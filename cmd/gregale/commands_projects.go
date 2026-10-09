@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -72,6 +72,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":
 		return cmdProjectsEnvironmentPolicies(args[1:])
+	case "queues":
+		return cmdProjectsEnvironmentQueues(args[1:])
 	case "gitops":
 		return cmdProjectsEnvironmentGitOps(args[1:])
 	case "diff":
@@ -155,14 +157,16 @@ func cmdProjectsEnvironmentReleases(args []string) int {
 }
 
 func cmdProjectsEnvironmentHistory(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("projects-environments-history", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment filter")
 	status := fs.String("status", "", "promotion status filter: running|succeeded|failed")
 	before := fs.String("before", "", "opaque cursor from a previous page")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", 50, "page size (1-100)")
-	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments history <project-slug> <environment-slug> [--from <environment>] [--status running|succeeded|failed] [--before <CURSOR>] [--limit <N>]", "projects environments")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments history <project-slug> <environment-slug> [--from <environment>] [--status running|succeeded|failed] [--cursor <CURSOR>] [--all] [--limit <N>]", "projects environments")
 		return 1
 	}
 	if *from != "" && !api.ValidProjectEnvironmentSlug(*from) {
@@ -178,12 +182,20 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	history, err := client.ListProjectEnvironmentPromotions(context.Background(), positional[0], positional[1], *before, *limit, *from, *status)
+	var history api.ProjectEnvironmentPromotionListResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.ProjectEnvironmentPromotionSummaryResponse, string, error) {
+		current, err := client.ListProjectEnvironmentPromotions(ctx, positional[0], positional[1], cursor, *limit, *from, *status)
+		return current.Items, current.NextBefore, err
+	})
+	history.Items, history.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not load promotion history", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(history))
+		return jsonOut(writeJSON(struct {
+			api.ProjectEnvironmentPromotionListResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{history, next}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %-10s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CONFIG", "CREATED")
 	for _, promotion := range history.Items {
@@ -194,7 +206,14 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %-10s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, configSync, promotion.CreatedAt)
 	}
 	if history.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next_before: %s\n", history.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale projects environments history %s %s --cursor '%s' --limit %d", positional[0], positional[1], strings.ReplaceAll(history.NextBefore, "'", "'\"'\"'"), *limit)
+		if *from != "" {
+			_, _ = fmt.Fprintf(osStdout, " --from %s", *from)
+		}
+		if *status != "" {
+			_, _ = fmt.Fprintf(osStdout, " --status %s", *status)
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }
@@ -552,7 +571,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
 		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1

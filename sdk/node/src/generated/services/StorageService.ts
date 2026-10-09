@@ -45,6 +45,12 @@ import type { ObjectTaggingResult } from '../models/ObjectTaggingResult.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
 import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
+import type { ObjectVersionLegalHoldRequest } from '../models/ObjectVersionLegalHoldRequest.js';
+import type { ObjectVersionLegalHoldResult } from '../models/ObjectVersionLegalHoldResult.js';
+import type { ObjectVersionList } from '../models/ObjectVersionList.js';
+import type { ObjectVersionProtection } from '../models/ObjectVersionProtection.js';
+import type { ObjectVersionRetentionRequest } from '../models/ObjectVersionRetentionRequest.js';
+import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetentionResult.js';
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
@@ -903,6 +909,67 @@ export class StorageService {
     });
   }
   /**
+   * List retained object versions and delete markers
+   * Requires storage read scope and a bucket read grant. Returns owned public version selectors, never native generations or physical placement. Both continuation markers belong to this bucket and exact key. Each provider page consumes the existing request safety budget.
+   * @returns ObjectVersionList A page of versions and common prefixes; Cache-Control no-store
+   * @returns Problem Invalid continuation, access denied, unsupported provider, stale accounting or exhausted safety budget
+   * @throws ApiError
+   */
+  public static listObjectBucketVersions({
+    slug,
+    bucket,
+    prefix,
+    delimiter,
+    limit = 1000,
+    keyMarker,
+    versionIdMarker,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the selected version.
+     */
+    bucket: string,
+    /**
+     * Restrict returned versions to matching logical keys.
+     */
+    prefix?: string,
+    /**
+     * Optional single Unicode character grouping matching keys.
+     */
+    delimiter?: string,
+    /**
+     * Maximum versions and common prefixes in this page.
+     */
+    limit?: number,
+    /**
+     * Exact continuation key returned by the previous page.
+     */
+    keyMarker?: string,
+    /**
+     * Public continuation version; requires its matching key_marker.
+     */
+    versionIdMarker?: string,
+  }): CancelablePromise<ObjectVersionList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'prefix': prefix,
+        'delimiter': delimiter,
+        'limit': limit,
+        'key_marker': keyMarker,
+        'version_id_marker': versionIdMarker,
+      },
+    });
+  }
+  /**
    * Permanently delete an immutable object version or delete marker
    * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt API. Quota is reclaimed only through verified capacity inventory.
    * @returns ObjectVersionDeleteResult Deleted or already removed immutable version; Cache-Control no-store
@@ -1130,6 +1197,221 @@ export class StorageService {
       path: {
         'slug': slug,
         'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read exact version retention
+   * Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionRetentionResult Verified native version retention policy
+   * @returns Problem Retention read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionRetentionResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version retention change
+   * Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Separately enrolled event holds support ON with one days or years duration and OFF without a duration. Releasing an active hold preserves its observed retention bound and verifies the provider-calculated final date. Governance bypass is unsupported.
+   * @returns ObjectVersionProtection Existing retention operation receipt
+   * @returns Problem Retention mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionRetentionRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read exact version legal hold
+   * Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionLegalHoldResult Verified native version legal hold policy
+   * @returns Problem Legal hold read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionLegalHoldResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version legal hold change
+   * Accept durable independent ON or OFF legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies exact-version readback without repeating a dispatched PUT. Retention and event hold policies remain independent.
+   * @returns ObjectVersionProtection Existing legal hold operation receipt
+   * @returns Problem Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionLegalHoldRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect an owned version protection operation
+   * Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+   * @returns ObjectVersionProtection Durable operation status and accepted policy
+   * @returns Problem Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionProtection({
+    slug,
+    bucket,
+    operation,
+  }: {
+    /**
+     * Application owning this protection operation target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for protection operation management.
+     */
+    bucket: string,
+    /**
+     * Durable protection operation identity.
+     */
+    operation: string,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'operation': operation,
       },
     });
   }

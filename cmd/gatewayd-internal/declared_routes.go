@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/routelifecycle"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -66,6 +67,25 @@ func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, ap
 	if app.PinnedDeploymentScope == "" || m == nil || m.store == nil {
 		return app, nil
 	}
+	if reader, ok := m.store.(state.DeploymentWorkloadSpecReader); ok && app.PinnedDeploymentID != "" && app.ProjectID != "" {
+		expectedScope := app.PinnedDeploymentScope
+		if expectedScope == "default" {
+			expectedScope = "production"
+		}
+		spec, err := reader.ProjectEnvironmentWorkloadSpecForDeployment(ctx, app.AccountID, app.ProjectID, app.PinnedDeploymentID)
+		if err == nil {
+			hash, hashErr := state.WorkloadSettingsHash(spec.Settings)
+			if hashErr != nil || hash != spec.Hash || spec.AppID != app.ID || spec.EnvironmentSlug != expectedScope {
+				return gateway.App{}, state.ErrConflict
+			}
+			app.OnlyAllowDeclaredRoutes = spec.Settings.OnlyAllowDeclaredRoutes
+			app.DeclaredRoutes = gatewayDeclaredRoutes(spec.Settings.DeclaredRoutes)
+			return app, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return gateway.App{}, err
+		}
+	}
 	store, ok := m.store.(interface {
 		GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
 	})
@@ -91,9 +111,10 @@ type compiledDeclaredRoute struct {
 }
 
 type declaredRoutePolicy struct {
-	routes  []compiledDeclaredRoute
-	expires time.Time
-	missing bool
+	lifecycle map[string]routelifecycle.Metadata
+	routes    []compiledDeclaredRoute
+	expires   time.Time
+	missing   bool
 }
 
 // declaredRoutesMatcher compiles an app's imported OpenAPI document once and
@@ -106,16 +127,20 @@ type declaredRoutesMatcher struct {
 	ttl   time.Duration
 	now   func() time.Time
 
-	mu      sync.RWMutex
-	entries map[string]declaredRoutePolicy
+	mu                sync.RWMutex
+	entries           map[string]declaredRoutePolicy
+	deploymentEntries map[deploymentLifecycleKey]declaredRoutePolicy
+	generations       map[string]uint64
 }
 
 func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatcher {
 	return &declaredRoutesMatcher{
-		store:   store,
-		ttl:     5 * time.Minute,
-		now:     time.Now,
-		entries: make(map[string]declaredRoutePolicy),
+		store:             store,
+		ttl:               5 * time.Minute,
+		now:               time.Now,
+		entries:           make(map[string]declaredRoutePolicy),
+		deploymentEntries: make(map[deploymentLifecycleKey]declaredRoutePolicy),
+		generations:       make(map[string]uint64),
 	}
 }
 
@@ -190,6 +215,12 @@ func (m *declaredRoutesMatcher) Invalidate(appID string) {
 	}
 	m.mu.Lock()
 	delete(m.entries, appID)
+	m.generations[appID]++
+	for key := range m.deploymentEntries {
+		if key.appID == appID {
+			delete(m.deploymentEntries, key)
+		}
+	}
 	m.mu.Unlock()
 }
 
@@ -199,17 +230,25 @@ func compileOpenAPIDocument(doc []byte) (declaredRoutePolicy, error) {
 		return declaredRoutePolicy{}, fmt.Errorf("compile OpenAPI document: %w", err)
 	}
 	routes := make([]gateway.DeclaredRoute, 0, len(spec.Paths))
+	lifecycle := make(map[string]routelifecycle.Metadata)
 	for path, item := range spec.Paths {
 		if item == nil {
 			continue
 		}
 		methods := make([]string, 0, len(item.Methods))
-		for method := range item.Methods {
+		for method, operation := range item.Methods {
+			metadata, err := routelifecycle.Parse(operation.Raw)
+			if err != nil {
+				return declaredRoutePolicy{}, fmt.Errorf("lifecycle %s %s: %w", method, path, err)
+			}
+			lifecycle[strings.ToUpper(method)+" "+normalizeDeclaredPath(path)] = metadata
 			methods = append(methods, strings.ToUpper(method))
 		}
 		routes = append(routes, gateway.DeclaredRoute{Path: path, Methods: methods})
 	}
-	return compileDeclaredRoutes(routes)
+	policy, err := compileDeclaredRoutes(routes)
+	policy.lifecycle = lifecycle
+	return policy, err
 }
 
 func compileDeclaredRoutes(routes []gateway.DeclaredRoute) (declaredRoutePolicy, error) {
@@ -308,4 +347,28 @@ func splitDeclaredPath(path string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimPrefix(path, "/"), "/")
+}
+
+// ResolveRouteLifecycle uses imported app metadata only on the app hostname.
+// Pinned deployment URLs must never inherit a mutable application contract.
+func (m *declaredRoutesMatcher) ResolveRouteLifecycle(ctx context.Context, app gateway.App, path, method string) (routelifecycle.Metadata, error) {
+	if app.PinnedDeploymentID != "" || app.PinnedDeploymentScope != "" {
+		return routelifecycle.Metadata{}, nil
+	}
+	// Explicit allowlists govern admission; lifecycle still belongs to the import.
+	app.DeclaredRoutes = nil
+	policy, err := m.loadPolicy(ctx, app)
+	if err != nil || policy.missing {
+		return routelifecycle.Metadata{}, err
+	}
+	template, matched := matchingDeclaredTemplate(policy.routes, path, method)
+	if !matched {
+		return routelifecycle.Metadata{}, nil
+	}
+	key := strings.ToUpper(method) + " " + template
+	metadata, found := policy.lifecycle[key]
+	if !found && strings.EqualFold(method, "HEAD") {
+		metadata = policy.lifecycle["GET "+template]
+	}
+	return metadata, nil
 }

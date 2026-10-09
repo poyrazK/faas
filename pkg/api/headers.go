@@ -57,9 +57,18 @@ const (
 	InvocationIDHeader = "X-Faas-Invocation-Id"
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
-	InvocationSourceHeader             = "X-Faas-Invocation-Source"
+	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	// Workflow step headers identify the run, step and attempt a workflow
+	// step request belongs to (docs/event-driven.md). Only scheduler-authored
+	// workflow invocations carry them to the guest.
+	WorkflowRunIDHeader                = "X-Faas-Workflow-Run-Id"
+	WorkflowStepHeader                 = "X-Faas-Workflow-Step"
+	WorkflowAttemptHeader              = "X-Faas-Workflow-Attempt"
 	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
 	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
+	// Advertised only for a managed request whose scheduler and gateway both
+	// understand the result protocol. Handlers should require value "1".
+	ManagedOperationResultVersionHeader = "X-Gregale-Operation-Result-Version"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -173,17 +182,52 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // may cross the gateway→guest boundary. The handler overwrites these values
 // immediately before forwarding; keeping the allowlist here makes the same
 // trust policy apply to HTTP/1, streaming, and upgrade forwarding paths.
+// IsWorkflowStepHeader reports one of the workflow step headers.
+func IsWorkflowStepHeader(name string) bool {
+	return strings.EqualFold(name, WorkflowRunIDHeader) || strings.EqualFold(name, WorkflowStepHeader) ||
+		strings.EqualFold(name, WorkflowAttemptHeader)
+}
+
 func IsGuestIdentityHeader(name string) bool {
+	if IsReservedOperationHeader(name) {
+		return true
+	}
 	switch strings.ToLower(name) {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
 		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
-		"x-gregale-operation-id", "x-gregale-operation-generation":
+		"x-gregale-operation-id", "x-gregale-operation-generation", "x-gregale-operation-result-version",
+		"x-gregale-customer-operation-id", "x-gregale-operation-attempt", "x-gregale-operation-capability":
 		return true
 	default:
 		return false
 	}
+}
+
+// outboundWebhookHeaders are the headers Gregale's own signed webhooks carry
+// (pkg/webhookout: alert rules and release webhooks). A receiver verifies the
+// HMAC with its own secret, so they assert nothing by themselves. The guest
+// boundary strips every other inbound x-faas-* header, which removed these
+// too: an alert receiver hosted on Gregale got the payload without
+// X-Faas-Alert-Signature and could not verify it (production-us hunt #7,
+// H5-64).
+var outboundWebhookHeaders = map[string]struct{}{
+	"x-faas-alert-signature":   {},
+	"x-faas-alert-id":          {},
+	"x-faas-alert-timestamp":   {},
+	"x-faas-alert-attempt":     {},
+	"x-faas-webhook-signature": {},
+	"x-faas-delivery-id":       {},
+	"x-faas-webhook-timestamp": {},
+	"x-faas-webhook-attempt":   {},
+}
+
+// IsOutboundWebhookHeader reports a header of a Gregale-signed outbound
+// webhook, which may reach a guest unchanged.
+func IsOutboundWebhookHeader(name string) bool {
+	_, ok := outboundWebhookHeaders[strings.ToLower(name)]
+	return ok
 }
 
 // Platform identity variables are injected by schedd into the workload's

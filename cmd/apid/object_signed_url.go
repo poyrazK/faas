@@ -17,7 +17,7 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	b, _, _, ok := s.loadBucket(w, r, acct, true)
+	b, _, provider, ok := s.loadBucket(w, r, acct, true)
 	if !ok {
 		return
 	}
@@ -32,6 +32,21 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 	}
 	if !s.authorizeBucketData(w, r, b, permission) {
 		return
+	}
+	if req.VersionID != "" {
+		if _, capable := provider.(objectstorage.VersionReadPresigner); !capable {
+			bucketProblem(w, objectstorage.ErrUnsupported)
+			return
+		}
+		refs, capable := s.store.(state.ObjectVersionReferenceStore)
+		if !capable {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		if _, err := refs.ResolveObjectVersion(r.Context(), b.AccountID, b.ID, req.Key, req.VersionID); err != nil {
+			bucketProblem(w, err)
+			return
+		}
 	}
 	store, ok := s.store.(state.ObjectURLCapabilityStore)
 	if !ok {
@@ -59,6 +74,10 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {
+	return s.prepareObjectURLCredentialWithLimit(r, b, req, permission, s.objectStorage.MaxSinglePutBytes)
+}
+
+func (s *server) prepareObjectURLCredentialWithLimit(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string, maxBytes int64) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {
 	c := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: b.AccountID, BucketID: b.ID, Label: "signed-url", Permission: permission, Status: state.ObjectS3CredentialStatusActive}
 	receipt := state.ObjectUploadCompletion{}
 	if setSecretRecipient == nil {
@@ -78,6 +97,13 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 	if err != nil {
 		return c, receipt, "", objectstorage.ErrUnavailable
 	}
+	protection := state.ObjectWriteProtectionSnapshot{}
+	if req.Method == http.MethodPut {
+		protection, err = s.resolveObjectWriteProtection(r.Context(), b, req.Protection)
+	}
+	if err != nil {
+		return c, receipt, "", err
+	}
 	encryption, err := s.resolveObjectURLEncryption(b, req)
 	if err != nil {
 		return c, receipt, "", err
@@ -86,7 +112,7 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 		selection := encryption.Clone().Selection
 		req.Encryption = &selection
 	}
-	req, err = objectstorage.NormalizePublicSignRequest(req, s.objectStorage.MaxSinglePutBytes)
+	req, err = objectstorage.NormalizePublicSignRequest(req, maxBytes)
 	if err != nil {
 		return c, receipt, "", err
 	}
@@ -96,7 +122,7 @@ func (s *server) prepareObjectURLCredential(r *http.Request, b state.ObjectBucke
 	}
 	if req.Method == http.MethodPut {
 		c.URL.ReceiptID = uuid.NewString()
-		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", Encryption: encryption}
+		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", Protection: protection, Encryption: encryption}
 	}
 	return c, receipt, secret, nil
 }

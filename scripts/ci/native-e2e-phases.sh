@@ -67,6 +67,9 @@ native_e2e_phase_files() {
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
       exclusive_operations_restore_metal_test.go \
+      durable_entities_restore_metal_test.go \
+      managed_operation_workflow_metal_test.go \
+      customer_workflow_operations_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
@@ -81,7 +84,7 @@ native_e2e_phase_files() {
     twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
-    jobs) printf '%s\n' jobs_metal_test.go ;;
+    jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
 }
@@ -176,7 +179,13 @@ native_e2e_assert_phase_partition() {
 # dedicated KVM, without waiting for the platform-wide matrix. The final
 # verdict requires its selected test to PASS; the runner still performs the
 # normal preflight, service restoration, and leakcheck.
-NATIVE_E2E_LANES=(smoke containers exclusive-operations-only)
+# managed-operation-only — source deployment, guest process death, in-place
+# managed workflow retry, and signed effect delivery on dedicated KVM.
+# customer-job-operations-only derives every Customer Job Operations scenario.
+# Missing or skipped scenarios fail its dedicated blocking verdict.
+# customer-workflow-operations-only derives every native workflow scenario;
+# its selected tests are blocking independently of the full matrix's phases.
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -190,6 +199,10 @@ NATIVE_E2E_SMOKE_TESTS=(
 
 NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS=(
   TestExclusiveOperationFencesRestoredKVMOwnerMetal
+)
+
+NATIVE_E2E_MANAGED_OPERATION_TESTS=(
+  TestManagedOperationWorkflowMetal
 )
 
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
@@ -216,6 +229,17 @@ native_e2e_lane_tests() {
       ;;
     exclusive-operations-only)
       printf '%s\n' "${NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS[@]}"
+      ;;
+    managed-operation-only)
+      printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
+      ;;
+    customer-job-operations-only)
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/customer_job_operations_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    customer-workflow-operations-only)
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/customer_workflow_operations_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
       ;;
     *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;
   esac

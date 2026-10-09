@@ -35,10 +35,64 @@ const (
 
 type gatewayTestStore struct {
 	state.ObjectDeletionStore
-	credential state.ObjectS3Credential
-	bucket     state.ObjectBucket
-	touched    int
-	admitted   []string
+	credential                          state.ObjectS3Credential
+	bucket                              state.ObjectBucket
+	touched                             int
+	admitted                            []string
+	activityMu                          sync.Mutex
+	activity                            map[string]state.ObjectBucketMutation
+	fenced                              bool
+	activityBeginErr, activityFinishErr error
+}
+
+// Deletion admission owns the same source hold as generic mutation admission
+// in the production stores. Keep both seams on this fixture's barrier.
+func (s *gatewayTestStore) BeginObjectDeletion(ctx context.Context, input state.ObjectDeletion, policy api.ObjectStoragePolicy) (state.ObjectDeletion, bool, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return state.ObjectDeletion{}, false, err
+	}
+	if s.activityBeginErr != nil {
+		return state.ObjectDeletion{}, false, s.activityBeginErr
+	}
+	if s.fenced {
+		return state.ObjectDeletion{}, false, state.ErrObjectBucketWriteFenced
+	}
+	return s.ObjectDeletionStore.BeginObjectDeletion(ctx, input, policy)
+}
+
+func (s *gatewayTestStore) BeginObjectBucketMutation(ctx context.Context, b state.ObjectBucket, kind string) (state.ObjectBucketMutation, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return state.ObjectBucketMutation{}, err
+	}
+	if s.activityBeginErr != nil {
+		return state.ObjectBucketMutation{}, s.activityBeginErr
+	}
+	if s.fenced {
+		return state.ObjectBucketMutation{}, state.ErrObjectBucketWriteFenced
+	}
+	if s.activity == nil {
+		s.activity = map[string]state.ObjectBucketMutation{}
+	}
+	receipt := state.ObjectBucketMutation{ID: uuid.NewString(), Bucket: b, Kind: kind}
+	s.activity[receipt.ID] = receipt
+	return receipt, nil
+}
+
+func (s *gatewayTestStore) FinishObjectBucketMutation(ctx context.Context, receipt state.ObjectBucketMutation) error {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.activityFinishErr != nil {
+		return s.activityFinishErr
+	}
+	delete(s.activity, receipt.ID)
+	return nil
 }
 
 func (s *gatewayTestStore) CreateObjectS3Credential(context.Context, state.ObjectS3Credential, int) (state.ObjectS3Credential, error) {

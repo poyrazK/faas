@@ -29,6 +29,7 @@ type ServiceOptions struct {
 	NewID               func() string
 	NewLeaseToken       func() string
 	Admit               func(context.Context, string) error
+	AdmitResize         func(context.Context, string, Spec) error
 	// MaxDatabasesPerAccount supplies the customer-specific reservation limit.
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
@@ -47,6 +48,7 @@ type Service struct {
 	newID                  func() string
 	newLeaseToken          func() string
 	admit                  func(context.Context, string) error
+	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 }
 
@@ -70,6 +72,16 @@ type RestoreDatabaseRequest struct {
 	SourceDatabaseID string
 	Name             string
 	PointInTime      time.Time
+	// SourceDefinition is an optional frozen environment-clone input. The
+	// source must still have this provider identity, but later desired spec
+	// edits cannot replace the captured target configuration.
+	SourceDefinition *RestoreSourceDefinition
+}
+
+type RestoreSourceDefinition struct {
+	Spec                                              Spec
+	BackendID, BackendFingerprint, ProviderResourceID string
+	DataResourceID                                    string
 }
 
 func NewService(registry *Registry, store Store, options ServiceOptions) (*Service, error) {
@@ -120,6 +132,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		newID:                  options.NewID,
 		newLeaseToken:          options.NewLeaseToken,
 		admit:                  options.Admit,
+		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
 	}, nil
 }
@@ -150,6 +163,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+			return Database{}, err
+		}
 		if existing.Spec != request.Spec {
 			return Database{}, ErrConflict
 		}
@@ -207,64 +223,74 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 // identity and timestamp before provider I/O, so a worker crash can safely
 // resume the same restore intent.
 func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (Database, error) {
+	database, _, err := s.RestoreWithResult(ctx, request)
+	return database, err
+}
+
+// RestoreWithResult also reports whether this invocation reserved the target.
+// Callers must compensate only resources they created, never adopted restores.
+func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	if !s.provisioningEnabled() {
-		return Database{}, ErrUnavailable
+		return Database{}, false, ErrUnavailable
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
-		return Database{}, ErrInvalid
+		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, ErrUnavailable
+		return Database{}, false, ErrUnavailable
 	}
-	source, err := s.store.Get(ctx, request.AccountID, request.SourceDatabaseID)
+	source, err := s.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if source.State != StateReady || source.ProviderResourceID == "" {
-		return Database{}, ErrConflict
+		return Database{}, false, ErrConflict
+	}
+	now := s.now()
+	currentRestoreWindow := source.Spec.RestoreWindowSeconds
+	if request.SourceDefinition != nil {
+		definition := *request.SourceDefinition
+		if definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.BackendID == "" || definition.BackendFingerprint == "" || definition.ProviderResourceID == "" || definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
+			return Database{}, false, ErrInvalid
+		}
+		if source.BackendID != definition.BackendID || source.BackendFingerprint != definition.BackendFingerprint || source.ProviderResourceID != definition.ProviderResourceID || source.DataResourceID != definition.DataResourceID {
+			return Database{}, false, ErrConflict
+		}
+		source.Spec = definition.Spec
 	}
 	// Returning an existing restore does not require its original point to
 	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+			return Database{}, false, err
+		}
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
-			return Database{}, ErrConflict
+			return Database{}, false, ErrConflict
+		}
+		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
+			return Database{}, false, ErrConflict
 		}
 		if existing.State == StateReady {
-			return existing, nil
+			return existing, false, nil
 		}
-		return s.Reconcile(ctx, request.AccountID, existing.ID)
+		database, err := s.Reconcile(ctx, request.AccountID, existing.ID)
+		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
-		return Database{}, err
+		return Database{}, false, err
 	}
-	now := s.now()
-	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, ErrInvalid
+	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
+		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
+		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, false, ErrInvalid
 	}
-	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, err
-		}
-	}
-	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
+	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
+		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
-	if !backend.Capabilities.PointInTimeRestore {
-		return Database{}, ErrUnsupported
-	}
-	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
-		return Database{}, ErrUnsupported
-	}
-	if err := backend.Capabilities.Supports(source.Spec); err != nil {
-		return Database{}, err
-	}
-	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
-	if err != nil {
-		return Database{}, err
-	}
-	database, _, err := s.store.Reserve(ctx, Database{
+	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
 		Name:                    request.Name,
@@ -272,7 +298,7 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 		BackendID:               source.BackendID,
 		BackendFingerprint:      source.BackendFingerprint,
 		RestoreSourceDatabaseID: source.ID,
-		RestoreSourceResourceID: source.ProviderResourceID,
+		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
 		State:                   StateProvisioning,
 		DesiredGeneration:       1,
@@ -280,15 +306,59 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 		UpdatedAt:               now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, err
+		return Database{}, false, err
 	}
 	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
-		return Database{}, ErrConflict
+		return Database{}, false, ErrConflict
+	}
+	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
+		return Database{}, false, ErrConflict
 	}
 	if database.State == StateReady {
-		return database, nil
+		return database, created, nil
 	}
-	return s.Reconcile(ctx, request.AccountID, database.ID)
+	ready, err := s.Reconcile(ctx, request.AccountID, database.ID)
+	if err != nil {
+		return database, created, err
+	}
+	return ready, created, nil
+}
+
+// AdmitRestoreReservation validates operator rollout, account admission,
+// provider capabilities and entitlements without provider IO. Internal clone
+// writers must separately authenticate their capture and atomically reserve
+// the target with its owner and live source lineage. This grants no access to
+// an existing private database.
+func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
+	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		return 0, ErrUnavailable
+	}
+	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
+		definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
+		return 0, ErrInvalid
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, accountID); err != nil {
+			return 0, err
+		}
+	}
+	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
+	if err != nil {
+		return 0, err
+	}
+	if !backend.Capabilities.PointInTimeRestore || s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
+		return 0, ErrUnsupported
+	}
+	if err := backend.Capabilities.Supports(definition.Spec); err != nil {
+		return 0, err
+	}
+	return s.reservationLimit(ctx, accountID)
+}
+
+func restoreMatchesSourceDefinition(target, source Database) bool {
+	return target.ID != source.ID && target.Spec == source.Spec && target.BackendID == source.BackendID && target.BackendFingerprint == source.BackendFingerprint &&
+		target.RestoreSourceResourceID == databaseDataResource(source) && target.State != StateDeleting && target.State != StateDeleted &&
+		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID && target.ProviderResourceID != databaseDataResource(source))
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -297,7 +367,22 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		return Database{}, err
 	}
 	switch database.State {
+	case StateUpdating:
+		return s.reconcileResize(ctx, database)
 	case StateReady:
+		if database.EnvironmentCloneOperationID != "" {
+			proofs, ok := s.store.(CloneRestoreProofStore)
+			if !ok {
+				return Database{}, ErrUnsupported
+			}
+			proof, err := proofs.GetCloneRestoreProof(ctx, accountID, databaseID)
+			if err != nil {
+				return Database{}, err
+			}
+			if err := validateCloneRestoreProof(database, proof); err != nil {
+				return Database{}, err
+			}
+		}
 		return database, nil
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
@@ -307,6 +392,11 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	default:
 		return Database{}, ErrConflict
+	}
+	if database.EnvironmentCloneOperationID != "" {
+		if _, ok := s.store.(CloneRestoreProofStore); !ok {
+			return Database{}, ErrUnsupported
+		}
 	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
@@ -333,13 +423,13 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 		}
 		if database.RestoreSourceResourceID != "" {
-			observed, err = backend.Provider.Restore(providerContext, RestoreRequest{
-				ResourceID:       database.ID,
-				SourceResourceID: database.RestoreSourceResourceID,
-				Spec:             database.Spec,
-				PointInTime:      database.RestorePointInTime,
-				IdempotencyKey:   "restore-" + database.ID,
-			})
+			request := RestoreRequest{ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
+				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID}
+			if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
+				observed, err = s.reconcileRestoreCreation(providerContext, receipts, database, request)
+			} else {
+				observed, err = backend.Provider.Restore(providerContext, request)
+			}
 		} else {
 			observed, err = backend.Provider.Provision(providerContext, ProvisionRequest{
 				ResourceID:     database.ID,
@@ -347,16 +437,15 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 				IdempotencyKey: "provision-" + database.ID,
 			})
 		}
-		if err == nil {
-			if observed.ProviderResourceID == "" {
-				err = ErrUnavailable
-			} else {
-				err = s.recordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID)
-				database.ProviderResourceID = observed.ProviderResourceID
-			}
-		}
 	} else {
-		observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
+		if inspector, ok := backend.Provider.(RestoreInspector); ok && database.RestoreSourceResourceID != "" {
+			observed, err = inspector.InspectRestore(providerContext, database.ProviderResourceID, RestoreRequest{
+				ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
+				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+			})
+		} else {
+			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
+		}
 		if errors.Is(err, ErrNotFound) {
 			// The Gregale resource still exists; an upstream disappearance is
 			// an availability incident, not a customer-facing 404.
@@ -369,6 +458,22 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
+	if err := validateCloneRestoreObservation(database, observed); err != nil {
+		code := "restore_lineage_unavailable"
+		if errors.Is(err, ErrConflict) {
+			code = "restore_lineage_mismatch"
+		}
+		return Database{}, s.releaseKnownError(ctx, database, StateProvisioning, code, err, retryDelay(err, database.AttemptCount))
+	}
+	if database.ProviderResourceID == "" {
+		if observed.ProviderResourceID == "" {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, ErrUnavailable)
+		}
+		if err := s.recordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID); err != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
+		}
+		database.ProviderResourceID = observed.ProviderResourceID
+	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
 		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", s.pollInterval); err != nil {
@@ -379,6 +484,28 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		if observed.Spec != database.Spec {
 			return Database{}, s.releaseKnownError(ctx, database, StateFailed, "spec_mismatch", ErrConflict, time.Hour)
 		}
+		if database.EnvironmentCloneOperationID != "" {
+			finishContext, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+			defer finishCancel()
+			result, finishErr := s.store.(CloneRestoreProofStore).FinishCloneRestoreProvision(finishContext, database, observed, s.now())
+			if finishErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, finishErr)
+			}
+			return result, nil
+		}
+		if observed.DataResourceID != "" {
+			pins, ok := s.store.(DataResourceProvisionStore)
+			if !ok {
+				return Database{}, s.releaseKnownError(ctx, database, StateProvisioning, "data_identity_unavailable", ErrUnsupported, time.Hour)
+			}
+			finishContext, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+			defer finishCancel()
+			result, finishErr := pins.FinishProvisionWithDataResource(finishContext, database, observed, s.now())
+			if finishErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, finishErr)
+			}
+			return result, nil
+		}
 		return s.finishProvision(ctx, database.ID, leaseToken)
 	case ProviderStatusFailed:
 		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "provider_failed", ErrUnavailable, time.Hour)
@@ -387,8 +514,38 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	}
 }
 
+// Clone-owned reservations must prove their physical origin before adopting a
+// provider identity, and again when asynchronous provisioning becomes ready.
+// The publication gate separately requires durable, coordinated data evidence.
+func validateCloneRestoreObservation(database Database, observed ObservedDatabase) error {
+	if database.RestoreSourceResourceID == "" && database.EnvironmentCloneOperationID == "" {
+		return nil
+	}
+	// Every restore keeps its source and point pinned while asynchronously
+	// becoming ready. Successful creation is not permanent data correctness.
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" {
+		return ErrUnavailable
+	}
+	if observed.ProviderResourceID == database.RestoreSourceResourceID || observed.RestoreLineage.SourceResourceID != database.RestoreSourceResourceID || !observed.RestoreLineage.PointInTime.Equal(database.RestorePointInTime) {
+		return ErrConflict
+	}
+	if database.EnvironmentCloneOperationID == "" {
+		return nil
+	}
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" || !validDataResourceID(observed.DataResourceID) {
+		return ErrUnavailable
+	}
+	if database.RestoreSourceDatabaseID == "" || database.RestoreSourceResourceID == "" || database.RestorePointInTime.IsZero() ||
+		observed.ProviderResourceID == database.RestoreSourceResourceID || observed.DataResourceID == database.RestoreSourceResourceID || database.DataResourceID != "" && database.DataResourceID != observed.DataResourceID ||
+		observed.RestoreLineage.SourceResourceID != database.RestoreSourceResourceID ||
+		!observed.RestoreLineage.PointInTime.Equal(database.RestorePointInTime) {
+		return ErrConflict
+	}
+	return nil
+}
+
 func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Database, error) {
-	database, err := s.store.Get(ctx, accountID, databaseID)
+	database, err := s.Get(ctx, accountID, databaseID)
 	if err != nil {
 		return Database{}, err
 	}
@@ -412,6 +569,17 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	if database.ProviderResourceID == "" && database.RestoreSourceResourceID != "" {
+		if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
+			accepted, receiptErr := s.restoreCreation(providerContext, database)
+			if receiptErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateDeleting, receiptErr)
+			}
+			if accepted != nil {
+				return s.deleteRestoreCreation(ctx, providerContext, receipts, database, *accepted)
+			}
+		}
+	}
 	if database.ProviderResourceID == "" {
 		identity, discoverErr := discoverResource(providerContext, backend.Provider, database)
 		if errors.Is(discoverErr, ErrNotFound) {
@@ -434,6 +602,7 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 		ResourceID:              database.ID,
 		ProviderResourceID:      database.ProviderResourceID,
 		RestoreSourceResourceID: database.RestoreSourceResourceID,
+		RestorePointInTime:      database.RestorePointInTime,
 		IdempotencyKey:          "delete-" + database.ID,
 	})
 	if errors.Is(err, ErrNotFound) {
@@ -453,7 +622,7 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 }
 
 func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
-	database, err := s.store.Get(ctx, accountID, databaseID)
+	database, err := customerDatabase(ctx, s.store, accountID, databaseID)
 	if err != nil {
 		return Database{}, err
 	}
@@ -464,15 +633,34 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 	return rows[0], nil
 }
 
+// FindByName locates an account-owned durable reservation. Clone workers use
+// their operation-specific name to recover after a crash before checkpointing
+// the target ID, including after a completed restore's PITR window has expired.
+func (s *Service) FindByName(ctx context.Context, accountID, name string) (Database, error) {
+	return s.store.FindByName(ctx, accountID, name)
+}
+
 func (s *Service) List(ctx context.Context, accountID string) ([]Database, error) {
 	if accountID == "" {
 		return nil, ErrInvalid
 	}
-	databases, err := s.store.List(ctx, accountID)
+	var items []Database
+	var err error
+	if customers, ok := s.store.(CustomerDatabaseStore); ok {
+		items, err = customers.ListCustomerDatabases(ctx, accountID)
+	} else {
+		items, err = s.store.List(ctx, accountID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return s.withHealth(ctx, accountID, databases)
+	visible := make([]Database, 0, len(items))
+	for _, database := range items {
+		if database.EnvironmentCloneOperationID == "" {
+			visible = append(visible, database)
+		}
+	}
+	return s.withHealth(ctx, accountID, visible)
 }
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {

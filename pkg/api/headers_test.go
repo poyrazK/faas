@@ -12,6 +12,12 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 	h.Set("X-Faas-Unknown", "internal-only")
 	h.Set(TargetDeploymentHeader, "attacker-deployment")
 	h.Set(PlatformTenantIDHeader, "attacker-tenant")
+	h.Set(ManagedOperationResultVersionHeader, "attacker-version")
+	h.Set(OperationReceiptVersionHeader, "attacker-version")
+	h.Set(OperationReceiptBindingHeader, "attacker-binding")
+	h.Set(OperationTransactionVersionHeader, "1")
+	h.Set(OperationMilestoneVersionHeader, "1")
+	h.Set(OperationResultMaxBytesHeader, "1048576")
 
 	PlatformIdentity{
 		RequestID:           "req-1",
@@ -31,21 +37,27 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 	}
 
 	for name, want := range map[string]string{
-		RequestIDHeader:           "req-1",
-		AppIDHeader:               "app-1",
-		DeploymentIDHeader:        "dep-1",
-		TenantIDHeader:            "tenant-1",
-		PlatformTenantIDHeader:    "",
-		InstanceIDHeader:          "instance-1",
-		NodeIDHeader:              "node-1",
-		RegionHeader:              "eu-west",
-		CommitSHAHeader:           "abc123",
-		DeploymentTagHeader:       "canary",
-		DeploymentCreatedAtHeader: "2026-09-19T12:00:00Z",
-		ImageDigestHeader:         "sha256:deadbeef",
-		"X-Faas-App":              "app-1",
-		"X-Faas-Instance":         "instance-1",
-		"X-Faas-Node":             "node-1",
+		RequestIDHeader:                     "req-1",
+		AppIDHeader:                         "app-1",
+		DeploymentIDHeader:                  "dep-1",
+		TenantIDHeader:                      "tenant-1",
+		PlatformTenantIDHeader:              "",
+		ManagedOperationResultVersionHeader: "",
+		OperationReceiptVersionHeader:       "",
+		OperationReceiptBindingHeader:       "",
+		OperationTransactionVersionHeader:   "",
+		OperationMilestoneVersionHeader:     "",
+		OperationResultMaxBytesHeader:       "",
+		InstanceIDHeader:                    "instance-1",
+		NodeIDHeader:                        "node-1",
+		RegionHeader:                        "eu-west",
+		CommitSHAHeader:                     "abc123",
+		DeploymentTagHeader:                 "canary",
+		DeploymentCreatedAtHeader:           "2026-09-19T12:00:00Z",
+		ImageDigestHeader:                   "sha256:deadbeef",
+		"X-Faas-App":                        "app-1",
+		"X-Faas-Instance":                   "instance-1",
+		"X-Faas-Node":                       "node-1",
 	} {
 		if got := h.Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)

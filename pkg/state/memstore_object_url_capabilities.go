@@ -37,7 +37,7 @@ func (m *MemStore) objectURLCredentialLiveLocked(c ObjectS3Credential) bool {
 		return true
 	}
 	b, ok := m.objectBuckets[c.BucketID]
-	if !ok || b.AccountID != c.AccountID || b.State != "ready" {
+	if !ok || b.AccountID != c.AccountID || b.State != "ready" || !m.cloneBucketAccessibleLocked(b) {
 		return false
 	}
 	if c.Status != ObjectS3CredentialStatusActive || !c.URL.ExpiresAt.After(m.clock()) {
@@ -54,7 +54,7 @@ func (m *MemStore) objectURLCredentialLiveLocked(c ObjectS3Credential) bool {
 func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, m.clock()) || !m.objectURLCredentialLiveLocked(c) {
+	if !receipt.Protection.ValidInput() || receipt.VerifiedProtection != "" || receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, m.clock()) || !m.objectURLCredentialLiveLocked(c) {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 	}
 	b, ok := m.objectBuckets[c.BucketID]
@@ -62,8 +62,15 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrNotFound
 	}
 	if c.URL.Request.Method == http.MethodPut {
+		if _, fenced := m.objectWriteFences[b.ID]; fenced {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+		}
 		var captureErr error
 		receipt.Encryption, receipt.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(receipt.BucketID, receipt.Encryption)
+		if captureErr != nil {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, captureErr
+		}
+		receipt.Protection, captureErr = m.captureObjectWriteProtectionLocked(receipt.BucketID, receipt.Protection)
 		if captureErr != nil {
 			return ObjectS3Credential{}, ObjectUploadCompletion{}, captureErr
 		}

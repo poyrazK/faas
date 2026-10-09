@@ -52,7 +52,6 @@ CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
 CheckWebhookReplay
-ClaimNextDueWorkflowRun
 ClaimNextPendingRun
 ClearDeployment
 ClearInstanceFrameworkReadyAt
@@ -216,6 +215,7 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
+GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GitHubInstallForAccountInstallation
@@ -266,6 +266,7 @@ LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
+ListAccountTraceLogEvents
 ListActiveRegressionsByApp
 ListAlertDeliveriesForRule
 ListAlertPresets
@@ -375,6 +376,7 @@ ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
 ListRecentEventsForAccount
+ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
 ListRequestTelemetryByPlatformTenant
 ListRequestTelemetryDependencySpans
@@ -405,7 +407,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
@@ -425,7 +426,6 @@ MarkTriggerRecordDeadLetter
 MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
-MarkWorkflowRunStatus
 MatchEdgeRulesForHost
 MatchRecoveryCode
 MinCertExpiryForApp
@@ -532,7 +532,6 @@ SetProjectScanSource
 SoftDeleteOrg
 StampAppScaleIn
 StampAppScaleOut
-StampFirstWake
 StampInstanceInvocation
 StartProjectEnvironmentPromotionRollback
 StorageUsage

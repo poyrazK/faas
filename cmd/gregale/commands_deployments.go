@@ -6,8 +6,8 @@
 //   - `gregale deployments` lists a single page (50 rows by default) so
 //     the customer sees what just shipped without thinking about
 //     pagination. `--limit N` and `--before CURSOR` thread through to
-//     the API; `--all` walks every page via the existing
-//     Client.ListDeploymentsAll helper (pkg/api/paging.go).
+//     the API; `--cursor` aliases `--before`, and `--all` uses bounded
+//     traversal with repeated-cursor detection.
 //
 //   - JSON output for the list path is the *envelope* ({items,next_before})
 //     rather than NDJSON per record. This is a deliberate break from
@@ -147,8 +147,9 @@ func cmdDeployments(args []string) int {
 	fs := newFlagSet("deployments", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (use app-scoped deployment history)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
-	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
-	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
+	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
+	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	// Issue #977 / ADR-116: --wide / -w toggles the annotation columns
 	// (by / pr / tag / reason). Default stays the old 5-column shape so
 	// existing scripts / dashboard scrapers don't break. Single-letter
@@ -161,7 +162,7 @@ func cmdDeployments(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--before CURSOR] [--all] [--wide]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide]", "deployments")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
@@ -179,24 +180,29 @@ func cmdDeployments(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if *all {
+	items, next, err := collectListPages(ctx, *before, *all, func(ctx context.Context, cursor string) ([]api.DeploymentResponse, string, error) {
+		var page api.DeploymentListResponse
+		var err error
 		if *app != "" {
-			return cmdAppDeploymentsAll(ctx, client, *app, *wide)
+			page, err = client.ListAppDeployments(ctx, *app, cursor, *limit)
+		} else {
+			page, err = client.ListDeployments(ctx, cursor, *limit)
 		}
-		return cmdDeploymentsAll(ctx, client, *wide)
-	}
-	var page api.DeploymentListResponse
-	if *app != "" {
-		page, err = client.ListAppDeployments(ctx, *app, *before, *limit)
-	} else {
-		page, err = client.ListDeployments(ctx, *before, *limit)
-	}
+		return page.Items, page.NextBefore, err
+	})
+	page := api.DeploymentListResponse{Items: items, NextBefore: next}
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
 		// Envelope (not NDJSON) so `next_before` survives; see file header.
-		return jsonOut(writeJSON(page))
+		if *all {
+			return jsonOut(writeNDJSON(items))
+		}
+		return jsonOut(writeJSON(struct {
+			api.DeploymentListResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{page, next}))
 	}
 	if len(page.Items) == 0 {
 		if *app != "" {
@@ -205,6 +211,9 @@ func cmdDeployments(args []string) int {
 			_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
 		}
 		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --tarball path/to/source.tar.gz` (or `gregale deploy --image <ref>`).")
+		if next != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
+		}
 		return 0
 	}
 	for _, d := range page.Items {
@@ -215,7 +224,7 @@ func cmdDeployments(args []string) int {
 		}
 	}
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 	}
 	return 0
 }
@@ -299,61 +308,15 @@ func cmdDeploymentsExcludeClear(args []string) int {
 	return 0
 }
 
-// cmdDeploymentsAll walks every page via the SDK helper and renders the
-// full list. Refuses to share a single envelope with the one-page path
-// (no `next_before` to surface), so JSON output is the bare slice —
-// matching how apps/crons/keys emit NDJSON for non-paginated lists.
-func cmdDeploymentsAll(ctx context.Context, client *api.Client, wide bool) int {
-	items, err := client.ListDeploymentsAll(ctx)
-	if err != nil {
-		return printErr("Request failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeNDJSON(items))
-	}
-	if len(items) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
-		return 0
-	}
-	for _, d := range items {
-		if wide {
-			renderDeploymentRowWide(osStdout, d)
-		} else {
-			renderDeploymentRow(osStdout, d)
-		}
-	}
-	return 0
-}
-
-func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, wide bool) int {
-	items, err := client.ListAppDeploymentsAll(ctx, slug)
-	if err != nil {
-		return printErr("Request failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeNDJSON(items))
-	}
-	if len(items) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", slug)
-		return 0
-	}
-	for _, d := range items {
-		if wide {
-			renderDeploymentRowWide(osStdout, d)
-		} else {
-			renderDeploymentRow(osStdout, d)
-		}
-	}
-	return 0
-}
-
 // cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
+	case "runtime":
+		return cmdDeploymentRuntime(args[1:])
 	case "advance":
 		return cmdDeploymentAdvance(args[1:])
 	case "set-min-instances":
@@ -380,7 +343,7 @@ func cmdDeploymentWait(args []string) int {
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -406,6 +369,7 @@ func cmdDeploymentWait(args []string) int {
 		waitTarget = "live and rollout-complete"
 	}
 	var progressState *deploymentProgressSnapshot
+	var held rolloutHeldNotice
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -417,6 +381,9 @@ func cmdDeploymentWait(args []string) int {
 		}
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
+		}
+		if *rollout && !jsonOutput {
+			held.maybeWarn(osStderr, d, time.Now())
 		}
 		if isCompletedDeployment(d) {
 			if d.Status != statusLive {

@@ -632,14 +632,15 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeAutomationVersionConflict       = "automation_version_conflict"
+	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
+	CodeAutomationInvalid               = "automation_invalid"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
 	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
@@ -1579,6 +1580,9 @@ const (
 	// CodeAPIContractBreakingChange is stamped on deployments rejected by
 	// the production OpenAPI contract gate.
 	CodeAPIContractBreakingChange = "api_contract_breaking_change"
+	// CodeAPIContractComparisonIncomplete means a promotion was blocked
+	// because an unsupported response-schema change could not be classified.
+	CodeAPIContractComparisonIncomplete = "api_contract_comparison_incomplete"
 	// CodeOpenAPIPolicyConfirmationRequired means a policy apply request
 	// omitted the approval token returned by the preceding plan.
 	CodeOpenAPIPolicyConfirmationRequired = "openapi_policy_confirmation_required"
@@ -1811,24 +1815,26 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota              = "plan_workflows_quota"
-	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound            = "workflow_step_not_found"
-	CodeWorkflowRunNotFound             = "workflow_run_not_found"
-	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound           = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
-	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
-	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
-	CodeWorkflowResumeLimit             = "workflow_resume_limit"
-	CodeWorkflowNotRunning              = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
-	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
-	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
-	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
-	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
+	CodePlanWorkflowsNotAllowed           = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota                = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                  = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound              = "workflow_step_not_found"
+	CodeWorkflowRunNotFound               = "workflow_run_not_found"
+	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
+	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound             = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit               = "workflow_resume_limit"
+	CodeWorkflowNotRunning                = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable     = "workflow_deployment_unavailable"
+	CodeWorkflowTenantIdentityUnavailable = "workflow_tenant_identity_unavailable"
+	CodeWorkflowCallbackClosed            = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired           = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict   = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict   = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1865,6 +1871,10 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeProfileGateBlocked:
+		return http.StatusConflict
+	case CodeProfileInvestigationLimit:
+		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
@@ -1931,18 +1941,19 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
-		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -1950,7 +1961,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -3075,12 +3086,12 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 // FAAS_DOMAIN_DOCTOR_ENABLED is unset. The route stays
 // registered (per the pre-#911 pattern in api/flags.go) so
 // the CLI gets a deterministic error code rather than a
-// generic 404. The detail line is the operator-facing
-// "set FAAS_DOMAIN_DOCTOR_ENABLED=1" hint.
+// generic 404. The detail stays customer-facing; operators key on
+// the stable code, not on FAAS_DOMAIN_DOCTOR_ENABLED in the text.
 func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
-		"the FAAS_DOMAIN_DOCTOR_ENABLED flag is not set on this cluster; ask the operator to enable it or use `gregale domains verify` for a one-shot check").
+		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
 		WithDocs(docsBase + "/domains/doctor")
 }
 
@@ -3101,7 +3112,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 func ErrAPIContractDiffDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
 		"API contract diff is disabled",
-		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		"API contract diff is not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -3110,6 +3121,15 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractComparisonIncomplete is used when the compatibility gate
+// cannot classify a changed response schema with its currently supported
+// checks.
+func ErrAPIContractComparisonIncomplete(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
+		"API contract comparison incomplete", detail).
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -3650,6 +3670,10 @@ const (
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
 	CodeRequestBudgetExceeded = "request_budget_exceeded"
+	// CodeCircuitOpen is the 503 the public gateway answers when every
+	// candidate instance of an app has an open instance-health circuit
+	// (ADR-201 §2). It carries Retry-After.
+	CodeCircuitOpen = "circuit_open"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"
@@ -3840,6 +3864,14 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
+// ErrWorkflowTenantIdentityUnavailable reports that the route does not carry
+// an authenticated platform tenant identity for a tenant-required app.
+func ErrWorkflowTenantIdentityUnavailable() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowTenantIdentityUnavailable,
+		"Tenant identity required",
+		"apps that require a platform tenant must start workflow runs through the account tenant route or an authenticated platform tenant token")
+}
+
 // ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
 func ErrWorkflowRunNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
@@ -3863,6 +3895,13 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+// ErrWorkflowStepRetryNotAllowed marks a retry request that cannot safely
+// resume the run's current DAG state.
+func ErrWorkflowStepRetryNotAllowed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowStepRetryNotAllowed,
+		"Workflow step cannot be retried", "retry requires a terminal failed or dead HTTP step with no other active, failed, or dead steps and no completed downstream work.")
 }
 
 func ErrWorkflowCallbackClosed() *Problem {
@@ -3910,7 +3949,7 @@ func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
 func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries int) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
 		"Job task retry budget exhausted",
-		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d.", taskIndex, runID, attempts, maxRetries)).
+		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d. Re-run its input in a linked run with `gregale jobs replay-failed <job> %s`.", taskIndex, runID, attempts, maxRetries, runID)).
 		WithDocs(docsBase + "/jobs#retry")
 }
 
@@ -4330,7 +4369,7 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 func ErrTenantSurfacesNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
 		"Tenant surfaces are not enabled",
-		"the FAAS_TENANT_SURFACES_ENABLED flag is not enabled on this cluster; ask the cluster operator to enable the tenant-surface API").
+		"tenant surfaces are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
@@ -4343,7 +4382,7 @@ func ErrTenantSurfacesNotEnabled() *Problem {
 func ErrStaticEgressIPNotEnabled() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeStaticEgressIPNotEnabled,
 		"Static egress IP feature is not enabled on this cluster",
-		"the FAAS_STATIC_EGRESS_IP_ENABLED env var is not set; ask the cluster operator to enable the static egress IP surface.").
+		"static egress IPs are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
@@ -4352,7 +4391,7 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 func ErrPrivateNetworkNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
 		"Private network attachments are not enabled on this cluster",
-		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		"private network attachments are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/networking")
 }
 
@@ -6438,3 +6477,8 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
 		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }
+
+// CodeProfileInvestigationLimit is the per-app saved metadata quota.
+const CodeProfileInvestigationLimit = "profile_investigation_limit"
+
+const CodeProfileGateBlocked = "profile_gate_blocked"

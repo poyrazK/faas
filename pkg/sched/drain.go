@@ -364,7 +364,7 @@ func (d *Drain) Tick(ctx context.Context) {
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
 				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
+					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
 						queueTriggerSkipped = true
 						continue
 					}
@@ -496,7 +496,7 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "accepted deployment version is unavailable")
 		return
 	}
-	coordinated, err := d.engine.EnsureWakeForDeployment(ctx, op.AppID, version.DeploymentID, scope, TriggerMeterd)
+	coordinated, err := d.engine.EnsureWakeForDeployment(ctx, op.AppID, version.DeploymentID, scope, TriggerInvocation)
 	if err == nil {
 		err = coordinated.Err
 	}
@@ -609,15 +609,18 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 		}
 		return
 	}
-	result := dispatched.Result
-	if !json.Valid(result) {
-		result, _ = json.Marshal(string(result))
-	}
-	if len(result) > api.MaxExclusiveResultBytes {
-		_ = owners.FailExclusiveOperation(ctx, claim, "operation result exceeded platform limit")
+	result, effects, decodeErr := decodeOperationResult(dispatched.Result)
+	if decodeErr != nil {
+		_ = owners.FailExclusiveOperation(ctx, claim, "invalid operation result or result exceeded platform limit")
 		return
 	}
-	if err := owners.CommitExclusiveOperation(ctx, claim, result, nil); err != nil && !errors.Is(err, exclusivework.ErrStaleOwner) {
+	if err := owners.CommitExclusiveOperation(ctx, claim, result, effects); err != nil && !errors.Is(err, exclusivework.ErrStaleOwner) {
+		if errors.Is(err, state.ErrInvalidArgument) {
+			_ = owners.FailExclusiveOperation(ctx, claim, "invalid operation effects or destination unavailable")
+		} else {
+			_ = owners.RetryExclusiveOperation(ctx, claim, "operation commit temporarily unavailable")
+			dispatchOutcome = "retry"
+		}
 		d.log.WarnContext(ctx, "exclusive operation commit failed", "operation_id", op.ID, "err", err)
 	} else if errors.Is(err, exclusivework.ErrStaleOwner) {
 		dispatchOutcome = "lost_owner"
@@ -818,6 +821,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
 	inv = claimed
+	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
+	defer stopClaim()
 	d.observeDelayedTaskClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
@@ -830,19 +835,19 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			err := errors.New("sched: debug replay gateway is not configured")
 			retryAfter := d.invocationRetryDelay(inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
-			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr != nil {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv)); failErr != nil {
 				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
 			}
 			return
 		}
-		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
+		dispatched, err := d.gateway.Invoke(claimCtx, inv.AppID, inv)
 		if err != nil {
 			retryAfter := d.invocationRetryDelay(inv)
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
 			budget := d.invocationAttemptBudget(ctx, inv)
-			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 			if failErr == nil && retryAfter == 0 {
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
@@ -853,7 +858,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			return
 		}
 		if dispatched.InstanceID != "" {
-			if err := d.store.StampInstanceInvocation(ctx, inv.ID, dispatched.InstanceID); err != nil {
+			if err := d.stampInvocationInstance(ctx, inv, dispatched.InstanceID); err != nil {
 				d.log.Warn("drain: stamp debug replay instance", "inv", inv.ID, "inst", dispatched.InstanceID, "err", err)
 			}
 		}
@@ -873,7 +878,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr == nil && retryAfter == 0 {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted()); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		return
@@ -884,12 +889,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// row so the meter's per-instance count is non-zero for this minute.
 	var wakeRes WakeResult
 	if version.DeploymentID != "" {
-		wakeRes, err = d.engine.Wake(ctx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		wakeRes, err = d.engine.Wake(claimCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerInvocation)
 		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(WithScope(ctx, version.Scope), inv.AppID, TriggerMeterd)
+		coord, wakeErr := d.engine.EnsureWake(WithScope(claimCtx, version.Scope), inv.AppID, TriggerInvocation)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err
@@ -913,7 +918,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
@@ -921,12 +926,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
-	// 4. Stamp the live instance handle. Failure here is non-fatal —
-	// the dispatch can still proceed; the meter just under-counts
-	// for this row. Logged so a regression in the stamp path is
-	// visible without aborting the dispatch.
-	if err := d.store.StampInstanceInvocation(ctx, inv.ID, wakeRes.InstanceID); err != nil {
+	// Operation progress authority must be bound before customer code runs.
+	// Ordinary invocation stamps retain their metering-only behavior.
+	if err := d.stampInvocationInstance(claimCtx, inv, wakeRes.InstanceID); err != nil {
 		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+		if state.InvocationHasOperation(inv) {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
+				d.log.Warn("drain: settle operation binding failure", "inv", inv.ID, "err", failErr)
+			}
+			return
+		}
 	}
 	// 5. Invoke (deliver envelope).
 	if d.gateway == nil {
@@ -940,9 +949,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	var dispatched state.Invocation
 	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
-		dispatched, err = prewoken.InvokeWithWake(ctx, inv.AppID, inv, wakeRes)
+		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
 	} else {
-		dispatched, err = d.gateway.Invoke(ctx, inv.AppID, inv)
+		dispatched, err = d.gateway.Invoke(claimCtx, inv.AppID, inv)
 	}
 	if inv.Source == state.InvocationCron && inv.FailureRules != nil {
 		if err == nil && dispatched.ResponseStatusCode == 0 {
@@ -966,7 +975,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -1027,7 +1036,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
-		state.WithClaimAttempt(inv.Attempts),
+		state.WithInvocationClaim(inv),
 		state.WithWorkClassification(decision, response.OutcomeCode),
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
@@ -1049,7 +1058,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
-		state.WithClaimAttempt(inv.Attempts),
+		state.WithInvocationClaim(inv),
 		state.WithWorkClassification(decision, ""),
 	}
 	if decision.Action == "hold" {
@@ -1067,7 +1076,12 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 }
 
 func completeClaimedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage) error {
-	if inv.WorkPolicyName != "" {
+	if inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay {
+		if claimed, ok := store.(state.InvocationClaimCompletionStore); ok {
+			return claimed.CompleteInvocationClaim(ctx, inv.ID, state.InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}, result)
+		}
+	}
+	if inv.WorkPolicyName != "" || state.InvocationHasOperation(inv) {
 		return store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, result)
 	}
 	return store.CompleteInvocation(ctx, inv.ID, result)
@@ -1258,4 +1272,15 @@ func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
 		return 0
 	}
 	return api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
+}
+
+func (d *Drain) stampInvocationInstance(ctx context.Context, inv state.Invocation, instanceID string) error {
+	if state.InvocationHasOperation(inv) {
+		fenced, ok := d.store.(state.OperationExecutionStampStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		return fenced.StampOperationExecutionAttempt(ctx, inv.ID, instanceID, inv.Attempts)
+	}
+	return d.store.StampInstanceInvocation(ctx, inv.ID, instanceID)
 }

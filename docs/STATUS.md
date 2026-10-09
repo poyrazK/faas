@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Local runtime update work — 2026-10-06
+
+[ADR-693](adr/693-private-runtime-routing-and-health-verification.md) adds private
+gateway cache-installation receipts, bounded lost-notification/restart repair,
+and account-scoped post-cutover verification using fresh candidate-only health
+and request evidence. Activation history stays immutable. Gateway confirmation
+is disabled by default; customer Apply remains unavailable. The reviewed gateway
+session set is explicit, and verification is a current observation rather than
+a durable completion or drain receipt. Authoritative gateway membership,
+durable verification orchestration, predecessor drain/cleanup and dedicated
+native Linux amd64 KVM acceptance remain open. Local fixtures provide no native
+runtime qualification; the dedicated acceptance project is suspended.
+
 ## Current snapshot — 2026-09-16
 
 - **Product surface:** the `gregale` CLI, API, GitHub integration, dashboard,
@@ -30,6 +43,44 @@ historical.
   error-budget metrics. Managed PostgreSQL dependency binding is available as
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
+
+Durable entity outbox update (2026-10-09): the private state engine can commit
+bounded outgoing webhook intents with state and request receipts through one
+manifest CAS. Pending work survives replay, restart, takeover and cleanup and
+counts toward snapshot/storage caps. Manifest schema 5 requires stopping older
+writers before upgrade. Guest protocol v1 continues to reject outgoing work;
+delivery/admission/retry remain a separate milestone. Native-host and live-bucket
+qualification remain pending ([ADR-903](adr/903-object-storage-entity-outbox-contract.md)).
+
+Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
+an advisory time-ordered alarm index with bounded repair scans, fenced retry
+reservations with backoff and exhaustion, and exact-scope private operator
+inspection. Its schema-4 upgrade is superseded by the schema-5 writer above.
+Native-host and live-provider qualification remain pending; this does
+not promote the preview to production availability
+([ADR-712](adr/712-object-storage-durable-entities.md)).
+
+Image readiness update (2026-10-07): newly assembled primary image deployments
+require a fresh successful effective OCI/Compose command healthcheck before
+serving readiness, in addition to existing readiness and route verification.
+Cold boot, restore, warm-pool resume and migration preserve that requirement;
+older daemon/guest responses cannot acknowledge it. Existing releases need
+reassembly or redeployment to gain the gate. Native boot/restore and leak
+qualification remain pending ([ADR-683](adr/683-image-healthcheck-readiness.md)).
+
+Image runtime recovery update (2026-10-07): required primary image command
+checks now continue throughout serving VM lifetimes. Repeated fresh failures
+use scheduler-owned cold recovery and existing restart limits; missing proof
+uses infrastructure recovery without charging app exhaustion. Old daemons and
+guests cannot silently omit monitoring. Native lifecycle and leak qualification
+remain pending ([ADR-684](adr/684-image-healthcheck-runtime-recovery.md)).
+
+Compose dependency rollout update (2026-10-07): `service_healthy` now holds an
+initial project release until its captured dependency deployment is live with
+traffic in the same project/environment. Durable waits survive restart; a failed
+dependency or expired deadline fails the candidate while retaining the previous
+serving release. CLI and dashboard stage summaries show the blocker
+([ADR-685](adr/685-compose-dependency-release-gates.md)).
 
 Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
 failed-boot ownership through confirmed teardown and serializes concurrent stops

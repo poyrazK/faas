@@ -96,10 +96,13 @@ def sync_detailed(
 ) -> Response[Problem | ReplayEventFanoutFailureResponse]:
     """Retry one terminal event recipient routing failure.
 
-     Requeues only the named failed recipient from the immutable recipient
-    snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+     Requeues only the named failed recipient captured at acceptance or
+    added by a retained historical backfill. Backfill failures must be
+    retryable and have a running or completed-with-failures job; reopening
+    a completed job observes active-job limits. Other recipients and
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -136,10 +139,13 @@ def sync(
 ) -> Problem | ReplayEventFanoutFailureResponse | None:
     """Retry one terminal event recipient routing failure.
 
-     Requeues only the named failed recipient from the immutable recipient
-    snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+     Requeues only the named failed recipient captured at acceptance or
+    added by a retained historical backfill. Backfill failures must be
+    retryable and have a running or completed-with-failures job; reopening
+    a completed job observes active-job limits. Other recipients and
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -171,10 +177,13 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReplayEventFanoutFailureResponse]:
     """Retry one terminal event recipient routing failure.
 
-     Requeues only the named failed recipient from the immutable recipient
-    snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+     Requeues only the named failed recipient captured at acceptance or
+    added by a retained historical backfill. Backfill failures must be
+    retryable and have a running or completed-with-failures job; reopening
+    a completed job observes active-job limits. Other recipients and
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):
@@ -209,10 +218,13 @@ async def asyncio(
 ) -> Problem | ReplayEventFanoutFailureResponse | None:
     """Retry one terminal event recipient routing failure.
 
-     Requeues only the named failed recipient from the immutable recipient
-    snapshot captured when the event was accepted. Other recipients and
-    their outcomes are left untouched. The event must have settled before
-    a failed recipient can be replayed.
+     Requeues only the named failed recipient captured at acceptance or
+    added by a retained historical backfill. Backfill failures must be
+    retryable and have a running or completed-with-failures job; reopening
+    a completed job observes active-job limits. Other recipients and
+    their outcomes are left untouched. With independent recipient routing,
+    a terminal recipient can be replayed while siblings are active and gets
+    a fresh routing retry budget. Legacy receipts must settle first.
 
     Args:
         slug (str):

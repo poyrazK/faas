@@ -6,10 +6,15 @@ import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
+import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
+import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
+import type { ApproveRouteLifecycleRequest } from '../models/ApproveRouteLifecycleRequest.js';
+import type { ApproveRouteRemovalRequest } from '../models/ApproveRouteRemovalRequest.js';
 import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
@@ -17,7 +22,9 @@ import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
+import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
+import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -53,9 +60,21 @@ import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
+import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
+import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
+import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
+import type { Problem } from '../models/Problem.js';
+import type { ProfileCanaryHistoryPage } from '../models/ProfileCanaryHistoryPage.js';
+import type { ProfileCompareRequest } from '../models/ProfileCompareRequest.js';
+import type { ProfileCompareResponse } from '../models/ProfileCompareResponse.js';
+import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js';
+import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
+import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
+import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -70,23 +89,33 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteLifecycleApproval } from '../models/RouteLifecycleApproval.js';
+import type { RouteLifecycleHistoryPage } from '../models/RouteLifecycleHistoryPage.js';
 import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
 import type { RouteMonitorIncident } from '../models/RouteMonitorIncident.js';
 import type { RouteMonitorIncidentPage } from '../models/RouteMonitorIncidentPage.js';
+import type { RouteMonitorPreview } from '../models/RouteMonitorPreview.js';
 import type { RouteMonitorReport } from '../models/RouteMonitorReport.js';
 import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
 import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
 import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
 import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
 import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
+import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
+import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
 import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
+import type { SaveProfileDeploymentPolicyRequest } from '../models/SaveProfileDeploymentPolicyRequest.js';
+import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInvestigationRequest.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
+import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
@@ -100,6 +129,101 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * Read a scope's stored binding release policy.
+   * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+   * @returns BindingReleasePolicy Stored policy, or the disabled default.
+   * @throws ApiError
+   */
+  public static getBindingReleasePolicy({
+    slug,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a binding release policy using its current revision.
+   * Requires deploy:write or admin and completed MFA. expected_revision is
+   * mandatory (0 initially); each accepted write increments it. Enforcement
+   * requires complete fresh verification on every deployment gaining traffic,
+   * including through redistribution. Promotion, direct traffic PATCH and
+   * canary advance evaluate the policy; request flags may only strengthen it.
+   * New candidates must be admitted with explicit zero traffic. Automatic
+   * cutovers, legacy recovery and project release graph switches fail closed
+   * until they support binding fences. To recover without evidence, explicitly
+   * set off with the current revision and a reason, then retry. Every update
+   * has durable policy history. Existing traffic is not changed by this call.
+   *
+   * @returns BindingReleasePolicy Saved policy with incremented revision.
+   * @throws ApiError
+   */
+  public static setBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetBindingReleasePolicyRequest,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
   /**
    * Inspect all runtime resource bindings attached to an app.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
@@ -157,7 +281,8 @@ export class AppsService {
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -175,7 +300,8 @@ export class AppsService {
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -216,7 +342,8 @@ export class AppsService {
         422: `code: invalid_cpu_ram_pair — explicit ram_mb and vcpu do not match the canonical shape for the account plan.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -228,11 +355,16 @@ export class AppsService {
    */
   public static getApp({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+     */
+    environment?: string,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -240,12 +372,17 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -258,6 +395,8 @@ export class AppsService {
   public static updateApp({
     slug,
     requestBody,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -267,12 +406,26 @@ export class AppsService {
      * Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest.
      */
     requestBody: UpdateAppRequest,
+    /**
+     * Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+     */
+    environment?: string,
+    /**
+     * Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}',
       path: {
         'slug': slug,
+      },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -281,10 +434,12 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -313,7 +468,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -369,7 +525,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -402,7 +559,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -457,7 +615,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -498,7 +657,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -533,7 +693,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -573,7 +734,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Certificate observation storage is unavailable.`,
       },
@@ -604,7 +766,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -655,7 +818,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -700,7 +864,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -740,7 +905,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -774,7 +940,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -803,7 +970,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -837,7 +1005,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -872,7 +1041,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -912,7 +1082,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1056,6 +1227,90 @@ export class AppsService {
     });
   }
   /**
+   * Explain observed app serving health.
+   * Read-only assessment of default-scope HTTP serving deployments,
+   * replica readiness, node evidence and the last 5 minutes of request
+   * telemetry scoped to current traffic-bearing default releases. It never wakes
+   * or probes a workload. Structural evidence is available on every plan;
+   * request telemetry follows the existing Hobby+ metrics entitlement.
+   * Missing, failed, stale or truncated evidence cannot confirm health.
+   * A failed latest release does not erase older serving evidence.
+   * Scale-to-zero idle is expected when no warm replicas are required.
+   * Worker and job execution health is not assessed.
+   * Requires apps:read or admin scope. No MFA required.
+   *
+   * @returns AppHealthResponse Evidence assessment, including unknown checks.
+   * @throws ApiError
+   */
+  public static getAppHealth({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/health',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `Authentication required.`,
+        403: `Read scope required.`,
+        404: `App not found for this account.`,
+        429: `Rate limit exceeded.`,
+      },
+    });
+  }
+  /**
+   * Read recorded app health changes.
+   * Requires apps:read or admin; no MFA required. Background collection
+   * records default HTTP serving assessments independently of dashboard
+   * reads, without waking or probing workloads. Baseline, meaningful
+   * changes and expired-evidence gaps are newest first. Times describe
+   * observations or evidence expiry, not exact incident start/end times.
+   * Retains up to 100 entries within 4 MiB and 30 days per app; each entry
+   * is bounded to 64 KiB. Missing, foreign, aged or pruned cursors return
+   * 404. Latest retains its original time; collector_fresh is false when
+   * unavailable or expired. Reads never create or refresh stored evidence.
+   *
+   * @returns AppHealthHistoryPage Recorded observations and collection freshness; Cache-Control no-store.
+   * @returns Problem Invalid page parameters, access denial, missing cursor, or unavailable storage.
+   * @throws ApiError
+   */
+  public static listAppHealthHistory({
+    slug,
+    limit = 20,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of retained observations to return.
+     */
+    limit?: number,
+    /**
+     * ID of the last retained entry from the preceding page.
+     */
+    before?: string,
+  }): CancelablePromise<AppHealthHistoryPage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/health/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+    });
+  }
+  /**
    * Per-app request metrics (issue
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
@@ -1105,7 +1360,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1183,7 +1439,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1257,7 +1514,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1338,7 +1596,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1409,7 +1668,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -1488,7 +1748,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1529,7 +1790,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1697,7 +1959,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1762,7 +2025,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1805,7 +2069,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -1846,7 +2111,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2059,7 +2325,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2128,7 +2395,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2175,7 +2443,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2216,7 +2485,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2253,7 +2523,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2296,7 +2567,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -2385,7 +2657,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2441,7 +2714,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2482,7 +2756,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2593,7 +2868,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2660,7 +2936,658 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the automatic CPU-check policy.
+   * Returns an owned app's deployment-check configuration with app-read access. Before the first save the policy is disabled at revision zero. Metadata remains readable without profiling entitlement or backend access.
+   * @returns ProfileDeploymentPolicy Automatic check configuration and revision, including initial disabled defaults.
+   * @throws ApiError
+   */
+  public static getProfileDeploymentPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ProfileDeploymentPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/deployment-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Configure CPU checks for future successful rollouts.
+   * Requires deploy-write access and the current policy revision; use zero for the initial save. Enabling requires a profiling plan and configured backend. Saving advances the revision and cancels pending checks; new completions use the new policy. The worker compares the previous successful deployment in the same environment and uses the selected runtime on both sides. Equal windows end at candidate creation for the baseline and start after rollout completion plus warm-up for the candidate. Retries preserve these windows, allow up to five attempts for late or insufficient data and remain inconclusive when data is absent. Deployment activation is independent of this background check.
+   * @returns ProfileDeploymentPolicy Saved deployment CPU-check policy with a new revision.
+   * @throws ApiError
+   */
+  public static saveProfileDeploymentPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Complete automatic profiling policy with revision protection.
+     */
+    requestBody: SaveProfileDeploymentPolicyRequest,
+  }): CancelablePromise<ProfileDeploymentPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/profiles/deployment-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect periodic route checks and their recent incident history.
+   * App-read access and completed MFA are required. Returns up to 50 newest monitors with up to ten terminal observations each, including pinned baselines, confirmation transitions and comparison links. Samples remain in backend retention. Checks are advisory and never change rollout decisions.
+   * @returns ListProfilePeriodicMonitorsResponse Bounded periodic monitor history.
+   * @throws ApiError
+   */
+  public static listProfilePeriodicMonitors({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListProfilePeriodicMonitorsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/periodic-monitors',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List recent automatic CPU-check receipts.
+   * Returns up to fifty receipts for the owned app with app-read access, newest first. Receipts keep the snapshotted policy, exact windows, attempt state and authenticated comparison link. Metadata is retained for thirty days; saved investigations retain their existing lifetime and fifty-record quota. This read does not query CPU samples.
+   * @returns ListProfileDeploymentChecksResponse Recent deployment profiling receipts with authenticated drill-down links.
+   * @throws ApiError
+   */
+  public static listProfileDeploymentChecks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListProfileDeploymentChecksResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/deployment-checks',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the CPU-check receipt for a deployment.
+   * Reads an owned app's receipt by deployment UUID with app-read access. Missing or foreign receipts return not found. A saved-investigation link restores the differential flamegraph; if the investigation quota was full or the saved record was deleted, the link keeps the original comparison selections instead. Missing baseline comparisons have no link.
+   * @returns ProfileDeploymentCheck Single deployment CPU-check receipt and comparison selection.
+   * @throws ApiError
+   */
+  public static getProfileDeploymentCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID for an automatic profiling receipt.
+     */
+    id: string,
+  }): CancelablePromise<ProfileDeploymentCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/deployment-checks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List retained CPU assessments for a deployment's canary stages.
+   * Requires app-read access and completed MFA. Returns bounded, newest-first stage assessments retained for 30 days, including exact fixed profile windows, policy revision, threshold evidence and retry state. Use next_cursor as before to read older stages. The read never queries profile samples.
+   * @returns ProfileCanaryHistoryPage Newest-first canary stage history page.
+   * @throws ApiError
+   */
+  public static listProfileCanaryChecks({
+    slug,
+    deployment,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canary deployment UUID.
+     */
+    deployment: string,
+    /**
+     * Maximum number of canary stage assessments to return.
+     */
+    limit?: number,
+    /**
+     * Opaque cursor from the prior page's next_cursor.
+     */
+    before?: string,
+  }): CancelablePromise<ProfileCanaryHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/canary-checks/{deployment}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List saved profiling investigations.
+   * Lists up to 50 investigations for an owned app, ordered by last update and UUID. Requires existing app-read access. Metadata remains readable after profile expiry, plan downgrades or backend outages; this operation does not query CPU samples.
+   * @returns ListProfileInvestigationsResponse Bounded saved-investigation list with per-window eligibility.
+   * @throws ApiError
+   */
+  public static listProfileInvestigations({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListProfileInvestigationsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/investigations',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Save profiling comparison selections and notes.
+   * Creates comparison metadata for retained deployments belonging to the owned app. Requires profiling entitlement and deploy-write access. Use expected_revision 0. Stores notes and selections without querying or retaining profile samples; sharing requires authenticated app access.
+   * @returns ProfileInvestigationResponse Created metadata and authenticated dashboard link.
+   * @throws ApiError
+   */
+  public static createProfileInvestigation({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * New investigation with expected_revision 0 and complete comparison selections.
+     */
+    requestBody: SaveProfileInvestigationRequest,
+  }): CancelablePromise<ProfileInvestigationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/investigations',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a saved investigation and window retention status.
+   * Reads saved metadata by its app-owned UUID with baseline and candidate eligibility under the current plan. Requires app-read access. Returned links require authentication and app ownership. A retained status establishes query eligibility, not sample presence.
+   * @returns ProfileInvestigationResponse Saved selections and notes with current retention eligibility.
+   * @throws ApiError
+   */
+  public static getProfileInvestigation({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved investigation UUID belonging to this app.
+     */
+    id: string,
+  }): CancelablePromise<ProfileInvestigationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/investigations/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Update a saved profiling investigation using its current revision.
+   * Replaces metadata using the current revision and deploy-write access. Unchanged expired selections permit commentary edits; changed selections recheck profiling entitlement, retention and deployment ownership. Concurrent edits return 409. Saving does not extend profile retention.
+   * @returns ProfileInvestigationResponse Updated metadata with a new saved revision.
+   * @throws ApiError
+   */
+  public static updateProfileInvestigation({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved investigation UUID belonging to this app.
+     */
+    id: string,
+    /**
+     * Complete metadata replacement with the currently observed saved revision.
+     */
+    requestBody: SaveProfileInvestigationRequest,
+  }): CancelablePromise<ProfileInvestigationResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/profiles/investigations/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a saved profiling investigation.
+   * Deletes metadata for an owned app using the current revision and deploy-write access. A stale revision returns 409, preserving concurrent edits. Deletion frees one saved-investigation slot and leaves backend profile retention unchanged.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProfileInvestigation({
+    slug,
+    id,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved investigation UUID belonging to this app.
+     */
+    id: string,
+    /**
+     * Current saved revision to prevent deleting concurrent edits.
+     */
+    expectedRevision: number,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/profiles/investigations/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Check a saved comparison for CPU regressions.
+   * Checks the exact saved windows with deploy-write access. Both relative and absolute CPU-rate thresholds must be met for a total, comparable function or complete call path. Missing samples, insufficient capture coverage, recorded failures or unavailable history produce a stored inconclusive assessment. This heuristic does not establish deployment causality or statistical confidence. Returns a new revision; concurrent edits or checks return 409. Later edits make the preserved assessment stale when its investigation_revision differs from the saved revision. Existing profiling query limits and retention apply; raw profiles are never stored.
+   * @returns ProfileInvestigationResponse Saved regression assessment with incremented revision and authenticated comparison link.
+   * @throws ApiError
+   */
+  public static checkProfileRegression({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned investigation UUID to assess.
+     */
+    id: string,
+    /**
+     * Current saved revision and optional complete threshold configuration; omit options for defaults.
+     */
+    requestBody: CheckProfileRegressionRequest,
+  }): CancelablePromise<ProfileInvestigationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/investigations/{id}/check',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Query sampled application CPU by deployment.
+   * Internal opt-in profiling. Returns function CPU totals and call paths; missing samples are explicitly empty. Times must fall within the plan retention window.
+   * @returns ProfileResponse Sampled CPU profile and source symbols.
+   * @throws ApiError
+   */
+  public static getAppProfiles({
+    slug,
+    deploymentId,
+    runtime,
+    start,
+    end,
+    route,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment belonging to the selected app.
+     */
+    deploymentId: string,
+    /**
+     * Runtime name attached by the compute broker.
+     */
+    runtime: string,
+    /**
+     * Inclusive capture start.
+     */
+    start: string,
+    /**
+     * Capture end after start.
+     */
+    end: string,
+    /**
+     * Static METHOD /pattern or [unattributed]; omitted selects all CPU.
+     */
+    route?: string,
+  }): CancelablePromise<ProfileResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'runtime': runtime,
+        'start': start,
+        'end': end,
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare deployment CPU profiles normalized by capture duration.
+   * Reads authorized deployment windows from the private profiling backend. Each function delta uses self CPU seconds divided by selected window seconds. Traffic and allocation changes also affect the result.
+   * @returns ProfileCompareResponse CPU rate deltas or an explicit unavailable comparison reason.
+   * @throws ApiError
+   */
+  public static compareAppProfiles({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Baseline and candidate capture selections.
+     */
+    requestBody: ProfileCompareRequest,
+  }): CancelablePromise<ProfileCompareResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/compare',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });
@@ -2707,7 +3634,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2759,7 +3687,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2810,7 +3739,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2863,7 +3793,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2910,7 +3841,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -2955,7 +3887,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -3002,7 +3935,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -3045,7 +3979,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -3088,7 +4023,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -3139,7 +4075,270 @@ export class AppsService {
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the production route removal policy.
+   * Requires apps:read or admin and completed MFA. An unconfigured app reports revision 0 and mode report.
+   * @returns RouteRemovalPolicy Current policy and durable production baseline.
+   * @throws ApiError
+   */
+  public static getRouteRemovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteRemovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-removal/policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Configure server route removal enforcement.
+   * Requires account admin authorization and completed MFA. expected_revision is mandatory. First configuration requires one production baseline at 100 percent, or no production deployments. Policy changes invalidate previous approvals. Quiet observation begins when a policy first adopts a baseline, resets on full cutover or capture changes, and survives policy mode changes.
+   * @returns RouteRemovalPolicy Saved route retirement policy.
+   * @throws ApiError
+   */
+  public static setRouteRemovalPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteRemovalPolicyRequest,
+  }): CancelablePromise<RouteRemovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-removal/policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List production lifecycle review history
+   * Requires read authorization and completed MFA. Returns newest retained reviews first by immutable review ID. Successful production traffic increases and blocked application review attempts are retained; rolled-back successful reviews and direct SQL rejections are not retained. Captures and graph IDs are historical metadata. Approval status is evaluated at read time and is not a fresh rollout authorization. Older reviews may have no recorded binding evidence. Metadata is bounded to 20 approvals, 64 captures and 64 graph IDs per approval; truncated indicates omitted metadata. Full successor pins remain available through the approval receipt endpoint. Configuration snapshots, credentials and OpenAPI payloads are never returned.
+   * @returns RouteLifecycleHistoryPage Retained production lifecycle reviews
+   * @throws ApiError
+   */
+  public static listRouteLifecycleHistory({
+    slug,
+    limit = 10,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum retained reviews to return.
+     */
+    limit?: number,
+    /**
+     * Retained app-owned review ID from next_cursor.
+     */
+    before?: string,
+  }): CancelablePromise<RouteLifecycleHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-lifecycle/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Approve exact captured lifecycle successor changes.
+   * Requires account admin authorization, owner or organization owner/admin identity, completed MFA and same-origin session protection. The server validates explicit authorized canonical or verified custom-domain HTTPS successor mappings against captured inline rooted OpenAPI operation contracts. Unknown or incompatible results fail closed. Receipt bindings include gate, saved requirements and removal policy revisions, configured policy fingerprint and authoritative capture hashes. Receipts expire after one hour and bind destination ownership, capture, hostname and production routing. Destination capture, domain, rule and routing changes invalidate receipts. All destination pins must be supplied together; project destinations require one active production graph member and verified frozen workload settings; ambiguous routing is unavailable for approval. Only successor-review findings on production traffic increases may be cleared; other lifecycle, removal and contract checks remain enforced. Workers also require the receipt database configuration binding to remain current.
+   * @returns RouteLifecycleApproval Durable compatibility approval receipt.
+   * @throws ApiError
+   */
+  public static approveRouteLifecycle({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ApproveRouteLifecycleRequest,
+  }): CancelablePromise<RouteLifecycleApproval> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-lifecycle/approvals',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an app-owned lifecycle approval receipt.
+   * Requires read authorization and completed MFA. Returns the persisted review bindings and capture invalidation timestamp. An expired or policy-stale receipt remains readable and does not authorize a production traffic increase.
+   * @returns RouteLifecycleApproval Persisted approval receipt.
+   * @throws ApiError
+   */
+  public static getRouteLifecycleApproval({
+    slug,
+    approvalId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned lifecycle approval receipt identifier.
+     */
+    approvalId: string,
+  }): CancelablePromise<RouteLifecycleApproval> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-lifecycle/approvals/{approval_id}',
+      path: {
+        'slug': slug,
+        'approval_id': approvalId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Store an authenticated approval for exact route removal.
+   * Requires account admin authorization and completed MFA. Uses server-owned captures, canonical successor mappings and retained production telemetry. Requires a staged baseline exposing old and successor routes, compatible successors in the candidate, the configured quiet grace period and explicit observed-only acknowledgement. Approver and timestamps are derived from authentication and server time. Approval is recorded durably. Local attestations and uploaded readiness statuses cannot satisfy this authorization. An approval does not waive other deployment or contract gates.
+   * @returns RouteRemovalApproval Durable approval receipt.
+   * @throws ApiError
+   */
+  public static approveRouteRemoval({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ApproveRouteRemovalRequest,
+  }): CancelablePromise<RouteRemovalApproval> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-removal/approvals',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read authoritative route removal blockers.
+   * Requires apps:read or admin and completed MFA. Uses the same evaluator as production traffic transitions. This read is advisory; enforcement repeats within the traffic transaction. Missing captures, stale approvals, changed policies or renewed old-route observations block enforce mode.
+   * @returns RouteRemovalCheck Current policy, removed operations and blockers.
+   * @throws ApiError
+   */
+  public static checkRouteRemoval({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate deployment whose removed routes are evaluated.
+     */
+    deploymentId: string,
+  }): CancelablePromise<RouteRemovalCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-removal/check',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -3250,6 +4449,39 @@ export class AppsService {
     });
   }
   /**
+   * Read current production monitoring and recovery progress.
+   * Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted.
+   * @returns AppOperationalSummary Independently observed operational facts; unavailable components remain explicit.
+   * @throws ApiError
+   */
+  public static getAppOperationalSummary({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppOperationalSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operational-summary',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Read advisory production route monitoring intent.
    * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer.
    * @returns RouteMonitorConfig Current advisory production monitor configuration.
@@ -3347,6 +4579,50 @@ export class AppsService {
       query: {
         'customer_details': customerDetails,
       },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Evaluate proposed route budgets against recent production traffic without saving them.
+   * Read-only evaluation of proposed absolute budgets against the two latest closed UTC minute windows for the sole fully serving default-scope deployment. Requires app read access and completed MFA. Uses the deployment and rollout observation anchors, but not the saved monitor update anchor, because the proposal has not been saved. If the proposal groups by customer, customer IDs are redacted by default. Saving changed configuration resets its observation anchor, so this preview is current evidence and not a prediction of the first post-save report. Violated and unknown findings return 200; no configuration, incident or traffic state is changed. Body limit is 16 KiB.
+   * @returns RouteMonitorPreview Read-only evaluation of the proposed budgets and saved revision used for comparison.
+   * @throws ApiError
+   */
+  public static previewRouteMonitor({
+    slug,
+    requestBody,
+    customerDetails = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewRouteMonitorRequest,
+    /**
+     * Explicitly include observed tenant or consumer UUIDs when customer_group_by is selected. Defaults to false.
+     */
+    customerDetails?: boolean,
+  }): CancelablePromise<RouteMonitorPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-monitor/preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'customer_details': customerDetails,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
@@ -3754,7 +5030,7 @@ export class AppsService {
   }
   /**
    * Read canary route gate mode and revision.
-   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-requirements evidence on canary advances and lifecycle declarations on production traffic increases, including initial activation and ordinary cutovers. Dark staging, validated abort and automatic incident recovery remain available.
    * @returns CanaryRouteGate Current saved route-requirements gate mode and revision.
    * @throws ApiError
    */
@@ -4154,7 +5430,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -4250,7 +5527,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -4346,7 +5624,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -4376,7 +5655,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -4412,7 +5692,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -4467,7 +5748,8 @@ export class AppsService {
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -4623,7 +5905,8 @@ export class AppsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -4671,7 +5954,8 @@ export class AppsService {
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -4762,7 +6046,8 @@ export class AppsService {
         404: `No such app (slug) or wake_id is unknown.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -4823,7 +6108,8 @@ export class AppsService {
         404: `No such app (slug) or sidecar timeline is unknown.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

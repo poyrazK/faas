@@ -847,6 +847,44 @@ func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.
 	}
 }
 
+// production-us hunt #5 (H5-44): workflow steps never saw the documented
+// X-Faas-Workflow-* headers; the guest boundary dropped every x-faas-* header
+// it did not list. Scheduler-marked synthetic work now carries them, and a
+// public request still cannot.
+func TestForwardingReverseProxy_WorkflowHeadersOnlyForSyntheticWork(t *testing.T) {
+	for _, synthetic := range []bool{false, true} {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK}}},
+		}}
+		lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set(api.WorkflowRunIDHeader, "run-1")
+		req.Header.Set(api.WorkflowStepHeader, "charge")
+		req.Header.Set(api.WorkflowAttemptHeader, "3")
+		if synthetic {
+			req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+		}
+		rec := httptest.NewRecorder()
+		gateway.ForwardingReverseProxy(lookup, nil)(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+			t.Fatalf("synthetic=%v: status %d, no init frame", synthetic, rec.Code)
+		}
+		got := make(http.Header)
+		for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+			got.Add(h.GetName(), h.GetValue())
+		}
+		want := map[string]string{api.WorkflowRunIDHeader: "run-1", api.WorkflowStepHeader: "charge", api.WorkflowAttemptHeader: "3"}
+		for name, value := range want {
+			if !synthetic {
+				value = ""
+			}
+			if got.Get(name) != value {
+				t.Errorf("synthetic=%v: %s = %q, want %q", synthetic, name, got.Get(name), value)
+			}
+		}
+	}
+}
+
 // TestForwardingReverseProxy_HappyPath pins the streaming-only path
 // (issue #471 PR-D / ADR-047). The forwarder must:
 //

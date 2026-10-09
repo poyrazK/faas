@@ -69,6 +69,10 @@ func (u *ObjectURLCapability) Clone() *ObjectURLCapability {
 		size := *u.Request.SizeBytes
 		out.Request.SizeBytes = &size
 	}
+	if u.Request.Protection != nil {
+		p := u.Request.Protection.Clone()
+		out.Request.Protection = &p
+	}
 	if u.Request.Encryption != nil {
 		e := cloneEncryptionSelection(*u.Request.Encryption)
 		out.Request.Encryption = &e
@@ -77,6 +81,9 @@ func (u *ObjectURLCapability) Clone() *ObjectURLCapability {
 }
 
 func validObjectURLRequest(r api.ObjectSignRequest) bool {
+	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !ValidObjectVersionID(r.VersionID)) {
+		return false
+	}
 	if r.ExpiresIn < 1 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Key == "" || len(r.Key) > 1024 || !utf8.ValidString(r.Key) || strings.ContainsAny(r.Key, "\x00\r\n") {
 		return false
 	}
@@ -86,9 +93,9 @@ func validObjectURLRequest(r api.ObjectSignRequest) bool {
 		}
 	}
 	if r.Method != http.MethodPut {
-		return (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.SizeBytes == nil && r.Encryption == nil && r.ContentType == "" && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == "" && len(r.Metadata) == 0 && len(r.Tags) == 0
+		return (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.SizeBytes == nil && r.Protection == nil && r.Encryption == nil && r.ContentType == "" && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == "" && len(r.Metadata) == 0 && len(r.Tags) == 0
 	}
-	if r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > api.MaxObjectSinglePutBytes || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty()) {
+	if r.Protection != nil && (!r.Protection.Valid() || r.Protection.Empty()) || r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > api.MaxObjectSinglePutBytes || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty()) {
 		return false
 	}
 	for _, v := range []string{r.ContentType, r.CacheControl, r.ContentDisposition, r.ContentEncoding, r.ContentLanguage} {
@@ -193,7 +200,7 @@ func validObjectURLMultipartRequest(u *ObjectURLCapability) bool {
 	}
 	id, err := uuid.Parse(u.Multipart.UploadID)
 	r := u.Request
-	return err == nil && id != uuid.Nil && r.Method == http.MethodPut && r.SizeBytes != nil && *r.SizeBytes > 0 && r.ContentType == "application/octet-stream" && r.Encryption == nil && len(r.Metadata) == 0 && len(r.Tags) == 0 && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == ""
+	return err == nil && id != uuid.Nil && r.Method == http.MethodPut && r.SizeBytes != nil && *r.SizeBytes > 0 && r.ContentType == "application/octet-stream" && r.Protection == nil && r.Encryption == nil && len(r.Metadata) == 0 && len(r.Tags) == 0 && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == ""
 }
 
 func validObjectURLMultipartUpload(c ObjectS3Credential, u ObjectMultipartUpload, now time.Time) bool {
@@ -213,5 +220,11 @@ func validObjectURLReceipt(c ObjectS3Credential, receipt ObjectUploadCompletion)
 	if u.Request.Encryption != nil {
 		e = cloneEncryptionSelection(*u.Request.Encryption)
 	}
-	return equalEncryptionSelection(receipt.Encryption.Selection, e)
+	requested := api.ObjectWriteProtection{}
+	if u.Request.Protection != nil {
+		requested = u.Request.Protection.ForWrite()
+	}
+	a, _ := json.Marshal(requested)
+	b, _ := json.Marshal(receipt.Protection.Requested.ForWrite())
+	return bytes.Equal(a, b) && equalEncryptionSelection(receipt.Encryption.Selection, e)
 }

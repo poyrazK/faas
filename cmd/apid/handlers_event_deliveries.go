@@ -300,15 +300,31 @@ func (s *server) listEventFanoutAttemptHistory(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
 		return
 	}
-	rows, err := store.ListEventFanoutAttemptsForApp(r.Context(), app.ID, limit+1, before,
-		eventSource, eventID, subscriptionID)
+	out, err := s.eventFanoutHistoryResponse(r, store, app, limit, before, eventSource, eventID, subscriptionID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("event fanout attempt history"))
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) eventFanoutHistoryResponse(r *http.Request, store state.EventFanoutAttemptHistoryStore, app state.App, limit int, before state.EventFanoutAttemptCursor, eventSource, eventID, subscriptionID string) (api.EventFanoutAttemptHistoryResponse, error) {
 	out := api.EventFanoutAttemptHistoryResponse{
-		AppSlug: app.Slug, EventSource: eventSource, EventID: eventID,
-		SubscriptionID: subscriptionID, History: make([]api.EventFanoutAttemptResponse, 0, len(rows)),
+		AppSlug: app.Slug, EventSource: eventSource, EventID: eventID, SubscriptionID: subscriptionID,
+		Coverage: state.EventRoutingHistoryCoverage, History: make([]api.EventFanoutAttemptResponse, 0), Summaries: make([]api.EventFanoutHistorySummaryResponse, 0),
+	}
+	rows, err := store.ListEventFanoutAttemptsForApp(r.Context(), app.ID, limit+1, before, eventSource, eventID, subscriptionID)
+	if err != nil {
+		return out, err
+	}
+	summaryStore, ok := s.store.(state.EventFanoutHistorySummaryStore)
+	if !ok {
+		return out, errors.New("routing history summaries unavailable")
+	}
+	summaries, err := summaryStore.ListEventFanoutHistorySummariesForApp(r.Context(), app.ID, eventSource, eventID, subscriptionID)
+	if err != nil {
+		return out, err
 	}
 	if len(rows) > limit {
 		out.NextBefore = encodeEventFanoutAttemptCursor(app.ID, eventSource, eventID, subscriptionID, rows[limit-1])
@@ -316,16 +332,25 @@ func (s *server) listEventFanoutAttemptHistory(w http.ResponseWriter, r *http.Re
 	}
 	for _, row := range rows {
 		out.History = append(out.History, api.EventFanoutAttemptResponse{
-			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State,
-			AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
-			Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
+			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State, AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
+			FilterReason: row.FilterReason, RetryStopReason: row.RetryStopReason, Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
+			CapacityScope: row.CapacityScope, CapacityDeferrals: row.CapacityDeferrals, DetailsTruncated: row.DetailsTruncated,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	for _, row := range summaries {
+		out.Summaries = append(out.Summaries, api.EventFanoutHistorySummaryResponse{
+			SubscriptionID: row.SubscriptionID, ObservedOutcomes: row.ObservedOutcomes, CapacityDeferrals: row.CapacityDeferrals,
+			CoalescedOutcomes: row.CoalescedOutcomes, CompactedOutcomes: row.CompactedOutcomes, CompactedThroughID: row.CompactedThroughID,
+			CompactedThroughAt: row.CompactedThroughAt, FirstCapacityWaitAt: row.FirstCapacityWaitAt, LastCapacityWaitAt: row.LastCapacityWaitAt,
+			LastCapacityScope: row.LastCapacityScope, RetainedRecords: row.RetainedRecords, RetainedBytes: row.RetainedBytes,
+		})
+	}
+	return out, nil
+
 }
 
 // replayEventFanoutFailure requeues exactly one terminal recipient from the
-// event's immutable acceptance-time snapshot.
+// event's acceptance snapshot or a retained historical backfill.
 func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -342,9 +367,11 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
 		return
 	}
-	err := store.ReplayFailedPublishedEventRecipientForApp(r.Context(), acct.ID, app.ID,
-		req.EventSource, req.EventID, req.SubscriptionID)
+	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
 	switch {
+	case errors.Is(err, state.ErrEventDeliveryExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
+		return
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
@@ -352,6 +379,9 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return
+	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
+		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))

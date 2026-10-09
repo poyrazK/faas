@@ -430,10 +430,10 @@ func kidFromPub(pub ed25519.PublicKey) string {
 }
 
 // MintWorkflow uses the rotating cluster signer with the workflow-only audience.
-func (a *atomicMinter) MintWorkflow(identity outbound.WorkflowIdentity, integrationID, method, path string, body []byte) (string, error) {
+func (a *atomicMinter) MintWorkflow(identity outbound.WorkflowIdentity, request outbound.WorkflowOutboundRequest, body []byte) (string, error) {
 	current := a.state.Load()
 	if current == nil {
 		return "", errors.New("workflow outbound signer unavailable")
 	}
-	return outbound.MintWorkflowIdentity(identity, integrationID, method, path, body, current.priv, current.kid, time.Now())
+	return outbound.MintWorkflowIdentity(identity, request, body, current.priv, current.kid, time.Now())
 }

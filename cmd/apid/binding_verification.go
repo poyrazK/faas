@@ -33,12 +33,24 @@ func bindingVerificationRevision(base string, changedAt time.Time) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func serviceBindingRevisions(app state.App) map[string]string {
+func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (map[string]string, error) {
 	revisions := map[string]string{}
-	for _, item := range serviceBindingInventory(app) {
-		revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = bindingMetadataRevision(item, "")
+	items := serviceBindingInventory(app)
+	if len(items) == 0 {
+		return revisions, nil
 	}
-	return revisions
+	store, ok := s.store.(state.ServiceBindingRevisionStore)
+	if !ok {
+		return nil, errors.New("service binding dependency metadata unavailable")
+	}
+	dependency, err := store.ReadServiceBindingRevision(ctx, app.AccountID, app.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = bindingMetadataRevision(item, dependency)
+	}
+	return revisions, nil
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
@@ -58,7 +70,12 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 	}
 	switch kind {
 	case api.AppTaskServiceBindingProbeCommand:
-		section.items, section.revisions = serviceBindingInventory(app), serviceBindingRevisions(app)
+		section.items = serviceBindingInventory(app)
+		var err error
+		section.revisions, err = s.serviceBindingRevisions(ctx, app)
+		if err != nil {
+			return nil, err
+		}
 	case api.AppTaskPostgresBindingProbeCommand:
 		if !middleware.HasScope(r, api.ScopesManagedPostgresReadSurface...) || s.managedPostgresBindings == nil {
 			return nil, nil
@@ -133,13 +150,14 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		return
 	}
 	kinds := []string{api.BindingTypeService}
-	if middleware.HasScope(r, api.ScopesManagedPostgresReadSurface...) {
+	workerRead, _ := r.Context().Value(bindingReleaseWorkerReadsKey{}).(bool)
+	if workerRead || middleware.HasScope(r, api.ScopesManagedPostgresReadSurface...) {
 		kinds = append(kinds, api.BindingTypePostgres)
 	}
-	if middleware.HasScope(r, api.ScopesStorageManageSurface...) {
+	if workerRead || middleware.HasScope(r, api.ScopesStorageManageSurface...) {
 		kinds = append(kinds, api.BindingTypeObjectStorage)
 	}
-	if middleware.HasScope(r, api.ScopesReadSurface...) {
+	if workerRead || middleware.HasScope(r, api.ScopesReadSurface...) {
 		kinds = append(kinds, api.BindingTypeOutbound)
 	}
 	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{DeploymentID: dep.ID, AllowFallback: inventory.RequestedDeploymentID == ""})

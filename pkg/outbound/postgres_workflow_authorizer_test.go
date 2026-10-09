@@ -81,14 +81,14 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 	}
 	mint := func(identity WorkflowIdentity, path string) string {
 		t.Helper()
-		token, err := MintWorkflowIdentity(identity, offer.ID, "POST", path, body, private, internalsvc.KidFromPub(public), time.Now())
+		token, err := MintWorkflowIdentity(identity, WorkflowOutboundRequest{IntegrationID: offer.ID, Method: "POST", Path: path, PathTemplate: path, QueryTemplate: map[string]string{}}, body, private, internalsvc.KidFromPub(public), time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 		return token
 	}
 	token := mint(identity, "/v1/contacts")
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); err != nil {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"account", "app", "attempt_token", "route"} {
@@ -105,7 +105,7 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 			case "route":
 				path = "/v1/admin"
 			}
-			if _, err := authorizer.AuthorizeWorkflow(ctx, mint(other, path), offer.ID, "POST", path, body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+			if _, err := authorizer.AuthorizeWorkflow(ctx, mint(other, path), offer.ID, "POST", path, "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 				t.Fatalf("accepted mismatched %s: %v", field, err)
 			}
 		})
@@ -118,7 +118,7 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 	if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, body); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 		t.Fatalf("stale attempt accepted after restart: %v", err)
 	}
 	lease, err = store.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1)
@@ -127,13 +127,13 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 	}
 	identity.AttemptToken = lease.Token
 	token = mint(identity, "/v1/contacts")
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); err != nil {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UnbindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 		t.Fatalf("revoked binding accepted: %v", err)
 	}
 	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
@@ -142,8 +142,120 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 	if _, err := store.CancelWorkflowRun(ctx, run.ID, "cancelled"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 		t.Fatalf("cancelled run accepted: %v", err)
+	}
+}
+
+func TestTenantWorkflowOutboundPostgresAuthorization(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID := internalsvc.KidFromPub(public)
+	if err := store.InsertClusterSigningKey(ctx, state.ClusterSigningKey{KeyID: keyID, PublicKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), SealedBlob: []byte("test-sealed-key")}); err != nil {
+		t.Fatal(err)
+	}
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-outbound-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "tenant-"+uuid.NewString(), "Tenant", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "consumer-"+uuid.NewString(), "Tenant consumer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	offer := state.OutboundIntegrationOffer{ID: uuid.NewString(), AccountID: account.ID, Name: "crm", Origin: "https://api.example.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed", RequestPolicy: api.DefaultOutboundRequestPolicy()}
+	if _, err := store.CreateOutboundIntegration(ctx, offer); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, offer.ID, []byte("sealed-provider-key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
+		t.Fatal(err)
+	}
+	spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts", IdempotencySupported: true}}}}
+	snapshot, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "send"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"tenant":"customer"}`)
+	if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, body); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1)
+	if err != nil || lease.PlatformTenantID != tenant.ID {
+		t.Fatalf("outbound lease=%+v err=%v", lease, err)
+	}
+	authorizer, err := NewPostgresWorkflowAuthorizer(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mint := func(identity WorkflowIdentity) string {
+		t.Helper()
+		token, err := MintWorkflowIdentity(identity, WorkflowOutboundRequest{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts", PathTemplate: "/v1/contacts", QueryTemplate: map[string]string{}}, body, private, keyID, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	identity := WorkflowIdentity{AccountID: account.ID, AppID: app.ID, PlatformTenantID: tenant.ID, RunID: run.ID, StepName: "send", Attempt: 1, AttemptToken: lease.Token}
+	valid := mint(identity)
+	if _, err := authorizer.AuthorizeWorkflow(ctx, valid, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
+		t.Fatalf("active linked tenant outbound call denied: %v", err)
+	}
+	for _, claimedTenant := range []string{"", uuid.NewString()} {
+		wrong := identity
+		wrong.PlatformTenantID = claimedTenant
+		if _, err := authorizer.AuthorizeWorkflow(ctx, mint(wrong), offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+			t.Fatalf("accepted tenant claim %q: %v", claimedTenant, err)
+		}
+	}
+	if _, err := store.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authorizer.AuthorizeWorkflow(ctx, valid, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+		t.Fatalf("suspended tenant outbound call authorized: %v", err)
+	}
+	if _, err := store.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantActive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevokeAPIConsumer(ctx, account.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authorizer.AuthorizeWorkflow(ctx, valid, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+		t.Fatalf("revoked tenant app link outbound call authorized: %v", err)
 	}
 }
 
@@ -218,14 +330,14 @@ func TestWorkflowForEachOutboundPostgresAuthorization(t *testing.T) {
 	}
 	mint := func(identity WorkflowIdentity, path string) string {
 		t.Helper()
-		token, err := MintWorkflowIdentity(identity, offer.ID, "POST", path, body, private, keyID, time.Now())
+		token, err := MintWorkflowIdentity(identity, WorkflowOutboundRequest{IntegrationID: offer.ID, Method: "POST", Path: path, PathTemplate: path, QueryTemplate: map[string]string{}}, body, private, keyID, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 		return token
 	}
 	token := mint(identity, "/v1/contacts")
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); err != nil {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"queued item", "parent", "route"} {
@@ -239,7 +351,7 @@ func TestWorkflowForEachOutboundPostgresAuthorization(t *testing.T) {
 		case "route":
 			path = "/v1/admin"
 		}
-		if _, err := authorizer.AuthorizeWorkflow(ctx, mint(other, path), offer.ID, "POST", path, body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+		if _, err := authorizer.AuthorizeWorkflow(ctx, mint(other, path), offer.ID, "POST", path, "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 			t.Fatalf("accepted %s: %v", field, err)
 		}
 	}
@@ -252,13 +364,13 @@ func TestWorkflowForEachOutboundPostgresAuthorization(t *testing.T) {
 	if _, err := store.StartWorkflowStep(ctx, run.ID, identity.StepName, 2, body); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 		t.Fatalf("stale item assertion accepted: %v", err)
 	}
 	if _, err := store.CancelWorkflowRun(ctx, run.ID, "cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
 		t.Fatalf("cancelled item authorized: %v", err)
 	}
 }

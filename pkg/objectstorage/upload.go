@@ -63,6 +63,11 @@ func NewUploadHandler(c UploadConfig) (http.Handler, error) {
 	if c.Store == nil || c.Routes == nil || c.Buckets == nil || c.Authenticator == nil || c.Registry == nil || c.Next == nil {
 		return nil, errors.New("object storage upload: store, routes, buckets, authenticator, registry and next are required")
 	}
+	if c.Registry.Accounting.GatewaySafety() {
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayRequestStore); !ok || c.Accounting == nil {
+			return nil, errors.New("object storage upload: gateway safety accounting requires atomic request admission")
+		}
+	}
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
@@ -113,7 +118,7 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.performTrackedUpload(w, r, st, tracked, bucket, completion)
 		return
 	}
-	if !completion.Encryption.Empty() {
+	if !completion.Protection.Empty() || !completion.Encryption.Empty() {
 		uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support tracked encrypted uploads")
 		return
 	}
@@ -182,6 +187,10 @@ func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, ap
 }
 func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, route state.ObjectUploadRoute, c state.ObjectUploadCompletion) bool {
 	for name := range r.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-amz-object-lock-") {
+			uploadProblem(w, http.StatusBadRequest, "upload protection is selected by the bucket policy")
+			return false
+		}
 		if strings.HasPrefix(strings.ToLower(name), "x-amz-server-side-encryption") {
 			uploadProblem(w, http.StatusBadRequest, "upload encryption is selected by the route policy")
 			return false
@@ -224,6 +233,21 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 		uploadProblem(w, http.StatusServiceUnavailable, "object storage is temporarily unavailable")
 		return bucket, nil, false
 	}
+	if locks, ok := h.buckets.(state.ObjectBucketObjectLockStore); ok {
+		j, e := locks.GetObjectBucketObjectLock(r.Context(), bucket.AccountID, bucket.AppID, bucket.ID)
+		if e != nil {
+			uploadProblem(w, http.StatusServiceUnavailable, "upload protection is temporarily unavailable")
+			return bucket, nil, false
+		}
+		if (j.EnabledRequired || j.NativeEnabledObserved) && !backend.ObjectLock.Enabled {
+			uploadProblem(w, http.StatusNotImplemented, "protected uploads are disabled on this backend")
+			return bucket, nil, false
+		}
+		if j.ObservedConfiguration != nil && j.ObservedConfiguration.DefaultRetention != nil && j.ObservedConfiguration.DefaultRetention.DefaultEventHold != nil && !backend.ObjectLock.EventHolds {
+			uploadProblem(w, http.StatusNotImplemented, "event hold uploads are disabled on this backend")
+			return bucket, nil, false
+		}
+	}
 	writer, ok := backend.Provider.(ObjectWriter)
 	if !ok {
 		uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support streaming uploads")
@@ -244,6 +268,16 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 }
 
 func (h *uploadHandler) performLegacyUpload(w http.ResponseWriter, r *http.Request, writer ObjectWriter, bucket state.ObjectBucket, c state.ObjectUploadCompletion) {
+	guard, err := h.admitTrackedObjectWrite(r.Context(), bucket)
+	if err != nil {
+		uploadProblem(w, http.StatusServiceUnavailable, "upload destination writes are temporarily unavailable")
+		return
+	}
+	defer func(ctx context.Context) {
+		if err := guard.finishUnsent(ctx); err != nil {
+			h.log.Warn("unsent upload writer receipt completion failed")
+		}
+	}(r.Context())
 	if err := h.accounting.AdmitObjectURL(r.Context(), c.AccountID, bucket.ID, c.Key, c.Bytes, true, h.registry.Accounting); err != nil {
 		uploadAccountingProblem(w, err)
 		return
@@ -267,7 +301,7 @@ func (h *uploadHandler) performLegacyUpload(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.registry.TransferTimeout())
 	defer cancel()
-	result, err := writer.WriteObject(ctx, bucket.PhysicalName, c.Key, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
+	result, err := guard.write(ctx, writer, c.Key, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
 	c.ETag = result.ETag
 	c.Status = "completed"
 	if err != nil {
@@ -299,8 +333,12 @@ func (h *uploadHandler) persistLegacyUpload(w http.ResponseWriter, r *http.Reque
 }
 func (h *uploadHandler) recordUploadAttempt(w http.ResponseWriter, r *http.Request, bucket string) bool {
 	if h.requestMetrics != nil {
-		if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), bucket, h.now()); err != nil {
-			uploadProblem(w, http.StatusServiceUnavailable, "object storage usage is temporarily unavailable")
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket, h.now(), h.registry.Accounting); err != nil {
+			if h.registry.Accounting.GatewaySafety() {
+				uploadAccountingProblem(w, err)
+			} else {
+				uploadProblem(w, http.StatusServiceUnavailable, "object storage usage is temporarily unavailable")
+			}
 			return false
 		}
 	}

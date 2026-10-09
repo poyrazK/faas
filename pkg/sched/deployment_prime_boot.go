@@ -15,25 +15,24 @@ type deploymentPrimeBoot struct {
 	Inputs           state.RuntimeConfigInputs
 	SecretDeliveries []state.AppSecretDeliveryCandidate
 	RejectionReason  string
+	SecretFence      state.RuntimeAppSecretFence
+	ConfigFence      state.RuntimeAppConfigFence
 }
 
 func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, placement Placement, ins state.Instance) (deploymentPrimeBoot, error) {
 	result := deploymentPrimeBoot{}
 	appID, primeLayer := app.ID, layerKey(dep.RootfsKey, dep.ID)
-	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, acct.ID, appID, dep.Scope)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	runtimeInputs := runtimeValues.Inputs
 	if err != nil {
 		result.RejectionReason = "prime_runtime_inputs_invalid"
 		return result, fmt.Errorf("sched: prime: load runtime inputs: %w", err)
 	}
-	sealedEnv, err := e.loadDeploymentSealedEnvDelivery(ctx, acct.ID, appID, dep)
+	sealedEnv := runtimeValues.MainSecrets
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
 	if err != nil {
 		result.RejectionReason = "prime_sealed_env_invalid"
 		return result, fmt.Errorf("sched: prime: load sealed env: %w", err)
-	}
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
-	if err != nil {
-		result.RejectionReason = "prime_sidecars_invalid"
-		return result, fmt.Errorf("sched: prime: load sidecars: %w", err)
 	}
 	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
 	if err != nil {
@@ -54,7 +53,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	// shadow the qualification route or reject the same reviewed key as a
 	// collision.
 	if graphID, graphQualification := ctx.Value(qualificationGraphContextKey{}).(string); !graphQualification || graphID == "" {
-		runtimeAPIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeAPIEnv, sealedEnv.Entries, dep)
+		runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
 		if err != nil {
 			result.RejectionReason = "prime_gitops_service_bindings_invalid"
 			return result, fmt.Errorf("sched: prime: load GitOps service bindings: %w", err)
@@ -62,8 +61,13 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, primeLayer)
+	if err != nil {
+		result.RejectionReason = "prime_runtime_release_unavailable"
+		return result, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
+		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
@@ -81,7 +85,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			runtimeAPIEnv,
+			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: see the Wake builder above. Prime is the
@@ -105,11 +109,13 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the
 		// inferred profile starts Node/Python apps on their framework port.
-		Port:                   deploymentRuntimePort(dep),
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
+		Port:                     deploymentRuntimePort(dep),
+		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckGRPC:          healthcheckGRPC,
+		HealthcheckGRPCService:   healthcheckGRPCService,
+		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
+		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -121,5 +127,6 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		AppProtocol: app.AppProtocol,
 	}
 	result.Spec, result.Inputs, result.SecretDeliveries = spec, runtimeInputs, sealedEnv.Candidates
+	result.SecretFence, result.ConfigFence = sealedEnv.Fence, runtimeValues.ConfigFence
 	return result, nil
 }

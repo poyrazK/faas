@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var (
@@ -164,9 +165,10 @@ type TrackedObjectWriter interface {
 }
 
 type UploadResult struct {
-	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
-	ETag              string
-	ProviderVersionID string `json:"-"`
+	VerifiedProtection string               `json:"-"`
+	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
+	ETag               string
+	ProviderVersionID  string `json:"-"`
 }
 
 type Object struct {
@@ -314,17 +316,24 @@ type ObjectMetadata struct {
 type CopyObjectRequest struct {
 	SourceKey               string
 	SourceProviderVersionID string `json:"-"`
-	DestinationKey          string
-	MetadataDirective       string
-	TaggingDirective        string
-	Metadata                ObjectMetadata
+	// SourceVersion pins immutable source bytes for an environment snapshot.
+	// Empty preserves the existing live-key CopyObject behavior.
+	SourceVersion string
+	// SourceMetadataVersion fences mutable GCS metadata on a pinned
+	// generation. S3 metadata is immutable per object version.
+	SourceMetadataVersion string
+	DestinationKey        string
+	MetadataDirective     string
+	TaggingDirective      string
+	Metadata              ObjectMetadata
 }
 
 type CopyObjectResult struct {
-	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
-	ProviderVersionID string               `json:"-"`
-	ETag              string
-	LastModified      time.Time
+	VerifiedProtection string               `json:"-"`
+	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
+	ProviderVersionID  string               `json:"-"`
+	ETag               string
+	LastModified       time.Time
 }
 
 // ObjectCopier is an optional provider capability for the branded S3
@@ -345,6 +354,10 @@ type CopySourceSnapshot struct {
 	// A non-null native version is immutable. It remains private and binds
 	// both metadata admission and the provider copy to the inspected object.
 	ProviderVersionID string `json:"-"`
+	// GCS metadata can change independently of immutable object data. These
+	// private observations preserve metadata and date predicates during copy.
+	ProviderMetadataVersion string    `json:"-"`
+	LastModified            time.Time `json:"-"`
 }
 
 // TrackedObjectCopier must issue one copy with a fresh private receipt and the
@@ -445,7 +458,10 @@ type ObjectTaggingResult struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
-	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
+	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !state.ValidObjectVersionID(r.VersionID)) {
+		return ErrInvalid
+	}
+	if r.Protection != nil && (r.Method != http.MethodPut || !r.Protection.Valid() || r.Protection.Empty()) || !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
 		return ErrInvalid
 	}
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {
@@ -565,6 +581,7 @@ const (
 	// marker written when Gregale initiates a multipart upload.
 	ReservedMultipartSessionMetadataKey = "gregale-upload-id"
 	ReservedUploadReceiptMetadataKey    = "gregale-upload-receipt"
+	ReservedObjectProtectionMetadataKey = "gregale-protection-proof"
 	ReservedObjectEncryptionMetadataKey = "gregale-encryption-proof"
 )
 
@@ -581,7 +598,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 		return ErrInvalid
 	}
 	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedObjectProtectionMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
 			return ErrInvalid
 		}
 	}

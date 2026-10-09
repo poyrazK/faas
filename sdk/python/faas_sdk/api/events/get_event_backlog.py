@@ -1,0 +1,464 @@
+from http import HTTPStatus
+from typing import Any
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.event_backlog_response import EventBacklogResponse
+from ...models.get_event_backlog_capacity_scope import (
+    GetEventBacklogCapacityScope,
+)
+from ...models.get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
+from ...models.get_event_backlog_origin import GetEventBacklogOrigin
+from ...models.get_event_backlog_state import GetEventBacklogState
+from ...models.get_event_backlog_waiting_reason import (
+    GetEventBacklogWaitingReason,
+)
+from ...models.problem import Problem
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    *,
+    app: str | Unset = UNSET,
+    subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
+    state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
+    capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
+    min_age_seconds: int | Unset = 0,
+    after: str | Unset = UNSET,
+    consumers_after: str | Unset = UNSET,
+    limit: int | Unset = 100,
+    consumer_limit: int | Unset = 100,
+) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["app"] = app
+
+    params["subscription_id"] = subscription_id
+
+    json_consumer_kind: str | Unset = UNSET
+    if not isinstance(consumer_kind, Unset):
+        json_consumer_kind = consumer_kind
+
+    params["consumer_kind"] = json_consumer_kind
+
+    json_origin: str | Unset = UNSET
+    if not isinstance(origin, Unset):
+        json_origin = origin
+
+    params["origin"] = json_origin
+
+    json_state: str | Unset = UNSET
+    if not isinstance(state, Unset):
+        json_state = state
+
+    params["state"] = json_state
+
+    json_waiting_reason: str | Unset = UNSET
+    if not isinstance(waiting_reason, Unset):
+        json_waiting_reason = waiting_reason
+
+    params["waiting_reason"] = json_waiting_reason
+
+    json_capacity_scope: str | Unset = UNSET
+    if not isinstance(capacity_scope, Unset):
+        json_capacity_scope = capacity_scope
+
+    params["capacity_scope"] = json_capacity_scope
+
+    params["min_age_seconds"] = min_age_seconds
+
+    params["after"] = after
+
+    params["consumers_after"] = consumers_after
+
+    params["limit"] = limit
+
+    params["consumer_limit"] = consumer_limit
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v1/events/backlog",
+        "params": params,
+    }
+
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> EventBacklogResponse | Problem | None:
+    if response.status_code == 200:
+        response_200 = EventBacklogResponse.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = Problem.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = Problem.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[EventBacklogResponse | Problem]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    *,
+    client: AuthenticatedClient,
+    app: str | Unset = UNSET,
+    subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
+    state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
+    capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
+    min_age_seconds: int | Unset = 0,
+    after: str | Unset = UNSET,
+    consumers_after: str | Unset = UNSET,
+    limit: int | Unset = 100,
+    consumer_limit: int | Unset = 100,
+) -> Response[EventBacklogResponse | Problem]:
+    """Discover waiting event consumers and recipient counts.
+
+     Requires apps:read or admin. Reads only the authenticated account's
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
+    never envelope data. Consumers count all matching recipients, independently
+    of either bounded page. Age is measured from durable event acceptance.
+    Recipient pages are oldest accepted first, then receipt and subscription
+    identity; consumer pages use app, subscription and consumer kind. Pass each
+    continuation cursor with the same filters; page sizes may change. Cursors
+    anchor window_at and its age cutoff, while membership and counts remain
+    live on every request. Recovered rows disappear, including cursor rows.
+    Replay behind a cursor requires restarting discovery. This inspection
+    ordering does not guarantee delivery FIFO. A repeatable read keeps each
+    response consistent. Aggregation has a five-second deadline; narrow
+    filters if event_backlog_read_timeout is returned. Responses use
+    Cache-Control no-store. unattributed_receipts counts pending legacy
+    receipts without captured recipients across the account; only the
+    acceptance/age window applies to that count, including with other filters.
+
+    Args:
+        app (str | Unset):
+        subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
+        state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
+        capacity_scope (GetEventBacklogCapacityScope | Unset):
+        min_age_seconds (int | Unset):  Default: 0.
+        after (str | Unset):
+        consumers_after (str | Unset):
+        limit (int | Unset):  Default: 100.
+        consumer_limit (int | Unset):  Default: 100.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[EventBacklogResponse | Problem]
+    """
+
+    kwargs = _get_kwargs(
+        app=app,
+        subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
+        state=state,
+        waiting_reason=waiting_reason,
+        capacity_scope=capacity_scope,
+        min_age_seconds=min_age_seconds,
+        after=after,
+        consumers_after=consumers_after,
+        limit=limit,
+        consumer_limit=consumer_limit,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    *,
+    client: AuthenticatedClient,
+    app: str | Unset = UNSET,
+    subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
+    state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
+    capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
+    min_age_seconds: int | Unset = 0,
+    after: str | Unset = UNSET,
+    consumers_after: str | Unset = UNSET,
+    limit: int | Unset = 100,
+    consumer_limit: int | Unset = 100,
+) -> EventBacklogResponse | Problem | None:
+    """Discover waiting event consumers and recipient counts.
+
+     Requires apps:read or admin. Reads only the authenticated account's
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
+    never envelope data. Consumers count all matching recipients, independently
+    of either bounded page. Age is measured from durable event acceptance.
+    Recipient pages are oldest accepted first, then receipt and subscription
+    identity; consumer pages use app, subscription and consumer kind. Pass each
+    continuation cursor with the same filters; page sizes may change. Cursors
+    anchor window_at and its age cutoff, while membership and counts remain
+    live on every request. Recovered rows disappear, including cursor rows.
+    Replay behind a cursor requires restarting discovery. This inspection
+    ordering does not guarantee delivery FIFO. A repeatable read keeps each
+    response consistent. Aggregation has a five-second deadline; narrow
+    filters if event_backlog_read_timeout is returned. Responses use
+    Cache-Control no-store. unattributed_receipts counts pending legacy
+    receipts without captured recipients across the account; only the
+    acceptance/age window applies to that count, including with other filters.
+
+    Args:
+        app (str | Unset):
+        subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
+        state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
+        capacity_scope (GetEventBacklogCapacityScope | Unset):
+        min_age_seconds (int | Unset):  Default: 0.
+        after (str | Unset):
+        consumers_after (str | Unset):
+        limit (int | Unset):  Default: 100.
+        consumer_limit (int | Unset):  Default: 100.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        EventBacklogResponse | Problem
+    """
+
+    return sync_detailed(
+        client=client,
+        app=app,
+        subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
+        state=state,
+        waiting_reason=waiting_reason,
+        capacity_scope=capacity_scope,
+        min_age_seconds=min_age_seconds,
+        after=after,
+        consumers_after=consumers_after,
+        limit=limit,
+        consumer_limit=consumer_limit,
+    ).parsed
+
+
+async def asyncio_detailed(
+    *,
+    client: AuthenticatedClient,
+    app: str | Unset = UNSET,
+    subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
+    state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
+    capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
+    min_age_seconds: int | Unset = 0,
+    after: str | Unset = UNSET,
+    consumers_after: str | Unset = UNSET,
+    limit: int | Unset = 100,
+    consumer_limit: int | Unset = 100,
+) -> Response[EventBacklogResponse | Problem]:
+    """Discover waiting event consumers and recipient counts.
+
+     Requires apps:read or admin. Reads only the authenticated account's
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
+    never envelope data. Consumers count all matching recipients, independently
+    of either bounded page. Age is measured from durable event acceptance.
+    Recipient pages are oldest accepted first, then receipt and subscription
+    identity; consumer pages use app, subscription and consumer kind. Pass each
+    continuation cursor with the same filters; page sizes may change. Cursors
+    anchor window_at and its age cutoff, while membership and counts remain
+    live on every request. Recovered rows disappear, including cursor rows.
+    Replay behind a cursor requires restarting discovery. This inspection
+    ordering does not guarantee delivery FIFO. A repeatable read keeps each
+    response consistent. Aggregation has a five-second deadline; narrow
+    filters if event_backlog_read_timeout is returned. Responses use
+    Cache-Control no-store. unattributed_receipts counts pending legacy
+    receipts without captured recipients across the account; only the
+    acceptance/age window applies to that count, including with other filters.
+
+    Args:
+        app (str | Unset):
+        subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
+        state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
+        capacity_scope (GetEventBacklogCapacityScope | Unset):
+        min_age_seconds (int | Unset):  Default: 0.
+        after (str | Unset):
+        consumers_after (str | Unset):
+        limit (int | Unset):  Default: 100.
+        consumer_limit (int | Unset):  Default: 100.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[EventBacklogResponse | Problem]
+    """
+
+    kwargs = _get_kwargs(
+        app=app,
+        subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
+        state=state,
+        waiting_reason=waiting_reason,
+        capacity_scope=capacity_scope,
+        min_age_seconds=min_age_seconds,
+        after=after,
+        consumers_after=consumers_after,
+        limit=limit,
+        consumer_limit=consumer_limit,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    *,
+    client: AuthenticatedClient,
+    app: str | Unset = UNSET,
+    subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
+    state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
+    capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
+    min_age_seconds: int | Unset = 0,
+    after: str | Unset = UNSET,
+    consumers_after: str | Unset = UNSET,
+    limit: int | Unset = 100,
+    consumer_limit: int | Unset = 100,
+) -> EventBacklogResponse | Problem | None:
+    """Discover waiting event consumers and recipient counts.
+
+     Requires apps:read or admin. Reads only the authenticated account's
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
+    never envelope data. Consumers count all matching recipients, independently
+    of either bounded page. Age is measured from durable event acceptance.
+    Recipient pages are oldest accepted first, then receipt and subscription
+    identity; consumer pages use app, subscription and consumer kind. Pass each
+    continuation cursor with the same filters; page sizes may change. Cursors
+    anchor window_at and its age cutoff, while membership and counts remain
+    live on every request. Recovered rows disappear, including cursor rows.
+    Replay behind a cursor requires restarting discovery. This inspection
+    ordering does not guarantee delivery FIFO. A repeatable read keeps each
+    response consistent. Aggregation has a five-second deadline; narrow
+    filters if event_backlog_read_timeout is returned. Responses use
+    Cache-Control no-store. unattributed_receipts counts pending legacy
+    receipts without captured recipients across the account; only the
+    acceptance/age window applies to that count, including with other filters.
+
+    Args:
+        app (str | Unset):
+        subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
+        state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
+        capacity_scope (GetEventBacklogCapacityScope | Unset):
+        min_age_seconds (int | Unset):  Default: 0.
+        after (str | Unset):
+        consumers_after (str | Unset):
+        limit (int | Unset):  Default: 100.
+        consumer_limit (int | Unset):  Default: 100.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        EventBacklogResponse | Problem
+    """
+
+    return (
+        await asyncio_detailed(
+            client=client,
+            app=app,
+            subscription_id=subscription_id,
+            consumer_kind=consumer_kind,
+            origin=origin,
+            state=state,
+            waiting_reason=waiting_reason,
+            capacity_scope=capacity_scope,
+            min_age_seconds=min_age_seconds,
+            after=after,
+            consumers_after=consumers_after,
+            limit=limit,
+            consumer_limit=consumer_limit,
+        )
+    ).parsed

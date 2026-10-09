@@ -94,30 +94,32 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 	// errors.go:1346; a regression that flips any common code is
 	// caught here.
 	cases := map[string]int{
-		"plan_limit_apps":               http.StatusForbidden,
-		"plan_log_archive_not_allowed":  http.StatusPaymentRequired,
-		"app_layer_too_large":           http.StatusForbidden,
-		"app_not_listening":             http.StatusUnprocessableEntity,
-		"app_runtime_oom":               http.StatusUnprocessableEntity,
-		"doctor_disabled":               http.StatusInternalServerError, // not in StatusForCode switch
-		"image_secret_detected":         http.StatusInternalServerError, // not in StatusForCode switch
-		"export_rate_limited":           http.StatusTooManyRequests,
-		"step_up_required":              http.StatusInternalServerError, // not in StatusForCode switch
-		"app_concurrency_reached":       http.StatusTooManyRequests,
-		"app_maintenance_mode":          http.StatusServiceUnavailable,
-		"app_unavailable":               http.StatusServiceUnavailable,
-		"debug_regressions_unavailable": http.StatusServiceUnavailable,
-		"tenant_surfaces_not_enabled":   http.StatusServiceUnavailable,
-		"domain_not_verified":           http.StatusConflict,
-		"plan_cron_quota":               http.StatusForbidden,
-		"alert_rule_invalid":            http.StatusBadRequest,
-		"cron_invalid":                  http.StatusBadRequest,
-		"app_webhook_invalid":           http.StatusBadRequest,
-		"egress_allowlist_too_long":     http.StatusBadRequest,
-		"plan_egress_ports_not_allowed": http.StatusForbidden,
-		"egress_ports_too_many":         http.StatusBadRequest,
-		"invalid_egress_port":           http.StatusBadRequest,
-		"account_abuse_hold":            http.StatusForbidden,
+		"plan_limit_apps":                     http.StatusForbidden,
+		"plan_log_archive_not_allowed":        http.StatusPaymentRequired,
+		"app_layer_too_large":                 http.StatusForbidden,
+		"app_not_listening":                   http.StatusUnprocessableEntity,
+		"app_runtime_oom":                     http.StatusUnprocessableEntity,
+		"doctor_disabled":                     http.StatusInternalServerError, // not in StatusForCode switch
+		"image_secret_detected":               http.StatusInternalServerError, // not in StatusForCode switch
+		"export_rate_limited":                 http.StatusTooManyRequests,
+		"step_up_required":                    http.StatusInternalServerError, // not in StatusForCode switch
+		"app_concurrency_reached":             http.StatusTooManyRequests,
+		"app_maintenance_mode":                http.StatusServiceUnavailable,
+		"app_unavailable":                     http.StatusServiceUnavailable,
+		"debug_regressions_unavailable":       http.StatusServiceUnavailable,
+		"tenant_surfaces_not_enabled":         http.StatusServiceUnavailable,
+		"domain_not_verified":                 http.StatusConflict,
+		"plan_cron_quota":                     http.StatusForbidden,
+		"alert_rule_invalid":                  http.StatusBadRequest,
+		"cron_invalid":                        http.StatusBadRequest,
+		"app_webhook_invalid":                 http.StatusBadRequest,
+		"egress_allowlist_too_long":           http.StatusBadRequest,
+		"plan_egress_ports_not_allowed":       http.StatusForbidden,
+		"egress_ports_too_many":               http.StatusBadRequest,
+		"invalid_egress_port":                 http.StatusBadRequest,
+		"account_abuse_hold":                  http.StatusForbidden,
+		CodeAPIContractComparisonIncomplete:   http.StatusUnprocessableEntity,
+		CodeWorkflowTenantIdentityUnavailable: http.StatusConflict,
 	}
 	for code, want := range cases {
 		if got := StatusForCode(code); got != want {

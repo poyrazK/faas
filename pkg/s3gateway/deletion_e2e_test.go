@@ -331,7 +331,21 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 			p := &mutableDeleteFixture{status: "Enabled", markers: []string{"marker-old"}, lost: true, truncatedBaseline: true}
 			f := newMultipartCopyIntegrationWithProvider(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) }))
 			prepareDeletionVersioning(t, st, f.bucket, "Enabled", advance)
-			_, e := f.client.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(mutableDeleteKey)})
+			fences := st.(state.ObjectBucketWriteFenceStore)
+			held, e := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+			if e != nil {
+				t.Fatal(e)
+			}
+			_, e = f.client.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(mutableDeleteKey)})
+			assertSDKErrorCode(t, e, "ServiceUnavailable")
+			held, e = fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, held.Token)
+			if e != nil || held.Requests != 0 || held.Deletions != 0 || p.count() != 0 {
+				t.Fatal("fenced SDK deletion admitted provider IO or duplicate writer", held, e)
+			}
+			if e = fences.ReleaseObjectBucketWriteFence(t.Context(), f.bucket, held.Token); e != nil {
+				t.Fatal(e)
+			}
+			_, e = f.client.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(mutableDeleteKey)})
 			assertSDKErrorCode(t, e, "ServiceUnavailable")
 			d := st.(state.ObjectDeletionStore)
 			advance(api.ObjectDeletionRetry + time.Second)
@@ -342,6 +356,15 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 			id := rows[0].ID
 			if p.count() != 1 {
 				t.Fatal("uncertain attempt redispatched", p.count())
+			}
+			// The original deletion journal is the sole deletion writer
+			// evidence. Recovery must not strand a second request receipt.
+			fence, e := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+			if e != nil || fence.Deletions != 1 || fence.Requests != 0 || fence.NativeGrants != 0 {
+				t.Fatal("uncertain deletion duplicated or lost writer evidence", fence, e)
+			}
+			if e = fences.ReleaseObjectBucketWriteFence(t.Context(), f.bucket, fence.Token); e != nil {
+				t.Fatal(e)
 			}
 			_, e = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("blocked"), Body: strings.NewReader("x")})
 			assertSDKErrorCode(t, e, "OperationAborted")
@@ -357,6 +380,13 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 			j, e := svc.Recover(t.Context(), f.bucket, id)
 			if e != nil || j.State != "completed" || !j.DeleteMarker || !state.ValidObjectVersionID(j.VersionID) {
 				t.Fatal(j, e)
+			}
+			fence, e = fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+			if e != nil || fence.Deletions != 0 {
+				t.Fatal("original SDK deletion recovery did not drain its journal", fence, e)
+			}
+			if e = fences.ReleaseObjectBucketWriteFence(t.Context(), f.bucket, fence.Token); e != nil {
+				t.Fatal(e)
 			}
 			native, e := st.(state.ObjectVersionReferenceStore).ResolveObjectVersion(t.Context(), f.bucket.AccountID, f.bucket.ID, mutableDeleteKey, j.VersionID)
 			if e != nil || native != "marker-new-1" {

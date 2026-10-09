@@ -42,6 +42,9 @@ func (h *Handler) boundURLRequest(w http.ResponseWriter, r *http.Request, c stat
 func boundURLQuery(r *http.Request, u *state.ObjectURLCapability) bool {
 	q := operationQuery(r.URL.Query())
 	if u.Multipart == nil {
+		if u.Request.VersionID != "" {
+			return len(q) == 1 && len(q["versionId"]) == 1 && q.Get("versionId") == u.Request.VersionID
+		}
 		return len(q) == 0
 	}
 	return len(q) == 2 && len(q["uploadId"]) == 1 && q.Get("uploadId") == u.Multipart.UploadID && len(q["partNumber"]) == 1 && q.Get("partNumber") == strconv.FormatInt(int64(u.Multipart.PartNumber), 10)
@@ -80,7 +83,7 @@ func (h *Handler) loadURLPutReceipt(w http.ResponseWriter, r *http.Request, req 
 		return state.ObjectUploadCompletion{}, false
 	}
 	c, err := st.GetObjectUploadReceipt(r.Context(), req.bucket.AccountID, req.bucket.AppID, "", req.credential.ID, req.credential.URL.ReceiptID)
-	if err != nil || c.BucketID != req.bucket.ID || c.Key != req.credential.URL.Request.Key || !c.Encryption.Equal(req.encryption) {
+	if err != nil || c.BucketID != req.bucket.ID || c.Key != req.credential.URL.Request.Key || !sameURLProtectionSelection(c.Protection, req.protection) || !c.Encryption.Equal(req.encryption) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, req.credential.URL.Request.Key)
 		return c, false
 	}
@@ -115,4 +118,12 @@ func (h *Handler) replayURLPut(w http.ResponseWriter, r *http.Request, req reque
 	}
 	_, ready := h.loadURLPutReceipt(w, r, req, st)
 	return !ready
+}
+
+func sameURLProtectionSelection(a, b state.ObjectWriteProtectionSnapshot) bool {
+	a.Enabled, b.Enabled = false, false
+	a.Revision, b.Revision = 0, 0
+	a.CapturedAt, b.CapturedAt = nil, nil
+	a.DefaultRetention, b.DefaultRetention = nil, nil
+	return a.Equal(b)
 }

@@ -59,6 +59,9 @@ func cmdAppExec(slug string, args []string) int {
 	if _, problem := request.Resolve(); problem != nil {
 		return printErr("Invalid app command", problem)
 	}
+	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
+		return printErr("Invalid --idempotency-key", err)
+	}
 
 	client, err := authedClient()
 	if err != nil {
@@ -84,7 +87,8 @@ func cmdAppExec(slug string, args []string) int {
 		}
 	} else {
 		var submitErr error
-		task, submitErr = client.CreateAppTask(context.Background(), slug, request)
+		submitContext := api.ContextWithIdempotencyKey(context.Background(), *idempotencyKey)
+		task, submitErr = client.CreateAppTask(submitContext, slug, request)
 		if submitErr != nil {
 			return printErr("App command submission failed", submitErr)
 		}

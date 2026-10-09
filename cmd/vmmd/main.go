@@ -1113,18 +1113,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The legacy reapers do not supply pinned exit or resource receipts and
 	// therefore cannot remove jails or clones behind that ownership.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
-			ins, err := store.InstanceByID(ctx, instanceID)
-			if err != nil {
-				// A row that is genuinely gone is not live; anything else is
-				// unknown and must not authorise resource removal.
-				if errors.Is(err, state.ErrNotFound) {
-					return false, nil
-				}
-				return false, err
-			}
-			return state.IsLive(ins.State), nil
-		}
+		isLiveInstance := durableInstanceLive(store)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
@@ -1141,24 +1130,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"skipped_young", rep.SkippedYoung,
 				"skipped_unknown", rep.SkippedUnknown)
 		}
+	}
+	// ADR-631: writable layer clones that nothing owns — not this Manager,
+	// not a resource-journal record, not durable state — are reclaimed on
+	// startup and periodically, including host-path clones beside
+	// /srv/fc/base drives that the cache-bucket sweep never saw; failed
+	// teardowns are retried. Journal-owned resources stay with verified
+	// recovery (ADR-477) in both recovery modes.
+	if store != nil {
+		cloneRoot := ""
 		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
-			cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
-				Root:   cacheBackend.Root(),
-				IsLive: isLiveInstance,
-				Log:    log,
-			})
-			if cloneErr != nil {
-				log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
-			} else if cloneRep.Scanned > 0 {
-				log.Info("vmmd: orphan layer clone reap complete",
-					"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
-					"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
-					"skipped_live", cloneRep.SkippedLive,
-					"skipped_young", cloneRep.SkippedYoung,
-					"skipped_unknown", cloneRep.SkippedUnknown,
-					"failed", cloneRep.Failed)
-			}
+			cloneRoot = cacheBackend.Root()
 		}
+		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
+		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath), cloneGate, mgr)
 	}
 
 	// Orphan sweep — schedule via a context-bound goroutine that
@@ -1235,6 +1220,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// per-instance Firecracker Unix listeners during boot/restore. Registration
 	// remains soft at process startup so diagnostics stay available, but the
 	// receiver health signals below hold /readyz at 503 on failure.
+	if err := startProfilingReceiver(ctx, log, mgr, store, jailer); err != nil {
+		return fmt.Errorf("register profile receiver: %w", err)
+	}
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
@@ -1351,12 +1339,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
-	// for the app/account attached to the accepted Firecracker stream.
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, store, jailer)
+	// for the deployment/app/account attached to the Firecracker stream.
+	runtimeEnvStore, _ := store.(runtimeConfigStore)
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer)
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
-		StartRuntimeConfigInvalidationWatcher(ctx, pool, runtimeConfigRecv, log)
 		defer runtimeConfigRecv.Close()
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,

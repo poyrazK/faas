@@ -23,6 +23,7 @@ export type { OpenAPIConfig } from './generated/index.js';
 // Generated services (one class per OpenAPI tag).
 export { AccountService } from './generated/services/AccountService.js';
 export { AppsService } from './generated/services/AppsService.js';
+export { AlertRulesService } from './generated/services/AlertRulesService.js';
 export { AuditService } from './generated/services/AuditService.js';
 export { AuthService } from './generated/services/AuthService.js';
 export { CronsService } from './generated/services/CronsService.js';
@@ -33,12 +34,15 @@ export { GithubService } from './generated/services/GithubService.js';
 export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
+export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OperationsService } from './generated/services/OperationsService.js';
 export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
 export { ProjectsService } from './generated/services/ProjectsService.js';
+export { RealtimeService } from './generated/services/RealtimeService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
@@ -92,10 +96,16 @@ export {
 
 export {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
+  REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeConfigurationError,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
+  type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelConsumerOptions,
+  type RealtimeConnectionOptions,
   type RealtimeCursorStore,
   type RealtimeMessage,
   type RealtimeSocket,
@@ -158,4 +168,72 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
-export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessRequest, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview, type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef } from './customer-operations.js';
+export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext, type OperationRequestHeaders, type OperationArtifactInput, type OperationArtifactUpload, type PreparedOperationArtifact } from './operations-runtime.js';
+export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
+export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
+export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
+
+export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+
+export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
+export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
+  type CustomerOperationHTTPRequest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
+export { customerOperationRequestFromHeaders as customerOperationReceiptRequestFromHeaders, customerOperationRequestDigest as customerOperationReceiptRequestDigest,
+  withCustomerOperationTransaction as withCustomerOperationReceiptTransaction, type CustomerOperationRequest as CustomerOperationReceiptRequest } from './operations.js';
+export {
+  operationRequestFromHeaders,
+  operationRequestDigest,
+  withOperationTransaction,
+  OperationConflictError,
+  OperationCommitUnknownError,
+  type OperationRequest,
+  type OperationOutcome,
+  type OperationTransaction,
+  type OperationConnection,
+  type OperationPool,
+  type OperationTransactionResult,
+} from "./operations.js";
+export { GregaleWorkflowOperations, type WorkflowOperationContext, type WorkflowArtifactReceipt } from './workflow-operations-runtime.js';
+
+export { createBrowserOperationReceiptStore, type OperationReceiptStore, type OperationReceiptAccess, type SavedOperationSubmission, type OperationReceiptScope, type BrowserOperationReceiptStoreOptions, type OperationSubmissionResume } from './operation-submission.js';
+export type { OperationTenantIdentity, OperationSubmissionScope, OperationSubmissionFence, OperationSubmissionLookup, OperationSubmissionLookupOptions } from './customer-operations.js';
+export { runJobOperation, type JobOperationContext, type JobOperationScope, type JobOperationOptions, type JobOperationArtifactUploadInput } from './job-operations-runtime.js';
+
+export type { OperationDirectUploadInput } from './operation-upload.js';
+
+export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
+export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
+
+export { CustomerOperationReadinessError, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
+
+export { businessDecisionPayload, type OperationBusinessDecision, type OperationBusinessDecisionPayload } from './customer-operation-decisions.js';
+
+export type { OperationWorkflowPolicyRequirement } from './customer-operations.js';
+
+export type { OperationWorkflowPlannedDecision } from './customer-operations.js';
+
+export type { OperationWorkflowReconciliationInput, OperationWorkflowReconciliation, OperationWorkflowReconciliationPayload, CustomerOperationReconciliationHelper } from './customer-operation-reconciliation.js';
+
+export type { OperationWorkflowActionPreviewRequest } from './generated/models/OperationWorkflowActionPreviewRequest.js';
+
+export type { OperationWorkflowActionPreviewResponse } from './generated/models/OperationWorkflowActionPreviewResponse.js';
+
+export { businessInvariantPayload, applyBusinessInvariant, type OperationBusinessInvariant, type OperationBusinessInvariantPayload } from './customer-operation-invariants.js';
+
+export type { OperationWorkflowInvariantRequirement } from './generated/models/OperationWorkflowInvariantRequirement.js';
+
+export type { OperationWorkflowPlannedInvariant } from './generated/models/OperationWorkflowPlannedInvariant.js';
+
+export type { OperationWorkflowUnmetInvariant } from './generated/models/OperationWorkflowUnmetInvariant.js';
+
+export { businessEffectPayload, type OperationBusinessEffect, type OperationBusinessEffectPayload } from './customer-operation-effects.js';
+
+export type { OperationWorkflowEffectRequirement } from './generated/models/OperationWorkflowEffectRequirement.js';
+
+export type { OperationWorkflowPlannedEffect } from './generated/models/OperationWorkflowPlannedEffect.js';
+
+export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
+
+export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';

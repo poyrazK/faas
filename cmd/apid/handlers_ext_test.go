@@ -2036,7 +2036,11 @@ func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
 // deployment stays live at 0% instead of superseded, and a plain rollback
 // answered "deploy at least twice". It must name the 0% deployments and the
 // explicit command, without guessing which of them used to serve.
-func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
+// TestRollbackApp_DefaultReturnsToReleaseDemotedByPromote — after `traffic
+// promote` the former release stays live at 0%. Default rollback answered
+// "deploy at least twice" on production-us. A live 0% release that served
+// before is now the default target.
+func TestRollbackApp_DefaultReturnsToReleaseDemotedByPromote(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	ctx := context.Background()
 	former := mustSeedDeployment(t, e, "rb-promoted")
@@ -2066,17 +2070,52 @@ func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
 	}
 
 	rec := e.do(t, http.MethodPost, "/v1/apps/rb-promoted/rollback", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rollback after promote = %d %s, want 202", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), former.ID) {
+		t.Fatalf("rollback after promote did not target the demoted release %s:\n%s", former.ID, rec.Body)
+	}
+}
+
+// TestRollbackApp_DefaultNamesZeroTrafficCandidates — a dark deploy (live at
+// 0%, never served) is not a default target. With no other release, the 409
+// names it with the explicit --to command.
+func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	serving := mustSeedDeployment(t, e, "rb-dark")
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-dark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dark, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, dark.ID); err != nil {
+		t.Fatal(err)
+	}
+	darkNow, err := e.store.DeploymentByID(ctx, dark.ID)
+	if err != nil || darkNow.Status != state.DeployLive || darkNow.TrafficPercent != 0 {
+		t.Fatalf("setup: dark deployment = %+v, err=%v; want live at 0%%", darkNow, err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-dark/rollback", nil, nil)
 	assertProblem(t, rec, http.StatusConflict, api.CodeNoRollbackTarget)
-	want := fmt.Sprintf("v%d", formerNow.Revision)
-	if formerNow.Revision <= 0 {
-		want = former.ID
+	want := fmt.Sprintf("v%d", darkNow.Revision)
+	if darkNow.Revision <= 0 {
+		want = dark.ID
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, want) || !strings.Contains(body, "gregale rollback rb-promoted --to "+want) {
+	if !strings.Contains(body, want) || !strings.Contains(body, "gregale rollback rb-dark --to "+want) {
 		t.Fatalf("rollback problem must name %s and the explicit command:\n%s", want, body)
-	}
-	if strings.Contains(body, fmt.Sprintf("v%d", serving.Revision)+",") {
-		t.Fatalf("rollback problem lists the serving deployment as a candidate:\n%s", body)
 	}
 }
 

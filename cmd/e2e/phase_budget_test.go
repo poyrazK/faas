@@ -63,7 +63,7 @@ func phaseInnerBudgets(t *testing.T) map[string]time.Duration {
 		t.Fatalf("read run-native-e2e.sh: %v", err)
 	}
 	// e.g.  `streaming) phase_timeout=60m ;;`  or  `twonode | deploy) phase_timeout=25m ;;`
-	re := regexp.MustCompile(`(?m)^\s*([a-z|\s]+)\)\s*phase_timeout=(\w+)\s*;;`)
+	re := regexp.MustCompile(`(?m)^\s*([a-z|\s-]+)\)\s*phase_timeout=(\w+)\s*;;`)
 
 	out := map[string]time.Duration{}
 	for _, m := range re.FindAllStringSubmatch(string(body), -1) {
@@ -153,9 +153,12 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	// inputs.lane either way), so it must not be added to their sum — but it
 	// must fit on its own.
 	lanes := map[string]bool{
-		"smoke":                     true,
-		"containers":                true,
-		"exclusive-operations-only": true,
+		"smoke":                             true,
+		"containers":                        true,
+		"exclusive-operations-only":         true,
+		"managed-operation-only":            true,
+		"customer-job-operations-only":      true,
+		"customer-workflow-operations-only": true,
 	}
 	var sum, laneMax time.Duration
 	for phase, d := range phaseOuterBudgets(t) {

@@ -40,7 +40,10 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err := validateCredentialRequest(request); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialMigration {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
+	}
+	if request.Access == managedpostgres.CredentialDataAPI && !p.dataAPIEnabled {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	ref, err := parseResourceRef(request.ProviderResourceID)
@@ -124,20 +127,22 @@ func validateCredentialRequest(request managedpostgres.CredentialRequest) error 
 	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
 		return managedpostgres.ErrInvalid
 	}
 	return nil
 }
 
 func (p *Provider) defaultBranch(ctx context.Context, projectID string) (string, error) {
-	path := "/projects/" + url.PathEscape(projectID) + "/branches"
-	var response branchesResponse
-	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+	branches, err := p.listProjectBranches(ctx, projectID, "")
+	if err != nil {
+		if errors.Is(err, managedpostgres.ErrConflict) {
+			err = managedpostgres.ErrUnavailable
+		}
 		return "", err
 	}
 	branchID := ""
-	for _, candidate := range response.Branches {
+	for _, candidate := range branches {
 		if !candidate.Default {
 			continue
 		}
@@ -239,11 +244,22 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 }
 
 func (p *Provider) connectionURI(ctx context.Context, projectID, branchID, roleName string, pooled bool, response *connectionURIResponse) error {
+	return p.connectionURIForDatabase(ctx, projectID, branchID, p.databaseName, roleName, pooled, response)
+}
+
+func (p *Provider) connectionURIForDatabase(ctx context.Context, projectID, branchID, databaseName, roleName string, pooled bool, response *connectionURIResponse) error {
+	return p.connectionURIForDatabaseEndpoint(ctx, projectID, branchID, "", databaseName, roleName, pooled, response)
+}
+
+func (p *Provider) connectionURIForDatabaseEndpoint(ctx context.Context, projectID, branchID, endpointID, databaseName, roleName string, pooled bool, response *connectionURIResponse) error {
 	query := url.Values{
 		"branch_id":     {branchID},
-		"database_name": {p.databaseName},
+		"database_name": {databaseName},
 		"role_name":     {roleName},
 		"pooled":        {strconv.FormatBool(pooled)},
+	}
+	if endpointID != "" {
+		query.Set("endpoint_id", endpointID)
 	}
 	path := "/projects/" + url.PathEscape(projectID) + "/connection_uri"
 	return p.doJSON(ctx, http.MethodGet, path, query, nil, response, http.StatusOK)

@@ -440,6 +440,12 @@ if [[ -n "${phase}" ]]; then
     containers) phase_timeout=75m ;;
     # One real guest/snapshot restore lifecycle, with a bounded test deadline.
     exclusive-operations-only) phase_timeout=20m ;;
+    # A source build plus one managed workflow guest recovery round trip.
+    managed-operation-only) phase_timeout=35m ;;
+    customer-job-operations-only) phase_timeout=35m ;;
+    customer-workflow-operations-only) phase_timeout=35m ;;
+    # Includes native workflow Operations image/guest/recovery scenarios.
+    wake) phase_timeout=30m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

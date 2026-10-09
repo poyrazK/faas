@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 const (
@@ -33,7 +32,7 @@ func cmdPreviewCreate(args []string) int {
 	ttlHours := fs.Int("ttl-hours", previewCLIDefaultTTLHours, "preview lease in hours (1-720)")
 	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
 	noWait := fs.Bool("no-wait", false, "return after the deployment is queued")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for deployment readiness")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for deployment readiness")
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this preview operation")
 	openURL := fs.Bool("open", false, "open the preview URL after queueing or successful deployment")
 	if err := fs.Parse(args); err != nil {
@@ -157,7 +156,7 @@ func openPreviewURL(open bool, url string) {
 	if !open || strings.TrimSpace(url) == "" {
 		return
 	}
-	if err := browser.Open(url); err != nil {
+	if err := openBrowser(url); err != nil {
 		PrintWarn(osStderr, "Could not open preview URL: %v", err)
 	}
 }

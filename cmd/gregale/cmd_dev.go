@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 const (
@@ -654,7 +653,7 @@ func cmdDev(args []string) int {
 // printed so a headless or unsupported environment can continue manually.
 func openDeveloperEnvironment(url string) {
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", url)
-	if err := browser.Open(url); err != nil {
+	if err := openBrowser(url); err != nil {
 		PrintFail(osStderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintf(osStderr, "  Open this URL manually:\n  %s\n", url)
 	}

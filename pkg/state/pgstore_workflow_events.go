@@ -49,60 +49,78 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	if err := json.Unmarshal(accepted.Recipient, &recipient); err != nil || recipient.ID != recipientID || len(recipient.Workflow) == 0 {
 		return "", fmt.Errorf("%w: captured recipient is missing or invalid", ErrWorkflowEventDefinitionInvalid)
 	}
-	prior, err := queries.GetEventWorkflowReceipt(ctx, tx, sqlc.GetEventWorkflowReceiptParams{
-		OutboxID: outboxID, RecipientID: mustPgUUID(recipientID),
-	})
-	if err == nil {
-		if prior.Valid {
-			return uuidFromPgtype(prior).String(), nil
-		}
-		return "", nil // The run was pruned; its durable receipt still wins.
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", err
-	}
-	if err := queries.LockWorkflowRunAdmission(ctx, tx, recipient.AppID); err != nil {
-		return "", err
-	}
-	target, err := queries.LockEventWorkflowTarget(ctx, tx, mustPgUUID(recipient.AppID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
-	}
+	runID, _, err := admitEventWorkflowTx(ctx, queries, tx, outboxID, recipient, accepted.Payload)
 	if err != nil {
 		return "", err
 	}
-	if target.AppStatus == string(AppDeleted) || uuidFromPgtype(target.AccountID).String() != recipient.AccountID {
-		return "", ErrNotFound
-	}
-	plan := api.Plan(target.Plan)
-	if (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid ||
-		!plan.WorkflowsAllowed() || target.MaintenanceMode || target.PlatformTenantRequired {
-		return "", ErrWorkflowEventTargetUnavailable
-	}
-	run, err := eventWorkflowRun(recipient, accepted.Payload, plan)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
-	}
-	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID)})
-	if err != nil {
-		return "", err
-	}
-	if int(active) >= plan.WorkflowMaxConcurrentRuns() {
-		return "", ErrWorkflowRunQuotaExceeded
-	}
-	if err := queries.InsertEventWorkflowRun(ctx, tx, sqlc.InsertEventWorkflowRunParams{
-		ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), WorkflowName: run.WorkflowName,
-		Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
-	}); err != nil {
-		return "", err
-	}
-	if err := queries.InsertEventWorkflowReceipt(ctx, tx, sqlc.InsertEventWorkflowReceiptParams{
-		OutboxID: outboxID, RecipientID: mustPgUUID(recipientID), RunID: mustPgUUID(run.ID),
+	if err := validateEventRoutingClaim(ctx, queries, tx, PublishedEventRoutingClaim{
+		OutboxID: outboxID, SubscriptionID: recipientID, ClaimToken: token,
 	}); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
-	return run.ID, nil
+	return runID, nil
+}
+
+func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx, outboxID int64, recipient PublishedEventRecipient, payload []byte) (string, bool, error) {
+	prior, err := queries.GetEventWorkflowReceipt(ctx, tx, sqlc.GetEventWorkflowReceiptParams{
+		OutboxID: outboxID, RecipientID: mustPgUUID(recipient.ID),
+	})
+	if err == nil {
+		if prior.Valid {
+			return uuidFromPgtype(prior).String(), false, nil
+		}
+		return "", false, nil // The run was pruned; its durable receipt still wins.
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, err
+	}
+	if err := queries.LockWorkflowRunAdmission(ctx, tx, recipient.AppID); err != nil {
+		return "", false, err
+	}
+	target, err := queries.LockEventWorkflowTarget(ctx, tx, mustPgUUID(recipient.AppID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, ErrNotFound
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if target.AppStatus == string(AppDeleted) || uuidFromPgtype(target.AccountID).String() != recipient.AccountID {
+		return "", false, ErrNotFound
+	}
+	plan := api.Plan(target.Plan)
+	if (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid ||
+		!plan.WorkflowsAllowed() || target.MaintenanceMode || (target.PlatformTenantRequired && recipient.PlatformTenantID == "") {
+		return "", false, ErrWorkflowEventTargetUnavailable
+	}
+	if recipient.PlatformTenantID != "" {
+		if !target.PlatformTenantRequired || lockTenantPublishedEventBinding(ctx, tx, recipient.AccountID, recipient.PlatformTenantID, recipient.AppID) != nil {
+			return "", false, ErrWorkflowEventTargetUnavailable
+		}
+	}
+	run, err := eventWorkflowRun(recipient, payload, plan)
+	if err != nil {
+		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
+	}
+	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID)})
+	if err != nil {
+		return "", false, err
+	}
+	if int(active) >= plan.WorkflowMaxConcurrentRuns() {
+		return "", false, ErrWorkflowRunQuotaExceeded
+	}
+	if err := queries.InsertEventWorkflowRun(ctx, tx, sqlc.InsertEventWorkflowRunParams{
+		DeploymentID: mustPgUUID(run.DeploymentID), ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), WorkflowName: run.WorkflowName,
+		PlatformTenantID: run.PlatformTenantID, Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
+	}); err != nil {
+		return "", false, err
+	}
+	if err := queries.InsertEventWorkflowReceipt(ctx, tx, sqlc.InsertEventWorkflowReceiptParams{
+		OutboxID: outboxID, RecipientID: mustPgUUID(recipient.ID), RunID: mustPgUUID(run.ID),
+	}); err != nil {
+		return "", false, err
+	}
+	return run.ID, true, nil
 }

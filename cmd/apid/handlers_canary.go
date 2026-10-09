@@ -32,6 +32,7 @@ func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct stat
 // state transaction rechecks the durable lease and configured stage dwell
 // before any persisted traffic advance.
 func (s *server) advanceCanaryByWorker(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	r = r.WithContext(context.WithValue(r.Context(), bindingReleaseWorkerReadsKey{}, true))
 	s.advanceCanaryWithLeasePolicy(w, r, acct, true)
 }
 
@@ -66,31 +67,55 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 			"Retry the request in a moment; if it continues, contact support.", errors.New("configured store does not support atomic canary transitions"))
 		return
 	}
-	audit, err := canaryAdvanceAudit(d, app, acct, req.ExpectedStep, next)
+	actor := canaryProgressionActor
+	if !requireWorkerLease {
+		actor = "account:" + acct.ID
+	}
+	audit, err := canaryAdvanceAudit(d, app, acct, req.ExpectedStep, next, actor)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "prepare canary audit",
 			"Gregale could not advance this canary rollout.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
+	profileIntent, problem := s.profileGateAdvanceIntent(r, acct, app, d, req, requireWorkerLease, next.Percent)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	var profileDecision api.ProfileCanaryGateDecision
+	if !requireWorkerLease {
+		audit.Actor = "account:" + acct.ID
+	}
 	var gateDecision api.RouteGateDecision
 	var healthDecision api.RouteHealthDecision
-	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
-		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
-		RequireSafeReleaseLease:   requireWorkerLease,
-		RequireCanaryStageElapsed: requireWorkerLease,
-		CanaryStageDuration:       current.Duration,
-		Audit:                     audit,
-		RouteCheckFingerprint:     s.routeGateFingerprint,
-		RouteGateDecision:         &gateDecision,
-		RouteHealthDecision:       &healthDecision,
+	var updated state.Deployment
+	var auditID int64
+	gateProblem, err := s.withBindingReleaseTraffic(r, acct, app, d, profileIntent, func(ctx context.Context) error {
+		var writeErr error
+		updated, auditID, writeErr = advancer.AdvanceCanary(ctx, d.ID, state.CanaryAdvanceParams{
+			ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
+			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
+			RequireSafeReleaseLease:   requireWorkerLease,
+			RequireCanaryStageElapsed: requireWorkerLease,
+			CanaryStageDuration:       current.Duration,
+			Audit:                     audit,
+			RouteCheckFingerprint:     s.routeGateFingerprint,
+			RouteGateDecision:         &gateDecision,
+			RouteHealthDecision:       &healthDecision,
+		})
+		return writeErr
 	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
+	}
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
 	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
-		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision,
+		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
 	})
 }
 
@@ -145,7 +170,7 @@ func persistedCanaryPreset(d state.Deployment) (canarycatalog.Preset, error) {
 	return preset, nil
 }
 
-func canaryAdvanceAudit(d state.Deployment, app state.App, acct state.Account, expected int, next canarycatalog.Stage) (state.DeploymentAudit, error) {
+func canaryAdvanceAudit(d state.Deployment, app state.App, acct state.Account, expected int, next canarycatalog.Stage, actor string) (state.DeploymentAudit, error) {
 	depID, err := uuid.Parse(d.ID)
 	if err != nil {
 		return state.DeploymentAudit{}, fmt.Errorf("deployment id %q: %w", d.ID, err)
@@ -158,7 +183,7 @@ func canaryAdvanceAudit(d state.Deployment, app state.App, acct state.Account, e
 	data, err := json.Marshal(map[string]any{
 		"deployment_id": d.ID, "app_id": app.ID, "from_percent": d.TrafficPercent,
 		"to_percent": next.Percent, "from_step": expected, "to_step": expected + 1,
-		"canary_preset": d.CanaryPreset, "actor": canaryProgressionActor,
+		"canary_preset": d.CanaryPreset, "actor": actor,
 		"at": now.Format(time.RFC3339Nano),
 	})
 	if err != nil {
@@ -166,7 +191,7 @@ func canaryAdvanceAudit(d state.Deployment, app state.App, acct state.Account, e
 	}
 	return state.DeploymentAudit{
 		DeploymentID: depID, AccountID: &acctID, Kind: state.DeployTrafficChanged,
-		Actor: canaryProgressionActor, At: now, Data: data,
+		Actor: actor, At: now, Data: data,
 	}, nil
 }
 
@@ -174,9 +199,14 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	if err == nil {
 		return true
 	}
+	var profileBlocked *state.ProfileGateBlockedError
 	var routeBlocked *state.RouteGateBlockedError
 	var healthBlocked *state.RouteHealthBlockedError
 	switch {
+	case errors.As(err, &profileBlocked):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProfileGateBlocked, "Canary profiling gate held", profileBlocked.Decision.Reason).WithHint("Inspect GET /v1/deployments/"+id+"/canary/profile-gate for the exact stage, baseline, route and code evidence. A customer may explicitly override this profile gate with the current policy revision and a reason."))
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 	case errors.As(err, &healthBlocked):
 		s.routeHealthError(w, err)
 	case errors.As(err, &routeBlocked):

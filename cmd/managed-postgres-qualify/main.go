@@ -238,7 +238,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return 2
 	}
-	timeout := 10 * time.Minute
+	timeout := 20 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -251,15 +251,40 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		_, _ = fmt.Fprintln(errorOutput, managedpostgres.QualificationApprovalTTLEnv+" must be positive and no longer than 90 days")
 		return 2
 	}
+	continueAfterUsageFailure, err := parseContinueAfterUsageFailure(getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE must be a boolean")
+		return 2
+	}
+	canaryAccounts, canaryErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
+	if canaryErr != nil {
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification canary accounts are invalid")
+		return 2
+	}
+	var durable durableQualificationConfig
+	if durableQualificationEnabled(getenv) {
+		preflight, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		durable, err = loadDurableQualification(preflight, getenv, spec, timeout)
+		cancel()
+		if err != nil {
+			_, _ = fmt.Fprintln(errorOutput, "durable qualification requires a marked disposable SQL catalog, owned app/account, and private key files")
+			return 2
+		}
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), backend.Provider, managedpostgres.QualificationOptions{
-		ProviderName: backend.Driver,
-		ResourceID:   resourceID,
-		Spec:         spec,
-		Timeout:      timeout,
-		Mutating:     true,
+		ProviderName:              backend.Driver,
+		ResourceID:                resourceID,
+		Spec:                      spec,
+		Timeout:                   timeout,
+		Mutating:                  true,
+		ContinueAfterUsageFailure: continueAfterUsageFailure,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
-	if qualificationErr == nil && isLifecycleQualificationEnabled(getenv) {
+	if qualificationErr == nil && durableQualificationEnabled(getenv) {
+		lifecycle, lifecycleErr := managedpostgres.QualifyDurableLifecycle(context.Background(), durable.factory(getenv), durable.options)
+		result.Lifecycle = &lifecycle
+		qualificationErr = lifecycleErr
+	} else if qualificationErr == nil && isLifecycleQualificationEnabled(getenv) {
 		store := managedpostgres.NewMemoryStore()
 		sink := &qualificationCredentialSink{refs: make(map[string]struct{})}
 		lifecycleService, serviceErr := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
@@ -293,10 +318,6 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 			qualificationErr = fmt.Errorf("%w: lifecycle_service", managedpostgres.ErrQualificationFailed)
 		}
 	}
-	canaryAccounts, canaryErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
-	if canaryErr != nil && qualificationErr == nil {
-		qualificationErr = fmt.Errorf("%w: canary_accounts", managedpostgres.ErrQualificationFailed)
-	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	result.Version = managedpostgres.QualificationArtifactVersion
@@ -321,15 +342,11 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		Approval:           result.Approval,
 		ApprovalEnv:        result.ApprovalEnv,
 	}
-	if canaryErr != nil {
-		result.Readiness = managedpostgres.QualificationReadiness{Reasons: []string{"canary_accounts_invalid"}}
-	} else {
+	result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
+	if result.Readiness.Ready && result.Approval != nil {
+		result.ApprovalEnv = approvalEnvironment(*result.Approval)
+		artifact.ApprovalEnv = result.ApprovalEnv
 		result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
-		if result.Readiness.Ready && result.Approval != nil {
-			result.ApprovalEnv = approvalEnvironment(*result.Approval)
-			artifact.ApprovalEnv = result.ApprovalEnv
-			result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
-		}
 	}
 	if err := encoder.Encode(result); err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "cannot write qualification report")
@@ -340,6 +357,14 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func parseContinueAfterUsageFailure(getenv func(string) string) (bool, error) {
+	value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE"))
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
 }
 
 const (

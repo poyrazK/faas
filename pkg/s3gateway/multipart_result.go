@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,16 +27,24 @@ func (h *Handler) executeMultipartResult(w http.ResponseWriter, r *http.Request,
 		snapshot := u.Encryption.Clone()
 		encryption = &snapshot
 	}
-	result, err := objectstorage.CompleteMultipartWithResult(callCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
-		Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts), Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
-		BeforeRequest: func(ctx context.Context) error {
-			if h.requestMetrics == nil {
-				return nil
-			}
-			return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC())
-		},
-	}, u.CompletionConditions)
-	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedEncryption: result.Encryption}
+	var bindErr error
+	callCtx, bindErr = h.protectionContext(callCtx, req, u.Protection)
+	if bindErr != nil {
+		h.providerError(w, r, req, bindErr, u.Key)
+		return
+	}
+	result, err := objectstorageactivity.ExecuteMultipart(callCtx, h.store, store, req.bucket, u, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
+		return objectstorage.CompleteMultipartWithResult(mutationCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+			Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts), Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
+			BeforeRequest: func(ctx context.Context) error {
+				if h.requestMetrics == nil {
+					return nil
+				}
+				return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC())
+			},
+		}, u.CompletionConditions)
+	})
+	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err != nil {

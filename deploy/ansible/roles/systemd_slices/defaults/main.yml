@@ -1,0 +1,9 @@
+---
+# faas-cp.slice limits. The defaults are the spec §13 budget row for the
+# reference control plane (6,144 MB). A smaller control-plane host must size
+# them to its RAM in the operator variables (CP_ANSIBLE_VARS_B64, ADR-580).
+# production-us runs a 4 GB control plane; at 6 GB the cap exceeded the host,
+# so a runaway daemon could exhaust RAM that PostgreSQL needs. The operator
+# had set 3 GB by hand, and every convergence reverted it.
+faas_cp_slice_memory_max: 6144M
+faas_cp_slice_cpu_quota: 400%

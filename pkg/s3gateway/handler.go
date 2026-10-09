@@ -96,6 +96,17 @@ func New(c Config) (*Handler, error) {
 	if c.Registry == nil || c.Store == nil || c.OpenSecret == nil {
 		return nil, errors.New("s3 gateway: registry, store and secret opener are required")
 	}
+	if c.Registry.Accounting.GatewaySafety() {
+		if c.RequestMetrics == nil {
+			c.RequestMetrics, _ = c.Store.(state.ObjectStorageProviderUsageStore)
+		}
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayEgressStore); !ok {
+			return nil, errors.New("s3 gateway: gateway safety accounting requires durable request and egress meters")
+		}
+		if _, ok := c.RequestMetrics.(state.ObjectStorageGatewayRequestStore); !ok {
+			return nil, errors.New("s3 gateway: gateway safety accounting requires atomic request admission")
+		}
+	}
 	if c.Host == "" {
 		endpoint, err := url.Parse(c.Registry.PublicEndpoint)
 		if err != nil {
@@ -142,6 +153,7 @@ func New(c Config) (*Handler, error) {
 	}
 	if c.HTTPClient == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableCompression = true
 		transport.ResponseHeaderTimeout = 30 * time.Second
 		transport.ExpectContinueTimeout = 5 * time.Second
 		c.HTTPClient = &http.Client{Transport: transport, Timeout: c.Registry.TransferTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -222,6 +234,7 @@ type requestContext struct {
 	streaming        *awsChunkedReader
 	encryptionConfig objectstorage.EncryptionConfig
 	objectLockConfig objectstorage.ObjectLockConfig
+	protection       state.ObjectWriteProtectionSnapshot
 	encryption       objectstorage.ResolvedObjectEncryption
 	copySource       *state.ObjectBucket
 	copyGrantID      string
@@ -240,6 +253,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.handleCORS(w, r, requestID) {
+		return
+	}
+	if r.URL.Query().Has(UploadGrantQueryParameter) {
+		h.serveUploadGrant(w, r, requestID)
 		return
 	}
 	var parsed sigV4Request
@@ -290,7 +307,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Has("encryption") {
 		bodyLimit = api.MaxObjectBucketEncryptionBodyBytes
 	}
-	if r.Method == http.MethodPut && r.URL.Query().Has("object-lock") {
+	if r.Method == http.MethodPut && (r.URL.Query().Has("object-lock") || r.URL.Query().Has("retention") || r.URL.Query().Has("legal-hold")) {
 		bodyLimit = api.MaxObjectLockBodyBytes
 	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
@@ -349,7 +366,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	if !h.captureEncryption(w, r, &req) {
+	if !h.captureWriteProtection(w, r, &req) || !h.captureEncryption(w, r, &req) {
 		return
 	}
 	if !hasBucket {
@@ -494,6 +511,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("retention") || query.Has("legal-hold") {
+		kind := "retention"
+		if query.Has("legal-hold") {
+			kind = "legal_hold"
+		}
+		h.objectVersionProtection(w, r, req, key, kind)
+		return
+	}
 	if query.Has("tagging") {
 		if !queryKeysOnly(query, "tagging", "versionId") {
 			h.unsupported(w, r, req.requestID)
@@ -869,7 +894,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) {
 			return true
 		}
 	}
@@ -911,6 +936,13 @@ func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, 
 		// startup when the configured store lacks this capability.
 		return true
 	}
+	if h.registry.Accounting.GatewaySafety() && r.Method != http.MethodDelete {
+		metrics, ok := h.requestMetrics.(state.ObjectStorageGatewayRequestStore)
+		if !ok {
+			return h.writeAdmissionError(w, r, req, state.ErrObjectUsageStale)
+		}
+		return h.writeAdmissionError(w, r, req, metrics.ReserveObjectStorageGatewayRequest(r.Context(), req.bucket.ID, h.now().UTC(), h.registry.Accounting))
+	}
 	if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), req.bucket.ID, h.now().UTC()); err != nil {
 		h.log.Warn("S3 provider request metric write failed", "request_id", req.requestID)
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not record object storage usage.", r.URL.Path, req.requestID)
@@ -942,7 +974,7 @@ func copyObjectHeaders(dst, src http.Header) {
 		default:
 			continue
 		}
-		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || key == objectstorage.ReservedObjectEncryptionMetadataKey || len(values) == 0 {
+		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || key == objectstorage.ReservedObjectProtectionMetadataKey || key == objectstorage.ReservedObjectEncryptionMetadataKey || len(values) == 0 {
 			continue
 		}
 		dst.Set("x-amz-meta-"+key, values[0])
@@ -954,6 +986,15 @@ func copyObjectHeaders(dst, src http.Header) {
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Bucket writes are temporarily paused for checkpoint capture.", resource, req.requestID)
+		return
+	}
+	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
+		w.Header().Set("Retry-After", "30")
+		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)
+		return
+	}
 	if errors.Is(err, objectstorage.ErrNotFound) {
 		code, message := "NoSuchKey", "The specified key does not exist."
 		if key == "" {
@@ -1039,16 +1080,30 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
-	encryption, err := req.encryptionConfig.PublicReadEncryption(req.bucket.AccountID, response.Header)
+	encryption, err := objectstorage.ProviderReadEncryption(req.provider, req.encryptionConfig, req.bucket.AccountID, response.Header)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
+	}
+	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
+		if !h.writeAdmissionError(w, r, req, objectstorage.ReserveGatewayRead(r.Context(), h.requestMetrics, req.bucket.ID, response, h.registry.Accounting, h.now().UTC())) {
+			return
+		}
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
-		_, _ = io.Copy(w, response.Body)
+		body := io.Reader(response.Body)
+		if h.registry.Accounting.GatewaySafety() {
+			body = io.LimitReader(body, response.ContentLength)
+		}
+		n, _ := io.Copy(w, body)
+		if !h.registry.Accounting.GatewaySafety() {
+			if err := objectstorage.RecordDeliveredEgress(r.Context(), h.requestMetrics, req.bucket.ID, n, h.now().UTC()); err != nil {
+				h.log.Warn("S3 egress metric write failed", "request_id", req.requestID)
+			}
+		}
 	}
 }

@@ -123,6 +123,7 @@ if TYPE_CHECKING:
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
@@ -140,6 +141,8 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     visibility: (
         None
         | Unset
@@ -241,7 +244,8 @@ class UpdateAppRequest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     ports: list[WorkloadPort] | None | Unset = UNSET
     """Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP
     listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."""
@@ -375,6 +379,10 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -828,6 +836,8 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if allowed_service_callers is not UNSET:
@@ -965,6 +975,7 @@ class UpdateAppRequest:
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
@@ -975,6 +986,12 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
 
         def _parse_visibility(
             data: object,
@@ -1968,6 +1985,7 @@ class UpdateAppRequest:
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
         update_app_request = cls(
+            profiling=profiling,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,

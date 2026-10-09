@@ -19,6 +19,7 @@
       "gcs_storage_class": "STANDARD",
       "gcs_service_account": "gregale-storage@replace-with-your-project.iam.gserviceaccount.com",
       "gcs_impersonate_service_account": true,
+      "encryption": { "algorithms": ["AES256"] },
       "allowed_origins": ["https://gregale.dev"]
     }
   ]

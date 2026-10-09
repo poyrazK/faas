@@ -35,6 +35,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -102,14 +104,17 @@ const (
 // persistence. Filter is a JSON object encoded as a string so the same matcher
 // contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
-	App             string `yaml:"app,omitempty" toml:"app"`
-	Source          string `yaml:"source" toml:"source"`
-	Type            string `yaml:"type" toml:"type"`
-	Filter          string `yaml:"filter,omitempty" toml:"filter"`
-	WorkPolicy      string `yaml:"work_policy,omitempty" toml:"work_policy"`
-	WorkKey         string `yaml:"work_key,omitempty" toml:"work_key"`
-	WorkFairnessKey string `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
-	WorkAction      string `yaml:"work_action,omitempty" toml:"work_action"`
+	SchemaVersions  []string               `yaml:"schema_versions,omitempty" toml:"schema_versions"`
+	Retry           *EventRoutingRetrySpec `yaml:"retry,omitempty" toml:"retry"`
+	App             string                 `yaml:"app,omitempty" toml:"app"`
+	Source          string                 `yaml:"source" toml:"source"`
+	Type            string                 `yaml:"type" toml:"type"`
+	Filter          string                 `yaml:"filter,omitempty" toml:"filter"`
+	Ordered         bool                   `yaml:"ordered,omitempty" toml:"ordered"`
+	WorkPolicy      string                 `yaml:"work_policy,omitempty" toml:"work_policy"`
+	WorkKey         string                 `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkFairnessKey string                 `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
+	WorkAction      string                 `yaml:"work_action,omitempty" toml:"work_action"`
 }
 
 func (t EventTrigger) EffectiveWorkAction() string {
@@ -609,6 +614,12 @@ func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
 // Validate checks the event pattern and content filter without requiring an
 // account ID. Account ownership is assigned by the authenticated apply path.
 func (t EventTrigger) Validate(idx int) error {
+	if _, err := api.NormalizeEventSchemaVersions(t.SchemaVersions); err != nil {
+		return fmt.Errorf("triggers.event[%d].schema_versions: %w", idx, err)
+	}
+	if _, err := t.RoutingRetryPolicy(); err != nil {
+		return fmt.Errorf("triggers.event[%d].retry: %w", idx, err)
+	}
 	if t.WorkAction != "" && t.WorkAction != "invoke" && t.WorkAction != "cancel_pending" {
 		return fmt.Errorf("triggers.event[%d].work_action must be invoke or cancel_pending", idx)
 	}
@@ -617,6 +628,9 @@ func (t EventTrigger) Validate(idx int) error {
 	}
 	if (t.WorkPolicy == "") != (t.WorkKey == "") {
 		return fmt.Errorf("triggers.event[%d]: work_policy and work_key must be set together", idx)
+	}
+	if t.Ordered && (t.WorkPolicy == "" || t.EffectiveWorkAction() != "invoke") {
+		return fmt.Errorf("triggers.event[%d].ordered requires work_policy, work_key, and work_action=invoke", idx)
 	}
 	if t.WorkPolicy != "" {
 		if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
@@ -666,10 +680,11 @@ func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, err
 		return events.Subscription{}, err
 	}
 	subscription := events.Subscription{
-		AccountID: accountID,
-		Source:    t.Source,
-		Type:      t.Type,
-		Filter:    t.FilterJSON(),
+		SchemaVersions: append([]string(nil), t.SchemaVersions...),
+		AccountID:      accountID,
+		Source:         t.Source,
+		Type:           t.Type,
+		Filter:         t.FilterJSON(),
 	}
 	if err := subscription.Validate(); err != nil {
 		return events.Subscription{}, err
@@ -1392,6 +1407,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
+	Profiling *api.ProfilingConfig `yaml:"profiling,omitempty"`
 	// SchemaVersion is optional for backward compatibility. New manifests may
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
@@ -1415,8 +1431,11 @@ type Manifest struct {
 	ExclusiveOperations *ExclusiveOperationsConfig `yaml:"exclusive_operations,omitempty"`
 	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
 	// existing managed routes unchanged; an explicit empty list clears them.
-	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
-	Companions  []CompanionSpec `yaml:"companions,omitempty"`
+	Operations         []Operation                   `yaml:"operations,omitempty"`
+	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
+	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
+	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
 	MainDependsOn []ExtensionDependency `yaml:"main_depends_on,omitempty"`
@@ -1514,6 +1533,7 @@ type FunctionConfig struct {
 // current app setting unchanged, while an explicit zero clears/inherits it.
 // The API remains authoritative for plan gates and workload compatibility.
 type LifecycleConfig struct {
+	Profiling        *api.ProfilingConfig      `yaml:"profiling,omitempty"`
 	ExecutionMode    *string                   `yaml:"execution_mode,omitempty"`
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
@@ -1536,6 +1556,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Profiling:        c.Profiling,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
@@ -1547,7 +1568,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1558,7 +1579,7 @@ func (c *LifecycleConfig) Validate() error {
 	if c == nil || c.Empty() {
 		return nil
 	}
-	m := api.AppManifest{}
+	m := api.AppManifest{Profiling: c.Profiling}
 	if c.ExecutionMode != nil {
 		m.ExecutionMode = *c.ExecutionMode
 	}
@@ -1638,6 +1659,7 @@ type WorkerScaleSpec struct {
 	Min    int     `yaml:"min"`
 	Max    int     `yaml:"max"`
 	Metric string  `yaml:"metric"`
+	Name   string  `yaml:"name,omitempty"`
 	Target float64 `yaml:"target,omitempty"`
 }
 
@@ -1647,6 +1669,7 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 		Min:    s.Min,
 		Max:    s.Max,
 		Metric: s.Metric,
+		Name:   s.Name,
 		Target: s.Target,
 	}
 }
@@ -1703,15 +1726,14 @@ func (s WorkerScaleSpec) Validate() error {
 	if s.Max < s.Min {
 		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
 	}
-	switch s.Metric {
-	case "queue_lag", "queue_depth":
-		if s.Target <= 0 {
-			return fmt.Errorf("target for metric %q must be greater than 0", s.Metric)
+	if s.Metric == "" {
+		if s.Name != "" || s.Target != 0 {
+			return fmt.Errorf("name and target require a worker metric")
 		}
-	case "":
-		// manual fixed replica count without metric
-	default:
-		return fmt.Errorf("unsupported worker metric %q; supported metrics: queue_lag, queue_depth", s.Metric)
+		return nil
+	}
+	if problem := api.ValidateScalingTargets("worker.scale", []api.ScalingTarget{{Metric: s.Metric, Name: s.Name, Value: s.Target}}); problem != nil {
+		return fmt.Errorf("%s", problem.Detail)
 	}
 	return nil
 }
@@ -1790,14 +1812,109 @@ func parseManifest(b []byte) (*Manifest, error) {
 	dec.KnownFields(true)
 	m := &Manifest{}
 	if err := dec.Decode(m); err != nil {
-		// yaml.Decoder wraps a strict-decode failure as a
-		// *yaml.TypeError; we surface the inner message verbatim.
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, humanizeYAMLError(err)
 	}
 	return m, nil
 }
 
+var (
+	yamlUnknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type gregalemanifest\.(\w+)$`)
+	yamlTypeMismatch = regexp.MustCompile("^line (\\d+): cannot unmarshal !!(\\w+) `([^`]*)` into (\\S+)$")
+)
+
+// humanizeYAMLError rewrites strict-decode failures in manifest terms.
+// production-us hunt #4: a typo surfaced as "decode: yaml: unmarshal
+// errors: line 4: field unknown_top_key not found in type
+// gregalemanifest.Manifest", naming a Go type instead of the key.
+func humanizeYAMLError(err error) error {
+	var typeErr *yaml.TypeError
+	if !errors.As(err, &typeErr) {
+		return fmt.Errorf("decode: %w", err)
+	}
+	lines := make([]string, 0, len(typeErr.Errors))
+	for _, raw := range typeErr.Errors {
+		lines = append(lines, humanizeYAMLLine(raw))
+	}
+	return errors.New(strings.Join(lines, "; "))
+}
+
+func humanizeYAMLLine(raw string) string {
+	if m := yamlUnknownField.FindStringSubmatch(raw); m != nil {
+		where := ""
+		if m[3] != "Manifest" {
+			where = " under " + manifestSectionForType(m[3])
+		}
+		msg := fmt.Sprintf("line %s: unknown key %q%s", m[1], m[2], where)
+		if m[3] == "Manifest" {
+			if near := nearestManifestKey(m[2]); near != "" {
+				msg += fmt.Sprintf("; did you mean %q?", near)
+			}
+		}
+		return msg
+	}
+	if m := yamlTypeMismatch.FindStringSubmatch(raw); m != nil {
+		return fmt.Sprintf("line %s: %q is not a valid %s", m[1], m[3], strings.TrimPrefix(m[4], "[]"))
+	}
+	return raw
+}
+
+// manifestSectionForType names the top-level key whose value has the Go type
+// typeName ("FunctionConfig" -> "function:"), falling back to the type name
+// for deeper nesting.
+func manifestSectionForType(typeName string) string {
+	t := reflect.TypeOf(Manifest{})
+	for i := 0; i < t.NumField(); i++ {
+		ft := t.Field(i).Type
+		for ft.Kind() == reflect.Pointer || ft.Kind() == reflect.Slice || ft.Kind() == reflect.Map {
+			ft = ft.Elem()
+		}
+		key, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if ft.Name() == typeName && key != "" && key != "-" {
+			return key + ":"
+		}
+	}
+	return strings.ToLower(typeName)
+}
+
+// nearestManifestKey suggests a top-level key within two edits of name.
+func nearestManifestKey(name string) string {
+	best, bestDistance := "", 3
+	t := reflect.TypeOf(Manifest{})
+	for i := 0; i < t.NumField(); i++ {
+		key, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if key == "" || key == "-" {
+			continue
+		}
+		if d := editDistance(name, key); d < bestDistance {
+			best, bestDistance = key, d
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
 type tomlManifest struct {
+	Profiling           *api.ProfilingConfig       `toml:"profiling"`
+	Operations          []Operation                `toml:"operations"`
 	SchemaVersion       int                        `toml:"schema_version"`
 	Triggers            tomlTriggers               `toml:"triggers"`
 	WorkPolicies        []WorkPolicy               `toml:"work_policies"`
@@ -1825,8 +1942,10 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
 	return &Manifest{
+		Operations:          raw.Operations,
 		SchemaVersion:       raw.SchemaVersion,
 		EventTriggers:       raw.Triggers.Event,
+		Profiling:           raw.Profiling,
 		WorkPolicies:        raw.WorkPolicies,
 		ExclusiveOperations: raw.ExclusiveOperations,
 		Companions:          raw.Companions,
@@ -1862,6 +1981,21 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if m.Profiling != nil {
+		if err := m.Profiling.Validate(plan); err != nil {
+			return err
+		}
+		if m.Lifecycle == nil {
+			m.Lifecycle = &LifecycleConfig{}
+		}
+		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
+		}
+		m.Lifecycle.Profiling = m.Profiling
+	}
+	if err := m.validateOperations(plan); err != nil {
+		return err
 	}
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
@@ -2114,6 +2248,19 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := trigger.Validate(i); err != nil {
 			return err
 		}
+		if trigger.Ordered {
+			for _, declaration := range m.WorkPolicies {
+				if declaration.Name != trigger.WorkPolicy ||
+					(declaration.App != "" && trigger.App != "" && declaration.App != trigger.App) {
+					continue
+				}
+				policy := declaration.ToPolicy()
+				if policy.MaxRunningPerKey != 1 || policy.PendingUpdates != workpolicy.PendingAll || policy.Debounce != 0 || policy.ExpiresAfter != 0 {
+					return fmt.Errorf("triggers.event[%d].ordered requires work policy %q to use max_running_per_key=1, pending_updates=all, debounce_ms=0, and expires_after_ms=0", i, trigger.WorkPolicy)
+				}
+				break
+			}
+		}
 		key := strings.Join([]string{trigger.App, trigger.Source, trigger.Type, strings.TrimSpace(trigger.Filter)}, "\x00")
 		if _, duplicate := seenEvents[key]; duplicate {
 			return fmt.Errorf("triggers.event[%d]: duplicate (app, source, type, filter)", i)
@@ -2136,8 +2283,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" {
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration}", i, access)
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" {
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the

@@ -374,10 +374,16 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
+		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,
 		AppID:                app.ID,
 		DeliveryID:           req.DeliveryId,
 		Kind:                 kind,
+		ImageRef:             app.Manifest.ProjectImage,
+		ImagePort:            app.Manifest.ProjectImagePort,
+		ImageCommand:         app.Manifest.ProjectImageCommand,
+		ImageHealthcheck:     app.Manifest.ProjectImageHealthcheck,
+		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
 		SourceRoot:           app.RootDir,

@@ -1,7 +1,7 @@
 // watchdog.go is schedd's §6.1 state-transition watchdog (commit 3 of
 // the lock-narrowing PR). Every second Loop.Run fires the Watchdog
 // once; each tick does three state-bucket queries:
-//   - WAKING rows older than 5s          → KillStuck(COLD_BOOTING fallback)
+//   - WAKING rows older than 5s + 30s    → KillStuck(COLD_BOOTING fallback)
 //   - COLD_BOOTING rows older than 30s   → KillStuck(FAILED)
 //   - SNAPSHOTTING rows older than 20s   → KillStuck(STOPPED)
 //
@@ -30,9 +30,9 @@ import (
 // the per-call deadline doesn't (e.g. the vmmd call hangs but Wake
 // has since returned nil — the only way the row stays in WAKING).
 const (
-	// WakingSweepBudget is the spec §6.1 budget for WAKING rows without a
-	// usable snapshot. Snapshot-backed rows are exempted in runOne because the
-	// restore path is allowed the cold-boot fallback budget.
+	// WakingSweepBudget is the spec §6.1 budget for a WAKING restore. Every
+	// WAKING row is snapshot-backed, so runOne adds the cold-boot fallback
+	// budget vmmd may spend after a refused restore (ADR-640).
 	WakingSweepBudget = 5 * time.Second
 
 	// ColdBootSweepBudget is the spec §6.1 budget for COLD_BOOTING.
@@ -111,20 +111,21 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 		return
 	}
 	for _, ins := range rows {
-		// A snapshot-backed wake can spend the restore budget in vmmd and then
-		// fall back to a cold boot. Its engine context is bounded by
-		// ColdBootTimeout, so the 5-second WAKING backstop must not race it.
-		// Do not exempt the row forever, though: if the wake caller is
-		// cancelled after vmmd has booted (or schedd is restarted), the row
-		// can otherwise remain WAKING indefinitely and consume the app's
-		// concurrency reservation. After the combined restore + cold-boot
-		// budget, the normal WAKING kill path is the safe recovery.
-		if st == state.StateWaking && ins.DeploymentID != "" {
-			if _, snapErr := w.store.LatestSnapshot(ctx, ins.DeploymentID); snapErr == nil {
-				if !ins.StartedAt.IsZero() && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget {
-					continue
-				}
-			}
+		// A row enters WAKING only after a wake or warm-pool restore chose a
+		// snapshot, and vmmd can spend the restore budget and then fall back
+		// to a cold boot. Its engine context is bounded by ColdBootTimeout,
+		// so the 5-second WAKING backstop must not race it. Do not look the
+		// snapshot up again (ADR-640): after a fallback the owner marks the
+		// refused snapshot stale before it publishes RUNNING, and a sibling
+		// wake's fallback can do the same mid-restore, so the lookup misses
+		// exactly the wakes that need the reprieve. Do not exempt the row
+		// forever, though: if the wake caller is cancelled after vmmd has
+		// booted (or schedd is restarted), the row can otherwise remain
+		// WAKING indefinitely and consume the app's concurrency reservation.
+		// After the combined restore + cold-boot budget, the normal WAKING
+		// kill path is the safe recovery.
+		if st == state.StateWaking && !ins.StartedAt.IsZero() && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget {
+			continue
 		}
 		// SNAPSHOTTING rows get a memory-scaled reprieve. The sweep
 		// query uses one flat SnapshotSweepBudget (20s) so it stays a
@@ -141,6 +142,14 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 		// is the same anchor the sweep query ages on.
 		if st == state.StateSnapshotting && !ins.ParkedAt.IsZero() {
 			if now.Sub(ins.ParkedAt) < SnapshotBudgetFor(ins.RAMMB) {
+				continue
+			}
+		}
+		// A deploy prime for an app with an ADR-138 startup deadline beyond
+		// the spec window gets the matching reprieve, so the watchdog does not
+		// kill a slow-starting first boot that the prime RPC still allows.
+		if st == state.StateColdBooting && !ins.StartedAt.IsZero() {
+			if extra := w.primeWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
 				continue
 			}
 		}

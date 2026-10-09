@@ -21,8 +21,10 @@ const (
 	managedRealtimeChannelRouteLockLease               = 10 * time.Minute
 )
 
-// ManagedRealtimeChannelRoute is a node-level hint. A stale row can cause an
-// extra node publish, but must never cause an active subscriber to be skipped.
+// ManagedRealtimeChannelRoute is a node-level hint for legacy and resumable
+// subscribers. Legacy route mutations are applied synchronously; realtimed
+// reports resumable route transitions directly, with process-revision
+// snapshots repairing missed reports.
 type ManagedRealtimeChannelRoute struct {
 	EndpointID string
 	Channel    string

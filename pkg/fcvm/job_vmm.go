@@ -553,7 +553,7 @@ func BuildJobColdBootConfig(s JobColdBootSpec, slot int) VMConfig {
 			// decideMode (M8) reads /etc/faas/{app,job}.json to
 			// pick runApp vs runJob; the kernel cmdline is
 			// unchanged.
-			BootArgs: coldBootArgs,
+			BootArgs: withGuestTimer(coldBootArgs),
 		},
 		Drives:        drives,
 		MachineConfig: Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB, Smt: false},

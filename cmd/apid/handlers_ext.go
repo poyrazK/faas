@@ -57,6 +57,28 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
+	app, environment, problem := s.appEnvironmentSettings(w, r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment.Slug != "" {
+		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
+		resp.CanonicalURL = resp.URL
+		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
+		switch {
+		case err == nil:
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+		case errors.Is(err, state.ErrNotFound):
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not resolve environment deployment availability"))
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
@@ -162,13 +184,20 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		}
 	}
 	if req.MinInstances == nil {
-		// fall through to the egress allowlist branch
+		// Lowering max_concurrency below the configured floor leaves a floor
+		// the scheduler can never reach.
+		if req.MaxConcurrency != nil && app.MinInstances > appMaxConcurrencyAfter(app, req, limits) {
+			return minInstancesAboveMaxConcurrency(app.MinInstances, appMaxConcurrencyAfter(app, req, limits))
+		}
 	} else {
 		if !acct.Plan.MinInstancesAllowed() {
 			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
 		}
 		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+		}
+		if appMax := appMaxConcurrencyAfter(app, req, limits); *req.MinInstances > appMax {
+			return minInstancesAboveMaxConcurrency(*req.MinInstances, appMax)
 		}
 		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
@@ -937,6 +966,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	app, environment, environmentProblem := s.appEnvironmentSettings(w, r, acct, app, true)
+	if environmentProblem != nil {
+		api.WriteProblem(w, environmentProblem)
+		return
+	}
 	var req api.UpdateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -1025,6 +1059,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is `pkg/vmmd/activity.ActivityTracker` (PR-B) which counts
 	// in-flight HTTP requests; a worker has none, so the metric is
 	// forever 0 and the engine would never admit.
+	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
+		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
+		return
+	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1446,6 +1484,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if environment.Slug != "" {
+		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
+		return
+	}
 	configActivityAtomic := false
 	var configActivityOutboxID int64
 	var updated state.App
@@ -1476,11 +1518,18 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
+			// The caller only sees a generic 503; keep the cause. Under load,
+			// h4-edge's no-op idle updates and one deploy's app update failed
+			// intermittently here with nothing logged (production-us hunt #5,
+			// H5-42).
+			if s.log != nil {
+				s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
+			}
 			api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		}
 		return
 	}
-	if req.BeforeCheckpoint != nil {
+	if req.BeforeCheckpoint != nil || req.Profiling != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
 		// baked manifest does not match this update.
@@ -2131,7 +2180,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
-	if req.ExpectedServingDeploymentID != nil {
+	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
 		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
 			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
 			return
@@ -2154,10 +2203,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	}
 	prev := d.TrafficPercent
 	var updated state.Deployment
-	if req.ExpectedServingDeploymentID != nil {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
-	} else {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var gateProblem *api.Problem
+	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		var writeErr error
+		if req.ExpectedServingDeploymentID != nil {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+		} else {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
+		}
+		return writeErr
+	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
 	}
 	if err != nil {
 		switch {
@@ -2256,6 +2314,15 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	if req.ExpectedCurrentDeploymentID != nil {
+		s.startCheckedRollback(w, r, acct, app, req)
+		return
+	}
+	if req.Reason != "" {
+		api.WriteProblem(w, bindingPromotionValidation("reason requires an exact checked rollback"))
+		return
+	}
+
 	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2348,6 +2415,16 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
+		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
+		if err != nil {
+			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+		}
+		if policy.Mode == "enforce" {
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+		}
+	}
+
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
@@ -2363,8 +2440,8 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
 			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
 		}
-		if len(check.Diff.Breaks) > 0 {
-			problem := api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
+		if check.Diff.Blocking() {
+			problem := contractGateProblem(check.Diff)
 			return state.Deployment{}, problem
 		}
 	}
@@ -2722,6 +2799,31 @@ type appStatusCompareAndSetter interface {
 	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
 }
 
+// appMaxConcurrencyAfter is the app's instance ceiling once this update
+// applies: its own max_concurrency, bounded by the plan.
+func appMaxConcurrencyAfter(app state.App, req *api.UpdateAppRequest, limits api.Limits) int {
+	appMax := app.MaxConcurrency
+	if req.MaxConcurrency != nil {
+		appMax = *req.MaxConcurrency
+	}
+	if appMax <= 0 || appMax > limits.MaxConcurrency {
+		appMax = limits.MaxConcurrency
+	}
+	return appMax
+}
+
+// minInstancesAboveMaxConcurrency rejects a floor above the app's own
+// instance ceiling. The plan bound alone accepted min_instances=3 on an app
+// with max_concurrency=1, and the CLI then promised three warm instances
+// (production-us hunt #5, H5-38).
+func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidMinInstances,
+		"Invalid min_instances",
+		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
+		WithLimit(int64(appMax), int64(minInstances)).
+		WithDocs("https://gregale.dev/docs/apps#min-instances")
+}
+
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
 	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
 		return atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppActive, state.AppEvictedCold)
@@ -2735,7 +2837,18 @@ func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool
 	return true, nil
 }
 
+// restartClaimReleaseTimeout bounds the release write once it is detached from
+// the request.
+const restartClaimReleaseTimeout = 10 * time.Second
+
+// releaseAppRestartClaim returns a claimed app to active. It runs detached
+// from the caller's context: the release follows a failure, which is often
+// the request's own deadline, and a release on that context fails too and
+// leaves a live app parked; the reaper then stops every serving instance
+// (production-us hunt #5, H5-35).
 func releaseAppRestartClaim(ctx context.Context, store state.Store, appID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restartClaimReleaseTimeout)
+	defer cancel()
 	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
 		_, err := atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppEvictedCold, state.AppActive)
 		return err
@@ -3497,10 +3610,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Checks:     []api.DomainDoctorCheck{},
 		Healthy:    true,
 	}
-	// 1. DNS record found.
-	dnsStatus, dnsDetail, dnsRem := probeOK, "A or AAAA records present", ""
+	// 1. DNS record found. The failing case used to keep the success
+	// detail ("A or AAAA records present") and ask for an A/AAAA record,
+	// while `domains add` and points_to_gregale both ask for the Gregale
+	// CNAME. The address lookups follow CNAMEs, so that record satisfies
+	// this check too (production-us, 2026-10-04).
+	dnsStatus, dnsDetail, dnsRem := probeOK, "the domain resolves", ""
 	if !obs.DNSRecordFound {
-		dnsStatus, dnsRem = probeFail, "Publish an A or AAAA record at "+d.Domain
+		dnsStatus, dnsDetail = probeFail, "no DNS record resolves at "+d.Domain
+		if expected := customDomainTarget(); expected != "" && !strings.EqualFold(expected, d.Domain) {
+			dnsRem = routingRemediation(d.Domain, expected)
+		} else {
+			dnsRem = "Publish the record shown by `gregale domains add` at " + d.Domain
+		}
 		report.Healthy = false
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
@@ -4751,7 +4873,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"account", acct.ID,
 				"from", logsanitize.Field(string(acct.Plan)),
 				"to", logsanitize.Field(string(plan)),
-				"err", err)
+				"err", logsanitize.FieldAny(err))
 			if errors.Is(err, billing.ErrAlreadyCancelled) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 					api.CodeConflict, "billing subscription unavailable",
@@ -5700,6 +5822,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	if d.ServiceRolloutHandoff.Action != "" {
 		h := d.ServiceRolloutHandoff
 		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			BindingsCheck:           h.BindingsCheck,
 			Action:                  h.Action,
 			Phase:                   h.Phase,
 			PredecessorDeploymentID: h.PredecessorDeploymentID,

@@ -177,6 +177,57 @@ native_e2e_lane_verdict "${work}/exclusive-operations-only.log" \
   >"${work}/exclusive-operations-only.out" 2>&1 ||
   fail "a passing stale-owner KVM test was rejected: $(cat "${work}/exclusive-operations-only.out")"
 
+managed_operation_tests=()
+while IFS= read -r selected_test; do
+  managed_operation_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests managed-operation-only "${repo_root}")
+[[ "${#managed_operation_tests[@]}" -eq 1 && \
+   "${managed_operation_tests[0]}" == "TestManagedOperationWorkflowMetal" ]] ||
+  fail "managed-operation-only does not select exactly the managed workflow recovery test"
+lane_pass_log "${work}/managed-operation-only.log" "${managed_operation_tests[@]}"
+native_e2e_lane_verdict "${work}/managed-operation-only.log" \
+  "managed operation KVM lane" "${managed_operation_tests[@]}" \
+  >"${work}/managed-operation-only.out" 2>&1 ||
+  fail "a passing managed workflow KVM test was rejected: $(cat "${work}/managed-operation-only.out")"
+
+customer_job_tests=()
+while IFS= read -r selected_test; do
+  customer_job_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests customer-job-operations-only "${repo_root}")
+[[ "${#customer_job_tests[@]}" -ge 5 ]] || fail "customer Job lane lost its acceptance scenarios"
+lane_pass_log "${work}/customer-job-green.log" "${customer_job_tests[@]}"
+native_e2e_lane_verdict "${work}/customer-job-green.log" "customer Job lane" "${customer_job_tests[@]}" >/dev/null || fail "complete customer Job lane was rejected"
+for victim in "${customer_job_tests[@]}"; do
+  for outcome in absent SKIP FAIL; do
+    grep -v -- "--- PASS: ${victim} " "${work}/customer-job-green.log" > "${work}/customer-job-red.log"
+    if [[ "${outcome}" != absent ]]; then
+      printf -- '--- %s: %s (0.00s)\n' "${outcome}" "${victim}" >> "${work}/customer-job-red.log"
+    fi
+    if native_e2e_lane_verdict "${work}/customer-job-red.log" "customer Job lane" "${customer_job_tests[@]}" >/dev/null 2>&1; then
+      fail "customer Job lane accepted ${victim} ${outcome}"
+    fi
+  done
+done
+
+customer_workflow_tests=()
+while IFS= read -r selected_test; do
+  customer_workflow_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")
+[[ "${#customer_workflow_tests[@]}" -ge 5 ]] || fail "customer Workflow lane lost its acceptance scenarios"
+lane_pass_log "${work}/customer-workflow-green.log" "${customer_workflow_tests[@]}"
+native_e2e_lane_verdict "${work}/customer-workflow-green.log" "customer Workflow lane" "${customer_workflow_tests[@]}" >/dev/null || fail "complete customer Workflow lane was rejected"
+for victim in "${customer_workflow_tests[@]}"; do
+  for outcome in absent SKIP FAIL; do
+    grep -v -- "--- PASS: ${victim} " "${work}/customer-workflow-green.log" > "${work}/customer-workflow-red.log"
+    if [[ "${outcome}" != absent ]]; then
+      printf -- '--- %s: %s (0.00s)\n' "${outcome}" "${victim}" >> "${work}/customer-workflow-red.log"
+    fi
+    if native_e2e_lane_verdict "${work}/customer-workflow-red.log" "customer Workflow lane" "${customer_workflow_tests[@]}" >/dev/null 2>&1; then
+      fail "customer Workflow lane accepted ${victim} ${outcome}"
+    fi
+  done
+done
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -261,6 +312,24 @@ grep -Fq 'exclusive_operations_only=${{ steps.phase_exclusive_operations_only.ou
 exclusive_exclusions="$(grep -Fc "inputs.lane != 'exclusive-operations-only'" "${workflow}" || true)"
 [[ "${exclusive_exclusions}" -eq 9 ]] ||
   fail "exclusive-operations-only must skip all nine platform phases (found ${exclusive_exclusions} exclusions)"
+grep -Fq 'native_e2e_lane_tests managed-operation-only "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the managed-operation lane does not derive its selected test for its verdict"
+grep -Fq "inputs.lane == 'managed-operation-only'" "${workflow}" ||
+  fail "the native workflow has no managed-operation-only dispatch route"
+grep -Fq 'managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}' "${workflow}" ||
+  fail "the managed-operation lane outcome is absent from the native verdict"
+managed_operation_exclusions="$(grep -Fc "inputs.lane != 'managed-operation-only'" "${workflow}" || true)"
+[[ "${managed_operation_exclusions}" -eq 9 ]] ||
+  fail "managed-operation-only must skip all nine platform phases (found ${managed_operation_exclusions} exclusions)"
+managed_operation_test_minutes="$(sed -n 's/^[[:space:]]*managed-operation-only) phase_timeout=\([0-9]*\)m ;;$/\1/p' "${runner}")"
+managed_operation_unit_minutes="$(awk '
+  /id: phase_managed_operation_only$/ { in_lane = 1 }
+  in_lane && /--property=RuntimeMaxSec=/ { print; exit }
+' "${workflow}" | sed -n 's/.*--property=RuntimeMaxSec=\([0-9]*\)m .*/\1/p')"
+[[ "${managed_operation_test_minutes}" =~ ^[0-9]+$ && "${managed_operation_unit_minutes}" =~ ^[0-9]+$ ]] ||
+  fail "cannot determine managed-operation test and unit budgets"
+[[ "${managed_operation_unit_minutes}" -gt "${managed_operation_test_minutes}" ]] ||
+  fail "managed-operation unit ${managed_operation_unit_minutes}m cannot outlast test budget ${managed_operation_test_minutes}m"
 grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
   fail "full native e2e dispatches no longer apply the platform-wide verdict"
 
@@ -555,5 +624,18 @@ wf_norm="${wf_norm//\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/RUN}"
   fail "stage_root drifted between the wrapper and the workflow:
   wrapper:  ${runner_stage}
   workflow: ${wf_stage}"
+
+
+grep -Fq 'native_e2e_lane_tests customer-job-operations-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "customer Job workflow verdict lost its derived scenario set"
+grep -Fq "inputs.lane == 'customer-job-operations-only'" "${workflow}" || fail "customer Job workflow dispatch missing"
+grep -Fq 'customer_job_operations_only=${{ steps.phase_customer_job_operations_only.outcome }}' "${workflow}" || fail "customer Job step outcome absent from Verdict"
+customer_job_exclusions="$(grep -Fc "inputs.lane != 'customer-job-operations-only'" "${workflow}" || true)"
+[[ "${customer_job_exclusions}" -eq 9 ]] || fail "customer Job lane must skip all nine platform phases"
+
+grep -Fq 'native_e2e_lane_tests customer-workflow-operations-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "customer Workflow workflow verdict lost its derived scenario set"
+grep -Fq "inputs.lane == 'customer-workflow-operations-only'" "${workflow}" || fail "customer Workflow workflow dispatch missing"
+grep -Fq 'customer_workflow_operations_only=${{ steps.phase_customer_workflow_operations_only.outcome }}' "${workflow}" || fail "customer Workflow step outcome absent from Verdict"
+customer_workflow_exclusions="$(grep -Fc "inputs.lane != 'customer-workflow-operations-only'" "${workflow}" || true)"
+[[ "${customer_workflow_exclusions}" -eq 9 ]] || fail "customer Workflow lane must skip all nine platform phases"
 
 echo "native e2e wrapper contracts OK"

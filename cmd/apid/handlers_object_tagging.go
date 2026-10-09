@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,7 +40,16 @@ func (s *server) objectBucketTags(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	out, err := s.objectTaggingService(b, p, q.Get("key")).Do(r.Context(), b, r.Method, q.Get("key"), q.Get("version_id"), tags)
+	call := func(callCtx context.Context) (api.ObjectTaggingResult, error) {
+		return s.objectTaggingService(b, p, q.Get("key")).Do(callCtx, b, r.Method, q.Get("key"), q.Get("version_id"), tags)
+	}
+	var out api.ObjectTaggingResult
+	var err error
+	if r.Method == http.MethodGet {
+		out, err = call(r.Context())
+	} else {
+		out, err = objectstorageactivity.Execute(r.Context(), s.store, b, call)
+	}
 	if err != nil {
 		bucketProblem(w, err)
 		return
@@ -49,12 +59,11 @@ func (s *server) objectBucketTags(w http.ResponseWriter, r *http.Request, acct s
 
 func (s *server) objectTaggingService(b state.ObjectBucket, p objectstorage.Provider, key string) objectstorage.TaggingService {
 	refs, _ := s.store.(state.ObjectVersionReferenceStore)
-	metrics, _ := s.store.(state.ObjectStorageProviderUsageStore)
 	return objectstorage.TaggingService{References: refs, Provider: p, BeforeRequest: func(ctx context.Context) error {
 		if err := s.admitObjectMultipartPartURL(ctx, b, key); err != nil {
 			return err
 		}
-		return objectstorage.VersioningRequestRecorder(metrics, b.ID)(ctx)
+		return s.customerObjectRequestRecorder(b)(ctx)
 	}}
 }
 

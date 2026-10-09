@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -18,7 +19,23 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 		return nil, nil, 0, fmt.Errorf("begin workflow resume: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	run, record, active, err := resumeWorkflowRunTx(ctx, tx, opts, false)
+	if err != nil {
+		return nil, nil, active, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, 0, fmt.Errorf("commit workflow resume: %w", err)
+	}
+	return run, record, active, nil
+}
+
+func resumeWorkflowRunTx(ctx context.Context, tx pgx.Tx, opts WorkflowResumeOptions, operation bool) (*WorkflowRun, *WorkflowResume, int, error) {
 	q := sqlc.New()
+	if _, err := q.GetCustomerOperationForWorkflow(ctx, tx, mustPgUUID(opts.RunID)); err == nil && !operation {
+		return nil, nil, 0, ErrWorkflowResumeUnsafe
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, 0, err
+	}
 	if err := q.LockWorkflowRunAdmission(ctx, tx, opts.AppID); err != nil {
 		return nil, nil, 0, err
 	}
@@ -30,14 +47,16 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 		return nil, nil, 0, err
 	}
 	plan := api.Plan(target.Plan)
-	if !plan.WorkflowsAllowed() || (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || target.AppStatus == string(AppDeleted) || target.MaintenanceMode || target.PlatformTenantRequired {
+	if !plan.WorkflowsAllowed() || (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || target.AppStatus == string(AppDeleted) || target.MaintenanceMode {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
-	if _, err := q.LockWorkflowScheduleTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, 0, ErrWorkflowResumeUnavailable
+	if !operation {
+		if _, err := q.LockWorkflowResumeTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil, 0, ErrWorkflowResumeUnavailable
+			}
+			return nil, nil, 0, err
 		}
-		return nil, nil, 0, err
 	}
 	row, err := q.LockWorkflowResumeRun(ctx, tx, sqlc.LockWorkflowResumeRunParams{RunID: mustPgUUID(opts.RunID), AppID: mustPgUUID(opts.AppID)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -46,7 +65,21 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
+	platformTenantID := pgUUIDString(row.PlatformTenantID)
+	if opts.PlatformTenantID != "" && platformTenantID != opts.PlatformTenantID {
+		return nil, nil, 0, ErrWorkflowRunNotFound
+	}
+	if target.PlatformTenantRequired && platformTenantID == "" {
+		return nil, nil, 0, ErrWorkflowResumeUnavailable
+	}
+	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, DeploymentID: pgUUIDString(row.DeploymentID), PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
+	targetSnapshot, err := q.GetWorkflowRecoveryTarget(ctx, tx, sqlc.GetWorkflowRecoveryTargetParams{RunID: mustPgUUID(run.ID), StaleMs: int64(WorkflowRunStaleAfter / time.Millisecond)})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if err := workflowRecoveryTargetError(run, workflowRecoveryTargetFromSQLC(targetSnapshot)); err != nil {
+		return nil, nil, 0, err
+	}
 	rows, err := q.WorkflowResumeSteps(ctx, tx, mustPgUUID(run.ID))
 	if err != nil {
 		return nil, nil, 0, err
@@ -103,8 +136,5 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	}
 	run.Status, run.ResumeCount, run.ScheduledFor, run.UpdatedAt = WorkflowRunStatusPending, record.ResumeNumber, queued.ScheduledFor.Time, queued.UpdatedAt.Time
 	run.FinishedAt, run.LastError, run.Output, run.CurrentStep = nil, nil, nil, nil
-	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, 0, fmt.Errorf("commit workflow resume: %w", err)
-	}
 	return &run, &record, int(active), nil
 }

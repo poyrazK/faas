@@ -13,6 +13,7 @@ import (
 
 type ObjectDeletion struct {
 	api.ObjectDeletion
+	NativeGCS                                                  bool                            `json:"-"`
 	RecoveryClaimed                                            bool                            `json:"-"`
 	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string                          `json:"-"`
 	TargetProviderVersionID                                    string                          `json:"-"`
@@ -20,6 +21,13 @@ type ObjectDeletion struct {
 	LeaseUntil, RetryAt                                        time.Time                       `json:"-"`
 	ReservedBytes                                              int64                           `json:"-"`
 	Lifecycle                                                  *ObjectLifecycleDeletionBinding `json:"-"`
+	ProtectionRequired, ProtectionVerified, DeletionVerified   bool                            `json:"-"`
+}
+
+// Protected lifecycle dispatch requires fresh native policy reads. A deletion
+// acknowledgment cannot complete these receipts without exact absence proof.
+type ObjectProtectedLifecycleDeletionStore interface {
+	DispatchObjectProtectedLifecycleDeletion(context.Context, string, string, string, []string) (ObjectDeletion, error)
 }
 
 type ObjectDeletionStore interface {
@@ -32,18 +40,22 @@ type ObjectDeletionStore interface {
 	RetryObjectDeletion(context.Context, string, string, string) error
 }
 
-// ObjectDeletionActivityStore supplies an owned planning check. Admission and
-// dispatch still acquire the authoritative mutation fence atomically.
+// ObjectDeletionActivityStore supplies an owned planning check. New admission
+// atomically checks the source capture hold. Already admitted intents remain
+// counted through dispatch and recovery until their journal reaches terminal.
 type ObjectDeletionActivityStore interface {
 	HasActiveObjectDeletion(context.Context, string, string, string) (bool, error)
 }
 
 func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
-	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
+	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, NativeGCS: j.NativeGCS, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
 }
 
 func deletionActive(j ObjectDeletion) bool    { return j.State == "prepared" || j.State == "dispatched" }
 func immutableDeletion(j ObjectDeletion) bool { return j.Selector != "" && j.Selector != "null" }
+func lifecycleProtectionRequired(j ObjectDeletion, lock ObjectBucketObjectLock) bool {
+	return j.Lifecycle != nil && j.Selector != "" && (lock.EnabledRequired || lock.NativeEnabledObserved || lock.ObservedConfiguration != nil && lock.ObservedConfiguration.Enabled)
+}
 func cloneDeletion(j ObjectDeletion) ObjectDeletion {
 	j.Baseline = append([]string{}, j.Baseline...)
 	j.Lifecycle = cloneLifecycleDeletionBinding(j.Lifecycle)
@@ -75,11 +87,18 @@ func validDeletionBaseline(b []string) bool {
 	}
 	return true
 }
-func dispatchDeletion(j ObjectDeletion, token, status string, baseline []string, now time.Time) (ObjectDeletion, error) {
-	if !validDeletionLease(j, token, now) || j.State != "prepared" || status != "" && !ValidObjectBucketVersioningStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && len(baseline) != 0 {
+func dispatchVerifiedDeletion(j ObjectDeletion, token, status string, baseline []string, verified bool, now time.Time) (ObjectDeletion, error) {
+	if j.ProtectionRequired && (!verified || j.Lifecycle == nil || j.Lifecycle.ExpectedDeleteMarker == nil) {
+		return j, ErrConflict
+	}
+	if !validDeletionLease(j, token, now) || j.State != "prepared" || !validObjectDeletionProviderStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && !nativeGCSDeletionStatus(status) && len(baseline) != 0 {
+		return j, ErrConflict
+	}
+	if status != j.ProviderStatus || nativeGCSDeletionStatus(status) && (j.Selector != "" || j.ReservedBytes != 0 || !validGCSDeletionBaseline(baseline)) {
 		return j, ErrConflict
 	}
 	j.State = "dispatched"
+	j.ProtectionVerified = j.ProtectionRequired && verified
 	j.ProviderStatus = status
 	j.Baseline = append([]string{}, baseline...)
 	j.UpdatedAt = now
@@ -91,17 +110,26 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	}
 	switch result.State {
 	case "failed":
-		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired")
+		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired" || j.ProtectionRequired && result.LastErrorCode == "object_protected")
 		rejected := j.State == "dispatched" && !j.RecoveryClaimed && result.LastErrorCode == "provider_rejected"
 		if !prepared && !rejected || result.ProviderVersionID != "" || result.VersionID != "" || result.DeleteMarker {
 			return j, ErrConflict
 		}
 	case "completed":
+		if j.ProtectionRequired && (!result.DeletionVerified || j.Lifecycle == nil || j.Lifecycle.ExpectedDeleteMarker == nil || result.DeleteMarker != *j.Lifecycle.ExpectedDeleteMarker) {
+			return j, ErrConflict
+		}
 		if j.State != "dispatched" || result.LastErrorCode != "" || result.VersionID != "" && !ValidObjectVersionID(result.VersionID) {
 			return j, ErrConflict
 		}
 		if immutableDeletion(j) {
 			if result.VersionID != j.Selector || result.ProviderVersionID != j.TargetProviderVersionID {
+				return j, ErrConflict
+			}
+			break
+		}
+		if nativeGCSDeletionStatus(j.ProviderStatus) {
+			if j.Selector != "" || result.DeleteMarker || result.VersionID != "" || result.ProviderVersionID != "" {
 				return j, ErrConflict
 			}
 			break
@@ -120,8 +148,21 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	j.VersionID = result.VersionID
 	j.DeleteMarker = result.DeleteMarker
 	j.ProviderVersionID = result.ProviderVersionID
+	j.DeletionVerified = j.ProtectionRequired && result.State == "completed" && result.DeletionVerified
 	j.Token = ""
 	j.LeaseUntil = time.Time{}
 	j.UpdatedAt = now
 	return j, nil
+}
+
+// Native GCS deletion has a captured generation fence, not an S3 marker.
+func nativeGCSDeletionStatus(status string) bool {
+	return status == "GCS_Enabled" || status == "GCS_Suspended"
+}
+
+func validGCSDeletionBaseline(b []string) bool {
+	return len(b) == 1 && len(b[0]) == 64 && strings.Trim(b[0][:48], "0") == "" && b[0][48] <= '7' && validDeletionBaseline(b)
+}
+func validObjectDeletionProviderStatus(status string) bool {
+	return status == "" || ValidObjectBucketVersioningStatus(status) || nativeGCSDeletionStatus(status)
 }

@@ -12,3 +12,5 @@ self-hosted-runner:
     - faas-fleet
     - faas-fleet-us
     - gregale-bridge-acceptance
+    - gregale-data-api-staging
+    - gregale-profiling-acceptance

@@ -16,17 +16,14 @@ import (
 	"os"
 )
 
-const deploysClearUsage = "usage: gregale deploys clear <id> [--app <slug>] [--force] [--json]"
+const deploysClearUsage = "usage: gregale deploys clear <id> [--app <slug>] [--dry-run] [--force] [--json]"
 
 func cmdDeploysClear(args []string) int {
 	fs := newFlagSet("deploys clear", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug (required; used as IDOR-gate path segment)")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked project, or the deployment's own app)")
+	dryRun := fs.Bool("dry-run", false, "preview deletion without changing resources")
 	force := fs.Bool("force", false, "skip the confirmation prompt")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *appSlug == "" {
-		PrintUsage(os.Stderr, deploysClearUsage+"   (--app is required)", "deploys")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -38,23 +35,36 @@ func cmdDeploysClear(args []string) int {
 		PrintUsage(os.Stderr, deploysClearUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
-	if !*force {
-		fmt.Fprintf(os.Stderr, "Clear deployment %s from app %s? This hides the row from the list. [y/N] ", id, *appSlug)
-		var answer string
-		if _, err := fmt.Scanln(&answer); err != nil || (answer != "y" && answer != "Y") {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return 1
-		}
+	if code := requireAutomationConfirmation(*force || *dryRun, "--force"); code != 0 {
+		return code
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	// ADR-198: a vN handle resolves against --app, else the linked project.
-	// A uuid short-circuits without a lookup.
 	id, err = resolveDeploymentArg(context.Background(), client, *appSlug, id)
 	if err != nil {
 		return printErr("Could not resolve deployment", err)
+	}
+	if *dryRun || !*force {
+		preview, err := previewSingleDeployment(context.Background(), client, id)
+		if err != nil {
+			return printErr("Could not preview deployment cleanup", err)
+		}
+		if *dryRun {
+			return writeDestructivePreview(preview)
+		}
+		if jsonOutput {
+			return printErr("Confirmation required", fmt.Errorf("deployment cleanup requires --force in JSON mode; inspect --dry-run first"))
+		}
+		renderDestructivePreview(osStderr, preview)
+		if _, err := fmt.Fprint(osStderr, "Clear this deployment? [y/N] "); err != nil {
+			return printErr("Could not display confirmation", err)
+		}
+		answer, err := readConfirmationLine(osStdin)
+		if err != nil || (answer != "y" && answer != "Y") {
+			return printErr("Aborted", &exitErr{msg: "deployment cleanup was not confirmed", code: 130})
+		}
 	}
 	if err := client.ClearDeployment(context.Background(), id); err != nil {
 		return printErr("Clear failed", err)

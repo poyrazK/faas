@@ -29,6 +29,15 @@ func (s *PgStore) IssueObjectMultipartURLCredential(ctx context.Context, c Objec
 	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
+	{
+		_, fenceErr := q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(c.BucketID))
+		if fenceErr == nil {
+			return ObjectS3Credential{}, ErrObjectBucketWriteFenced
+		}
+		if !errors.Is(fenceErr, pgx.ErrNoRows) {
+			return ObjectS3Credential{}, mapErr(fenceErr)
+		}
+	}
 	row, err := q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(expected.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
@@ -37,7 +46,7 @@ func (s *PgStore) IssueObjectMultipartURLCredential(ctx context.Context, c Objec
 	if err != nil {
 		return ObjectS3Credential{}, err
 	}
-	if !validObjectURLMultipartUpload(c, u, time.Now()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || u.EncryptionDefaultRevision != expected.EncryptionDefaultRevision || !u.Encryption.Equal(expected.Encryption) {
+	if !validObjectURLMultipartUpload(c, u, time.Now()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || !u.Protection.Equal(expected.Protection) || u.EncryptionDefaultRevision != expected.EncryptionDefaultRevision || !u.Encryption.Equal(expected.Encryption) {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	out, err := insertObjectURLCredentialSQL(ctx, tx, c)

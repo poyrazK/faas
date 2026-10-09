@@ -57,6 +57,7 @@ const (
 	workWorkflowSchedules    workKind = "workflow_schedules"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workEventFanout          workKind = "event_fanout"
+	workReaper               workKind = "reaper"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -64,6 +65,7 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workEventFanout,
+	workReaper,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -110,10 +112,14 @@ var workSpecs = map[workKind]workSpec{
 	workJobCancel:            {slots: 8, overflow: overflowDrop},
 	workJobDispatch:          {slots: 1, overflow: overflowDrop},
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
-	workWorkflowDispatch:     {slots: 4, overflow: overflowDrop},
+	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	workEventFanout:          {slots: 1, overflow: overflowDrop},
+	// One reaper tick at a time, sequential inside, as before it moved off
+	// the loop. A tick that fires while the previous one still runs
+	// coalesces into it; the next tick re-reads the instance table.
+	workReaper: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

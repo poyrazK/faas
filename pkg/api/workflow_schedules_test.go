@@ -17,6 +17,20 @@ func TestWorkflowScheduleValidation(t *testing.T) {
 	}{
 		{"manual", WorkflowTriggerSpec{Type: "manual"}, false},
 		{"schedule", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", Timezone: "Europe/Istanbul"}, false},
+		{"latest recovery", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest"}, false},
+		{"minimum window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest", CatchUpWindow: "1m"}, false},
+		{"maximum window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest", CatchUpWindow: "24h"}, false},
+		{"unknown recovery", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "all"}, true},
+		{"window without recovery", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUpWindow: "2h"}, true},
+		{"skip with window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "skip", CatchUpWindow: "2h"}, true},
+		{"too short window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest", CatchUpWindow: "59s"}, true},
+		{"too long window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest", CatchUpWindow: "24h1s"}, true},
+		{"malformed window", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", CatchUp: "latest", CatchUpWindow: "yesterday"}, true},
+		{"manual recovery", WorkflowTriggerSpec{Type: "manual", CatchUp: "latest"}, true},
+		{"event recovery", WorkflowTriggerSpec{Type: "event", Source: "billing", EventType: "paid", CatchUp: "latest"}, true},
+		{"tenant-configurable schedule", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 7 * * *", TenantConfigurable: true}, false},
+		{"tenant-configurable manual", WorkflowTriggerSpec{Type: "manual", TenantConfigurable: true}, true},
+		{"tenant-configurable event", WorkflowTriggerSpec{Type: "event", Source: "billing.*", EventType: "paid", TenantConfigurable: true}, true},
 		{"unknown", WorkflowTriggerSpec{Type: "event"}, true},
 		{"missing schedule", WorkflowTriggerSpec{Type: "schedule"}, true},
 		{"seconds", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * * *"}, true},
@@ -45,6 +59,8 @@ trigger:
   type: schedule
   schedule: '0 7 * * *'
   timezone: Europe/Istanbul
+  catch_up: latest
+  catch_up_window: 2h
   input:
     report: daily
     count: 7
@@ -56,6 +72,9 @@ steps:
 	}
 	if string(definition.Trigger.Input) != `{"count":7,"report":"daily"}` {
 		t.Fatalf("scheduled input = %s", definition.Trigger.Input)
+	}
+	if definition.Trigger.CatchUp != "latest" || definition.Trigger.CatchUpWindow != "2h" {
+		t.Fatalf("catch-up options = %+v", definition.Trigger)
 	}
 	for _, raw := range []string{`{"type":"schedule","schedule":"* * * * *","typo":true}`, `{"type":"manual","input":{"secret":true},"typo":1}`} {
 		var trigger WorkflowTriggerSpec

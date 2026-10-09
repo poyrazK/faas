@@ -174,7 +174,7 @@ func TestCmdInvocationsWait_TimeoutReturnsLastStatus(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsWait([]string{"--interval=1s", "--timeout=25ms", inv.ID}); code != 124 {
+	if code := cmdInvocationsWait([]string{"--interval=5s", "--timeout=1s", inv.ID}); code != 124 {
 		t.Fatalf("invocations wait timeout = %d, want 124", code)
 	}
 	if !strings.Contains(stdout.String(), "State:      pending") {
@@ -209,6 +209,93 @@ func TestCmdInvocationsWait_JSON(t *testing.T) {
 	}
 	if got.ID != inv.ID || got.State != "completed" {
 		t.Errorf("JSON invocation = %#v, want id=%s state=completed", got, inv.ID)
+	}
+}
+
+func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		exit   int
+	}{
+		{http.StatusNotFound, 1},
+		{http.StatusForbidden, 1},
+		{http.StatusConflict, 1},
+		{http.StatusTooManyRequests, 1},
+		{http.StatusUnauthorized, 2},
+		{http.StatusServiceUnavailable, 3},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			resetJSONOut(t)
+			problem := api.Problem{Status: tc.status, Code: "wait_test_error", Title: "Invocation unavailable", Detail: "Cannot inspect this invocation"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/invocations/inv-json-error" {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.status)
+				_ = json.NewEncoder(w).Encode(problem)
+			}))
+			defer server.Close()
+			t.Setenv("FAAS_API", server.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			out, stderr, restore := swapIO(t)
+			defer restore()
+			if code := run([]string{"invocations", "wait", "inv-json-error", "--json"}); code != tc.exit {
+				t.Fatalf("exit = %d, want %d", code, tc.exit)
+			}
+			var got api.Problem
+			if err := json.Unmarshal([]byte(stderr()), &got); err != nil {
+				t.Fatalf("stderr is not one Problem: %v: %s", err, stderr())
+			}
+			var metadata struct {
+				ExitCode int `json:"exit_code"`
+			}
+			if err := json.Unmarshal([]byte(stderr()), &metadata); err != nil || metadata.ExitCode != tc.exit {
+				t.Fatalf("exit metadata: %+v error=%v", metadata, err)
+			}
+			if out.Len() != 0 || got.Status != problem.Status || got.Code != problem.Code || got.Detail != problem.Detail {
+				t.Fatalf("stdout=%s problem=%+v", out.String(), got)
+			}
+		})
+	}
+}
+
+func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
+	resetJSONOut(t)
+	inv := invocationFixture()
+	inv.State = "pending"
+	inv.Result = nil
+	inv.CompletedAt = nil
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("wait must not cancel the invocation: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(inv)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	out, stderr, restore := swapIO(t)
+	defer restore()
+	if code := run([]string{"invocations", "wait", inv.ID, "--json", "--timeout", "250ms", "--interval", "1s"}); code != 124 {
+		t.Fatalf("exit = %d, want 124", code)
+	}
+	var got api.Invocation
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.ID != inv.ID || got.State != "pending" {
+		t.Fatalf("last status: %v: %s", err, out.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal([]byte(stderr()), &problem); err != nil {
+		t.Fatalf("stderr is not one Problem: %v: %s", err, stderr())
+	}
+	var metadata struct {
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(stderr()), &metadata); err != nil || metadata.ExitCode != 124 {
+		t.Fatalf("timeout metadata: %+v error=%v", metadata, err)
+	}
+	if problem.Code != "invocation_wait_timeout" || problem.Status != http.StatusRequestTimeout || !strings.Contains(problem.Hint, "gregale invocations get "+inv.ID) {
+		t.Fatalf("timeout problem = %+v", problem)
 	}
 }
 

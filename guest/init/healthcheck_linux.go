@@ -748,6 +748,10 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		case <-time.After(nextDelay):
 		}
 
+		probeCtx, releaseProbe, permitted := acquireLegacyImageHealthcheck(ctx)
+		if !permitted {
+			continue
+		}
 		env := BuildEnvWithSecrets(os.Environ(), manifest, nil, nil)
 		if runtime.Environment != nil {
 			env = runtime.Environment()
@@ -756,7 +760,8 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		probeArgv := append([]string(nil), argv...)
 		probeArgv[0] = resolveWorkloadCommandPath("/", probeArgv[0], env)
 		probeStartedAt := time.Now()
-		report := execHealthcheckWithOptions(ctx, probeArgv, timeout, int(credential.Uid), env, manifest.EffectiveWorkingDir(), launch.SysProcAttr, log)
+		report := execHealthcheckWithOptions(probeCtx, probeArgv, timeout, int(credential.Uid), env, manifest.EffectiveWorkingDir(), launch.SysProcAttr, log)
+		releaseProbe()
 		report.Seq = seq
 		report.TsUnixMs = time.Now().UnixMilli()
 		report.StartPeriodS = int(startPeriod / time.Second)
@@ -811,7 +816,14 @@ func execHealthcheckWithOptions(ctx context.Context, argv []string, timeout time
 			cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
 		}
 	}
-	out, err := cmd.CombinedOutput()
+	cmd.SysProcAttr.Setpgid = true
+	cmd.SysProcAttr.Pgid = 0
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 100 * time.Millisecond
+	tail := newRingBuffer(VsockHealthcheckMaxOutput)
+	cmd.Stdout, cmd.Stderr = tail, tail
+	err := cmd.Run()
+	out := []byte(tail.Tail())
 	status := healthcheckStatusPass
 	if err != nil {
 		status = healthcheckStatusFail

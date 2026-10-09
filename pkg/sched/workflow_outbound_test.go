@@ -39,14 +39,17 @@ func TestWorkflowOutboundRetryAfterIsBounded(t *testing.T) {
 	}
 }
 
-type outboundLeaseStub struct{ token atomic.Pointer[string] }
+type outboundLeaseStub struct {
+	token    atomic.Pointer[string]
+	tenantID string
+}
 
 func (s *outboundLeaseStub) GetWorkflowOutboundAttempt(context.Context, string, string, int) (state.WorkflowOutboundAttempt, error) {
 	token := s.token.Load()
 	if token == nil {
 		return state.WorkflowOutboundAttempt{}, state.ErrWorkflowNotRunning
 	}
-	return state.WorkflowOutboundAttempt{AccountID: "00000000-0000-0000-0000-000000000001", AppID: "00000000-0000-0000-0000-000000000002", Token: *token}, nil
+	return state.WorkflowOutboundAttempt{AccountID: "00000000-0000-0000-0000-000000000001", AppID: "00000000-0000-0000-0000-000000000002", PlatformTenantID: s.tenantID, Token: *token}, nil
 }
 func (s *outboundLeaseStub) ValidateWorkflowOutboundBindings(context.Context, string, api.WorkflowSpec) error {
 	return nil
@@ -56,28 +59,36 @@ func TestWorkflowOutboundExecutorOutputAndCancellation(t *testing.T) {
 	store := &outboundLeaseStub{}
 	nonce := uuid.NewString()
 	store.token.Store(&nonce)
+	store.tenantID = uuid.NewString()
 	identityCalls := 0
 	capturedBody := ""
 	key := ""
-	executor := &workflowOutboundExecutor{store: store, mint: func(identity outbound.WorkflowIdentity, _, _, _ string, body []byte) (string, error) {
+	integrationID := uuid.NewString()
+	spec := api.WorkflowOutboundSpec{IntegrationID: integrationID, Method: "POST", Path: "/v1/items/42", PathTemplate: "/v1/items/{{input.id}}", Query: map[string]string{"email": "a+b@example.com"}, QueryTemplate: map[string]string{"email": "{{input.email}}"}, RawQuery: "email=a%2Bb%40example.com", IdempotencySupported: true}
+	var capturedRoute outbound.WorkflowOutboundRequest
+	executor := &workflowOutboundExecutor{store: store, mint: func(identity outbound.WorkflowIdentity, request outbound.WorkflowOutboundRequest, body []byte) (string, error) {
 		identityCalls++
 		if identity.AttemptToken != nonce {
 			t.Error("wrong lease")
 		}
+		if identity.PlatformTenantID != store.tenantID {
+			t.Error("tenant identity did not come from the persisted outbound lease")
+		}
+		capturedRoute = request
+
 		capturedBody = string(body)
 		return "private-token", nil
 	}, client: &http.Client{Transport: workflowRoundTripper(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Host != executionOutboundGatewayAddress || r.Header.Get(outbound.WorkflowIdentityHeader) != "private-token" {
+		if r.URL.Host != executionOutboundGatewayAddress || r.URL.EscapedPath() != outbound.Prefix+integrationID+"/v1/items/42" || r.URL.RawQuery != "email=a%2Bb%40example.com" || r.Header.Get(outbound.WorkflowIdentityHeader) != "private-token" {
 			t.Error("wrong private transport")
 		}
 		key = r.Header.Get("Idempotency-Key")
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":17}`))}, nil
 	})}}
-	spec := api.WorkflowOutboundSpec{IntegrationID: uuid.NewString(), Method: "POST", Path: "/v1/items", IdempotencySupported: true}
 	runID := uuid.NewString()
 	status, output, _, err := executor.ExecuteOutboundStep(context.Background(), runID, "send", 1, spec, []byte(`{"email":"a@example.com"}`), time.Second)
-	if err != nil || status != 200 || string(output) != `{"status":200,"body":{"id":17}}` || capturedBody == "" || identityCalls != 1 || key != workflowStepIdempotencyKey(runID, "send") {
-		t.Fatalf("status=%d output=%s err=%v", status, output, err)
+	if err != nil || status != 200 || string(output) != `{"status":200,"body":{"id":17}}` || capturedBody == "" || identityCalls != 1 || key != workflowStepIdempotencyKey(runID, "send") || capturedRoute.PathTemplate != "/v1/items/{{input.id}}" || capturedRoute.QueryTemplate["email"] != "{{input.email}}" || capturedRoute.RawQuery != spec.RawQuery {
+		t.Fatalf("status=%d output=%s route=%+v err=%v", status, output, capturedRoute, err)
 	}
 	spec.Method = "GET"
 	if _, _, _, err := executor.ExecuteOutboundStep(context.Background(), runID, "send", 2, spec, []byte(`{"must_not_send":true}`), time.Second); err != nil || capturedBody != "" {
@@ -92,6 +103,43 @@ func TestWorkflowOutboundExecutorOutputAndCancellation(t *testing.T) {
 	_, _, _, err = executor.ExecuteOutboundStep(context.Background(), runID, "send", 3, spec, nil, 5*time.Second)
 	if err == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("revocation did not cancel call: %v duration=%v", err, time.Since(started))
+	}
+}
+
+func TestWorkflowOutboundForEachTemplateContext(t *testing.T) {
+	parentName := "each"
+	itemIndex := 0
+	outboundSpec := &api.WorkflowOutboundSpec{
+		IntegrationID: uuid.NewString(), Method: "GET",
+		Path:  "/v1/contacts/{{input.item.id}}",
+		Query: map[string]string{"tenant": "{{steps.lookup.output.tenant}}"},
+	}
+	parentSpec := api.WorkflowStepSpec{
+		Name: "each", DependsOn: []string{"lookup"},
+		ForEach: &api.WorkflowForEachSpec{
+			Items:  "input.contacts",
+			Action: api.WorkflowForEachActionSpec{Outbound: outboundSpec},
+		},
+	}
+	definition, err := json.Marshal(api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "lookup"}, parentSpec}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{Input: json.RawMessage(`{"contacts":[{"id":"contact 42"}]}`), DefinitionSnapshot: definition}
+	child := &state.WorkflowStep{StepName: "each[0]", ForEachParent: &parentName, ForEachIndex: &itemIndex}
+	lookup := &state.WorkflowStep{StepName: "lookup", Status: state.WorkflowStepStatusSucceeded, Output: json.RawMessage(`{"tenant":"north"}`)}
+	parent := &state.WorkflowStep{StepName: parentName, Status: state.WorkflowStepStatusSucceeded, Input: json.RawMessage(`[{"id":"contact 42"}]`)}
+	step := parentSpec.ForEach.Action.Step(child.StepName)
+	input, outputs, err := workflowOutboundTemplateContext(run, child, step, map[string]*state.WorkflowStep{parentName: parent, "lookup": lookup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := api.ResolveWorkflowOutboundTarget(*outboundSpec, input, outputs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Path != "/v1/contacts/contact%2042" || resolved.RawQuery != "tenant=north" {
+		t.Fatalf("foreach outbound target = %q?%s", resolved.Path, resolved.RawQuery)
 	}
 }
 

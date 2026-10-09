@@ -24,6 +24,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
 	_, _ = fmt.Fprintln(w, "|---|---|")
 	for _, c := range cmds {
@@ -81,12 +83,34 @@ func renderMarkdownSubtree(w io.Writer, command cliCommand, ancestors []string, 
 }
 
 func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliFlag) string {
-	parts := []string{localHelpCommandPath(command)}
-	parts = append(parts, names...)
+	path := localHelpSubcommandPath(command, names)
+	var terminal cliSub
+	var found bool
+	choices := command.Subcommands
+	for _, name := range names {
+		terminal, found = findCliSubcommand(choices, name)
+		if !found {
+			break
+		}
+		choices = terminal.Subcommands
+	}
+	parts := []string{path}
+	if found && len(terminal.Subcommands) > 0 && !terminal.SubcommandsAfterPositionals {
+		parts = append(parts, "<"+terminal.subcommandChoice()+">")
+	}
+	appendPositionals := !found || !terminal.SubcommandsAfterPositionals
+	if appendPositionals && found && terminal.FlagsAfterPositionals {
+		parts = append(parts, positionals...)
+	}
 	for _, flag := range flags {
 		parts = append(parts, mdFlagSyntax(flag))
 	}
-	parts = append(parts, positionals...)
+	if appendPositionals && (!found || !terminal.FlagsAfterPositionals) {
+		parts = append(parts, positionals...)
+	}
+	if found && len(terminal.Subcommands) > 0 && terminal.SubcommandsAfterPositionals {
+		parts = append(parts, "<"+terminal.subcommandChoice()+">")
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -144,10 +168,7 @@ func mdCodeList(vals []string) string {
 }
 
 func mdFlagSyntax(f cliFlag) string {
-	label := "--" + f.Name
-	if value := mdFlagValue(f); value != "" {
-		label += " <" + value + ">"
-	}
+	label := mdFlagLabel(f)
 	if !f.Req {
 		label = "[" + label + "]"
 	}
@@ -158,14 +179,19 @@ func mdFlagSyntax(f cliFlag) string {
 }
 
 func mdFlagLabel(f cliFlag) string {
-	label := "--" + f.Name
-	if value := mdFlagValue(f); value != "" {
+	label := strings.Join(cliFlagSpellings(f), "|")
+	if f.Bool && len(f.ClosedSet) > 0 {
+		label += "[=" + strings.Join(f.ClosedSet, "|") + "]"
+	} else if value := mdFlagValue(f); value != "" {
 		label += " <" + value + ">"
 	}
 	return label
 }
 
 func mdFlagValue(f cliFlag) string {
+	if f.Bool {
+		return ""
+	}
 	if f.Value != "" {
 		return f.Value
 	}

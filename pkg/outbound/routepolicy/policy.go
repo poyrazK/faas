@@ -4,7 +4,9 @@ package routepolicy
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -110,12 +112,31 @@ func matchesPrefix(path, prefix string) bool {
 }
 
 func CanonicalPath(path string) bool {
-	if path == "" || path[0] != '/' || len(path) > MaxRequestLength || strings.ContainsAny(path, "%\\;#?") || strings.Contains(path, "//") {
+	if path == "" || path[0] != '/' || len(path) > MaxRequestLength || strings.ContainsAny(path, "\\;#?") || strings.Contains(path, "//") {
 		return false
 	}
 	for _, segment := range strings.Split(path[1:], "/") {
-		if segment == "." || segment == ".." {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil || !utf8.ValidString(decoded) || decoded == "." || decoded == ".." || strings.ContainsAny(decoded, "/\\;#?%") {
 			return false
+		}
+		for i := range len(decoded) {
+			if decoded[i] < 0x20 || decoded[i] == 0x7f {
+				return false
+			}
+		}
+		for i := 0; i < len(segment); i++ {
+			if segment[i] == '%' {
+				if i+2 >= len(segment) || !upperHex(segment[i+1]) || !upperHex(segment[i+2]) {
+					return false
+				}
+				decodedByte := hexByte(segment[i+1], segment[i+2])
+				if unreservedPathByte(decodedByte) {
+					return false
+				}
+				i += 2
+				continue
+			}
 		}
 	}
 	for i := 0; i < len(path); i++ {
@@ -124,4 +145,22 @@ func CanonicalPath(path string) bool {
 		}
 	}
 	return true
+}
+
+func upperHex(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'A' && value <= 'F'
+}
+
+func hexByte(high, low byte) byte {
+	decode := func(value byte) byte {
+		if value >= '0' && value <= '9' {
+			return value - '0'
+		}
+		return value - 'A' + 10
+	}
+	return decode(high)<<4 | decode(low)
+}
+
+func unreservedPathByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("-._~", rune(value))
 }

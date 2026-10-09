@@ -33,10 +33,62 @@ without per-target metering, provided its source usage response accounts for
 all descendants.
 
 Run the provider qualification with
-`FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
+`FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and
+`FAAS_MANAGED_POSTGRES_QUALIFY_DURABLE=true`, using the fixture below, and save its JSON output in an
 operator-owned path. The output includes a versioned approval envelope and the
 exact `approval_env` values for the staging gate. Verify the saved artifact
 before applying those values:
+
+A newly created provider project may have no usage in the previous completed
+hour. To continue independent credential, compute, restore and deletion tests,
+set `FAAS_MANAGED_POSTGRES_QUALIFY_CONTINUE_AFTER_USAGE_FAILURE=true` for that
+isolated run. The usage failure remains in the report, the command exits
+non-zero, and it emits no approval or provisioning gate values. This option
+does not relax any other prerequisite. A complete settled usage window is
+still required for qualification and rollout. Cleanup failures are reported
+alongside the original failure so operators can recover every leaked resource.
+
+The Neon restore fixture chooses a whole-second database clock boundary after
+the first committed marker and waits for that boundary before writing the
+second marker. It never rounds a customer restore request. Incomplete branch
+creation acknowledgements are resolved by bounded reads of the acknowledged
+branch identity, with exact source and timestamp validation before adoption
+or cleanup. Fractional timestamps that Neon cannot report exactly remain
+unqualified; timestamp tolerance is not a lineage proof.
+
+Live PostgreSQL 18 tests on 2026-10-06 observed a whole-second restore
+request whose ready branch reported the earlier WAL commit's timestamp.
+ADR-677 adds independent historical-source WAL verification for that case;
+[the recovery evidence](ops/evidence/20261007-managed-postgres-recovery/REPORT.md)
+records normal, restarted, and lost-response recovery. Waiting for metadata or
+rounding the test point still cannot establish a timestamp-to-LSN mapping.
+Snapshot creation acknowledgements can omit both timestamp and expiry; read
+the accepted snapshot until its complete metadata is available before adopting
+it or changing retention. Missing or conflicting final metadata remains a
+blocker. These diagnostics do not authorize enabling the production service.
+
+Snapshot capture replay and lost-response discovery use the same bounded reads
+as fresh creation. Missing metadata can settle; a reported conflicting owner,
+source or capture point stops recovery even when other fields are missing.
+Private snapshot restore also hydrates only the original target branch, including
+temporary absence after acknowledgement. It independently reads readiness and
+never finalizes the preview or substitutes a matching display name for a known
+target identity. An unavailable observation remains retryable; it is not proof
+that the provider-side resource was never created.
+
+Restore discovery, replay and cleanup read all bounded branch pages before
+creating a target or declaring it absent. Discovery pins creation-time ordering
+and rejects missing lists, overlapping identities, duplicate owner names and
+cursor cycles. An incomplete provider listing cannot authorize another create
+or report cleanup complete.
+Live local Neon tests on 2026-10-07 observed `sort_order: "ASC"` in responses
+to the lowercase `asc` query. Inventory validation accepts ascending ordering
+regardless of casing; descending ordering on any page still stops discovery,
+replay and cleanup before mutation.
+Lifecycle inspection, read-only health observation and default-source selection
+use the same complete branch inventory, so a later-page branch is not reported
+missing. A missing or null branch list is unknown; an explicit empty list can
+establish absence after pagination completes.
 
 ```sh
 FAAS_ENVIRONMENT=staging \
@@ -49,12 +101,18 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 3
+passes; rerun qualification instead of extending it by hand. Version 8
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
+When read-only access is advertised, approval also requires actual existing and
+future table/sequence reads, denied mutations/DDL/administration and RLS bypass,
+stable recovered passwords, rotation preserving data, and revoked old sessions
+and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
-target readiness, earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1 and 2 cannot authorize this release.
+exact source and point lineage on creation and readiness, and same-target
+restore replay. Earlier committed data, rejection of source credentials on
+the target, and completed deletion. Version 8 also requires durable SQL restart
+and encrypted credential delivery evidence. Versions 1–7 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -62,9 +120,77 @@ the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
 valid. Those variables are a fallback only when no approval path is set and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3` matches the current contract.
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8` matches the current contract.
 Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
+
+## Durable lifecycle fixture
+
+Use a fresh run UUID and a private, disposable PostgreSQL catalog. Apply the
+normal Gregale migrations and seed one test account and app using the existing
+test-fixture or staging API tooling. The app must belong to the supplied
+account. The qualifier neither runs migrations nor creates these intent rows.
+Do not point it at a customer or production catalog.
+
+Before running, mark **only this disposable database**, using its database
+owner/admin connection. Substitute the actual database identifier and run UUID:
+
+```sql
+ALTER DATABASE qualification_catalog
+  SET faas.qualification_run TO '11111111-1111-4111-8111-111111111111';
+```
+
+The qualifier reads the stored database-level setting directly; `SET`,
+`set_config`, connection options and `PGOPTIONS` cannot bypass this guard.
+Each reconstructed pool must still see the same marker and catalog identity.
+Use a fresh UUID and catalog for each run; deleted lifecycle tombstones remain
+for audit. Provisioning stays disabled in the configured deployment.
+
+Create a disposable X25519 age identity and at least 32 bytes of random HMAC
+key material in private regular files (0400 or 0600, no symlinks). Use the same
+files throughout this run. Pass the private catalog connection URL through the
+environment without putting it in reports or shell history. Add these inputs
+to the existing staging/live provider qualification environment:
+
+```sh
+export FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true
+export FAAS_MANAGED_POSTGRES_QUALIFY_DURABLE=true
+export FAAS_MANAGED_POSTGRES_QUALIFY_RUN_ID=11111111-1111-4111-8111-111111111111
+export FAAS_MANAGED_POSTGRES_QUALIFY_ACCOUNT_ID=22222222-2222-4222-8222-222222222222
+export FAAS_MANAGED_POSTGRES_QUALIFY_APP_ID=33333333-3333-4333-8333-333333333333
+export FAAS_MANAGED_POSTGRES_QUALIFY_AGE_IDENTITY_FILE=/private/qualification/identity.age
+export FAAS_MANAGED_POSTGRES_QUALIFY_HMAC_KEY_FILE=/private/qualification/hmac.key
+# FAAS_MANAGED_POSTGRES_QUALIFY_CATALOG_URL is supplied privately.
+go run ./cmd/managed-postgres-qualify > /private/qualification/report.json
+```
+
+Catalog/key/ownership preflight happens before provider mutation. After the
+provider probes pass, the durable stage uses the configured adapter with real
+SQL and app-secret stores. It deliberately loses successful acknowledgements,
+reconstructs the services, verifies credentials and SQL data through rotation,
+then deletes bindings and the provider project with provisioning closed.
+The fault disconnects the catalog before the saga can persist its error; each
+restart waits for the unfinished lease to expire. Allow at least 20 minutes for
+the durable stage (four default two-minute leases plus provider operations).
+An independently reconstructed final session verifies tombstones and absence
+of encrypted secrets. Failed cleanup blocks approval; recover retained resources
+before dropping the catalog. Keep the sanitized report, then remove the
+disposable catalog and private age/HMAC files. Revoke temporary provider keys
+after checking the provider inventory for leaked resources.
+
+Local acceptance uses:
+
+```sh
+FAAS_PGTEST_TEMPLATE_DATABASE=1 go test ./pkg/managedpostgres ./pkg/managedpostgres/credentialdelivery ./cmd/managed-postgres-qualify ./cmd/apid
+```
+
+Supply `DATABASE_URL` privately to an isolated PostgreSQL cluster with CREATEDB
+and role administration for the test-only customer role fixture. The cluster
+must enable TLS and password authentication for fixture roles. Without a
+database URL, SQL integration tests skip and do not establish acceptance.
+These tests simulate provider management; fresh live Neon v8 qualification is
+still required. Guest injection, native egress, deployment and retirement of
+old credentials require a disposable app canary on a supported native KVM host.
 
 ## Staging canary rollout
 
@@ -99,6 +225,15 @@ records that aggregate once against the source and skips restore descendants,
 marking them `included_in_source`; this supports aggregate COGS guardrails but
 does not provide per-database restore cost attribution. Do not enable guarded
 restores for a provider whose qualification reports neither accounting mode.
+
+Neon may publish a parent WAL position while its timestamp is absent or refers
+to an earlier rounded commit. ADR-677 requires a matching independently routed
+historical source position before publishing the requested restore point.
+Gregale pins the source branch and endpoint, uses verified TLS, rejects writable
+or current-primary connections, and rechecks the exact target after reading the
+position. A missing mapping keeps recovery unavailable; it cannot be replaced
+with the request timestamp. Creation custody still permits safe compensation
+when verification fails. Worker restarts repeat verification before readiness.
 
 ## Account deletion
 
@@ -150,12 +285,40 @@ Recorded usage remains in account monthly totals after database deletion.
 If provider history is outside its retention period, investigate and reconcile
 that gap before enabling further reservations.
 
+For `legacy_identity_unknown` diagnostics on deleted rows, retain and verify
+resource ownership, the exact backend fingerprint, branch lineage, and actual
+provider shutdown evidence. Preview with `gregale postgres reconcile ACCOUNT_ID
+--file retained-shutdown.json --json`, review the boundary, then apply with its
+`expected_revision` and a recently stepped-up operator session file. See the
+[input format and evidence requirements](managed-postgres.md). Missing lookup
+results and old logical deletion timestamps are insufficient.
+
+The repair preserves the old catalog and coverage in an immutable receipt,
+retains all monetary ledger rows, and resets derived coverage atomically. Run
+normal collection or the retained-usage import against the accounting root,
+then inspect account diagnostics again. Attaching an identity alone does not
+settle missing windows, final corrections, budget headroom, or provider invoices.
+
 ## Credential privilege adoption
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 3 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 8 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
+
+Version 7 replaces prior approvals, including version 6. The
+[2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
+passed the core provider and lifecycle contract for PostgreSQL 18. Snapshot
+capture and native copy remain unqualified. Keep production provisioning closed;
+review the exact artifact and staging canary before changing rollout gates. Inspect
+`gregale postgres capabilities --json` before adoption: `read_only` is configured
+support, while `provisioning_enabled` reflects the current rollout gate.
+After qualification, attach a distinct `READ_DATABASE_URL` binding with
+`--access read_only`. Reader permissions are enforced on primary pooled/direct
+connections; no replica endpoint is required. Review PUBLIC, column, function
+and future-object grants; later privileged migrations remain responsible for
+preserving the reader boundary. Native SQL regressions cover inherited reader
+login retirement during restore, but do not replace live branch qualification.
 
 Rotate existing preview administrator bindings deliberately. The new runtime
 login receives public-schema data access, while migrations use a separate direct
@@ -203,5 +366,82 @@ to that parent. With a disposable local `DATABASE_URL`, run
 `go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
 This exercises the actual migration scripts against restricted SQL roles,
 concurrent release locking, runtime data access, and retained schema after
-migration-login retirement. Keep the existing live version-3 Neon qualification
+migration-login retirement. Keep the existing live version-5 Neon qualification
 and rollout gates; local PostgreSQL evidence does not replace them.
+
+## Compute resize recovery (ADR-623)
+
+Use a fresh version 8 qualification approval before allowing new Neon intents.
+The qualification changes the disposable primary's class and restores it,
+checking data, existing logins and read-only permissions after both changes.
+Existing pending resizes remain reconciled when provisioning is disabled.
+
+Inspect the request using `gregale postgres resize-status DATABASE REQUEST_UUID`.
+A provider timeout leaves the database `updating`; preserve the operation and
+its pinned IDs. Recovery reads provider configuration before considering a
+mutation. A changed dataset, default branch, unexpected configuration, missing
+backend or expired worker lease prevents completion. Repair the provider/config
+cause and allow reconciliation; do not delete the intent or edit generations to
+force readiness. There is no customer cancellation or rollback endpoint yet.
+Monitor the `updating` database reconciliation metrics and pending request's
+`last_error_code`. Provider changes can interrupt connections.
+
+
+## Existing database idle policy changes (ADR-624)
+
+Apply the additive compute-policy migration and deploy the matching apid and
+reconciler binaries before enabling this capability. Keep provisioning closed
+until fresh qualification v7 proves both idle policy directions, actual
+suspend/wake, preserved data and credentials, stable replay and restoration.
+Earlier approval artifacts cannot authorize this contract. Qualification now
+defaults to twenty minutes; an explicit timeout must leave room for two real
+five-minute idle periods as well as provisioning and credential checks.
+
+Check `gregale postgres capabilities --json` for `scale_to_zero_update` and
+`always_on`. The former declares update support; disabling suspension also
+requires the plan's always-on entitlement. The selected database's pinned
+backend must support updates, even if the regional default does.
+
+```sh
+gregale postgres compute-policy orders --scale-to-zero false --request-id UUID
+gregale postgres compute-policy-status orders UUID
+```
+
+Use `true` to re-enable idle suspension. Both the boolean and UUID are required.
+Reuse the same UUID after a timeout; do not substitute a new request. The API
+returns current persisted progress, including explicit false target values.
+Class resizing and policy changes cannot run concurrently. Policy changes do
+not change compute limits, storage, retention, credentials or data identity.
+Neon's enabled idle period remains five minutes in this increment.
+
+An uncertain provider result retains its pending intent and confirmed prior
+specification. Reconciliation continues after admission closes. Diagnose safe
+`last_error_code` values and provider configuration; preserve the journal and
+generations. Existing connections may disconnect and reconnect using their
+existing credentials. Rollback of the additive migration is blocked once any
+policy history exists so completed receipts cannot silently disappear.
+
+## Failed creation custody and compensation
+
+Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying
+creation-custody recovery (ADR-638). The private creation journal is separate
+from verified restore proofs and retained snapshot receipts. Its requested point
+is an intent fence; it is never evidence of restored contents or retention.
+
+A successful Neon creation response with complete ownership metadata is recorded
+before correctness polling. After a verification failure or worker takeover,
+recovery observes that exact physical ID. Compensation independently rechecks
+its source, operation owner, resource type and creation time, then confirms
+physical absence after deletion. A durable cleanup checkpoint records prior
+independent visibility; early absence of a creation that has never been observed
+cannot finish compensation. Missing capture timestamp or expiry can still
+block readiness while an independently owned failed resource is cleaned up.
+Snapshot compensation does not invent a retained receipt, and database cleanup
+preserves the physical accounting identity and outstanding usage holds.
+
+Do not remove source projects to compensate failed customer resources. Resources
+without an acknowledged ownership receipt retain conservative full-proof
+recovery. Missing inventory entries do not establish that an uncertain creation
+never happened. Keep provisioning disabled: PITR timestamp/LSN mapping, snapshot
+capture and retention evidence, restored login/data isolation, and completed
+settled usage qualification remain open.

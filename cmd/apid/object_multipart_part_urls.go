@@ -22,7 +22,7 @@ func (s *server) issueObjectMultipartPartURL(r *http.Request, b state.ObjectBuck
 	if sign.ExpiresIn < 1 {
 		return objectstorage.SignedRequest{}, state.ErrConflict
 	}
-	c, _, secret, err := s.prepareObjectURLCredential(r, b, sign, state.ObjectBucketPermissionWrite)
+	c, _, secret, err := s.prepareObjectURLCredentialWithLimit(r, b, sign, state.ObjectBucketPermissionWrite, s.objectStorage.MaxPartBytes)
 	if err != nil {
 		return objectstorage.SignedRequest{}, err
 	}

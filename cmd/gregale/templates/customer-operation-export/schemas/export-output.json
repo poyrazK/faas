@@ -1,0 +1,1 @@
+{"type":"object","required":["artifact_id","rows"],"properties":{"artifact_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},"rows":{"type":"integer","minimum":1,"maximum":1000}},"additionalProperties":false}

@@ -103,6 +103,21 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
+	"event_execution_dead_letters",
+	"event_execution_dead_letter_rate_per_second",
+	"event_handler_failure_pct",
+	"event_completion_latency_p95_seconds",
+
+	"event_recovery_stalled_jobs",
+	"event_recovery_expiring_jobs",
+	"event_recovery_capacity_wait_jobs",
+	"event_pending_recipients",
+	"event_oldest_pending_seconds",
+	"event_retry_rate_per_second",
+	"event_terminal_failure_pct",
+	"event_routing_latency_p95_seconds",
+	"event_paused_seconds",
+	"event_drain_rate_per_second",
 	"error_rate_pct",
 	"latency_p50_ms",
 	"latency_p95_ms",
@@ -118,6 +133,12 @@ var AllowedAlertRuleMetrics = []string{
 	"queue_depth",
 	"pre_auth_target_threshold",
 	"pre_auth_target_signal_gap_pct",
+	"workflow_failures",
+	"workflow_schedule_quota_skips",
+	"workflow_pending_age_seconds",
+	"workflow_waiting_age_seconds",
+	"workflow_due_age_seconds",
+
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
@@ -174,7 +195,9 @@ func AllowedAlertRuleAction(v string) bool {
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" {
+	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
+		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
+		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true
@@ -184,17 +207,19 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 // AppID is the URL slug, not the body — same shape as the per-app
 // custom-domain and metric routes.
 type CreateAlertRuleRequest struct {
-	Name            string  `json:"name"`
-	Enabled         *bool   `json:"enabled,omitempty"`
-	Metric          string  `json:"metric"`
-	Comparison      string  `json:"comparison"`
-	Threshold       float64 `json:"threshold"`
-	WindowSpec      string  `json:"window_spec"`
-	FailureSource   string  `json:"failure_source,omitempty"`
-	Action          *string `json:"action,omitempty"`
-	WebhookURL      string  `json:"webhook_url"`
-	WebhookSecret   string  `json:"webhook_secret"`
-	CooldownMinutes *int    `json:"cooldown_minutes,omitempty"`
+	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
+	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
+	Name                            string  `json:"name"`
+	Enabled                         *bool   `json:"enabled,omitempty"`
+	Metric                          string  `json:"metric"`
+	Comparison                      string  `json:"comparison"`
+	Threshold                       float64 `json:"threshold"`
+	WindowSpec                      string  `json:"window_spec"`
+	FailureSource                   string  `json:"failure_source,omitempty"`
+	Action                          *string `json:"action,omitempty"`
+	WebhookURL                      string  `json:"webhook_url"`
+	WebhookSecret                   string  `json:"webhook_secret"`
+	CooldownMinutes                 *int    `json:"cooldown_minutes,omitempty"`
 }
 
 // UpdateAlertRuleRequest is the PATCH body. Every editable field is
@@ -209,16 +234,17 @@ type CreateAlertRuleRequest struct {
 // handler rejects metric-family swaps with 400
 // ErrAlertRuleInvalid("metric family cannot change; delete and recreate").
 type UpdateAlertRuleRequest struct {
-	Name            *string  `json:"name,omitempty"`
-	Enabled         *bool    `json:"enabled,omitempty"`
-	Metric          *string  `json:"metric,omitempty"`
-	Comparison      *string  `json:"comparison,omitempty"`
-	Threshold       *float64 `json:"threshold,omitempty"`
-	WindowSpec      *string  `json:"window_spec,omitempty"`
-	Action          *string  `json:"action,omitempty"`
-	WebhookURL      *string  `json:"webhook_url,omitempty"`
-	WebhookSecret   *string  `json:"webhook_secret,omitempty"`
-	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
+	PostDeployRollbackWindowSeconds *int     `json:"post_deploy_rollback_window_seconds,omitempty"`
+	Name                            *string  `json:"name,omitempty"`
+	Enabled                         *bool    `json:"enabled,omitempty"`
+	Metric                          *string  `json:"metric,omitempty"`
+	Comparison                      *string  `json:"comparison,omitempty"`
+	Threshold                       *float64 `json:"threshold,omitempty"`
+	WindowSpec                      *string  `json:"window_spec,omitempty"`
+	Action                          *string  `json:"action,omitempty"`
+	WebhookURL                      *string  `json:"webhook_url,omitempty"`
+	WebhookSecret                   *string  `json:"webhook_secret,omitempty"`
+	CooldownMinutes                 *int     `json:"cooldown_minutes,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -239,24 +265,26 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
-	ID                        string  `json:"id"`
-	AppID                     string  `json:"app_id"`
-	Name                      string  `json:"name"`
-	Enabled                   bool    `json:"enabled"`
-	Metric                    string  `json:"metric"`
-	Comparison                string  `json:"comparison"`
-	Threshold                 float64 `json:"threshold"`
-	WindowSpec                string  `json:"window_spec"`
-	FailureSource             string  `json:"failure_source,omitempty"`
-	Action                    string  `json:"action"`
-	WebhookURL                string  `json:"webhook_url"`
-	WebhookSecretSealedMasked string  `json:"webhook_secret_sealed_masked"`
-	CooldownMinutes           int     `json:"cooldown_minutes"`
-	State                     string  `json:"state"`
-	LastFiredAt               string  `json:"last_fired_at,omitempty"`
-	LastEvaluatedAt           string  `json:"last_evaluated_at,omitempty"`
-	CreatedAt                 string  `json:"created_at"`
-	UpdatedAt                 string  `json:"updated_at"`
+	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
+	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
+	ID                              string  `json:"id"`
+	AppID                           string  `json:"app_id"`
+	Name                            string  `json:"name"`
+	Enabled                         bool    `json:"enabled"`
+	Metric                          string  `json:"metric"`
+	Comparison                      string  `json:"comparison"`
+	Threshold                       float64 `json:"threshold"`
+	WindowSpec                      string  `json:"window_spec"`
+	FailureSource                   string  `json:"failure_source,omitempty"`
+	Action                          string  `json:"action"`
+	WebhookURL                      string  `json:"webhook_url"`
+	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
+	CooldownMinutes                 int     `json:"cooldown_minutes"`
+	State                           string  `json:"state"`
+	LastFiredAt                     string  `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt                 string  `json:"last_evaluated_at,omitempty"`
+	CreatedAt                       string  `json:"created_at"`
+	UpdatedAt                       string  `json:"updated_at"`
 }
 
 // AlertRuleRow is the closed-set-typed counterpart of AlertRuleResponse,
@@ -266,23 +294,25 @@ type AlertRuleResponse struct {
 // handler test can pin the mapping without dragging pkg/state into
 // pkg/api_test.
 type AlertRuleRow struct {
-	ID              string
-	AppID           string
-	Name            string
-	Enabled         bool
-	Metric          string
-	Comparison      string
-	Threshold       float64
-	WindowSpec      string
-	FailureSource   string
-	Action          string
-	WebhookURL      string
-	CooldownMinutes int
-	State           string
-	LastFiredAt     time.Time
-	LastEvaluatedAt time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	EventSubscriptionID             string
+	PostDeployRollbackWindowSeconds int
+	ID                              string
+	AppID                           string
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   string
+	Action                          string
+	WebhookURL                      string
+	CooldownMinutes                 int
+	State                           string
+	LastFiredAt                     time.Time
+	LastEvaluatedAt                 time.Time
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
 // AlertRuleResponseFromRow maps a wire-shaped row (closed sets as
@@ -296,24 +326,26 @@ type AlertRuleRow struct {
 // at the seam so neither side imports the other (precedent: PR #327).
 func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 	return AlertRuleResponse{
-		ID:                        r.ID,
-		AppID:                     r.AppID,
-		Name:                      r.Name,
-		Enabled:                   r.Enabled,
-		Metric:                    r.Metric,
-		Comparison:                r.Comparison,
-		Threshold:                 r.Threshold,
-		WindowSpec:                r.WindowSpec,
-		FailureSource:             r.FailureSource,
-		Action:                    r.Action,
-		WebhookURL:                r.WebhookURL,
-		WebhookSecretSealedMasked: AlertRuleWebhookSecretMasked,
-		CooldownMinutes:           r.CooldownMinutes,
-		State:                     r.State,
-		LastFiredAt:               FormatAlertTime(r.LastFiredAt),
-		LastEvaluatedAt:           FormatAlertTime(r.LastEvaluatedAt),
-		CreatedAt:                 FormatAlertTime(r.CreatedAt),
-		UpdatedAt:                 FormatAlertTime(r.UpdatedAt),
+		EventSubscriptionID:             r.EventSubscriptionID,
+		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
+		ID:                              r.ID,
+		AppID:                           r.AppID,
+		Name:                            r.Name,
+		Enabled:                         r.Enabled,
+		Metric:                          r.Metric,
+		Comparison:                      r.Comparison,
+		Threshold:                       r.Threshold,
+		WindowSpec:                      r.WindowSpec,
+		FailureSource:                   r.FailureSource,
+		Action:                          r.Action,
+		WebhookURL:                      r.WebhookURL,
+		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
+		CooldownMinutes:                 r.CooldownMinutes,
+		State:                           r.State,
+		LastFiredAt:                     FormatAlertTime(r.LastFiredAt),
+		LastEvaluatedAt:                 FormatAlertTime(r.LastEvaluatedAt),
+		CreatedAt:                       FormatAlertTime(r.CreatedAt),
+		UpdatedAt:                       FormatAlertTime(r.UpdatedAt),
 	}
 }
 
@@ -386,4 +418,15 @@ func AllowedAlertRuleState(v string) bool { return containsString(AllowedAlertRu
 func TrimNonEmpty(s string) (string, bool) {
 	t := strings.TrimSpace(s)
 	return t, t != ""
+}
+
+func IsEventConsumerAlertMetric(metric string) bool {
+	if IsEventConsumerExecutionAlertMetric(metric) {
+		return true
+	}
+	switch metric {
+	case "event_pending_recipients", "event_oldest_pending_seconds", "event_retry_rate_per_second", "event_terminal_failure_pct", "event_routing_latency_p95_seconds", "event_paused_seconds", "event_drain_rate_per_second":
+		return true
+	}
+	return false
 }

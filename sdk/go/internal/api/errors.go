@@ -448,6 +448,10 @@ const MaxSecretKeyLen = 128
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeProfileGateBlocked:
+		return http.StatusConflict
+	case CodeProfileInvestigationLimit:
+		return http.StatusTooManyRequests
 	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue:
 		return http.StatusForbidden
 	case CodePlanPlatformTenantRequiredNotAllowed:
@@ -471,7 +475,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
@@ -923,3 +927,8 @@ func ErrInvalidRegistryHost(detail error) *Problem {
 }
 
 const CodeRouteHealthBlocked = "route_health_blocked"
+
+// CodeProfileInvestigationLimit is the per-app saved metadata quota.
+const CodeProfileInvestigationLimit = "profile_investigation_limit"
+
+const CodeProfileGateBlocked = "profile_gate_blocked"

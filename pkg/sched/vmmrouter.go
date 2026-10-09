@@ -691,6 +691,20 @@ func (r *VMMRouter) ResumeWarmInstance(ctx context.Context, nodeID, instance str
 	return resumer.ResumeWarmInstance(ctx, instance)
 }
 
+func (r *VMMRouter) ResumeWarmInstanceWithImageHealthcheck(ctx context.Context, nodeID, instance string) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	resumer, ok := cli.(interface {
+		ResumeWarmInstanceWithImageHealthcheck(context.Context, string) error
+	})
+	if !ok {
+		return errors.New("sched: warm resume cannot enforce image healthcheck")
+	}
+	return resumer.ResumeWarmInstanceWithImageHealthcheck(ctx, instance)
+}
+
 // Destroy implements RoutedVMM.
 func (r *VMMRouter) Destroy(ctx context.Context, nodeID, instance string) error {
 	cli, err := r.resolveFor(ctx, nodeID)

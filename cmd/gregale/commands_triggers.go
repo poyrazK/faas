@@ -230,7 +230,9 @@ func cmdTriggersCreate(args []string) int {
 		return triggerUsageError(usage, "--app and --kind are required")
 	}
 	if !triggerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerKindsUsage)
+		// cron is a valid trigger kind but not one `triggers create` makes,
+		// so list only the kinds this command accepts.
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
 		return triggerUsageError(usage, "kind=cron is managed by `gregale crons add`; POST /v1/triggers rejects cron rows")
@@ -376,12 +378,16 @@ func cmdTriggersDelete(args []string) int {
 	usage := "usage: gregale triggers delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	pos := fs.Args()
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	if !*quiet {
 		_, _ = fmt.Fprintf(osStderr, "About to delete trigger %s.\n", pos[0])
@@ -587,7 +593,7 @@ func triggerEnabledValue(explicit map[string]bool, enabled, disabled bool) *bool
 }
 
 func triggerJSONFlag(value string) (json.RawMessage, error) {
-	raw, err := resolvePayload(value)
+	raw, err := resolveJSONFlag("--config", value)
 	if err != nil {
 		return nil, err
 	}

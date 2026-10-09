@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -228,11 +230,14 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		policy = api.ServiceBindingPolicyDeclared
 	}
 	return api.PlanWorkload{
-		Name:       w.Name,
-		RootDir:    w.RootDir,
-		Dockerfile: w.Dockerfile,
-		Command:    w.Command,
-		DependsOn:  w.DependsOn,
+		Name:                w.Name,
+		RootDir:             w.RootDir,
+		Dockerfile:          w.Dockerfile,
+		Image:               w.Image,
+		ImageHealthcheck:    w.ImageHealthcheck.Clone(),
+		Command:             w.Command,
+		DependsOn:           w.DependsOn,
+		DependsOnConditions: maps.Clone(w.DependsOnConditions),
 
 		ServiceBindingPolicy:      policy,
 		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
@@ -918,8 +923,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		touched = orderAppsByWorkload(touched, order)
 	}
 	out := make([]appliedBuild, 0, len(touched))
+	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
+			res.Error = blocker
+			out = append(out, res)
+			continue
+		}
 		// Project apply admits builds through consumeAccountDeployRate
 		// directly, so it skipped the account gate admitAccountDeploy
 		// applies to every other deploy path (spec §4.7: past_due and
@@ -969,19 +980,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
+		manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
+		if manifestProblem != nil {
+			_ = os.Remove(staged)
+			res.Error = "operation or release declaration invalid"
+			s.log.Warn("apid: apply manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", logsanitize.Field(manifestProblem.Detail))
+			out = append(out, res)
+			continue
+		}
+		operationDefinitions := sourceOperationSpecs(manifest)
 		// A single-workload project has no ownership ambiguity, so it may
 		// also use the explicit gregale.yaml release.command declaration.
 		// Multi-workload Procfiles are already assigned exactly once by
 		// reposcan (web first, otherwise deterministic process order).
 		if len(workloads) == 1 {
-			manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
-			if manifestProblem != nil {
-				_ = os.Remove(staged)
-				res.Error = "release declaration invalid (server logs carry the detail)"
-				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
-				out = append(out, res)
-				continue
-			}
 			var releaseProblem *api.Problem
 			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, app, manifest)
 			if releaseProblem != nil {
@@ -998,16 +1010,23 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// the prior row. Source="tarball" keeps the build_queued
 		// payload's kind field aligned with the deployment's kind.
 		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
-			AppID:           app.ID,
-			Kind:            kind,
-			SourcePath:      staged,
-			SourceBytes:     bytes,
-			SourceRoot:      app.RootDir,
-			Scope:           environment,
-			DockerfilePath:  app.Manifest.BuildDockerfile,
-			FunctionRuntime: functionRuntimeForApp(app),
-			LogSpool:        spoolRoot(),
-			Log:             s.log,
+			OperationDefinitions:      operationDefinitions,
+			OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, environment, operationDefinitions),
+			AppID:                     app.ID,
+			Kind:                      kind,
+			ImageRef:                  app.Manifest.ProjectImage,
+			ImagePort:                 app.Manifest.ProjectImagePort,
+			ImageCommand:              app.Manifest.ProjectImageCommand,
+			ImageHealthcheck:          app.Manifest.ProjectImageHealthcheck,
+			FullRootfsAllowAuto:       api.FullRootfsAllowAutoDefault[acct.Plan],
+			SourcePath:                staged,
+			SourceBytes:               bytes,
+			SourceRoot:                app.RootDir,
+			Scope:                     environment,
+			DockerfilePath:            app.Manifest.BuildDockerfile,
+			FunctionRuntime:           functionRuntimeForApp(app),
+			LogSpool:                  spoolRoot(),
+			Log:                       s.log,
 			// MEDIUM review #2 (PR #992): stamp the four
 			// actor columns on every scan-and-apply
 			// deployment. Without these, every
@@ -1026,6 +1045,9 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
+		if app.Manifest.ProjectImage != "" {
+			_ = os.Remove(staged)
+		}
 		if enqErr != nil {
 			// Same wire/server split as the stage branch
 			// above: surface a generic message to the
@@ -1038,6 +1060,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		res.DeploymentID = enqRes.DeploymentID
+		accepted[strings.ToLower(app.WorkloadName)] = true
 		res.BuildID = enqRes.BuildID
 		// Enqueue is the acceptance boundary for the source. Checkpoint the
 		// per-workload digest only after the deployment and build rows exist;
@@ -1642,6 +1665,7 @@ func (s *server) scanService(
 	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preCronGate)
 	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, cronGate)
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -1649,6 +1673,7 @@ func (s *server) scanService(
 		// operator deliberately reduced to zero with --exclude is an
 		// applicable no-op; the skipped partition records that intent.
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID)
+		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
 	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false

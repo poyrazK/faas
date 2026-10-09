@@ -45,6 +45,9 @@ func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUpload
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if bucket, exists := m.objectBuckets[route.BucketID]; exists && !m.cloneBucketAccessibleLocked(bucket) {
+		return ObjectUploadRoute{}, ErrNotFound
+	}
 	if !route.Encryption.Empty() {
 		b := m.objectBuckets[route.BucketID]
 		if b.AccountID != route.AccountID || b.AppID != route.AppID || b.State != "ready" {
@@ -94,6 +97,9 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.objectWriteFences[completion.BucketID]; held {
+		return ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+	}
 	if (!m.objectUploadRoutes[completion.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(completion.BucketID)) && completion.Status != "rejected" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
@@ -113,6 +119,9 @@ func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUplo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.objectWriteFences[intent.BucketID]; held {
+		return ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+	}
 	if !m.objectUploadRoutes[intent.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(intent.BucketID) {
 		return ObjectUploadCompletion{}, ErrConflict
 	}

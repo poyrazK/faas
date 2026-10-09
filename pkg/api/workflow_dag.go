@@ -15,55 +15,70 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	WorkflowRetryMaxAttempts          = 25
+	WorkflowMaxConcurrentRunsLimit    = 200
+	WorkflowMaxConcurrentActionsLimit = 200
+)
+
 var (
-	ErrWorkflowEmptySteps              = errors.New("workflow: must have at least one step")
-	ErrWorkflowNameRequired            = errors.New("workflow: name cannot be empty")
-	ErrWorkflowPlanNotAllowed          = errors.New("workflow: plan does not allow workflows")
-	ErrWorkflowInvalidTrigger          = errors.New("workflow: invalid manual, schedule, or event trigger")
-	ErrWorkflowDuplicateStep           = errors.New("workflow: duplicate step name")
-	ErrWorkflowInvalidStepTarget       = errors.New("workflow: step must specify exactly one of run, path, outbound, wait_for_event, wait_for_callback, wait_for_duration, wait_for_condition, join, or for_each")
-	ErrWorkflowInvalidPath             = errors.New("workflow: step path must start with '/'")
-	ErrWorkflowInvalidMethod           = errors.New("workflow: step method is not supported")
-	ErrWorkflowInvalidRun              = errors.New("workflow: step run cannot be empty")
-	ErrWorkflowInvalidInput            = errors.New("workflow: step input must be valid JSON")
-	ErrWorkflowUnknownDependency       = errors.New("workflow: step depends on unknown step")
-	ErrWorkflowDuplicateDependency     = errors.New("workflow: step has a duplicate dependency")
-	ErrWorkflowSelfDependency          = errors.New("workflow: step cannot depend on itself")
-	ErrWorkflowDAGCycle                = errors.New("workflow: circular dependency detected in steps")
-	ErrWorkflowTimeoutInvalid          = errors.New("workflow: step timeout cannot be negative")
-	ErrWorkflowTimeoutExceeded         = errors.New("workflow: step timeout exceeds plan limit")
-	ErrWorkflowWaitTimeoutInvalid      = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
-	ErrWorkflowConditionTimeoutInvalid = errors.New("workflow: condition wait timeout must be between 1s and 7d")
-	ErrWorkflowWaitDurationInvalid     = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
-	ErrWorkflowWaitOptionsInvalid      = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, on_failure, or retry")
-	ErrWorkflowCallbackOptionsInvalid  = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
-	ErrWorkflowConditionInvalid        = errors.New("workflow: wait_for_condition needs a valid checker, interval, and 1-1000 attempts")
-	ErrWorkflowConditionOptionsInvalid = errors.New("workflow: wait_for_condition cannot have input, method, or retry")
-	ErrWorkflowReservedEventName       = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
-	ErrWorkflowRetryInvalid            = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
-	ErrWorkflowUnknownOnTimeout        = errors.New("workflow: on_timeout references unknown step")
-	ErrWorkflowUnknownOnFailure        = errors.New("workflow: on_failure references unknown step")
-	ErrWorkflowInvalidOnFailure        = errors.New("workflow: on_failure must target a distinct handler step and may only be used on handler steps")
-	ErrWorkflowDuplicateFailureTarget  = errors.New("workflow: a failure handler can only handle one source step")
-	ErrWorkflowFailureHandlerDependent = errors.New("workflow: an on_failure handler cannot have dependent steps")
-	ErrWorkflowInvalidFailureContext   = errors.New("workflow: failure context is only available in an on_failure handler")
-	ErrWorkflowInputTemplateInvalid    = errors.New("workflow: invalid step input template")
-	ErrWorkflowInputOutputDependency   = errors.New("workflow: step output references must name a direct dependency")
+	ErrWorkflowEmptySteps               = errors.New("workflow: must have at least one step")
+	ErrWorkflowNameRequired             = errors.New("workflow: name cannot be empty")
+	ErrWorkflowPlanNotAllowed           = errors.New("workflow: plan does not allow workflows")
+	ErrWorkflowInvalidTrigger           = errors.New("workflow: invalid manual, schedule, or event trigger")
+	ErrWorkflowDuplicateStep            = errors.New("workflow: duplicate step name")
+	ErrWorkflowInvalidStepTarget        = errors.New("workflow: step must specify exactly one of run, path, outbound, wait_for_event, wait_for_callback, wait_for_duration, wait_for_condition, join, or for_each")
+	ErrWorkflowInvalidPath              = errors.New("workflow: step path must start with '/'")
+	ErrWorkflowInvalidMethod            = errors.New("workflow: step method is not supported")
+	ErrWorkflowInvalidRun               = errors.New("workflow: step run cannot be empty")
+	ErrWorkflowInvalidInput             = errors.New("workflow: step input must be valid JSON")
+	ErrWorkflowUnknownDependency        = errors.New("workflow: step depends on unknown step")
+	ErrWorkflowDuplicateDependency      = errors.New("workflow: step has a duplicate dependency")
+	ErrWorkflowSelfDependency           = errors.New("workflow: step cannot depend on itself")
+	ErrWorkflowDAGCycle                 = errors.New("workflow: circular dependency detected in steps")
+	ErrWorkflowTimeoutInvalid           = errors.New("workflow: step timeout cannot be negative")
+	ErrWorkflowTimeoutExceeded          = errors.New("workflow: step timeout exceeds plan limit")
+	ErrWorkflowWaitTimeoutInvalid       = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
+	ErrWorkflowConditionTimeoutInvalid  = errors.New("workflow: condition wait timeout must be between 1s and 7d")
+	ErrWorkflowWaitDurationInvalid      = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
+	ErrWorkflowWaitOptionsInvalid       = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, on_failure, or retry")
+	ErrWorkflowCallbackOptionsInvalid   = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
+	ErrWorkflowConditionInvalid         = errors.New("workflow: wait_for_condition needs a valid checker, interval, and 1-1000 attempts")
+	ErrWorkflowConditionOptionsInvalid  = errors.New("workflow: wait_for_condition cannot have input, method, or retry")
+	ErrWorkflowReservedEventName        = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
+	ErrWorkflowRetryInvalid             = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
+	ErrWorkflowConcurrencyInvalid       = errors.New("workflow: max_concurrent_runs must be between 1 and 200 when specified")
+	ErrWorkflowActionConcurrencyInvalid = errors.New("workflow: max_concurrent_actions must be between 1 and 200 when specified")
+	ErrWorkflowUnknownOnTimeout         = errors.New("workflow: on_timeout references unknown step")
+	ErrWorkflowUnknownOnFailure         = errors.New("workflow: on_failure references unknown step")
+	ErrWorkflowInvalidOnFailure         = errors.New("workflow: on_failure must target a distinct handler step and may only be used on handler steps")
+	ErrWorkflowDuplicateFailureTarget   = errors.New("workflow: a failure handler can only handle one source step")
+	ErrWorkflowFailureHandlerDependent  = errors.New("workflow: an on_failure handler cannot have dependent steps")
+	ErrWorkflowInvalidFailureContext    = errors.New("workflow: failure context is only available in an on_failure handler")
+	ErrWorkflowInputTemplateInvalid     = errors.New("workflow: invalid step input template")
+	ErrWorkflowInputOutputDependency    = errors.New("workflow: step output references must name a direct dependency")
 )
 
 // WorkflowTriggerSpec describes a manual, scheduled, or event-driven start.
-// Omission remains equivalent to a manual trigger. Scheduled starts skip
-// missed minutes and use the same five-field grammar as application crons.
+// Omission remains equivalent to a manual trigger. Scheduled starts use the
+// same five-field grammar as application crons and skip missed fires by default.
+// TenantConfigurable lets linked platform tenants override only the cadence,
+// timezone, overlap policy, and enabled state of an opted-in schedule.
 type WorkflowTriggerSpec struct {
-	Source    string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
-	EventType string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
-	Filter    json.RawMessage `json:"filter,omitempty" yaml:"filter,omitempty" toml:"filter,omitempty"`
-	Type      string          `json:"type" yaml:"type" toml:"type"`
-	Schedule  string          `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
-	Timezone  string          `json:"timezone,omitempty" yaml:"timezone,omitempty" toml:"timezone,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
-	Overlap   string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
-	Enabled   *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+	Source        string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
+	EventType     string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
+	Filter        json.RawMessage `json:"filter,omitempty" yaml:"filter,omitempty" toml:"filter,omitempty"`
+	Type          string          `json:"type" yaml:"type" toml:"type"`
+	Schedule      string          `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
+	Timezone      string          `json:"timezone,omitempty" yaml:"timezone,omitempty" toml:"timezone,omitempty"`
+	Input         json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
+	Overlap       string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
+	CatchUp       string          `json:"catch_up,omitempty" yaml:"catch_up,omitempty" toml:"catch_up,omitempty"`
+	CatchUpWindow string          `json:"catch_up_window,omitempty" yaml:"catch_up_window,omitempty" toml:"catch_up_window,omitempty"`
+	Enabled       *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+	// TenantConfigurable lets each linked platform tenant manage its own
+	// cadence and enabled state without changing the app owner's definition.
+	TenantConfigurable bool `json:"tenant_configurable,omitempty" yaml:"tenant_configurable,omitempty" toml:"tenant_configurable,omitempty"`
 }
 
 func (t *WorkflowTriggerSpec) UnmarshalJSON(data []byte) error {
@@ -99,6 +114,12 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 	if trigger.Type != "event" && (trigger.Source != "" || trigger.EventType != "" || len(trigger.Filter) != 0) {
 		return fmt.Errorf("%w: event options require an event trigger", ErrWorkflowInvalidTrigger)
 	}
+	if trigger.TenantConfigurable && trigger.Type != "schedule" {
+		return fmt.Errorf("%w: tenant_configurable requires a schedule trigger", ErrWorkflowInvalidTrigger)
+	}
+	if trigger.Type != "schedule" && (trigger.CatchUp != "" || trigger.CatchUpWindow != "") {
+		return fmt.Errorf("%w: catch-up options require a schedule trigger", ErrWorkflowInvalidTrigger)
+	}
 	switch trigger.Type {
 	case "manual":
 		if trigger.Schedule != "" || trigger.Timezone != "" || len(trigger.Input) != 0 || trigger.Overlap != "" || trigger.Enabled != nil {
@@ -121,6 +142,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 			return fmt.Errorf("%w: %w", ErrWorkflowInvalidTrigger, err)
 		}
 	case "schedule":
+		if _, err := trigger.ScheduleCatchUpWindow(); err != nil {
+			return err
+		}
 		if timezone, err := cronexpr.NormalizeTimezone(trigger.Timezone); err != nil || timezone == "Local" {
 			return fmt.Errorf("%w: timezone must identify an IANA zone or UTC", ErrWorkflowInvalidTrigger)
 		}
@@ -141,9 +165,11 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 
 // WorkflowSpec defines the declarative structure of a workflow.
 type WorkflowSpec struct {
-	Name    string               `json:"name" yaml:"name" toml:"name"`
-	Trigger *WorkflowTriggerSpec `json:"trigger,omitempty" yaml:"trigger,omitempty" toml:"trigger,omitempty"`
-	Steps   []WorkflowStepSpec   `json:"steps" yaml:"steps" toml:"steps"`
+	Name                 string               `json:"name" yaml:"name" toml:"name"`
+	Trigger              *WorkflowTriggerSpec `json:"trigger,omitempty" yaml:"trigger,omitempty" toml:"trigger,omitempty"`
+	MaxConcurrentRuns    int                  `json:"max_concurrent_runs,omitempty" yaml:"max_concurrent_runs,omitempty" toml:"max_concurrent_runs,omitempty"`
+	MaxConcurrentActions int                  `json:"max_concurrent_actions,omitempty" yaml:"max_concurrent_actions,omitempty" toml:"max_concurrent_actions,omitempty"`
+	Steps                []WorkflowStepSpec   `json:"steps" yaml:"steps" toml:"steps"`
 }
 
 // WorkflowStepSpec defines an individual step in a workflow DAG. Run and
@@ -153,6 +179,7 @@ type WorkflowSpec struct {
 type WorkflowStepSpec struct {
 	Name             string                 `json:"name" yaml:"name" toml:"name"`
 	Run              string                 `json:"run,omitempty" yaml:"run,omitempty" toml:"run,omitempty"`
+	ManagedOperation bool                   `json:"managed_operation,omitempty" yaml:"managed_operation,omitempty" toml:"managed_operation,omitempty"`
 	Input            json.RawMessage        `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Path             string                 `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
 	ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty" yaml:"for_each,omitempty" toml:"for_each,omitempty"`
@@ -169,6 +196,21 @@ type WorkflowStepSpec struct {
 	OnTimeout        string                 `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
 	OnFailure        string                 `json:"on_failure,omitempty" yaml:"on_failure,omitempty" toml:"on_failure,omitempty"`
 	Retry            *WorkflowRetrySpec     `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
+}
+
+// ManagedWorkflowStepOperationID is stable across handler retries and scoped
+// to one run/step pair. The run UUID and framed tuple are hashed so arbitrary
+// workflow step names cannot collide through delimiter ambiguity.
+func ManagedWorkflowStepOperationID(runID, stepName string) (string, error) {
+	run, err := uuid.Parse(runID)
+	if err != nil || stepName == "" {
+		return "", fmt.Errorf("workflow operation identity requires a run UUID and step name")
+	}
+	framed, err := json.Marshal([2]string{run.String(), stepName})
+	if err != nil {
+		return "", err
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("gregale-workflow-step-operation-v1\n"), framed...)).String(), nil
 }
 
 // WorkflowConditionSpec calls a named checker on a durable schedule. A checker
@@ -254,7 +296,8 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
+		"managed_operation": {},
+		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
 		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
@@ -266,6 +309,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		Name             string                 `json:"name"`
 		Run              string                 `json:"run"`
+		ManagedOperation bool                   `json:"managed_operation"`
 		Input            json.RawMessage        `json:"input"`
 		Path             string                 `json:"path"`
 		ForEach          *WorkflowForEachSpec   `json:"for_each"`
@@ -296,7 +340,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*s = WorkflowStepSpec{
-		Name: w.Name, Run: w.Run, Input: cloneRawJSON(w.Input), Path: w.Path,
+		Name: w.Name, Run: w.Run, ManagedOperation: w.ManagedOperation, Input: cloneRawJSON(w.Input), Path: w.Path,
 		ForEach: w.ForEach, Join: w.Join, When: w.When, Outbound: w.Outbound, Method: w.Method, DependsOn: append([]string(nil), w.DependsOn...),
 		WaitForEvent: w.WaitForEvent, WaitForCallback: w.WaitForCallback,
 		WaitForDuration:  waitForDuration,
@@ -321,6 +365,7 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Name             string                 `json:"name"`
 		Run              string                 `json:"run,omitempty"`
+		ManagedOperation bool                   `json:"managed_operation,omitempty"`
 		Input            json.RawMessage        `json:"input,omitempty"`
 		Path             string                 `json:"path,omitempty"`
 		ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty"`
@@ -338,7 +383,7 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		OnFailure        string                 `json:"on_failure,omitempty"`
 		Retry            *WorkflowRetrySpec     `json:"retry,omitempty"`
 	}{
-		Name: s.Name, Run: s.Run, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
+		Name: s.Name, Run: s.Run, ManagedOperation: s.ManagedOperation, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
 		ForEach: s.ForEach, Join: s.Join, When: s.When, DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
 		WaitForCallback: s.WaitForCallback,
 		WaitForDuration: waitForDuration, WaitForCondition: s.WaitForCondition, Timeout: timeout,
@@ -358,7 +403,8 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
+		"managed_operation": {},
+		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
 		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
@@ -435,6 +481,12 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, ErrWorkflowNameRequired
 	}
+	if spec.MaxConcurrentRuns < 0 || spec.MaxConcurrentRuns > WorkflowMaxConcurrentRunsLimit {
+		return nil, ErrWorkflowConcurrencyInvalid
+	}
+	if spec.MaxConcurrentActions < 0 || spec.MaxConcurrentActions > WorkflowMaxConcurrentActionsLimit {
+		return nil, ErrWorkflowActionConcurrencyInvalid
+	}
 	if err := ValidateWorkflowTrigger(spec.Trigger); err != nil {
 		return nil, err
 	}
@@ -486,6 +538,9 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if hasPath && !validWorkflowPath(step.Path) {
 			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInvalidPath, step.Name, step.Path)
 		}
+		if step.ManagedOperation && !hasRun && !hasPath {
+			return nil, fmt.Errorf("workflow: managed_operation requires an executable HTTP step in %q", step.Name)
+		}
 		if step.Method != "" && !validWorkflowMethod(step.Method) {
 			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInvalidMethod, step.Name, step.Method)
 		}
@@ -493,7 +548,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidInput, step.Name)
 		}
 		if step.Retry != nil {
-			if step.Retry.MaxAttempts < 1 || step.Retry.MaxAttempts > 25 ||
+			if step.Retry.MaxAttempts < 1 || step.Retry.MaxAttempts > WorkflowRetryMaxAttempts ||
 				(step.Retry.Backoff != "" && step.Retry.Backoff != "fixed" && step.Retry.Backoff != "exponential") {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowRetryInvalid, step.Name)
 			}
@@ -624,6 +679,11 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
 		}
+		outboundRefs, err := workflowOutboundInputReferences(step.Outbound, stepNames)
+		if err != nil {
+			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
+		}
+		refs = append(refs, outboundRefs...)
 		dependencies := make(map[string]struct{}, len(step.DependsOn))
 		for _, dep := range step.DependsOn {
 			dependencies[dep] = struct{}{}
@@ -753,27 +813,40 @@ func validWorkflowMethod(value string) bool {
 
 // WorkflowRunResponse is the API wire representation of a workflow run.
 type WorkflowRunResponse struct {
-	ResumeCount  int             `json:"resume_count"`
-	CancelledAt  *string         `json:"cancelled_at,omitempty"`
-	ID           string          `json:"id"`
-	AppID        string          `json:"app_id"`
-	WorkflowName string          `json:"workflow_name"`
-	Status       string          `json:"status"`
-	CurrentStep  *string         `json:"current_step,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	Output       json.RawMessage `json:"output,omitempty"`
-	ScheduledFor string          `json:"scheduled_for"`
-	StartedAt    *string         `json:"started_at,omitempty"`
-	FinishedAt   *string         `json:"finished_at,omitempty"`
-	LastError    *string         `json:"last_error,omitempty"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
+	DeploymentID     string          `json:"deployment_id,omitempty"`
+	ResumeCount      int             `json:"resume_count"`
+	CancelledAt      *string         `json:"cancelled_at,omitempty"`
+	ID               string          `json:"id"`
+	AppID            string          `json:"app_id"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	WorkflowName     string          `json:"workflow_name"`
+	Status           string          `json:"status"`
+	CurrentStep      *string         `json:"current_step,omitempty"`
+	Input            json.RawMessage `json:"input,omitempty"`
+	Output           json.RawMessage `json:"output,omitempty"`
+	ScheduledFor     string          `json:"scheduled_for"`
+	StartedAt        *string         `json:"started_at,omitempty"`
+	FinishedAt       *string         `json:"finished_at,omitempty"`
+	LastError        *string         `json:"last_error,omitempty"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
 }
 
 // ListWorkflowRunsResponse is the payload returned by GET /v1/apps/{slug}/workflows/runs.
 type ListWorkflowRunsResponse struct {
 	Runs  []WorkflowRunResponse `json:"runs"`
 	Total int                   `json:"total"`
+}
+
+// WorkflowRunListOptions filters and paginates workflow run history.
+// CreatedAfter and CreatedBefore are inclusive UTC timestamps when set.
+type WorkflowRunListOptions struct {
+	Status        string
+	WorkflowName  string
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	Limit         int
+	Offset        int
 }
 
 // ValidWorkflowRunStatus reports the closed set accepted by the workflow-run
@@ -815,13 +888,14 @@ type ListWorkflowStepsResponse struct {
 
 // WorkflowStepAttemptResponse is one durable executor invocation for a step.
 type WorkflowStepAttemptResponse struct {
-	Attempt       int     `json:"attempt"`
-	Status        string  `json:"status"`
-	HTTPStatus    *int    `json:"http_status,omitempty"`
-	StartedAt     string  `json:"started_at"`
-	FinishedAt    *string `json:"finished_at,omitempty"`
-	NextAttemptAt *string `json:"next_attempt_at,omitempty"`
-	Error         *string `json:"error,omitempty"`
+	Attempt       int                     `json:"attempt"`
+	Status        string                  `json:"status"`
+	HTTPStatus    *int                    `json:"http_status,omitempty"`
+	StartedAt     string                  `json:"started_at"`
+	FinishedAt    *string                 `json:"finished_at,omitempty"`
+	NextAttemptAt *string                 `json:"next_attempt_at,omitempty"`
+	Error         *string                 `json:"error,omitempty"`
+	Effects       []OperationEffectRecord `json:"effects,omitempty"`
 }
 
 // ListWorkflowStepAttemptsResponse is returned by

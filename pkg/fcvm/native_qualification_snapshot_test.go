@@ -83,7 +83,7 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 		t.Fatal(err)
 	}
 	m.WithStorage(backend)
-	m.instanceBacking = map[string]BackingIdentity{frame.InstanceID: {Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}}
+	m.instanceBacking = map[string]BackingIdentity{frame.InstanceID: {Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}}
 	m.live[frame.InstanceID] = &Instance{Lease: lease, Method: WakeColdBoot, nativeGeneration: physical.Generation, AppID: frame.AppID, DeploymentID: frame.DeploymentID}
 	// This fixture models an already-live original process, never a recovered
 	// or newly booted VM. Fake PID/journal evidence is not native acceptance.

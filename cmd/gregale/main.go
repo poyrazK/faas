@@ -35,13 +35,13 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
 		b.WriteString("  help                   Show command help\n")
 		b.WriteString("\nExamples:\n")
-		b.WriteString("  gregale login\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
+		b.WriteString("  gregale start\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
@@ -50,6 +50,8 @@ func topLevelUsage(showAdvanced bool) string {
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
+	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
+	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -78,6 +80,9 @@ func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
 
 func hasHelpFlag(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
 		if arg == "--help" || arg == "-h" {
 			return true
 		}
@@ -98,20 +103,39 @@ func init() {
 }
 
 func run(args []string) (status int) {
-	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
+		invokedCommandPath = previousPath
 	}()
-	if invalid := invalidJSONFlagValue(args); invalid != "" {
-		PrintUsage(os.Stderr, "invalid --json value "+invalid+"; use true or false", "cli")
-		return 1
-	}
+	previousAutomation := nonInteractive
+	defer func() { nonInteractive = previousAutomation }()
+	nonInteractive = false
+	var automationErr error
+	args, automationErr = extractAutomationFlag(args)
+	previousProfile := profileOverride
+	defer func() { profileOverride = previousProfile }()
+	profileOverride = ""
+	var profileErr error
+	args, profileErr = extractConnectionProfile(args)
+	invalidJSON := invalidJSONFlagValue(args)
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
+	if invalidJSON != "" {
+		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
+		return 1
+	}
+	if automationErr != nil {
+		return printErr("Invalid automation option", automationErr)
+	}
+	if profileErr != nil {
+		return printErr("Invalid connection profile", profileErr)
+	}
 	jsonUsageHelp = hasHelpFlag(args)
+	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
@@ -125,7 +149,12 @@ func run(args []string) (status int) {
 			}
 		}
 	}
+	if err := validateSelectedProfile(); err != nil {
+		return printErr("Invalid connection profile", err)
+	}
 	switch args[0] {
+	case "profile":
+		return cmdProfile(args[1:])
 	case "version", "--version", "-v":
 		// `gregale version --help` prints usage + docs link; bare
 		// `gregale version foo` still prints the version string (POSIX
@@ -133,6 +162,12 @@ func run(args []string) (status int) {
 		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
 			PrintUsage(os.Stderr, "usage: gregale version", "version")
 			return 0
+		}
+		if jsonOutput {
+			// production-us hunt #4: --json version printed "gregale dev".
+			return jsonOut(writeJSON(map[string]string{
+				"version": wire.Version, "git_sha": wire.GitSHA, "build_time": wire.BuildTime,
+			}))
 		}
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
@@ -196,6 +231,8 @@ func run(args []string) (status int) {
 		return cmdBindings(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "start":
+		return cmdStart(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":
@@ -289,14 +326,14 @@ func run(args []string) (status int) {
 			return cmdAppsStreamingCap(args[2], args[3:])
 		}
 		// `gregale apps -q <slug>` is the delete path.
-		if len(args) > 1 && (args[1] == "-q" || args[1] == "--quiet") {
+		if len(args) > 1 && (strings.SplitN(args[1], "=", 2)[0] == "-q" || strings.SplitN(args[1], "=", 2)[0] == "--quiet" || strings.SplitN(args[1], "=", 2)[0] == "--yes" || strings.SplitN(args[1], "=", 2)[0] == "--dry-run") {
 			// Preserve the quiet flag for cmdAppsRm. Dropping it here
 			// made the documented `gregale apps -q <slug>` command
 			// unexpectedly enter the typed-confirmation path.
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()
@@ -308,6 +345,8 @@ func run(args []string) (status int) {
 		// `gregale deployment <id>` — get one. Must come before appSlugFallback
 		// so the singular is never misread as an app slug.
 		return cmdDeployment(args[1:])
+	case "data-api":
+		return cmdDataAPI(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
 	case "realtime":
@@ -372,6 +411,8 @@ func run(args []string) (status int) {
 		return cmdTraffic(args[1:])
 	case "mirror":
 		return cmdMirror(args[1:])
+	case "log-drains":
+		return cmdLogDrains(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
 	case dispatchUploadCache:
@@ -452,7 +493,7 @@ func run(args []string) (status int) {
 		// PR-D / ADR-012 §7 amendment. Distinct top-level
 		// command; dispatches to a single verb (set) for the
 		// per-tenant webhook secret rotation.
-		return githubWebhookSecretSet(args[1:])
+		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "alerts":
@@ -489,6 +530,8 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "customer-operations":
+		return cmdCustomerOperations(args[1:])
 	case "operations":
 		// Durable exclusive operations: reconcile coordination policies and
 		// trigger bindings, submit work, inspect ownership, or cancel it.
@@ -502,8 +545,11 @@ func run(args []string) (status int) {
 		// lives in commands_jobs.go (cmdJobs).
 		return cmdJobs(args[1:])
 	case "workflows":
-		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
+		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "automations":
+		// Manage declarative automation definitions: validate, save a draft, publish.
+		return cmdAutomations(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "events":
@@ -618,11 +664,22 @@ func run(args []string) (status int) {
 func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 	var selected []cliSub
 	positionalCount := 0
-	for _, arg := range args {
+	nestedPositionalCounts := map[int]int{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--help" || arg == "-h" {
 			break
 		}
+		if arg == "--" {
+			break
+		}
 		if strings.HasPrefix(arg, "-") {
+			if !strings.Contains(arg, "=") {
+				flag := manifestFlag(command, selected, strings.TrimLeft(arg, "-"))
+				if flag != nil && !flag.Bool && (flag.Value != "" || flag.Req || len(flag.ClosedSet) > 0) && i+1 < len(args) {
+					i++
+				}
+			}
 			continue
 		}
 		var choices []cliSub
@@ -631,13 +688,25 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 		} else {
 			choices = selected[len(selected)-1].Subcommands
 		}
-		if sub, ok := findCliSubcommand(choices, arg); ok {
-			selected = append(selected, sub)
-		} else if len(choices) > 0 {
-			if command.SubcommandsAfterPositionals && len(selected) == 0 && positionalCount < len(command.Positionals) {
-				positionalCount++
+		// Slug-first command families reserve their first positional before
+		// considering verbs. A slug such as "network" is valid data, even
+		// when it happens to match one of the command's verbs.
+		if command.SubcommandsAfterPositionals && len(selected) == 0 && positionalCount < len(command.Positionals) {
+			positionalCount++
+			continue
+		}
+		if len(selected) > 0 {
+			depth := len(selected) - 1
+			parent := selected[depth]
+			if parent.SubcommandsAfterPositionals && nestedPositionalCounts[depth] < len(parent.Positionals) {
+				nestedPositionalCounts[depth]++
 				continue
 			}
+		}
+		if sub, ok := findCliSubcommand(choices, arg); ok {
+			selected = append(selected, sub)
+			nestedPositionalCounts[len(selected)-1] = 0
+		} else if len(choices) > 0 {
 			return false
 		}
 	}
@@ -651,7 +720,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 			return true
 		}
 		if helpPath == "rollouts recover" {
-			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			PrintUsage(w, rolloutsRecoverUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts status" {
+			PrintUsage(w, rolloutsStatusUsage, command.DocSlug)
 			return true
 		}
 		if helpPath == "deploys retry" {
@@ -667,6 +740,19 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 	return true
 }
 
+func manifestFlag(command cliCommand, selected []cliSub, name string) *cliFlag {
+	flags := command.Flags
+	if len(selected) > 0 {
+		flags = selected[len(selected)-1].Flags
+	}
+	for i := range flags {
+		if flags[i].Name == name {
+			return &flags[i]
+		}
+	}
+	return nil
+}
+
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// Release-management commands use verb-first syntax with the slug on
 	// the leaf. The generic manifest renderer cannot express that shape
@@ -675,6 +761,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	switch command.Name {
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)
@@ -723,15 +810,15 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
-	usage := localHelpCommandPath(command) + " " + sub.Name
+	usage := localHelpSubcommandPath(command, []string{sub.Name})
 	if len(sub.Subcommands) > 0 {
-		choices := make([]string, 0, len(sub.Subcommands))
-		for _, child := range sub.Subcommands {
-			choices = append(choices, child.Name)
-		}
-		usage += " <" + strings.Join(choices, "|") + ">"
+		usage += " <" + sub.subcommandChoice() + ">"
 	}
-	usage = localHelpArguments(usage, sub.Positionals, sub.Flags)
+	if sub.SubcommandsAfterPositionals {
+		usage = localHelpArguments(usage, nil, sub.Flags, false)
+	} else {
+		usage = localHelpArguments(usage, sub.Positionals, sub.Flags, sub.FlagsAfterPositionals)
+	}
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
 	if len(sub.Subcommands) > 0 {
 		_, _ = fmt.Fprintln(w, "\nCommands:")
@@ -753,8 +840,8 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 }
 
 func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
-	usage := localHelpCommandPath(command) + " " + parent.Name + " " + leaf.Name
-	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags)
+	usage := localHelpSubcommandPath(command, []string{parent.Name, leaf.Name})
+	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags, leaf.FlagsAfterPositionals)
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", leaf.Short, usage)
 	if len(leaf.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
@@ -779,17 +866,45 @@ func localHelpCommandPath(command cliCommand) string {
 	return path
 }
 
-func localHelpArguments(path string, positionals []string, flags []cliFlag) string {
-	hasOptional := false
-	for _, flag := range flags {
-		if flag.Req {
-			path += " " + mdFlagSyntax(flag)
-		} else {
-			hasOptional = true
+func localHelpSubcommandPath(command cliCommand, names []string) string {
+	path := localHelpCommandPath(command)
+	choices := command.Subcommands
+	for _, name := range names {
+		sub, ok := findCliSubcommand(choices, name)
+		path += " " + name
+		if !ok {
+			choices = nil
+			continue
 		}
+		if sub.SubcommandsAfterPositionals {
+			for _, positional := range sub.Positionals {
+				path += " " + positional
+			}
+		}
+		choices = sub.Subcommands
+	}
+	return path
+}
+
+func localHelpArguments(path string, positionals []string, flags []cliFlag, flagsAfterPositionals bool) string {
+	hasOptional := false
+	appendRequiredFlags := func() {
+		for _, flag := range flags {
+			if flag.Req {
+				path += " " + mdFlagSyntax(flag)
+			} else {
+				hasOptional = true
+			}
+		}
+	}
+	if !flagsAfterPositionals {
+		appendRequiredFlags()
 	}
 	for _, positional := range positionals {
 		path += " " + positional
+	}
+	if flagsAfterPositionals {
+		appendRequiredFlags()
 	}
 	if hasOptional {
 		path += " [flags]"

@@ -1,0 +1,28 @@
+{{define "app-operational-summary"}}
+{{$slug := .App.Slug}}
+{{with .Operational}}
+<section aria-label="Current operations">
+  <h2>Current operations</h2>
+  <p class="muted">Deployment checks describe launch-time verification. Production route health below evaluates recent retained traffic in the default scope; coverage is limited to observed requests.</p>
+  {{with .Monitoring}}
+    <p><strong>Production routes:</strong> {{if .Available}}{{.Status}} · <code>{{.Reason}}</code>{{else}}unavailable · <code>{{.Reason}}</code>{{end}}</p>
+    {{if .CheckedAt}}<p class="muted">Evaluated: <time>{{.CheckedAt.Format "2006-01-02T15:04:05Z07:00"}}</time>{{if and .WindowStart .WindowEnd}} · observation window <time>{{.WindowStart.Format "2006-01-02T15:04:05Z07:00"}}</time> to <time>{{.WindowEnd.Format "2006-01-02T15:04:05Z07:00"}}</time>{{end}}</p>{{end}}
+    {{if .Incident}}<p role="status"><strong>Open production incident:</strong> <code>{{.Incident.ID}}</code> · deployment <code>{{.Incident.DeploymentID}}</code> · opened {{.Incident.OpenedAt.Format "2006-01-02T15:04:05Z07:00"}}</p>{{else if not .IncidentsAvailable}}<p class="muted">Open-incident status is unavailable.</p>{{end}}
+  {{end}}
+  {{with .Recovery}}
+    <h3>Recovery progress</h3>
+    {{if not .RollbacksAvailable}}<p class="muted">Rollback status is unavailable.</p>{{else if not .Rollbacks}}<p class="muted">No pending rollback operations.</p>{{end}}
+    {{range .Rollbacks}}<p><strong>Rollback {{.Status}}</strong> · <code>{{.ID}}</code> · scope <code>{{.Scope}}</code> · target <code>{{.TargetDeploymentID}}</code>{{if .Code}} · <code>{{.Code}}</code>{{end}}</p>{{end}}
+    {{if .RollbacksTruncated}}<p role="status">More pending rollbacks exist; this list is truncated.</p>{{end}}
+    {{if not .RestartsAvailable}}<p class="muted">Restart status is unavailable.</p>{{else if not .Restarts}}<p class="muted">No pending or failed restart handoffs.</p>{{end}}
+    {{range .Restarts}}<p><strong>Restart {{.Status}}</strong> · <a href="/dashboard/apps/{{$slug}}/restarts/{{.WakeID}}"><code>{{.WakeID}}</code> · view progress</a> · attempts {{.Attempts}}<br>{{.ProgressMessage}}</p>{{end}}
+    {{if .RestartsTruncated}}<p role="status">More pending or failed restarts exist; this list is truncated.</p>{{end}}
+    <p class="muted">Accepted recovery work is not completed recovery. Restart handoff status does not independently verify application health.</p>
+  {{end}}
+  {{if .Recommendations}}
+    <h3>Needs attention</h3>
+    <ul>{{range .Recommendations}}<li><strong>{{.Severity}}</strong>: {{.Message}}<br><code>{{.Next}}</code></li>{{end}}</ul>
+  {{end}}
+</section>
+{{end}}
+{{end}}

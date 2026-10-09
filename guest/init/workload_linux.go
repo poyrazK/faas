@@ -862,6 +862,12 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	// ADR-687: a sidecar chrooted into its own rootfs cannot see
+	// /run/guest-init, and a --require of a missing file stops Node from
+	// starting, so only shared-root workloads get the restore reseed preload.
+	if directRoot == "" {
+		env = StampRestoreReseedEnv(env)
+	}
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust(root, directRoot)
 	if trustErr != nil {

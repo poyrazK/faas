@@ -52,6 +52,9 @@ func (c *VMMClient) CreateEnvironmentQualification(ctx context.Context, frame st
 	if err != nil {
 		return nil, err
 	}
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return nil, err
 	}
@@ -63,7 +66,7 @@ func (c *VMMClient) CreateEnvironmentQualification(ctx context.Context, frame st
 	returned, err := qualificationwire.ExecutionFromProto(resp.GetExecution())
 	wake := resp.GetWake()
 	if err != nil || returned != frame || wake == nil || wake.GetInstance() != frame.InstanceID || wake.GetMethod() != vmmdpb.WakeMethod_WAKE_COLD_BOOT ||
-		wake.GetRequestedMethod() != vmmdpb.WakeMethod_WAKE_COLD_BOOT || appNeedsSecretAliasSupport(app) && !wake.GetSupportsSecretAliases() {
+		wake.GetRequestedMethod() != vmmdpb.WakeMethod_WAKE_COLD_BOOT || appNeedsSecretAliasSupport(app) && !wake.GetSupportsSecretAliases() || app.ImageHealthcheckRequired && (!wake.GetSupportsImageHealthcheck() || !wake.GetImageHealthcheckVerified() || !wake.GetSupportsImageHealthcheckMonitoring()) {
 		// Never use the generic secret-alias cleanup helper here. The runtime
 		// owner will retire the original frame through the dedicated RPC.
 		return nil, errors.Join(state.ErrConflict, err)

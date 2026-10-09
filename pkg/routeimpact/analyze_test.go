@@ -22,6 +22,29 @@ func testSnapshot(sources map[string]string) sourceSnapshot {
 	return snapshot
 }
 
+func TestFingerprintsStayScopedToSelectedFramework(t *testing.T) {
+	base := testSnapshot(map[string]string{
+		"main.py": "app = object()\n",
+		"go.mod":  "module example.com/store\n\ngo 1.25\n",
+		"main.go": "package main\nfunc Value() int { return 1 }\n",
+	})
+	changed := testSnapshot(map[string]string{
+		"main.py": "app = object()\n",
+		"go.mod":  "module example.com/store\n\ngo 1.25\n",
+		"main.go": "package main\nfunc Value() int { return 2 }\n",
+	})
+	fingerprintForFramework(&base, "fastapi")
+	fingerprintForFramework(&changed, "fastapi")
+	if base.meta.SourceSHA256 != changed.meta.SourceSHA256 || base.meta.PythonFiles != 1 || base.meta.GoFiles != 0 {
+		t.Fatalf("FastAPI fingerprint included unrelated Go source: base=%+v changed=%+v", base.meta, changed.meta)
+	}
+	fingerprintForFramework(&base, "go-nethttp")
+	fingerprintForFramework(&changed, "go-nethttp")
+	if base.meta.SourceSHA256 == changed.meta.SourceSHA256 || base.meta.PythonFiles != 0 || base.meta.GoFiles != 1 {
+		t.Fatalf("Go fingerprint did not include module Go source: base=%+v changed=%+v", base.meta, changed.meta)
+	}
+}
+
 func indexFixture(t *testing.T, sources map[string]string, entrypoint string) sourceIndex {
 	t.Helper()
 	requirePython(t)

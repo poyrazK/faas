@@ -15,6 +15,9 @@ import (
 // FlagsAudience prevents a federation or service token being replayed to Flags.
 const FlagsAudience = "gregale:flags"
 
+// OperationsAudience fences runtime reporting from cloud federation and Flags.
+const OperationsAudience = "gregale:operations"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string

@@ -166,10 +166,12 @@ func viewBucket(b state.ObjectBucket) bucketView {
 func bucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
+	case errors.Is(err, state.ErrObjectBucketWriteFenced):
+		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
-		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new URLs are blocked."
+		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectBudget):
-		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new URLs are blocked."
+		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectCapacity):
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
@@ -519,6 +521,10 @@ func (s *server) listBucketObjects(w http.ResponseWriter, r *http.Request, acct 
 	}
 	if err != nil || limit < 1 || limit > 1000 || len(prefix) > 1024 || !utf8.ValidString(prefix) || len(cursor) > 8192 {
 		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	if err := s.customerObjectRequestRecorder(b)(r.Context()); err != nil {
+		bucketProblem(w, err)
 		return
 	}
 	page, err := provider.ListObjects(r.Context(), b.PhysicalName, prefix, cursor, int32(limit))

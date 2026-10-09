@@ -94,7 +94,7 @@ Format for future ADRs: `ADR-NNN · title · status · decision · consequences`
 
 | ADR | Decision | Why | Rejected alternatives |
 |---|---|---|---|
-| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.25.13 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
+| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.26.9 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
 | 002 | **Builds on the control-plane nodes** (option B), governed | Founder decision; €0 extra; reuse existing capacity | Off-host builder VM (revisit at Gate B if build queue p95 > 60 s) |
 | 003 | **Builds run inside ephemeral builder microVMs**, not host containers | Untrusted `npm install` gets the same VM-grade isolation as untrusted runtime code; RAM cap is the VM boundary (exact, unbreachable); reuses vmmd primitives; kills rootless-runc attack surface on the host | Rootless BuildKit directly on host (weaker isolation, cgroup escapes are kernel bugs away), host docker (unacceptable) |
 | 004 | Zero-config engine: **Railpack** (BuildKit-based, Go); **Dockerfile** escape hatch; **pre-built OCI** accepted | Railpack is Nixpacks' successor (Nixpacks in maintenance mode), produces far smaller images — directly protects the 130 MB fleet snapshot target | Nixpacks (larger images), CNB Buildpacks (multi-GB builder images don't fit our RAM/disk budget) |
@@ -452,7 +452,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
 - Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
-- Timeouts: 10 min build, 15 min end-to-end. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
+- Timeouts: 15 min build (`api.BuildTimeoutSeconds`; ADR-791 — the original 10 min was raised for cold rootless Railpack exports). End-to-end deploy time is not separately enforced; the CLI waits build + 5 min. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
 ### 4.6 `imaged` — image and snapshot service
@@ -577,7 +577,7 @@ The runner's HTTP listener (`http.ListenAndServe` on `:8080`) dispatches each ac
 - **Go `net/http`** — a Go handler achieves the bound.
 - **Synchronous subprocess-per-request** (e.g. a Python `read-stdin → write-stdout` script) — does NOT achieve the bound; one subprocess handles one request at a time regardless of the listener's goroutine count.
 
-Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. On scheduler restart, live deployment layers are cryptographically verified before the wake listener becomes ready, using two workers and a 15-second per-layer deadline (`api.StartupAttestationWorkers`, `api.StartupAttestationLayerTimeout`). This primes the existing successful-verification cache without starting VMs. Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
+Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. Each scheduler verifies the live deployment layers of the apps it owns in the background, at startup and again every minute so apps re-homed to it after a restart or newly deployed are covered, using two workers and a two-minute per-layer deadline; a failed layer is retried after five minutes (`api.AttestationWarmWorkers`, `api.AttestationWarmLayerTimeout`, `api.AttestationWarmInterval`, `api.AttestationWarmRetryBackoff`). This primes the existing successful-verification cache without starting VMs; concurrent verifications of one layer share a single read and hash (`api.LayerVerifyTimeout`). Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
 
 The runner-level concurrency claim is pinned by `guest/runners/internal/runnerparity/concurrency_test.go::TestRunner_HandleIsConcurrent` — 20 parallel GETs against a slow handler complete in ~1× handler-sleep, not 20× (the serialized floor). A regression to single-threaded accept would surface there.
 
@@ -643,6 +643,13 @@ surface.
 ### 4.10 Triggers and event-source mappings (issue #757 / ADR-100)
 
 The unified Trigger primitive replaces six unrelated invocation surfaces with one resource + one batch envelope + one FSM.
+
+Internal application-event fanout additionally follows
+[ADR-606](adr/606-independent-event-recipient-routing.md): snapshot-backed
+receipts can adopt independent recipient routing leases, retry schedules, and
+replay generations through an opt-in schedd flag. Acceptance and deterministic
+invocation deduplication stay unchanged. Recipient routing settlement is
+separate from handler completion and imposes no publication-order guarantee.
 
 #### Resource model
 
@@ -1082,7 +1089,7 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
-5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
+5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-687:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
 ### 6.3 Wake latency budget (p50 targets)
 
@@ -1509,7 +1516,7 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 
 **Host:** cgroups v2 unified only; kernel ≥ 6.8 HWE; `kernel.unprivileged_userns_clone=0` (nothing on the host needs it — builds are in VMs); auditd on execve in control-plane slices; unattended-upgrades security-only with reboot window Sun 04:00 UTC; nftables default-drop inbound.
 **Jailer/VM:** unique uid/gid per instance; chroot; seccomp default filter (Firecracker's); `--daemonize` off, supervised by vmmd; no shared directories with guests — block devices only; virtio-rng always attached.
-**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8); TLS session keys, UUID generators inside customer apps are their concern *after* our entropy re-seed is proven (test: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume).
+**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8), then, before the resume ACK, reseeds the userspace generators of every registered Node and Python process (ADR-687, superseding the earlier position that in-app generators were the customer's concern). A process that cannot confirm fails the resume closed and the instance cold-boots. Tests: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume (V6), and different Node `crypto`/`Math.random` and Python `random` output (ADR-687 evidence gate).
 **Control plane:** apid input validation is the trust boundary — fuzz it; API keys hashed; rate limit auth failures (10/min/IP); Postgres on unix socket only; secrets in `/etc/faas/secrets/` root:root 0400, never in env of tenant-reachable processes. `/etc/faas/sealed.env` is the apid-only env file — every other control-plane daemon (schedd, meterd, githubd, gatewayd-internal, vmmd, imaged, builderd) loads private material via `systemd LoadCredential=` + `Environment=KEY=%d/<id>`, and env-var overrides (billing-provider keys, GitHub App credentials, FAAS_NODE_NAME) via per-daemon `EnvironmentFile=-/etc/faas/secrets/<daemon>/*.env`. The shared cross-daemon `DATABASE_URL` lives at `/etc/faas/compute-db.env` (0440 root:faas). The static CI gate `scripts/ci/check_sealed_env_scope.sh` (wired into `make lint`) refuses any `EnvironmentFile={-,}/etc/faas/sealed.env` line in a non-apid unit. See ADR-127.
 **Per-deployment authentication (issue #560):** `apps.require_authn bool NOT NULL DEFAULT false` — opt-in per-app token gate. Default is `false` so every existing customer is unaffected; Pro/Scale customers can PATCH the flag on (Free/Hobby receive 403 `plan_require_authn_not_allowed` at apid). When on, `gatewayd-internal` demands `Authorization: Bearer <token>` for every request, validates the key via `pkg/auth.Middleware.RequireSession` (SHA-256 hash, account-scoped), and rejects cross-account tokens with 403 `insufficient_scope`. The check sits after Host→app resolution and before the wake gate so anonymous traffic cannot trigger cold-boot on a token-gated app.
 **Patch policy:** Firecracker/kernel CVE affecting guest isolation = same-day; everything else = weekly window. Subscribe to firecracker-microvm security advisories; drill the FC-upgrade-invalidates-snapshots path (it's routine, not an incident — ADR-005).
@@ -1911,7 +1918,7 @@ The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is indep
 
 ## 14. Delivery plan (for agents; sequential, each gate = passing acceptance tests)
 
-Conventions for all milestones: Go 1.25.13 (the version pinned by `go.mod`);
+Conventions for all milestones: Go 1.26.9 (the version pinned by `go.mod`);
 integration tests that need KVM are tagged `//go:build metal` and run on the
 dedicated native x86_64 Linux acceptance host via `make test-metal`; unit tests
 must pass with `make test` on any machine.
@@ -2136,3 +2143,81 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
+
+
+## Versioned Commit operation routing (ADR-589)
+
+Commit version 2 admits a trusted producer's typed business key and optional
+owner-authorized platform-tenant selector into the existing Operations engine.
+The source fixes its app, queue policy, version and selection authority. Tenant
+selection requires an active same-account tenant and active app surface link.
+Version 1 retains source-wide account queues. Operation admission and the receipt,
+including normalized routing identity, commit atomically. Replay precedes lifecycle
+and version checks; external effects remain at least once. Customer-owned routing
+schema upgrades are explicit. See `docs/gregale-commit.md` for the wire contract
+and the existing operator/native qualification gates.
+
+## Managed operation webhook effects (ADR-585)
+
+Managed HTTP operation handlers may return a negotiated version 1 result envelope
+with up to 32 named webhook effects. The full handler response is bounded to
+1 MiB, each effect payload to 64 KiB, and each business event type to 256 bytes.
+The authenticated operation scope owns the destination; customer deliveries
+require a same-account tenant receiver explicitly subscribed to operation.effect
+and an active app surface link. Completion, effects, and existing webhook ledger
+insertions commit atomically under current ownership, rechecked after receiver
+locks. The signed dispatcher owns at-least-once delivery and rechecks current
+scope before each attempt. Inspection exposes immutable effect/delivery identity
+and current status. Negotiation requires upgraded schedd and internal gateway;
+Commit's existing internal gate and native promotion evidence remain required.
+See `docs/managed-operation-effects.md` for the handler and receiver contracts.
+
+## Transactional operation handler SDK (ADR-586)
+
+Node, Go, and Python SDKs own a customer PostgreSQL READ COMMITTED transaction
+that commits business writes and the complete managed-operation response together.
+The database owner explicitly installs `public.gregale_operation_inbox`; the SDK
+does not install or prune it. A shared operation lock serializes duplicate
+attempts. Receipts verify account/app/customer scope and a SHA-256 fingerprint of
+the original method, request target, and body. Generation changes replay exact
+stored response bytes and effect intent without repeating committed business
+writes. Callback errors roll back both; uncertain commit acknowledgements require
+retrying the same identity. Customer and platform transactions remain separate,
+and callbacks retain responsibility for business constraints and authorization.
+The portable acceptance gate covers PostgreSQL recovery, HTTP process death, and
+all nine cross-language writer/reader pairs. ADR-585 native runtime promotion
+remains required. See `docs/operation-transactions.md` for usage and retention.
+
+## Transactional managed HTTP workflow steps (ADR-587)
+
+Executable workflow steps may opt into the managed operation result protocol
+with `managed_operation: true`. The scheduler derives a stable operation ID
+from the workflow run and step and advances generation per attempt. The
+authenticated gateway checks the active run/attempt and immutable workflow
+definition before stamping the app owner's account identity. Existing Node,
+Go, and Python transaction SDK receipts then replay committed business writes
+and results; workflow dependencies receive the result value. This first slice
+supports account-scoped workflows. A successful result, app-owned explicitly
+subscribed webhook effects, delivery rows, and step/attempt completion commit
+atomically in Gregale. The dispatcher handles signed at-least-once delivery and
+rechecks the active app/account and receiver subscription. Workflow effects do
+not target tenant receivers. The customer's transaction remains separate, so a
+receiver rejected at result acceptance can leave business writes committed
+while the workflow step fails. See
+`docs/adr/587-transactional-workflow-http-steps.md`,
+`docs/managed-operation-effects.md`, and `docs/event-driven.md` for the
+contracts and delivery inspection surface.
+
+## In-place retry of failed workflow steps (ADR-588)
+
+`POST /v1/workflows/runs/{id}/steps/{step}/retry` and
+`gregale workflows retry` resume one terminal failed or dead HTTP step in the same
+run. The store preserves the run ID, definition snapshot, original input, the
+failed step's stored request input, and prior attempt records. It appends the
+next attempt number and reopens skipped `depends_on` descendants. The
+transaction rejects cancellation, active or additional failed steps, completed
+downstream work, wait/handler targets, and exhausted per-app active-run quota.
+Managed-operation retries therefore retain the run/step receipt identity from
+ADR-587; ordinary HTTP delivery remains at least once. See
+`docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
+the API and CLI contract.

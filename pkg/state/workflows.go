@@ -9,6 +9,9 @@ import (
 	"math/big"
 	"reflect"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 )
 
 // Workflow run status constants (ADR-081 §1).
@@ -40,19 +43,23 @@ const (
 )
 
 var (
-	ErrWorkflowRunNotFound       = errors.New("state: workflow run not found")
-	ErrWorkflowStepNotFound      = errors.New("state: workflow step not found")
-	ErrWorkflowAttemptNotFound   = errors.New("state: workflow step attempt not found")
-	ErrWorkflowEventNotFound     = errors.New("state: workflow event not found")
-	ErrWorkflowNotRunning        = errors.New("state: workflow run is not in running state")
-	ErrWorkflowInvalidStatus     = errors.New("state: invalid workflow status")
-	ErrWorkflowInvalidAttempt    = errors.New("state: workflow attempt cannot be negative")
-	ErrWorkflowInvalidPagination = errors.New("state: workflow pagination cannot be negative")
-	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
-	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
-	ErrWorkflowRunQuotaExceeded  = errors.New("state: workflow active-run quota exceeded")
-	ErrWorkflowCallbackClosed    = errors.New("state: workflow callback is closed")
-	ErrWorkflowCallbackExpired   = errors.New("state: workflow callback has expired")
+	ErrWorkflowRunNotFound            = errors.New("state: workflow run not found")
+	ErrWorkflowStepNotFound           = errors.New("state: workflow step not found")
+	ErrWorkflowAttemptNotFound        = errors.New("state: workflow step attempt not found")
+	ErrWorkflowEventNotFound          = errors.New("state: workflow event not found")
+	ErrWorkflowNotRunning             = errors.New("state: workflow run is not in running state")
+	ErrWorkflowInvalidStatus          = errors.New("state: invalid workflow status")
+	ErrWorkflowInvalidAttempt         = errors.New("state: workflow attempt cannot be negative")
+	ErrWorkflowInvalidPagination      = errors.New("state: workflow pagination cannot be negative")
+	ErrWorkflowInvalidCreatedRange    = errors.New("state: workflow created-after timestamp is after created-before timestamp")
+	ErrWorkflowInvalidInput           = errors.New("state: workflow JSON payload is invalid")
+	ErrWorkflowInvalidRecord          = errors.New("state: workflow record is invalid")
+	ErrWorkflowRunQuotaExceeded       = errors.New("state: workflow active-run quota exceeded")
+	ErrWorkflowActionConcurrencyLimit = errors.New("state: workflow action concurrency limit reached")
+	ErrWorkflowRunIdempotencyConflict = errors.New("state: workflow run idempotency key reused with different input")
+	ErrWorkflowRetryNotAllowed        = errors.New("state: workflow step retry is not allowed")
+	ErrWorkflowCallbackClosed         = errors.New("state: workflow callback is closed")
+	ErrWorkflowCallbackExpired        = errors.New("state: workflow callback has expired")
 )
 
 // WorkflowRunStaleAfter is the fallback for runs claimed before leases were
@@ -60,11 +67,125 @@ var (
 // step timeout plus five minutes before each executor call.
 const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
 
+const WorkflowRunIdempotencyKeyMaxBytes = 255
+
+func validateWorkflowRunCreateIdempotency(key string, requestFingerprint []byte) error {
+	if key == "" || len(key) > WorkflowRunIdempotencyKeyMaxBytes || len(requestFingerprint) != 32 {
+		return fmt.Errorf("%w: invalid workflow run idempotency metadata", ErrWorkflowInvalidRecord)
+	}
+	return nil
+}
+
 // WorkflowRunLeaseStore is implemented by production stores. It lets a
 // dispatcher bound crash recovery to the actual step timeout instead of the
 // largest timeout supported by any plan.
 type WorkflowRunLeaseStore interface {
 	ExtendWorkflowRunLease(context.Context, string, time.Duration) error
+}
+
+// WorkflowRetryStore requeues a terminal run around one failed HTTP step.
+// It remains optional so existing WorkflowStore implementations and test
+// doubles do not need to support the operator retry surface.
+type WorkflowRetryStore interface {
+	RetryWorkflowStep(context.Context, string, string, int) (*WorkflowRun, int, error)
+}
+
+// workflowRetryPlan validates an in-place retry and returns skipped dependency
+// descendants that must be reopened so the DAG can continue after the retry.
+func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep) ([]string, error) {
+	if run == nil || (run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	var spec api.WorkflowSpec
+	if err := json.Unmarshal(run.DefinitionSnapshot, &spec); err != nil {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	var target *api.WorkflowStepSpec
+	for i := range spec.Steps {
+		step := spec.Steps[i]
+		if step.Name == stepName {
+			target = &spec.Steps[i]
+		}
+	}
+	if target == nil || (target.Run == "" && target.Path == "") {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	if len(steps) == 0 {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	stepByName := make(map[string]*WorkflowStep, len(steps))
+	for _, step := range steps {
+		if step != nil {
+			stepByName[step.StepName] = step
+		}
+	}
+	failed, exists := stepByName[stepName]
+	if !exists || (failed.Status != WorkflowStepStatusFailed && failed.Status != WorkflowStepStatusDead) {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	for name, step := range stepByName {
+		if name == stepName {
+			continue
+		}
+		if step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead ||
+			step.Status == WorkflowStepStatusRunning || step.Status == WorkflowStepStatusAwaitingEvent {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+		// Cancellation marks skipped steps with the run's last error. Do not
+		// turn an operator-cancelled run back into active work.
+		if run.LastError != nil && step.Status == WorkflowStepStatusSkipped && step.Error != nil && *step.Error == *run.LastError {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+	for _, candidate := range spec.Steps {
+		if candidate.OnFailure == stepName || candidate.OnTimeout == stepName {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+	for _, handlerName := range []string{target.OnFailure, target.OnTimeout} {
+		if handlerName == "" {
+			continue
+		}
+		handler := stepByName[handlerName]
+		if handler != nil && handler.Status == WorkflowStepStatusSucceeded {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+
+	// Descendants reached through depends_on are rerun if they were skipped
+	// because this step failed. A completed descendant means its effects have
+	// already escaped and cannot safely be replayed in place.
+	children := make(map[string][]string, len(spec.Steps))
+	for _, candidate := range spec.Steps {
+		for _, dependency := range candidate.DependsOn {
+			children[dependency] = append(children[dependency], candidate.Name)
+		}
+	}
+	var reopen []string
+	visited := map[string]bool{stepName: true}
+	queue := []string{stepName}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, child := range children[parent] {
+			if visited[child] {
+				continue
+			}
+			visited[child] = true
+			queue = append(queue, child)
+			step := stepByName[child]
+			if step == nil {
+				return nil, ErrWorkflowRetryNotAllowed
+			}
+			if step.Status == WorkflowStepStatusSucceeded {
+				return nil, ErrWorkflowRetryNotAllowed
+			}
+			if step.Status == WorkflowStepStatusSkipped {
+				reopen = append(reopen, child)
+			}
+		}
+	}
+	return reopen, nil
 }
 
 func validateWorkflowRunStatus(status string) error {
@@ -192,10 +313,13 @@ func equalWorkflowValue(left, right any) bool {
 
 // WorkflowRun is one row of public.workflow_runs.
 type WorkflowRun struct {
-	ResumeCount        int             `json:"resume_count"`
-	CancelledAt        *time.Time      `json:"cancelled_at,omitempty"`
-	ID                 string          `json:"id"`
-	AppID              string          `json:"app_id"`
+	ResumeCount int        `json:"resume_count"`
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	ID          string     `json:"id"`
+	AppID       string     `json:"app_id"`
+	// DeploymentID is immutable private code identity; empty only for legacy runs.
+	DeploymentID       string          `json:"deployment_id,omitempty"`
+	PlatformTenantID   string          `json:"platform_tenant_id,omitempty"`
 	WorkflowName       string          `json:"workflow_name"`
 	Status             string          `json:"status"`
 	CurrentStep        *string         `json:"current_step,omitempty"`
@@ -245,15 +369,35 @@ type WorkflowStep struct {
 // WorkflowStep, attempts are append-only by (run, step, attempt) so retries
 // remain inspectable after the step summary advances.
 type WorkflowStepAttempt struct {
-	RunID         string     `json:"run_id"`
-	StepName      string     `json:"step_name"`
-	Attempt       int        `json:"attempt"`
-	Status        string     `json:"status"`
-	HTTPStatus    *int       `json:"http_status,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
-	Error         *string    `json:"error,omitempty"`
+	RunID         string                      `json:"run_id"`
+	StepName      string                      `json:"step_name"`
+	Attempt       int                         `json:"attempt"`
+	Status        string                      `json:"status"`
+	HTTPStatus    *int                        `json:"http_status,omitempty"`
+	StartedAt     time.Time                   `json:"started_at"`
+	FinishedAt    *time.Time                  `json:"finished_at,omitempty"`
+	NextAttemptAt *time.Time                  `json:"next_attempt_at,omitempty"`
+	Error         *string                     `json:"error,omitempty"`
+	Effects       []api.OperationEffectRecord `json:"effects,omitempty"`
+}
+
+// ManagedWorkflowStepCommit is the accepted result of a managed HTTP step.
+// The result, webhook intent, delivery rows, and step success share one
+// platform transaction after the customer SDK has committed its receipt.
+type ManagedWorkflowStepCommit struct {
+	RunID       string
+	StepName    string
+	OperationID string
+	Attempt     int
+	HTTPStatus  int
+	Output      json.RawMessage
+	Effects     []exclusivework.Effect
+}
+
+// ManagedWorkflowStepCommitter is optional so existing workflow store doubles
+// remain source-compatible. Production stores implement the atomic transition.
+type ManagedWorkflowStepCommitter interface {
+	CommitManagedWorkflowStep(context.Context, ManagedWorkflowStepCommit) error
 }
 
 type workflowStepAttemptKey struct {
@@ -272,9 +416,13 @@ type WorkflowEvent struct {
 
 // ListWorkflowRunsOpts controls pagination and filtering for workflow runs.
 type ListWorkflowRunsOpts struct {
-	Status string
-	Limit  int
-	Offset int
+	Status           string
+	WorkflowName     string
+	PlatformTenantID string
+	CreatedAfter     *time.Time
+	CreatedBefore    *time.Time
+	Limit            int
+	Offset           int
 }
 
 // WorkflowStore defines the storage operations for durable workflows.
@@ -284,6 +432,14 @@ type WorkflowStore interface {
 	// CreateWorkflowRunAdmitted serializes quota admission per app and returns
 	// the observed active count when the quota is already full.
 	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (active int, err error)
+	// GetWorkflowRunByIdempotencyKey returns the original run for a matching
+	// request fingerprint. A missing key returns ErrWorkflowRunNotFound and a
+	// different fingerprint returns ErrWorkflowRunIdempotencyConflict.
+	GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte) (*WorkflowRun, error)
+	// CreateWorkflowRunAdmittedWithIdempotencyKey atomically records a run and
+	// its request key with quota admission. A replay replaces r with the
+	// original run and returns replayed=true without consuming another slot.
+	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error
@@ -291,6 +447,8 @@ type WorkflowStore interface {
 	// ClaimNextDueWorkflowRun claims a pending run or a parked wait whose
 	// scheduled_for deadline has arrived. A due timer completes; a due
 	// event wait takes its timeout path.
+	// Eligible apps and tenant scopes are served least recently claimed first,
+	// subject to live-lease dispatch caps and definition concurrency limits.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
 	// SetWorkflowRunWake replaces the scheduler wake after active waits and
@@ -347,4 +505,13 @@ type WorkflowStore interface {
 	// Retention
 	SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.Duration) (int, error)
 	SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error)
+}
+
+// TenantWorkflowContinuationStore admits external event and callback
+// continuations only when the run still belongs to the authenticated tenant
+// and that tenant is still linked to the app. Implementations perform the
+// identity check in the same critical section as the durable write.
+type TenantWorkflowContinuationStore interface {
+	InsertTenantWorkflowEvent(ctx context.Context, tenantID string, event *WorkflowEvent) error
+	CompleteTenantWorkflowCallback(ctx context.Context, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (duplicate bool, err error)
 }

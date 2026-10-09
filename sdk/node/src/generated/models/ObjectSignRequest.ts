@@ -3,12 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ObjectEncryption } from './ObjectEncryption.js';
+import type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 /**
  * Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an explicit owned encryption selection.
  */
 export type ObjectSignRequest = {
   method: 'GET' | 'HEAD' | 'PUT';
   key: string;
+  /**
+   * GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object.
+   */
+  version_id?: string;
   expires_in?: number;
   /**
    * Required for PUT; forbidden for GET.
@@ -42,6 +47,7 @@ export type ObjectSignRequest = {
    * PUT-only S3 object tags.
    */
   tags?: Record<string, string>;
+  protection?: ObjectWriteProtection;
   encryption?: ObjectEncryption;
 };
 

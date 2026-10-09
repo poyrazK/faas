@@ -2,6 +2,7 @@ name: Customer platform starter
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/templates/**"
       - "cmd/apid/**"
@@ -20,13 +21,25 @@ on:
       - "Makefile"
   workflow_dispatch:
 
+# Only the newest push to a pull request is interesting; without a group every
+# superseded push kept its runners until completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
   acceptance:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold builds of the complete API/state test sources reached the old
+    # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -34,6 +47,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # pgtest drops fully migrated schemas; the default lock table can
+          # exhaust shared memory. Match the main CI PostgreSQL fixture.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U faas -d faas"
@@ -46,9 +62,25 @@ jobs:
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      # Restore-only: read main's non-race `checks` Go cache instead of letting
+      # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
+      # CI cache families from the 10 GB repository budget.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + module cache from main
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false  # restored from main above
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -63,4 +95,45 @@ jobs:
             -c "GRANT USAGE ON SCHEMA public TO customer_app;" \
             -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
       - name: Test two-customer lifecycle and PostgreSQL isolation
+        # Serial package builds alone do not bound a large compiler heap.
+        # Bound GC pressure, omit APID test debug metadata and serialize its
+        # compiler backend. Production build jobs retain their debug metadata.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: make test-customer-platform
+
+  mcp-task-postgres:
+    name: MCP durable Tasks PostgreSQL integration
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+      - name: Install MCP starter dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node
+      - name: Verify durable task SQL against PostgreSQL 16
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+          MCP_TASKS_REQUIRE_POSTGRES: "1"
+        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node

@@ -279,6 +279,21 @@ func TestManifestValidate(t *testing.T) {
 			ExecutionMode:  ExecutionModeWorker,
 			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: "queue_lag", Target: 100},
 		}, true},
+		{"worker_replicas custom valid", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
+		}, true},
+		{"worker_replicas custom requires name", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Target: 4},
+		}, false},
+		{"worker_replicas name requires custom metric", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricQueueDepth, Name: "mcp_tasks_outstanding", Target: 4},
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

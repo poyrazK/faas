@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -63,7 +65,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) error {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
+		arg := args[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(args).
 		if arg == "--" {
 			positionals = append(positionals, args[i+1:]...)
 			break
@@ -112,7 +114,92 @@ func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})
 		return
 	}
-	fs.SetOutput(human)
+	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human})
+}
+
+// invokedCommandPath is the public command path of the current run(), for
+// example "invocations list". FlagSet names are internal ("usage-list",
+// "jobs-list"), so flag errors must not print them as a command to run.
+var invokedCommandPath string
+
+// publicCommandPath resolves the manifest command and verb the user typed.
+func publicCommandPath(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	command, ok := lookupCliCommand(args[0])
+	if !ok {
+		return args[0]
+	}
+	path := command.Name
+	if command.SubcommandsAfterPositionals || len(args) < 2 {
+		return path
+	}
+	sub, ok := findCliSubcommand(command.Subcommands, args[1])
+	if !ok {
+		return path
+	}
+	path += " " + sub.Name
+	if len(args) > 2 {
+		if leaf, ok := findCliSubcommand(sub.Subcommands, args[2]); ok {
+			path += " " + leaf.Name
+		}
+	}
+	return path
+}
+
+// flagDiagnosticDash matches the single-dash flag names the flag package
+// prints ("-app"); the CLI documents and accepts double-dash flags.
+var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z0-9])`)
+
+// normalizeFlagDiagnostic rewrites a flag package parse error in the CLI's
+// own spelling, e.g. "flag provided but not defined: -app" becomes
+// "unknown flag --app".
+func normalizeFlagDiagnostic(message string) string {
+	message = flagDiagnosticDash.ReplaceAllString(message, "${1}--${2}")
+	if rest, ok := strings.CutPrefix(message, "flag provided but not defined: "); ok {
+		return "unknown flag " + rest
+	}
+	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
+		return "flag " + rest + " needs a value"
+	}
+	return message
+}
+
+// humanFlagErrorWriter turns a flag parse failure into one diagnostic plus
+// a pointer to the command's help. production-us hunt #4: 30 leaves dumped
+// the flag package's raw output instead, with single-dash flag names, every
+// default, and internal FlagSet names ("Usage of usage-list:"). Usage text a
+// leaf prints itself still passes through; only the generic "Usage of"
+// header and PrintDefaults lines are dropped.
+type humanFlagErrorWriter struct {
+	name  string
+	dst   io.Writer
+	wrote bool
+}
+
+func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
+	text := string(p)
+	if strings.TrimSpace(text) == "" {
+		return len(p), nil
+	}
+	if !w.wrote {
+		w.wrote = true
+		path := invokedCommandPath
+		if path == "" {
+			if fields := strings.Fields(w.name); len(fields) > 0 {
+				path = fields[0]
+			}
+		}
+		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
+			normalizeFlagDiagnostic(strings.TrimSpace(text)), path)
+		return len(p), err
+	}
+	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {
+		return len(p), nil
+	}
+	_, err := io.WriteString(w.dst, text)
+	return len(p), err
 }
 
 type jsonFlagErrorWriter struct {
@@ -126,23 +213,24 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	w.wrote = true
-	err := writeJSONProblemTo(w.dst, api.Problem{
+	err := writeJSONProblemWithExit(w.dst, api.Problem{
 		Type:    docsSiteURL + "/errors/invalid-request",
 		Title:   "Invalid command flags",
 		Status:  400,
 		Code:    api.CodeValidation,
-		Detail:  strings.TrimSpace(string(p)),
+		Detail:  normalizeFlagDiagnostic(strings.TrimSpace(string(p))),
 		DocsURL: cliDocsURL,
-	})
+	}, 1)
 	return len(p), err
 }
 
-// applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
+// applyJSONFlag consumes --json (or -j / --json=BOOL) before "--" from
 // args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
 // non-secret config preference, unless --json=false is explicit on the
 // command line. Returns the args with the flag
-// stripped so downstream dispatch sees only its own flags. Idempotent
-// on a second call — safe if a subcommand happens to call it.
+// stripped so downstream dispatch sees only its own flags. If the flag is
+// repeated, the last explicit value wins. Idempotent on a second call — safe
+// if a subcommand happens to call it.
 //
 // Recognised boolean spellings (case-insensitive):
 //
@@ -157,33 +245,43 @@ func applyJSONFlag(args []string) []string {
 	if configured, ok := configuredJSONPreference(); ok {
 		jsonOutput = configured
 	}
+	filtered := make([]string, 0, len(args))
 	for i, a := range args {
+		if a == "--" {
+			filtered = append(filtered, args[i:]...)
+			break
+		}
 		switch {
 		case a == "--json" || a == "-j":
 			jsonOutput = true
-			return append(args[:i], args[i+1:]...)
 		case strings.HasPrefix(a, "--json="):
 			jsonOutput = jsonBoolTrue(a[len("--json="):])
-			return append(args[:i], args[i+1:]...)
+		default:
+			filtered = append(filtered, a)
 		}
 	}
-	return args
+	return filtered
 }
 
 func invalidJSONFlagValue(args []string) string {
+	invalid := ""
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "--json=") {
 			continue
 		}
 		value := strings.ToLower(strings.TrimPrefix(arg, "--json="))
 		switch value {
 		case "", requireSignedTrue, "yes", "on", "1", requireSignedFalse, "no", "off", "0":
-			return ""
 		default:
-			return value
+			if invalid == "" {
+				invalid = value
+			}
 		}
 	}
-	return ""
+	return invalid
 }
 
 // jsonBoolTrue maps a --json= suffix to a boolean. Falsy spellings
@@ -249,6 +347,20 @@ func writeJSONProblem(p api.Problem) error {
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(b, '\n'))
+	return err
+}
+
+// Client error metadata supplements the server's stable Problem code.
+func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
+	b, err := json.Marshal(struct {
+		api.Problem
+		Category string `json:"category"`
+		ExitCode int    `json:"exit_code"`
+	}{p, exitCategory(code), code})
 	if err != nil {
 		return err
 	}

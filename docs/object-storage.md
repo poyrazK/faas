@@ -378,7 +378,8 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional PUTs/completion and source-conditional copies return 501 explicitly.
+GCS conditional PUTs/completion return 501 explicitly. GCS tracked copies
+support source conditions using a captured generation and metageneration.
 S3 copies support `x-amz-copy-source-if-match` and
 `x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
 range and condition headers must be signed. S3 copies also support signed
@@ -562,6 +563,26 @@ Versions and delete markers carry durable Gregale UUIDs, scoped to the logical
 bucket and object key. The special S3 `null` ID remains mutable. Native provider
 version IDs are private and are not accepted as customer IDs.
 
+The Gregale control API exposes the same public references with
+`GET /v1/apps/{slug}/buckets/{bucket}/objects/versions`. Query parameters are
+`prefix`, `delimiter`, `limit` (1–1000), `key_marker` and `version_id_marker`.
+The JSON response includes versions, delete markers, common prefixes and paired
+continuation markers. Resume using both returned markers. Listing requires a
+bucket read grant and request-budget admission.
+
+```sh
+gregale bucket versions list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
+gregale bucket download <app> <bucket-id> 'reports/report.txt' ./old-report.txt --version-id <public-version-id>
+```
+
+Upload JSON includes `version_id` when a version is acknowledged. Download
+`--version-id` accepts an owned immutable public UUID; the mutable S3 `null` ID
+is excluded. GET/HEAD signed URL requests accept the same `version_id`. Stored
+URL authority, query signatures and the gateway all enforce that selector.
+Missing, foreign or deleted versions never fall back to the current object. A
+CLI download verifies the acknowledged public version before publishing the
+complete local file. See [ADR-687](adr/687-object-version-cli-and-bound-downloads.md).
+
 Use those IDs with standard SDK GetObject/HeadObject `VersionId` parameters,
 or AWS CLI `s3api get-object --bucket assets --key hello.txt --version-id ID
 output.txt`. Read permissions and credential revocation still apply on every
@@ -689,6 +710,19 @@ The `accounting` object in the same provider-registry JSON sets uniform
 operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
+
+In `gateway_safety_v1`, customer native calls reserve the shared request budget
+before dispatch. Each multipart part-list page (including CLI resume), bucket
+configuration or version-protection probe, and tag request counts separately,
+even when the provider returns an error. Exhausted budgets return
+`object_storage_budget_reached`; unqualified accounting returns
+`object_storage_usage_stale`, before contacting the provider. Multipart session
+status/listing remain available without a native request. A denied resume keeps
+its checkpoint for retry after accounting recovers. Pending bucket configuration
+inspection may return persisted progress when its live probe is denied. S3
+object and part listings make one provider attempt; an explicit retry requires
+a new reservation. Accepted recovery,
+maintenance and cleanup keep recording attempts and can finish at the ceiling.
 
 Copy-source grants have a separate fixed ceiling of 32 source buckets per
 destination credential. The API reports `copy_sources_per_credential` with
@@ -1003,7 +1037,8 @@ five-second deadline. It runs with uploads disabled or budgets exhausted.
 Route deletion preserves recovery records until the owning bucket is removed.
 See [ADR-534](adr/534-recoverable-application-object-uploads.md).
 
-GCS and third-party writers without the tracked capability retain conservative
+GCS supports tracked receipts and generation-based historical confirmation.
+Third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
 uploads, copies and uncertain writes still cannot be force-refunded.
 
@@ -1078,9 +1113,10 @@ when generic retries are enabled.
 Include PUT-only `encryption` with `algorithm`, an enrolled `key_id` for KMS,
 optional `bucket_key_enabled` and optional `context`. The gateway captures the
 owned selection before issuing the URL and returns owned encryption headers.
-GCS rejects encryption; an ordinary GCS PUT still uses the branded broker, but
-a lost acknowledgment retains its receipt until exact provider proof support
-is available. Fixed multipart part URLs now use the branded endpoint too. The
+GCS supports enrolled AES256 and confirms the stored receipt, native generation
+and encryption intent before acknowledging it. CMEK and other encryption modes
+remain unsupported. Lost acknowledgments retain their receipt for exact current
+or historical proof. Fixed multipart part URLs use the branded endpoint too. The
 URL binds the owned session, exact part and length; it stops admitting writes
 when the session starts completion or abort. Native upload IDs stay private.
 URLs issued before ADR-557/558 retain their native provider expiry; changing
@@ -1255,12 +1291,81 @@ embedded errors inside HTTP 200 remain pending. Recovery confirms only the
 destination receipt, size and ETag; it never repeats the copy. After confirmed
 settlement, deletion and fenced inventory can reclaim capacity without
 refunding monthly authorizations or billing. Existing upload recovery and
-transfer limits apply. GCS, older copies, environment-clone/cross-bucket copies
+transfer limits apply. GCS tracked copies use the same owned receipts and source
+grant admission. Older copies, environment-clone copies
 and providers without the capability remain conservative.
 Apply the additive migration before upgrading gateways and API workers.
 See [ADR-536](adr/536-recoverable-s3-gateway-copies.md).
 
 ## Multipart server-side copy
+
+GCS uses a generation- and metageneration-fenced native GET streamed into a
+part PUT. This consumes one extra provider request and reserves the copied
+source length against gateway safety egress before reading it. Range responses
+must match the requested interval exactly. Interrupted copy reservations remain
+conservative. Native multipart completion confirms the stored session receipt
+and generation, including retained history after a later replacement.
+
+## CLI file transfers
+
+```sh
+gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
+gregale bucket upload <app> <bucket-id> <key> <file> --resume <upload-id>
+gregale bucket download <app> <bucket-id> <key> <file>
+gregale bucket download <app> <bucket-id> <key> <file> --force
+gregale bucket uploads list <app> <bucket-id>
+gregale bucket uploads status <app> <bucket-id> <upload-id>
+gregale bucket uploads parts <app> <bucket-id> <upload-id>
+gregale usage object-storage
+```
+
+Transfers stream regular files with a default thirty-minute deadline. Uploads
+automatically use multipart above the server's single PUT limit. An uncertain
+transfer returns its pending receipt or session ID for inspection; it does not
+automatically abort or repeat an admitted write. Downloads publish atomically
+after success, preserve existing files on failure, and require `--force` to
+replace a destination. JSON output includes the key, file, size, status and
+upload ID. Usage output marks unavailable meters as unknown.
+
+Multipart uploads save a private local checkpoint before issuing part URLs.
+Use `--resume <upload-id>` with the same API endpoint, app, bucket, key and file
+contents. The source may move to another path, but its size and SHA-256 must
+match. An explicit `--content-type` must also match; otherwise resume preserves
+the session's original type. The CLI validates all part-list pages and skips
+only parts whose native listing matches the checkpoint's saved ETag. A part
+with a lost acknowledgment is resent from verified staged bytes. Changed or
+unexpected parts fail without completing a mixed object.
+
+Checkpoints live in `gregale/object-uploads` under `XDG_STATE_HOME` when set,
+otherwise the user's configuration directory. They contain fingerprints and
+public session identity, never credentials or signed URLs. Keep this directory
+for later recovery. Completed records remain available for status-based replay;
+they can be removed when recovery is no longer needed. Each record is bounded
+at 4 MiB, with at most 10,000 parts. Processes sharing a checkpoint cannot resume
+it concurrently. Each missing or unacknowledged part needs temporary disk space
+up to the session's configured part size, bounded by 5 GiB. The staged part is
+removed after its attempt; a killed process leaves one private staged file,
+which the next resume removes under the session lock. This extra local I/O prevents an in-place source
+change from altering bytes after verification.
+
+Before completion, the CLI persists the ordered part manifest. If the completion
+response is lost, resume checks the durable session first: an already completed
+session returns its saved result without issuing another completion. A pending
+completion reuses exactly that manifest through the server's recovery journal.
+Expired, aborted, foreign, or uncheckpointed sessions are rejected. A lost create
+response before the first checkpoint still needs session inspection; this CLI
+path does not automatically create a replacement. Single PUTs continue to use
+their existing write-receipt inspection path. See [ADR-688](adr/688-resumable-cli-object-uploads.md).
+
+GCS supports tracked PUT/copy recovery, native version controls and reads, copy
+grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding
+enrollment to an existing backend changes its immutable placement fingerprint;
+preserve existing placement configuration and use the normal adoption process.
+Native generations remain private, and ordinary deletion does not manufacture
+S3 delete markers. GCS Object Lock, CMEK and conditional PUT/completion remain
+unsupported. See [ADR-628](adr/628-gcs-tracked-writes-and-native-generations.md).
+
+## Multipart copy admission
 
 S3 backends implement `UploadPartCopy` within the credential's logical bucket.
 The credential needs both read and write permissions. Initiate the destination
@@ -1440,8 +1545,12 @@ gregale bucket versioning suspend <app> <bucket-id>
 Control requests require storage manage scope and bucket write access; S3 PUT
 requires a bucket write credential. Discovery of provider versioning also fences
 an empty bucket until adoption is verified. Unresolved legacy direct-write grants
-block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
-GCS configuration and unsupported provider endpoints return NotImplemented.
+block configuration; URL expiry alone cannot make them safe. GCS maps enabled
+versioning to Enabled and its disabled Boolean to Suspended; it preserves native
+generations without creating S3 delete markers. MFA Delete changes and
+unsupported provider endpoints return NotImplemented.
+The first GCS versioning observation also requires the existing fifteen-minute
+adoption window and a complete generation inventory, including when disabled.
 See [ADR-545](adr/545-durable-bucket-versioning-configuration.md). Delete-marker
 admission and mutable null deletion are implemented in
 [ADR-547](adr/547-durable-s3-mutable-deletion.md). Replay-safe direct writes and
@@ -1923,12 +2032,111 @@ gregale bucket object-lock status <app> <bucket-id>
 gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
-This increment covers bucket configuration. Customer per-version retention,
-legal hold and governance bypass, per-write protection snapshots and qualified
-protected deletion/lifecycle/account cleanup remain separate implementation
-work. The gateway rejects unsupported per-object lock/bypass headers. Local
-HTTP/TLS and memory/PostgreSQL tests qualify the implementation; activation and
-production provider qualification remain deployment work.
+[ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
+management described below. [ADR-619](adr/619-durable-object-write-protection.md) adds the write snapshots
+described below. [ADR-620](adr/620-protection-aware-object-lifecycle.md) adds protected
+lifecycle deletion. ADRs 594 and 595 add per-version and creation event holds; governance bypass remains open.
+The gateway accepts separately enrolled event-hold creation headers and rejects governance-bypass headers. Object
+Lock enrollment remains explicit per backend; deployment defaults stay disabled.
+Local tests qualify the implementation; production activation remains deployment work.
+
+## Per-version retention and legal holds
+
+Select an explicit owned public version UUIDv4 from version listing or a write
+receipt. The literal `null` is accepted only in an Object Lock bucket with fresh
+Enabled native versioning. There is no implicit current selector. Foreign
+versions, cross-key references and native delete markers are rejected.
+
+Control routes use `?key=<url-encoded-key>&version_id=<public-version>`:
+
+- `GET`/`PUT .../objects/protection/retention`
+- `GET`/`PUT .../objects/protection/legal-hold`
+- `GET .../protection-operations/<operation-id>` for durable progress.
+
+The prefix is `/v1/apps/{slug}/buckets/{bucket}`. GET reads native policy and
+requires the bucket read grant. PUT requires the write grant, storage manage
+scope, existing MFA policy, ingress and explicit backend Object Lock enrollment.
+The capability response advertises `version_retention`, `version_legal_hold` and
+separately enrolled `version_event_hold`.
+Inspection and accepted recovery remain available when enrollment is disabled.
+Receipt inspection also works while backend placement is unavailable.
+
+Create a canonical UUIDv4 operation ID and reuse it for retries:
+
+```json
+{"id":"<operation-id>","retention":{"mode":"COMPLIANCE","retain_until_date":"2027-01-01T00:00:00Z"}}
+```
+
+Legal hold uses `{"id":"<operation-id>","legal_hold":{"status":"ON"}}`
+or `OFF`. An explicit empty `retention:{}` clears expired/no fixed retention.
+Active retention cannot be shortened or cleared, and active COMPLIANCE cannot
+be downgraded. GOVERNANCE does not imply bypass. Dates round upward to native
+millisecond precision. Governance bypass and fixed retention changes over
+existing event holds remain rejected. Event-hold observations remain readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+
+Event holds use the same retention endpoint on backends enrolled with
+`object_lock.event_holds:true`. ON requires one duration. OFF omits duration;
+the provider fixes the final retention date from the active hold. For example:
+
+```json
+{"id":"<enable-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}
+{"id":"<release-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"OFF"}}
+```
+
+Supply `retain_until_date` to preserve a requested minimum. Changing a duration
+while ON requires readback that preserves the observed retention date. Releasing
+without an explicit date requires a fresh ON observation. The worker persists
+that policy before dispatch and verifies the provider's final date after release.
+Uncertainty retains the operation and bucket fence; recovery never repeats PUT.
+The private snapshot does not appear in customer receipts. Event-hold protection
+for new writes and bucket default snapshots remains outside the fixed write
+protection contract below.
+
+CLI examples:
+
+```bash
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE ON days 30 OPERATION_ID
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE OFF OPERATION_ID
+```
+
+Use `years N` instead of `days N`, and add `--retain-until RFC3339_DATE`
+before the operation ID for a minimum date. Standard S3 retention XML uses
+`EventHold` and `EventHoldDuration` with the same rules. Legal holds remain
+independent.
+
+PUT returns 202 after durable acceptance. The receipt transitions through
+`waiting`/`applying` to `ready` or `failed`; it contains the public version and
+requested policy, without private provider IDs. Reusing an ID with different
+intent conflicts. An identical active request may return the existing operation
+ID, so retain the returned ID for status and retries.
+
+Standard S3 SDK `GetObjectRetention`, `PutObjectRetention`, `GetObjectLegalHold`
+and `PutObjectLegalHold` use `?retention` or `?legal-hold` plus explicit
+`versionId`. A signed `X-Gregale-Protection-Id` is optional; S3 responses identify
+accepted work through this header. PUT returns 200 only after readback verifies
+the requested policy. Pending/conflicting work returns `OperationAborted`;
+uncertain provider outcomes return `ServiceUnavailable`. Inspect the control
+receipt or retry identical intent. Each journal sends at most one native PUT.
+
+One active protection operation per bucket temporarily blocks competing writes,
+deletion, inventory reclamation, configuration and cleanup. Reads remain
+available. Recovery uses two-minute leases, 45-second deadlines, 30-second
+retries and at most 50 due operations per sweep. Unknown/mismatched readback
+keeps the fence, including after restart. Neither elapsed time nor absence
+proves failure. A positively parsed native rejection can end the operation;
+otherwise operators must investigate provider truth without resetting dispatch
+history. Native calls are metered and do not change object byte/key capacity.
+
+Go/Node/Python clients expose the five typed protection methods. CLI examples:
+
+```sh
+gregale bucket protection retention <app> <bucket-id> <key> <version-id>
+gregale bucket protection retention <app> <bucket-id> <key> <version-id> COMPLIANCE 2027-01-01T00:00:00Z <operation-id>
+gregale bucket protection retention <app> <bucket-id> <key> <version-id> clear <operation-id>
+gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> ON <operation-id>
+gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> OFF <operation-id>
+gregale bucket protection status <app> <bucket-id> <operation-id>
+```
 
 
 ## Owned bucket and expired-account cleanup
@@ -1956,11 +2164,98 @@ Bucket deletion must return a native 204 acknowledgment or a parsed
 `NoSuchBucket`; an empty listing cannot authorize a cascade. Inactive accounts
 cannot reserve more buckets, and restoration closes at the existing grace
 expiry. Account metadata is removed only after confirmed native cleanup. New
-Object Lock enrollment remains disabled pending the remaining per-version
-customer management/protection scope.
+Object Lock writes and protected lifecycle deletion are locally qualified by
+ADRs 592 and 593. Backend enrollment and production activation remain explicit.
 
 Key custody does not revoke native URLs issued before tracking, out-of-band
 writers or provider lifecycle rules. Missing proof stays pending with its
 reservation. These cases, and uncertain ordinary mutable deletions, still need
 stronger retained evidence or operator resolution. Do not recreate a physical
 bucket name while its cleanup journal is active.
+
+
+### Protection on newly created S3 versions (ADR-619)
+
+Protected multipart parts share the configured aggregate upload spool and
+free-space floor with PUTs. Gregale verifies the incoming part, computes MD5
+from its bounded spool and signs the native Content-MD5 header. Insufficient
+staging capacity returns `SlowDown` before a native part write.
+
+Owned Object Lock buckets capture the verified fixed or event retention default and any
+explicit write protection when admitting each upload or copy. Standard signed
+`x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date` and
+`x-amz-object-lock-legal-hold` headers are supported on PUT, CopyObject and
+CreateMultipartUpload. Fixed retention requires mode and date together; legal holds use `ON` or
+`OFF`. Explicit dates must be in the future. Separately enrolled event holds are
+described below. Governance bypass is unsupported, and parts/completion cannot replace initiation protection.
+
+Signed object-upload and multipart-creation APIs accept an optional selection:
+
+```json
+{
+  "protection": {
+    "retention": {
+      "mode": "COMPLIANCE",
+      "retain_until_date": "2027-01-01T00:00:00Z"
+    },
+    "legal_hold": {"status": "ON"}
+  }
+}
+```
+
+Omitting `retention` inherits the admitted bucket default. Application upload
+routes inherit those defaults as well. Multipart sessions retain their accepted
+policy through completion. Gregale waits for exact native version readback to
+verify protection before settling a protected write. Unknown outcomes keep the
+receipt and capacity reservation; recovery reads the original private proof and
+never repeats a PUT or copy. Accepted recovery continues after enrollment is
+disabled. Private policy snapshots are bounded to 16 KiB and remain internal.
+
+Object Lock enrollment remains explicit per backend. Local S3 protocol tests
+qualify this implementation without requiring a real provider environment.
+
+## Protection-aware lifecycle expiration
+
+Permanent lifecycle deletion in a durably protected bucket checks fresh native
+Object Lock configuration, Enabled versioning and the exact data version's
+retention/legal hold. Active fixed retention, legal holds and event holds defer
+the target with deletion receipt `last_error_code: object_protected`. Scans continue
+past held versions, within their existing action limit, and reconsider them on
+a later hourly scan. Unknown policy fails closed. Lifecycle never removes a hold
+or sends a governance bypass. Current expiration can create a delete marker while
+preserving locked data; marker cleanup does not read per-version data protection.
+
+A native DELETE acknowledgment cannot complete a protected permanent deletion.
+Gregale verifies complete bounded exact-key version history before clearing its
+fence. Recovery settles a missing immutable target without another DELETE, and
+rechecks a still-present target's policy before retrying. Qualified existing null
+versions require permanent Object Lock and fresh Enabled versioning; ordinary
+mutable deletions keep their conservative recovery behavior. Accepted receipt
+recovery continues with new ingress or enrollment disabled. Missing historical
+classification, malformed history or unknown effects retain custody and capacity.
+Only verified all-version inventory changes the quota baseline after deletion.
+
+See [ADR-620](adr/620-protection-aware-object-lifecycle.md).
+
+### Event holds on new versions
+
+Separately enrolled backends advertise `write_event_hold`. Owned signed-upload
+and multipart initiation requests can select an event hold through `protection`:
+
+```json
+{"protection":{"retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}}
+```
+
+An optional `retain_until_date` is a minimum. ON requires one days or years
+duration. OFF on a new version requires a fixed date and no duration; use the
+existing-version retention API to release an active hold without a fixed date.
+The signed S3 PUT, copy and multipart initiation paths accept the standard
+`x-amz-object-lock-event-hold` and duration-days/duration-years headers.
+
+Omitted retention inherits the admitted bucket default, including default event
+holds and fixed minima. An explicit retention selection overrides that default.
+Upload routes inherit defaults. Parts and completion keep initiation policy.
+Accepted receipts preserve these snapshots through disabled enrollment, changing
+defaults, restarts and missing acknowledgments. Settlement requires exact-version
+readback with the correct status, duration, private receipt and retention bound;
+recovery does not resend the body. See [ADR-622](adr/622-event-protection-for-new-object-versions.md).

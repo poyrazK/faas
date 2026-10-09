@@ -11,21 +11,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // EventSubscription is the durable, tenant-scoped representation of an
 // internal event subscription declared by an application manifest.
 type EventSubscription struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Source    string
-	Type      string
-	Filter    json.RawMessage
-	Enabled   bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	SchemaVersions     []string
+	RoutingRetryPolicy *api.EventRoutingRetryPolicy
+	ID                 string
+	AccountID          string
+	AppID              string
+	Source             string
+	Type               string
+	Filter             json.RawMessage
+	Enabled            bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // EventSubscriptionStore is optional on Store implementations so existing
@@ -78,6 +81,7 @@ func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
 
 func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 	return EventSubscription{
+		SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		AppID:     uuidFromPgtype(row.AppID).String(),
@@ -92,6 +96,7 @@ func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 
 func eventSubscriptionFromUpsert(row sqlc.UpsertEventSubscriptionRow) EventSubscription {
 	return EventSubscription{
+		SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		AppID:     uuidFromPgtype(row.AppID).String(),
@@ -211,7 +216,7 @@ func (m *MemStore) ListEventSubscriptionsForApp(_ context.Context, appID string)
 	out := make([]EventSubscription, 0)
 	for _, subscription := range m.eventSubscriptions {
 		if subscription.AppID == canonicalAppID {
-			out = append(out, subscription)
+			out = append(out, cloneEventSubscription(subscription))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -231,7 +236,7 @@ func (m *MemStore) ListEnabledEventSubscriptionsForAccount(_ context.Context, ac
 	for _, subscription := range m.eventSubscriptions {
 		app, appExists := m.eventSubscriptionAppLocked(subscription.AppID)
 		if subscription.AccountID == canonicalAccountID && subscription.Enabled && appExists && app.Status != AppDeleted {
-			out = append(out, subscription)
+			out = append(out, cloneEventSubscription(subscription))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -285,7 +290,7 @@ func (m *MemStore) ListMatchingEventSubscriptionsForAccount(_ context.Context, a
 		if !cursor.CreatedAt.IsZero() && (subscription.CreatedAt.Before(cursor.CreatedAt) || (subscription.CreatedAt.Equal(cursor.CreatedAt) && subscription.ID <= cursor.ID)) {
 			continue
 		}
-		out = append(out, subscription)
+		out = append(out, cloneEventSubscription(subscription))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
@@ -338,7 +343,7 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	}
 	mapKey := canonicalMemUUID(appID) + "\x00" + key
 	if existing, ok := m.eventSubscriptions[mapKey]; ok {
-		return existing, false, nil
+		return cloneEventSubscription(existing), false, nil
 	}
 	now := time.Now().UTC()
 	subscription := EventSubscription{
@@ -359,7 +364,14 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 }
 
 func sameMemUUID(left, right string) bool {
-	return left == right || canonicalMemUUID(left) == canonicalMemUUID(right)
+	if left == right {
+		return true
+	}
+	leftID, rightID := parseSubjectID(left), parseSubjectID(right)
+	if leftID != nil && rightID != nil {
+		return *leftID == *rightID
+	}
+	return canonicalMemUUID(left) == canonicalMemUUID(right)
 }
 
 func (m *MemStore) DeleteEventSubscription(_ context.Context, id, accountID, appID string) error {
@@ -377,4 +389,11 @@ func (m *MemStore) DeleteEventSubscription(_ context.Context, id, accountID, app
 		return nil
 	}
 	return ErrNotFound
+}
+
+func cloneEventSubscription(s EventSubscription) EventSubscription {
+	s.Filter = append(json.RawMessage(nil), s.Filter...)
+	s.SchemaVersions = append([]string(nil), s.SchemaVersions...)
+	s.RoutingRetryPolicy = cloneEventRoutingRetryPolicy(s.RoutingRetryPolicy)
+	return s
 }

@@ -314,16 +314,16 @@ func TestClosedSetPredicates(t *testing.T) {
 	}
 }
 
-func TestPreAuthTargetAlertActionIsNotificationOnly(t *testing.T) {
-	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct"} {
+func TestNotificationOnlyAlertActions(t *testing.T) {
+	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "workflow_failures", "workflow_schedule_quota_skips", "workflow_pending_age_seconds", "workflow_waiting_age_seconds", "workflow_due_age_seconds"} {
 		for _, action := range []string{"", "webhook"} {
 			if !api.AlertRuleActionAllowedForMetric(metric, action) {
-				t.Fatalf("pre-auth target metric %q rejected action %q", metric, action)
+				t.Fatalf("notification-only metric %q rejected action %q", metric, action)
 			}
 		}
 		for _, action := range []string{"rollback", "demote", "promote"} {
 			if api.AlertRuleActionAllowedForMetric(metric, action) {
-				t.Fatalf("pre-auth target metric %q accepted deployment action %q", metric, action)
+				t.Fatalf("notification-only metric %q accepted deployment action %q", metric, action)
 			}
 		}
 	}

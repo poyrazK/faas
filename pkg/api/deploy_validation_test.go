@@ -1,6 +1,34 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// adr: 678
+func TestValidProjectImage(t *testing.T) {
+	for _, tc := range []struct {
+		ref  string
+		want bool
+	}{
+		{"docker.io/library/nginx:1.27", true},
+		{"registry.example.com:5000/team/app:release-1", true},
+		{"ghcr.io/team/app@sha256:" + strings.Repeat("a", 64), true},
+		{"nginx:latest", false},
+		{"https://example.com/app:v1", false},
+		{"example.com/app:bad tag", false},
+		{"example.com/app@sha256:short", false},
+		{"example.com/a/../app:v1", false},
+		{"example.com//app:v1", false},
+		{"example.com/app:v1\n", false},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			if got := ValidProjectImage(tc.ref); got != tc.want {
+				t.Fatalf("ValidProjectImage = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestValidFunctionRuntime(t *testing.T) {
 	for _, runtime := range FunctionRuntimes {

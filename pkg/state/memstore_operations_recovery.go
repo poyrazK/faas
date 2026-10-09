@@ -34,6 +34,15 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 		}
 		return cloneOperation(m.operationDeliveryLocked(op)), nil
 	}
+	if err := m.checkOperationInspectionRevisionLocked(op, req.ExpectedInspectionRevision); err != nil {
+		return Operation{}, err
+	}
+	if op.WorkflowRunID != "" {
+		return m.recoverOperationWorkflowLocked(op, req, fingerprint)
+	}
+	if op.JobRunID != "" {
+		return m.recoverOperationJobLocked(op, req, fingerprint)
+	}
 	original, exists := m.invocations[op.CurrentInvocationID]
 	if !exists {
 		return Operation{}, ErrNotFound
@@ -50,6 +59,7 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 		}
 	}
 	def := data.definitions[op.DefinitionID]
+	receiptExpiry := op.ExpiresAt
 	inv, event, err := prepareOperationRecovery(&op, original, def, limits, req, now)
 	if err != nil {
 		return Operation{}, err
@@ -57,12 +67,13 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 	if req.Resolution == "safe_to_retry" {
 		m.invocations[inv.ID] = inv
 		data.executions[inv.ID] = op.ID
+		data.generations[inv.ID] = op.Generation
 	} else {
 		if err := m.operationCompletionLocked(&op, def); err != nil {
 			return Operation{}, err
 		}
 	}
-	data.recoveries[key] = fingerprint
+	m.saveOperationRecoveryDecisionLocked(op, req, fingerprint, now, receiptExpiry)
 	m.operationSaveLocked(op, event)
 	return cloneOperation(op), nil
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -44,6 +47,238 @@ func (s *server) getAutomation(w http.ResponseWriter, r *http.Request, account s
 		}
 	}
 	s.notFound(w, "no such automation")
+}
+
+func (s *server) getAutomationHealth(w http.ResponseWriter, r *http.Request, account state.Account) {
+	app, ok := s.loadApp(w, r, account, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	definitions, err := s.automationList(r.Context(), app, account)
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	if !automationListed(definitions.Automations, name) {
+		s.notFound(w, "no such automation")
+		return
+	}
+	after, before, valid := automationHealthTimeRange(r.URL.Query(), time.Now().UTC())
+	if !valid {
+		api.WriteProblem(w, api.ErrValidation("created_after and created_before must form a non-future window no longer than 30 days"))
+		return
+	}
+	store, ok := s.store.(state.WorkflowAutomationHealthStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("automation health storage unavailable"))
+		return
+	}
+	health, err := store.GetWorkflowAutomationHealth(r.Context(), app.ID, name, after, before)
+	if err != nil {
+		s.log.Error("get automation health failed", "app_id", app.ID, "workflow_name", name, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to read automation health"))
+		return
+	}
+	writeJSON(w, http.StatusOK, automationHealthResponse(app.Slug, name, after, before, health))
+}
+
+func automationListed(definitions []api.AutomationResponse, name string) bool {
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func automationHealthTimeRange(query map[string][]string, now time.Time) (time.Time, time.Time, bool) {
+	after, err := parseWorkflowRunTimeFilter(query, "created_after")
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	before, err := parseWorkflowRunTimeFilter(query, "created_before")
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if before == nil {
+		before = &now
+	}
+	if before.After(now) {
+		return time.Time{}, time.Time{}, false
+	}
+	if after == nil {
+		defaultAfter := before.Add(-api.WorkflowAutomationHealthDefaultRange)
+		after = &defaultAfter
+	}
+	if after.After(*before) || before.Sub(*after) > api.WorkflowAutomationHealthMaxRange {
+		return time.Time{}, time.Time{}, false
+	}
+	return *after, *before, true
+}
+
+func automationHealthResponse(appSlug, name string, after, before time.Time, health state.WorkflowAutomationHealth) api.AutomationHealthResponse {
+	successes := health.StatusCounts[state.WorkflowRunStatusSucceeded]
+	successRate := 0.0
+	if health.CompletedRunCount > 0 {
+		successRate = float64(successes) / float64(health.CompletedRunCount)
+	}
+	response := api.AutomationHealthResponse{
+		AppSlug: appSlug, AutomationName: name, WindowStart: after, WindowEnd: before,
+		RunCount: health.RunCount, CompletedRunCount: health.CompletedRunCount,
+		ActiveRunCount: health.ActiveRunCount, QueuedRunCount: health.QueuedRunCount,
+		Queue:       health.Queue,
+		SuccessRate: successRate, StatusCounts: health.StatusCounts,
+		P50DurationMS: health.P50DurationMS, P95DurationMS: health.P95DurationMS,
+		FailedSteps: make([]api.AutomationHealthStepFailure, 0, len(health.FailedSteps)),
+	}
+	response.LastRun = automationHealthRunResponse(health.LastRun)
+	response.LastSuccess = automationHealthRunResponse(health.LastSuccess)
+	response.LastFailure = automationHealthRunResponse(health.LastFailure)
+	for _, failure := range health.FailedSteps {
+		response.FailedSteps = append(response.FailedSteps, api.AutomationHealthStepFailure{
+			StepName: failure.StepName, FailedRunCount: failure.FailedRunCount, LastFailedAt: failure.LastFailedAt,
+		})
+	}
+	return response
+}
+
+func automationHealthRunResponse(run *state.WorkflowAutomationRunSummary) *api.AutomationHealthRun {
+	if run == nil {
+		return nil
+	}
+	return &api.AutomationHealthRun{ID: run.ID, Status: run.Status, CreatedAt: run.CreatedAt, FinishedAt: run.FinishedAt}
+}
+
+func (s *server) listAutomationRevisions(w http.ResponseWriter, r *http.Request, account state.Account) {
+	app, ok := s.loadApp(w, r, account, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limit, valid := automationRevisionQueryInt(w, r, "limit", 50, 1, 100)
+	if !valid {
+		return
+	}
+	offset, valid := automationRevisionQueryInt(w, r, "offset", 0, 0, int(^uint32(0)>>1))
+	if !valid {
+		return
+	}
+	store, ok := s.store.(state.AutomationStore)
+	if !ok {
+		writeAutomationError(w, errors.New("automation storage unavailable"))
+		return
+	}
+	revisions, total, err := store.ListAutomationRevisions(r.Context(), app.ID, r.PathValue("name"), state.AutomationRevisionListOptions{Limit: limit, Offset: offset})
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	response := api.ListAutomationRevisionsResponse{Revisions: make([]api.AutomationRevisionResponse, 0, len(revisions)), Total: total, Limit: limit, Offset: offset}
+	for _, revision := range revisions {
+		item, err := automationRevisionResponse(revision)
+		if err != nil {
+			writeAutomationError(w, err)
+			return
+		}
+		response.Revisions = append(response.Revisions, item)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) getAutomationRevision(w http.ResponseWriter, r *http.Request, account state.Account) {
+	app, ok := s.loadApp(w, r, account, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	version, ok := automationRevisionPathVersion(w, r)
+	if !ok {
+		return
+	}
+	store, ok := s.store.(state.AutomationStore)
+	if !ok {
+		writeAutomationError(w, errors.New("automation storage unavailable"))
+		return
+	}
+	revision, err := store.GetAutomationRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	response, err := automationRevisionResponse(revision)
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) restoreAutomationRevision(w http.ResponseWriter, r *http.Request, account state.Account) {
+	var body api.RestoreAutomationRevisionRequest
+	if !decodeAutomationBody(w, r, &body) {
+		return
+	}
+	if body.ExpectedVersion < 0 {
+		api.WriteProblem(w, api.ErrValidation("expected_version must be zero or positive"))
+		return
+	}
+	app, ok := s.loadApp(w, r, account, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	version, ok := automationRevisionPathVersion(w, r)
+	if !ok {
+		return
+	}
+	store, ok := s.store.(state.AutomationStore)
+	if !ok {
+		writeAutomationError(w, errors.New("automation storage unavailable"))
+		return
+	}
+	revision, err := store.GetAutomationRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	s.applyAutomationMutation(w, r, account, state.AutomationMutation{Action: "save", ExpectedVersion: body.ExpectedVersion, Draft: revision.Definition})
+}
+
+func automationRevisionQueryInt(w http.ResponseWriter, r *http.Request, name string, fallback, minimum, maximum int) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback, true
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value < int64(minimum) || value > int64(maximum) {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("%s must be between %d and %d", name, minimum, maximum)))
+		return 0, false
+	}
+	return int(value), true
+}
+
+func automationRevisionPathVersion(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	version, err := strconv.ParseInt(r.PathValue("version"), 10, 64)
+	if err != nil || version <= 0 {
+		api.WriteProblem(w, api.ErrValidation("version must be a positive integer"))
+		return 0, false
+	}
+	return version, true
+}
+
+func automationRevisionResponse(revision state.AutomationRevision) (api.AutomationRevisionResponse, error) {
+	var definition api.WorkflowSpec
+	if err := json.Unmarshal(revision.Definition, &definition); err != nil {
+		return api.AutomationRevisionResponse{}, err
+	}
+	canonical, err := json.Marshal(definition)
+	if err != nil {
+		return api.AutomationRevisionResponse{}, err
+	}
+	hash := sha256.Sum256(canonical)
+	return api.AutomationRevisionResponse{
+		Version: revision.Version, Definition: definition, DefinitionHash: hex.EncodeToString(hash[:]),
+		RecordedAt: revision.RecordedAt.UTC(), LegacySnapshot: revision.LegacySnapshot,
+		PublishedByAccountID: revision.PublishedByAccountID, PublishedByAPIKeyID: revision.PublishedByAPIKeyID,
+	}, nil
 }
 func (s *server) automationList(ctx context.Context, app state.App, account state.Account) (api.ListAutomationsResponse, error) {
 	response := api.ListAutomationsResponse{AppSlug: app.Slug, RuntimeEnabled: s.workflowRuntimeEnabled, UnavailableReason: workflowScheduleUnavailableReason(s.workflowRuntimeEnabled, app, account), MaxDefinitions: account.Plan.WorkflowMaxPerApp(), Automations: []api.AutomationResponse{}}
@@ -170,6 +405,12 @@ func (s *server) applyAutomationMutation(w http.ResponseWriter, r *http.Request,
 		writeAutomationError(w, errors.New("automation storage unavailable"))
 		return
 	}
+	if mutation.Action == "publish" {
+		mutation.ActorAccountID = account.ID
+		if _, key, authenticated := authmw.AccountFromContext(r); authenticated && key != nil {
+			mutation.ActorAPIKeyID = key.ID
+		}
+	}
 	record, err := store.MutateAutomation(r.Context(), app.ID, r.PathValue("name"), mutation)
 	if err != nil {
 		writeAutomationError(w, err)
@@ -262,6 +503,8 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such automation"))
 	case errors.Is(err, state.ErrAutomationVersionConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAutomationVersionConflict, "Automation changed", err.Error()))
+	case errors.Is(err, state.ErrAutomationRevisionNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such automation revision"))
 	case errors.Is(err, state.ErrAutomationOwnershipConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAutomationOwnershipConflict, "Confirm YAML ownership change", err.Error()))
 	case errors.Is(err, state.ErrAutomationInvalid):

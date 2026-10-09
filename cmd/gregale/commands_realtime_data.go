@@ -21,9 +21,14 @@ type realtimeCLIResult struct {
 	ConnectionID string `json:"connection_id,omitempty"`
 	Channel      string `json:"channel,omitempty"`
 	Queued       *int   `json:"queued,omitempty"`
+	Subscribers  *int   `json:"subscribers,omitempty"`
+	QueueFull    *int   `json:"queue_full,omitempty"`
+	Failed       *int   `json:"failed,omitempty"`
 	Partial      *bool  `json:"partial,omitempty"`
 	NodesQueried *int   `json:"nodes_queried,omitempty"`
 	NodesDown    *int   `json:"nodes_unavailable,omitempty"`
+	Sequence     *int64 `json:"sequence,omitempty"`
+	Durable      *bool  `json:"durable,omitempty"`
 }
 
 func cmdRealtimeSend(args []string) int {
@@ -117,7 +122,11 @@ func cmdRealtimeSubscription(args []string, subscribe bool) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Realtime connection %s %s from channel %s.", args[2], verb, args[3])
+	preposition := "to"
+	if verb == "unsubscribed" {
+		preposition = "from"
+	}
+	PrintOK(osStdout, "Realtime connection %s %s %s channel %s.", args[2], verb, preposition, args[3])
 	return 0
 }
 
@@ -127,34 +136,58 @@ func cmdRealtimePublish(args []string) int {
 	data := fs.String("data", "", "UTF-8 message data (prefer --data-stdin for binary-safe input)")
 	dataStdin := fs.Bool("data-stdin", false, "read message bytes from stdin")
 	binary := fs.Bool("binary", false, "publish as a binary WebSocket frame")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this exact message")
+	delivery := fs.String("delivery", "live", "delivery mode: live or retained")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 3 || !realtime.ValidateChannel(fs.Arg(2)) {
-		PrintUsage(osStderr, "usage: gregale realtime publish APP_SLUG ENDPOINT_ID CHANNEL (--data-stdin|--data DATA) [--binary]", "realtime")
+		PrintUsage(osStderr, "usage: gregale realtime publish APP_SLUG ENDPOINT_ID CHANNEL (--data-stdin|--data DATA) [--binary] [--delivery live|retained] [--idempotency-key KEY]", "realtime")
 		return 1
+	}
+	if *delivery != string(api.ManagedRealtimeDeliveryLive) && *delivery != string(api.ManagedRealtimeDeliveryRetained) {
+		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live or retained"))
+	}
+	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && *idempotencyKey == "" {
+		return printErr("Could not publish realtime message", fmt.Errorf("--delivery retained requires --idempotency-key"))
 	}
 	request, err := realtimeMessageRequest(*data, *dataStdin, *binary)
 	if err != nil {
 		return printErr("Could not read realtime message", err)
 	}
+	if *delivery == string(api.ManagedRealtimeDeliveryRetained) {
+		payload, decodeErr := base64.StdEncoding.DecodeString(request.DataBase64)
+		if decodeErr != nil || len(payload) > 4<<10 {
+			return printErr("Could not publish realtime message", fmt.Errorf("retained messages are limited to 4096 decoded bytes"))
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	response, err := client.PublishManagedRealtimeChannel(context.Background(), fs.Arg(0), fs.Arg(1), fs.Arg(2), request)
+	response, err := client.PublishManagedRealtimeChannelWithDelivery(context.Background(), fs.Arg(0), fs.Arg(1), fs.Arg(2), request,
+		api.ManagedRealtimeDelivery(*delivery), *idempotencyKey)
 	if err != nil {
 		return printErr("Could not publish realtime message", err)
 	}
-	queued := response.Queued
+	queued, subscribers, queueFull, failed := response.Queued, response.Subscribers, response.QueueFull, response.Failed
 	partial, nodesQueried, nodesDown := response.Partial, response.NodesQueried, response.NodesUnavailable
 	result := realtimeCLIResult{
 		Operation: "publish", AppSlug: fs.Arg(0), EndpointID: fs.Arg(1), Channel: fs.Arg(2),
-		Queued: &queued, Partial: &partial, NodesQueried: &nodesQueried, NodesDown: &nodesDown,
+		Queued: &queued, Subscribers: &subscribers, QueueFull: &queueFull, Failed: &failed,
+		Partial: &partial, NodesQueried: &nodesQueried, NodesDown: &nodesDown,
+	}
+	if response.Durable {
+		durable, sequence := response.Durable, response.Sequence
+		result.Durable, result.Sequence = &durable, &sequence
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Realtime message published to %d connection(s).", response.Queued)
+	if response.Durable {
+		PrintOK(osStdout, "Realtime message retained at channel sequence %d and accepted for %d of %d targeted connection(s).", response.Sequence, response.Queued, response.Subscribers)
+	} else {
+		PrintOK(osStdout, "Realtime message queued for %d of %d targeted connection(s).", response.Queued, response.Subscribers)
+	}
 	if response.Partial {
-		PrintWarn(osStderr, "Publish was partial: %d realtime node(s) did not accept it. Retrying may send duplicates to reached nodes.", response.NodesUnavailable)
+		PrintWarn(osStderr, "Publish was partial: %d queue full, %d failed, and %d realtime node(s) unavailable. Repeating without the same idempotency key may send duplicates.", response.QueueFull, response.Failed, response.NodesUnavailable)
 	}
 	return 0
 }
@@ -183,7 +216,7 @@ func realtimeMessageRequest(data string, fromStdin, binary bool) (api.ManagedRea
 }
 
 func normalizeRealtimeMessageArgs(args []string) []string {
-	return normalizeRealtimeValueArgs(args, map[string]bool{"--data": true}, map[string]bool{"--data-stdin": true, "--binary": true})
+	return normalizeRealtimeValueArgs(args, map[string]bool{"--data": true, "--idempotency-key": true, "--delivery": true}, map[string]bool{"--data-stdin": true, "--binary": true})
 }
 
 func normalizeRealtimeCloseArgs(args []string) []string {

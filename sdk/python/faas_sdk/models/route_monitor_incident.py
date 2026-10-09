@@ -12,7 +12,10 @@ from ..models.route_monitor_incident_status import RouteMonitorIncidentStatus, c
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.route_monitor_deployment_baseline import RouteMonitorDeploymentBaseline
     from ..models.route_monitor_evidence import RouteMonitorEvidence
+    from ..models.route_monitor_incident_escalation import RouteMonitorIncidentEscalation
+    from ..models.route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
     from ..models.route_monitor_report import RouteMonitorReport
 
 
@@ -21,8 +24,10 @@ T = TypeVar("T", bound="RouteMonitorIncident")
 
 @_attrs_define
 class RouteMonitorIncident:
-    """Saved opening evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays
-    fixed even when telemetry expires.
+    """Saved opening evidence, the previous healthy deployment when known, bounded route-impact timeline, transition-linked
+    escalation evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays
+    fixed even when telemetry expires. Timeline entries contain aggregate customer counts only and preserve the opening
+    baseline plus the newest evaluations.
 
     """
 
@@ -39,9 +44,21 @@ class RouteMonitorIncident:
     evidence: list[RouteMonitorEvidence]
     evidence_truncated: bool
     closed_at: datetime.datetime | Unset = UNSET
+    baseline: RouteMonitorDeploymentBaseline | Unset = UNSET
+    """The last different fully serving deployment with a healthy route-monitor report before this incident opened.
+    Provenance values are sanitized declared metadata and do not attest to deployment archive bytes."""
     recovery_report: RouteMonitorReport | Unset = UNSET
     """Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited
     to stored telemetry."""
+    timeline: list[RouteMonitorIncidentTimelineEntry] | Unset = UNSET
+    """Opening baseline and up to 59 most recent confirmed evaluations. Route indexes refer to
+    opening_report.routes."""
+    timeline_truncated: bool | Unset = UNSET
+    """True when older evaluations were dropped to preserve the opening baseline and bounded incident size."""
+    escalations: list[RouteMonitorIncidentEscalation] | Unset = UNSET
+    """Newest newly violated route/signal transitions with bounded evidence captured at each transition."""
+    escalations_truncated: bool | Unset = UNSET
+    """True when older escalation records were dropped to preserve the newest transition details and incident size."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,9 +89,31 @@ class RouteMonitorIncident:
         if not isinstance(self.closed_at, Unset):
             closed_at = self.closed_at.isoformat()
 
+        baseline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.baseline, Unset):
+            baseline = self.baseline.to_dict()
+
         recovery_report: dict[str, Any] | Unset = UNSET
         if not isinstance(self.recovery_report, Unset):
             recovery_report = self.recovery_report.to_dict()
+
+        timeline: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.timeline, Unset):
+            timeline = []
+            for timeline_item_data in self.timeline:
+                timeline_item = timeline_item_data.to_dict()
+                timeline.append(timeline_item)
+
+        timeline_truncated = self.timeline_truncated
+
+        escalations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.escalations, Unset):
+            escalations = []
+            for escalations_item_data in self.escalations:
+                escalations_item = escalations_item_data.to_dict()
+                escalations.append(escalations_item)
+
+        escalations_truncated = self.escalations_truncated
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -94,14 +133,27 @@ class RouteMonitorIncident:
         )
         if closed_at is not UNSET:
             field_dict["closed_at"] = closed_at
+        if baseline is not UNSET:
+            field_dict["baseline"] = baseline
         if recovery_report is not UNSET:
             field_dict["recovery_report"] = recovery_report
+        if timeline is not UNSET:
+            field_dict["timeline"] = timeline
+        if timeline_truncated is not UNSET:
+            field_dict["timeline_truncated"] = timeline_truncated
+        if escalations is not UNSET:
+            field_dict["escalations"] = escalations
+        if escalations_truncated is not UNSET:
+            field_dict["escalations_truncated"] = escalations_truncated
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_monitor_deployment_baseline import RouteMonitorDeploymentBaseline
         from ..models.route_monitor_evidence import RouteMonitorEvidence
+        from ..models.route_monitor_incident_escalation import RouteMonitorIncidentEscalation
+        from ..models.route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
         from ..models.route_monitor_report import RouteMonitorReport
 
         d = dict(src_dict)
@@ -137,12 +189,41 @@ class RouteMonitorIncident:
         else:
             closed_at = datetime.datetime.fromisoformat(_closed_at)
 
+        _baseline = d.pop("baseline", UNSET)
+        baseline: RouteMonitorDeploymentBaseline | Unset
+        if isinstance(_baseline, Unset):
+            baseline = UNSET
+        else:
+            baseline = RouteMonitorDeploymentBaseline.from_dict(_baseline)
+
         _recovery_report = d.pop("recovery_report", UNSET)
         recovery_report: RouteMonitorReport | Unset
         if isinstance(_recovery_report, Unset):
             recovery_report = UNSET
         else:
             recovery_report = RouteMonitorReport.from_dict(_recovery_report)
+
+        _timeline = d.pop("timeline", UNSET)
+        timeline: list[RouteMonitorIncidentTimelineEntry] | Unset = UNSET
+        if _timeline is not UNSET:
+            timeline = []
+            for timeline_item_data in _timeline:
+                timeline_item = RouteMonitorIncidentTimelineEntry.from_dict(timeline_item_data)
+
+                timeline.append(timeline_item)
+
+        timeline_truncated = d.pop("timeline_truncated", UNSET)
+
+        _escalations = d.pop("escalations", UNSET)
+        escalations: list[RouteMonitorIncidentEscalation] | Unset = UNSET
+        if _escalations is not UNSET:
+            escalations = []
+            for escalations_item_data in _escalations:
+                escalations_item = RouteMonitorIncidentEscalation.from_dict(escalations_item_data)
+
+                escalations.append(escalations_item)
+
+        escalations_truncated = d.pop("escalations_truncated", UNSET)
 
         route_monitor_incident = cls(
             version=version,
@@ -156,7 +237,12 @@ class RouteMonitorIncident:
             evidence=evidence,
             evidence_truncated=evidence_truncated,
             closed_at=closed_at,
+            baseline=baseline,
             recovery_report=recovery_report,
+            timeline=timeline,
+            timeline_truncated=timeline_truncated,
+            escalations=escalations,
+            escalations_truncated=escalations_truncated,
         )
 
         route_monitor_incident.additional_properties = d

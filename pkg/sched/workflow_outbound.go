@@ -10,14 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"io"
 	"net/http"
-	"strconv"
+	"net/url"
 	"time"
 )
 
 type WorkflowOutboundExecutor interface {
 	ExecuteOutboundStep(context.Context, string, string, int, api.WorkflowOutboundSpec, []byte, time.Duration) (int, []byte, time.Time, error)
 }
-type WorkflowOutboundMinter func(outbound.WorkflowIdentity, string, string, string, []byte) (string, error)
+type WorkflowOutboundMinter func(outbound.WorkflowIdentity, outbound.WorkflowOutboundRequest, []byte) (string, error)
 
 func (o *WorkflowOrchestrator) WithOutboundExecutor(executor WorkflowOutboundExecutor) *WorkflowOrchestrator {
 	o.outbound = executor
@@ -42,16 +42,6 @@ func NewWorkflowOutboundExecutor(store state.WorkflowOutboundStore, mint Workflo
 	return &workflowOutboundExecutor{store: store, mint: mint, client: relay.client}
 }
 
-func workflowOutboundMaxAttempts(spec api.WorkflowStepSpec) int {
-	if spec.Retry != nil {
-		return spec.Retry.MaxAttempts
-	}
-	if spec.Outbound != nil && !spec.Outbound.SafeToRepeat() {
-		return 1
-	}
-	return 3
-}
-
 func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runID, stepName string, attempt int, spec api.WorkflowOutboundSpec, input []byte, timeout time.Duration) (int, []byte, time.Time, error) {
 	var zero time.Time
 	if e == nil || e.store == nil || e.mint == nil || e.client == nil {
@@ -67,8 +57,25 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 	if err != nil {
 		return 0, nil, zero, state.ErrWorkflowOutboundAttemptExpired
 	}
-	identity := outbound.WorkflowIdentity{AccountID: lease.AccountID, AppID: lease.AppID, RunID: runID, StepName: stepName, Attempt: attempt, AttemptToken: lease.Token}
-	assertion, err := e.mint(identity, spec.IntegrationID, spec.Method, spec.Path, input)
+	identity := outbound.WorkflowIdentity{AccountID: lease.AccountID, AppID: lease.AppID, PlatformTenantID: lease.PlatformTenantID, RunID: runID, StepName: stepName, Attempt: attempt, AttemptToken: lease.Token}
+	pathTemplate := spec.PathTemplate
+	if pathTemplate == "" {
+		pathTemplate = spec.Path
+	}
+	queryTemplate := spec.QueryTemplate
+	if queryTemplate == nil {
+		queryTemplate = spec.Query
+	}
+	rawQuery := spec.RawQuery
+	if rawQuery == "" && len(spec.Query) > 0 {
+		values := make(url.Values, len(spec.Query))
+		for key, value := range spec.Query {
+			values.Set(key, value)
+		}
+		rawQuery = values.Encode()
+	}
+	authorization := outbound.WorkflowOutboundRequest{IntegrationID: spec.IntegrationID, Method: spec.Method, Path: spec.Path, RawQuery: rawQuery, PathTemplate: pathTemplate, QueryTemplate: queryTemplate}
+	assertion, err := e.mint(identity, authorization, input)
 	if err != nil {
 		return 0, nil, zero, errors.New("workflow outbound assertion unavailable")
 	}
@@ -93,7 +100,11 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 		}
 	}()
 	defer func() { cancel(); <-done }()
-	request, err := http.NewRequestWithContext(callCtx, spec.Method, "http://"+executionOutboundGatewayAddress+outbound.Prefix+spec.IntegrationID+spec.Path, bytes.NewReader(input))
+	requestURL := "http://" + executionOutboundGatewayAddress + outbound.Prefix + spec.IntegrationID + spec.Path
+	if rawQuery != "" {
+		requestURL += "?" + rawQuery
+	}
+	request, err := http.NewRequestWithContext(callCtx, spec.Method, requestURL, bytes.NewReader(input))
 	if err != nil {
 		return 0, nil, zero, errors.New("workflow outbound request invalid")
 	}
@@ -131,22 +142,7 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 }
 
 func workflowOutboundRetryAfter(raw string, now time.Time) time.Time {
-	if seconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
-		if seconds >= uint64(time.Hour/time.Second) {
-			return now.Add(time.Hour)
-		}
-		return now.Add(time.Duration(seconds) * time.Second)
-	}
-	if at, err := http.ParseTime(raw); err == nil && at.After(now) {
-		return minTime(at, now.Add(time.Hour))
-	}
-	return time.Time{}
-}
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
+	return api.WorkflowRetryAfter(raw, now)
 }
 
 func workflowHasOutbound(steps []api.WorkflowStepSpec) bool {

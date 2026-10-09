@@ -214,6 +214,15 @@ func cmdBuildStatus(args []string) int {
 		return jsonOut(writeJSON(b))
 	}
 	printBuildStatus(osStdout, b)
+	// The build row carries only a failure class. The reason ("build
+	// exited 1", the failing step) is on the deployment row, and the full
+	// output is the deployment's build log.
+	if b.Status == "failed" && b.DeploymentID != "" {
+		if dep, depErr := client.GetDeployment(context.Background(), b.DeploymentID); depErr == nil && dep.Error != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-22s %s\n", "failure_reason:", dep.Error)
+		}
+		_, _ = fmt.Fprintf(osStdout, "build log: gregale logs <slug> --deployment %s\n", b.DeploymentID)
+	}
 	return 0
 }
 
@@ -329,10 +338,10 @@ func renderBuildListRow(w io.Writer, b api.BuildResponse) {
 		strconv.FormatInt(b.SourceBytes, 10), started)
 }
 
-// cmdBuildList implements `gregale build list [--app SLUG] [--status S] [--limit N] [--before C] [--all]`.
+// cmdBuildList implements `gregale build list [--app SLUG] [--status S] [--limit N] [--cursor C] [--all]`.
 // Wire shape: GET /v1/builds. Mirrors cmdDeployments exactly
 // (commands_deployments.go:65) — pagination defaults to 50,
-// --all walks every page via Client.GetBuildsAll.
+// --all uses bounded CLI traversal and honors the starting cursor and limit.
 //
 // Filter validation: status must be one of queued|running|succeeded|
 // failed (matches the API's CHECK constraint + the BuildStatus*
@@ -347,13 +356,14 @@ func cmdBuildList(args []string) int {
 	app := fs.String("app", "", "filter to one app slug")
 	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed|cancelled)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
-	before := fs.String("before", "", "pagination cursor (opaque token from NextBefore)")
-	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
+	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
+	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale build list [--app SLUG] [--status S] [--limit N] [--before C] [--all]", "build")
+		PrintUsage(os.Stderr, "usage: gregale build list [--app SLUG] [--status S] [--limit N] [--cursor C] [--all]", "build")
 		return 1
 	}
 	if *status != "" {
@@ -380,19 +390,29 @@ func cmdBuildList(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if *all {
-		return cmdBuildListAll(ctx, client, *app, *status)
-	}
-	page, err := client.GetBuilds(ctx, *app, *status, *before, *limit)
+	items, next, err := collectListPages(ctx, *before, *all, func(ctx context.Context, cursor string) ([]api.BuildResponse, string, error) {
+		page, err := client.GetBuilds(ctx, *app, *status, cursor, *limit)
+		return page.Items, page.NextBefore, err
+	})
+	page := api.BuildListResponse{Items: items, NextBefore: next}
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
 		// Envelope (not NDJSON) so `next_before` survives; see file header.
-		return jsonOut(writeJSON(page))
+		if *all {
+			return jsonOut(writeJSON(items))
+		}
+		return jsonOut(writeJSON(struct {
+			api.BuildListResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{page, next}))
 	}
 	if len(page.Items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No builds match.")
+		if next != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
+		}
 		return 0
 	}
 	for _, b := range page.Items {
@@ -401,31 +421,7 @@ func cmdBuildList(args []string) int {
 	if page.NextBefore != "" {
 		// Em-dash (U+2014) matches cmdDeployments' cursor hint
 		// byte-for-byte — tests pin this in commands_builds_test.go.
-		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", page.NextBefore)
-	}
-	return 0
-}
-
-// cmdBuildListAll walks every page via the SDK helper and renders
-// the full list. Refuses to share a single envelope with the
-// one-page path (no `next_before` to surface), so JSON output is
-// the bare slice — matching how deployments / apps / crons emit
-// NDJSON for non-paginated lists. Mirrors cmdDeploymentsAll
-// (commands_deployments.go:114-134) exactly.
-func cmdBuildListAll(ctx context.Context, client *api.Client, app, status string) int {
-	items, err := client.GetBuildsAll(ctx, app, status)
-	if err != nil {
-		return printErr("Request failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(items))
-	}
-	if len(items) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No builds match.")
-		return 0
-	}
-	for _, b := range items {
-		renderBuildListRow(osStdout, b)
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 	}
 	return 0
 }

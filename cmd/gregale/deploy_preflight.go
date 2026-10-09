@@ -26,6 +26,9 @@ type deployPreflightSummary struct {
 	ResourceBehavior  string
 	ExecutionMode     string
 	Release           string
+	// Healthcheck is the resolved --healthcheck-path / --healthcheck-grpc
+	// override, when one was given.
+	Healthcheck *api.DeploymentHealthcheck
 }
 
 // deployPreflightSource describes the exact local source selection without
@@ -129,6 +132,9 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 }
 
 func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
+	if nonInteractive && w == osStdout {
+		w = osStderr
+	}
 	_, _ = fmt.Fprintln(w, "Deployment plan:")
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "app:", summary.Slug)
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "source:", summary.Source)
@@ -149,7 +155,7 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if summary.BuildPlan != nil && summary.BuildPlan.Handler != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "handler:", summary.BuildPlan.Handler)
 	}
-	if listener := deployPreflightListener(summary.BuildPlan, summary.SimpleAppPlan); listener != "" {
+	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "listener:", listener)
 	}
 	if resources := deployPreflightResources(summary); resources != "" {
@@ -188,6 +194,13 @@ func deployPreflightRuntime(plan *api.BuildPlan) string {
 }
 
 func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) string {
+	return deployPreflightListenerWith(build, simple, nil)
+}
+
+// deployPreflightListenerWith honours an explicit healthcheck override. With
+// --healthcheck-grpc the plan used to promise "health GET /healthz", which a
+// gRPC server cannot answer.
+func deployPreflightListenerWith(build *api.BuildPlan, simple *simpleapp.Plan, hc *api.DeploymentHealthcheck) string {
 	port, health := 0, ""
 	if build != nil {
 		port, health = build.Port, build.HealthPath
@@ -199,6 +212,19 @@ func deployPreflightListener(build *api.BuildPlan, simple *simpleapp.Plan) strin
 		if health == "" {
 			health = simple.HealthPath
 		}
+	}
+	if hc != nil && hc.GRPC != nil {
+		check := "gRPC health"
+		if hc.GRPC.Service != "" {
+			check += " " + hc.GRPC.Service
+		}
+		if port == 0 {
+			return check
+		}
+		return fmt.Sprintf(":%d · %s", port, check)
+	}
+	if hc != nil && hc.Path != "" {
+		health = hc.Path
 	}
 	if port == 0 && health == "" {
 		return ""

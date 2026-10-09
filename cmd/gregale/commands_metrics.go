@@ -55,8 +55,14 @@ func cmdMetrics(args []string) int {
 	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args, "account")
 	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	pos, err := mergeAppFlag(pos, *app, 1)
+	if err != nil {
+		PrintUsage(os.Stderr, metricsCmdUsage+"\nerror: "+err.Error(), metricsCmdDocsTopic)
 		return 1
 	}
 	if *account && len(pos) != 0 {
@@ -101,7 +107,7 @@ func cmdMetrics(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(m))
 	}
-	renderAppMetrics(osStdout, m)
+	renderAppMetrics(osStdout, slug, m)
 	return 0
 }
 
@@ -113,11 +119,15 @@ func cmdMetrics(args []string) int {
 // When Source is "degraded: <reason>" we render a one-line warning
 // before the values so the customer understands the zeroes are
 // real (Prometheus isn't reachable), not a bug.
-func renderAppMetrics(w io.Writer, m api.AppMetricsResponse) {
+func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 	if m.Source != "" && m.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below are zero — Prometheus is unavailable)\n", m.Source)
 	}
+	// Same App/Slug pair as `gregale slo` (H5-4): the id alone named no app.
 	_, _ = fmt.Fprintf(w, "App:        %s\n", m.AppID)
+	if slug != "" {
+		_, _ = fmt.Fprintf(w, "Slug:       %s\n", slug)
+	}
 	_, _ = fmt.Fprintf(w, "Range:      %s\n", m.Range)
 	if m.AsOf != "" {
 		_, _ = fmt.Fprintf(w, "As of:      %s\n", m.AsOf)
@@ -211,11 +221,13 @@ func cmdThrottleSuggestions(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "preview pass: ask the server to count sub-windows where observed rps exceeds --candidate-rps")
 	candidateRPS := fs.Float64("candidate-rps", 0, "candidate rps (required when --dry-run; positive float)")
 	candidateBurst := fs.Int("candidate-burst", 0, "candidate burst (optional when --dry-run; non-negative int)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args, "dry-run")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
+	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage, throttleSuggestionsCmdDocsTopic)
 		return 1
 	}

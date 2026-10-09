@@ -101,6 +101,7 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries             int                   `json:"max_retries,omitempty"`
 	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -142,6 +143,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -659,9 +661,18 @@ type DeploymentResponse struct {
 	// HostingReceipt is the non-secret deployment evidence captured after
 	// readiness. Raw JSON keeps the Go SDK forward-compatible with receipt
 	// schema additions.
-	HostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
-	SourceRoot     string          `json:"source_root,omitempty"`
-	TrafficPercent int             `json:"traffic_percent,omitempty"`
+	HostingReceipt        json.RawMessage                `json:"hosting_receipt,omitempty"`
+	SourceRoot            string                         `json:"source_root,omitempty"`
+	TrafficPercent        int                            `json:"traffic_percent,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	CanaryStep            int                            `json:"canary_step,omitempty"`
+	CanaryTotalSteps      int                            `json:"canary_total_steps,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for
@@ -1549,20 +1560,21 @@ type ExclusiveWorkPolicyList struct {
 	Policies []ExclusiveWorkPolicyRecord `json:"policies"`
 }
 type ExclusiveOperationRecord struct {
-	ID               string          `json:"id"`
-	AppID            string          `json:"app_id,omitempty"`
-	JobID            string          `json:"job_id,omitempty"`
-	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
-	Sequence         int64           `json:"sequence"`
-	State            string          `json:"state"`
-	PolicyRevision   int64           `json:"policy_revision"`
-	Generation       int64           `json:"generation"`
-	LeaseExpiresAt   *time.Time      `json:"lease_expires_at,omitempty"`
-	AttemptDeadline  *time.Time      `json:"attempt_deadline,omitempty"`
-	Result           json.RawMessage `json:"result,omitempty"`
-	LastError        string          `json:"last_error,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
+	ID               string                  `json:"id"`
+	AppID            string                  `json:"app_id,omitempty"`
+	JobID            string                  `json:"job_id,omitempty"`
+	PlatformTenantID string                  `json:"platform_tenant_id,omitempty"`
+	Sequence         int64                   `json:"sequence"`
+	State            string                  `json:"state"`
+	PolicyRevision   int64                   `json:"policy_revision"`
+	Generation       int64                   `json:"generation"`
+	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
+	AttemptDeadline  *time.Time              `json:"attempt_deadline,omitempty"`
+	Result           json.RawMessage         `json:"result,omitempty"`
+	Effects          []OperationEffectRecord `json:"effects,omitempty"`
+	LastError        string                  `json:"last_error,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	CompletedAt      *time.Time              `json:"completed_at,omitempty"`
 }
 
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
@@ -2284,7 +2296,7 @@ type TriggerMetricsResponse struct {
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Mirrors the canonical Job DTOs in pkg/api/dto.go. Field tags + ordering
 // + omitempty are part of the wire contract — the spec_compliance_test
-// gate (TestSpecCompliance in cmd/apid) pins the OpenAPI schema's
+// gate (TestSpecCompliance in scripts/ci/speccompliance) pins the OpenAPI schema's
 // `required` arrays, so any drift between this file and pkg/api/dto.go
 // breaks the gatewayd-public edge case.
 
@@ -2564,8 +2576,69 @@ type ClearObsoleteReport struct {
 	OlderThan string `json:"older_than"`
 }
 
+type ManagedOperationResult struct {
+	Version int                      `json:"gregale_operation_result"`
+	Result  json.RawMessage          `json:"result"`
+	Effects []ManagedOperationEffect `json:"effects"`
+}
+
+// OperationEffectRecord correlates immutable effect identity with the existing
+// webhook ledger. Unavailable means the delivery history was deleted or pruned.
+type OperationEffectRecord struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	WebhookID  string `json:"webhook_id,omitempty"`
+	DeliveryID string `json:"delivery_id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Status     string `json:"status"`
+	Attempt    int    `json:"attempt"`
+	LastError  string `json:"last_error,omitempty"`
+}
+
+// OperationEffectPayload is the data in an operation.effect webhook. Scope and
+// identifiers are supplied by the control plane, not the handler response.
+type OperationEffectPayload struct {
+	OperationID      string          `json:"operation_id"`
+	AppID            string          `json:"app_id"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Generation       int64           `json:"generation"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"`
+	Data             json.RawMessage `json:"data"`
+}
+
+type ManagedOperationEffect struct {
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	WebhookID string          `json:"webhook_id"`
+	Type      string          `json:"type"`
+}
+
 type InvokeWork struct {
 	Policy      string          `json:"policy"`
 	Key         json.RawMessage `json:"key"`
 	FairnessKey json.RawMessage `json:"fairness_key,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	BindingsCheck           *ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
+	Action                  string                     `json:"action"`
+	Phase                   string                     `json:"phase"`
+	PredecessorDeploymentID string                     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64                      `json:"generation,omitempty"`
+	ExpectedGateways        []string                   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string                   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string                   `json:"missing_gateways,omitempty"`
+	RetryCount              int                        `json:"retry_count"`
+	LastError               string                     `json:"last_error,omitempty"`
+	Reason                  string                     `json:"reason,omitempty"`
+	StartedAt               *time.Time                 `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time                 `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
 }

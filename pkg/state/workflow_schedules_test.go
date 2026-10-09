@@ -100,7 +100,7 @@ func testWorkflowScheduleConcurrentAdmission(t *testing.T, store Store) {
 	}
 	group.Wait()
 	runs, total, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 100})
-	if err != nil || started.Load() != 1 || total != 1 || len(runs) != 1 {
+	if err != nil || started.Load() != 1 || total != 1 || len(runs) != 1 || runs[0].DeploymentID != deployment.ID {
 		t.Fatalf("started=%d total=%d runs=%d err=%v", started.Load(), total, len(runs), err)
 	}
 	if !equalWorkflowJSON(runs[0].Input, json.RawMessage(`{"report":"daily"}`)) || !runs[0].ScheduledFor.Equal(at.Add(time.Minute).Truncate(time.Minute)) {
@@ -368,8 +368,8 @@ func TestWorkflowScheduleCalendarAndClockRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, run, err := evaluateWorkflowSchedule("app", "deployment", spec,
-				&WorkflowScheduleCursor{DeploymentID: "deployment", TriggerSnapshot: trigger, LastEvaluatedAt: previous}, now, 0, 0, 10)
+			_, run, err := evaluateWorkflowSchedule("app", "", "00000000-0000-0000-0000-000000000640", spec,
+				&WorkflowScheduleCursor{DeploymentID: "00000000-0000-0000-0000-000000000640", TriggerSnapshot: trigger, LastEvaluatedAt: previous}, now, 0, 0, 10)
 			if err != nil || (run != nil) != test.starts {
 				t.Fatalf("run=%+v err=%v", run, err)
 			}

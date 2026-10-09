@@ -10,7 +10,7 @@ export type InboundWebhookEndpointResponse = {
   app_id: string;
   account_id: string;
   name: string;
-  provider: 'stripe';
+  provider: 'stripe' | 'generic';
   delivery_path: string;
   enabled: boolean;
   signing_secret_masked: '***';

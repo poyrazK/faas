@@ -55,6 +55,9 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
 		{"app_secret_runtime_process_generation_is_fenced", testAppSecretRuntimeProcessGenerationFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
+		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
+		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -78,6 +81,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
+		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
@@ -160,11 +164,17 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
+		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
 		{"workflow_waits_and_attempts_are_durable", testWorkflowWaitsAndAttempts},
 		{"workflow_control_steps_are_consistent", testWorkflowControlSteps},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"owned_runtime_publication_is_fenced", testOwnedRuntimePublication},
+		{"deployment_scaling_clocks_are_owned", testDeploymentScalingClocks},
+		{"layer_deletion_claims_are_durable", testLayerDeletionClaims},
+		{"production_queue_reader_rejects_other_sources", testProductionQueueReader},
 		{"startup_cpu_boost_reservation_is_durable_and_expires", testStartupCPUBoostReservation},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
@@ -2123,6 +2133,11 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
 	}
 
+	// production-us hunt #5 (H5-45): cancelling while a step's handler runs
+	// must close that step's attempt, not leave it running forever.
+	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 1, []byte(`{}`)); err != nil {
+		t.Fatalf("StartWorkflowStep: %v", err)
+	}
 	const reason = "cancelled by conformance"
 	cancelled, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, reason)
 	if err != nil || cancelled.Status != state.WorkflowRunStatusFailed || cancelled.LastError == nil || *cancelled.LastError != reason || cancelled.FinishedAt == nil {
@@ -2132,9 +2147,150 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusSkipped || steps[1].Status != state.WorkflowStepStatusSkipped {
 		t.Fatalf("GetWorkflowSteps(cancelled) = (%#v, %v), want both skipped", steps, err)
 	}
+	attempts, err := fx.Store.GetWorkflowStepAttempts(fx.Ctx, run.ID, "first")
+	if err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed || attempts[0].FinishedAt == nil {
+		t.Fatalf("GetWorkflowStepAttempts(cancelled) = (%+v, %v), want the in-flight attempt failed and finished", attempts, err)
+	}
 	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
 	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
 		t.Fatalf("CancelWorkflowRun(terminal) = (%#v, %v), want original terminal result", unchanged, err)
+	}
+}
+
+func testWorkflowConcurrencyLimitQueues(t *testing.T, fx *Fixture) {
+	definition := json.RawMessage(`{"name":"limited","max_concurrent_runs":1,"steps":[{"name":"work","run":"handler"}]}`)
+	base := time.Now().UTC().Add(-time.Minute)
+	first := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base}
+	second := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "limited", Status: state.WorkflowRunStatusPending,
+		DefinitionSnapshot: definition, ScheduledFor: base.Add(time.Second)}
+	for _, run := range []*state.WorkflowRun{first, second} {
+		if err := fx.Store.CreateWorkflowRun(fx.Ctx, run); err != nil {
+			t.Fatalf("CreateWorkflowRun(%s): %v", run.WorkflowName, err)
+		}
+	}
+
+	type claimResult struct {
+		run *state.WorkflowRun
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+			results <- claimResult{run: run, err: err}
+		}()
+	}
+	close(start)
+	var claimed *state.WorkflowRun
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			if claimed != nil {
+				t.Fatalf("concurrent claims started both runs at max_concurrent_runs=1: %s and %s", claimed.ID, result.run.ID)
+			}
+			claimed = result.run
+		} else if !errors.Is(result.err, state.ErrNotFound) {
+			t.Fatalf("concurrent claim error = %v, want ErrNotFound for the queued run", result.err)
+		}
+	}
+	if claimed == nil || claimed.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("concurrent claims produced no running slot: %+v", claimed)
+	}
+	queuedID := first.ID
+	if claimed.ID == first.ID {
+		queuedID = second.ID
+	}
+	if err := fx.Store.MarkWorkflowRunStatus(fx.Ctx, claimed.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		t.Fatalf("finish running slot: %v", err)
+	}
+	queued, err := fx.Store.ClaimNextDueWorkflowRun(fx.Ctx)
+	if err != nil || queued.ID != queuedID || queued.Status != state.WorkflowRunStatusRunning {
+		t.Fatalf("queued run after slot release = (%+v, %v), want run %s running", queued, err, queuedID)
+	}
+}
+
+func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
+	key := "conformance-" + uuid.NewString()
+	fingerprint := []byte("01234567890123456789012345678901")
+	type result struct {
+		run      *state.WorkflowRun
+		active   int
+		replayed bool
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			run := &state.WorkflowRun{
+				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+			}
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			results <- result{run: run, active: active, replayed: replayed, err: err}
+		}()
+	}
+	close(start)
+	var runID string
+	created, replayed := 0, 0
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("CreateWorkflowRunAdmittedWithIdempotencyKey: %v", got.err)
+		}
+		if runID == "" {
+			runID = got.run.ID
+		} else if got.run.ID != runID {
+			t.Fatalf("concurrent idempotency keys created different runs %s and %s", runID, got.run.ID)
+		}
+		if got.replayed {
+			replayed++
+		} else {
+			created++
+			if got.active != 1 {
+				t.Fatalf("first admission active count = %d, want 1", got.active)
+			}
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
+	}
+
+	changedDefinition := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
+	}
+	var replayedSnapshot, expectedSnapshot any
+	if err := json.Unmarshal(changedDefinition.DefinitionSnapshot, &replayedSnapshot); err != nil {
+		t.Fatalf("decode replayed definition snapshot: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"idempotent-create","steps":[]}`), &expectedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if changedDefinition.ID != runID || !reflect.DeepEqual(replayedSnapshot, expectedSnapshot) {
+		t.Fatalf("definition update changed replayed run = %+v", changedDefinition)
+	}
+
+	changedInputFingerprint := append([]byte(nil), fingerprint...)
+	changedInputFingerprint[0] = 'x'
+	conflict := &state.WorkflowRun{
+		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
+		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
+	}
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
+	}
+
+	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }
 
@@ -2998,9 +3154,22 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 		t.Fatalf("initial secret metadata = revision %d delivery %d status %q, want 1/1/pending", first.SecretVersion, first.DeliveryVersion, first.DeliveryStatus)
 	}
 
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fx.Store.RuntimeAppValuesForDeployment(fx.Ctx, fx.Account.ID, fx.App.ID, fx.Deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := state.AppSecretDeliveryResult{
-		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: "wake-conformance",
-		InstanceID: "instance-conformance", Status: state.SecretDeliveryDelivered,
+		Fence:     fence,
+		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: instance.WakeID,
+		InstanceID: instance.ID, Status: state.SecretDeliveryDelivered,
 		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: first.DeliveryVersion}},
 	}
 	updated, err := fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
@@ -3020,8 +3189,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	}
 
 	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
-	if err != nil || updated != 0 {
-		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want 0/nil", updated, err)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want conflict", updated, err)
 	}
 	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil {
@@ -3449,22 +3618,30 @@ func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 }
 
 func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	testLatestDeploymentPromotionFence(t, fx, state.DeploymentKindGitHub)
+}
+
+func testImageDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	testLatestDeploymentPromotionFence(t, fx, state.DeploymentKindImage)
+}
+
+func testLatestDeploymentPromotionFence(t *testing.T, fx *Fixture, kind state.DeploymentKind) {
 	older, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
-		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AppID: fx.App.ID, Kind: kind, Scope: "staging",
+		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ImageDigest: "sha256:older",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(older staging): %v", err)
 	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(older staging): %v", err)
+	}
 	newer, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
-		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		AppID: fx.App.ID, Kind: kind, Scope: "staging",
+		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ImageDigest: "sha256:newer",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(newer staging): %v", err)
-	}
-	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
-		t.Fatalf("UpdateDeploymentStatus(older staging): %v", err)
 	}
 	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, newer.ID, state.DeployBuilding, ""); err != nil {
 		t.Fatalf("UpdateDeploymentStatus(newer staging): %v", err)
@@ -3473,12 +3650,12 @@ func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 		t.Fatalf("staging deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
 	}
 	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "production",
-		CommitSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		AppID: fx.App.ID, Kind: kind, Scope: "production",
+		CommitSHA: "cccccccccccccccccccccccccccccccccccccccc", ImageDigest: "sha256:production",
 	}); err != nil {
 		t.Fatalf("CreateDeployment(newer production): %v", err)
 	}
-	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+	if err := fx.Store.MarkDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
 		t.Fatalf("older staging promotion = %v, want ErrDeploymentSuperseded", err)
 	}
 	oldRow, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
@@ -3489,7 +3666,7 @@ func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 	if err != nil || stable.Status != state.DeployLive {
 		t.Fatalf("existing live deployment = (%+v, %v), want live", stable, err)
 	}
-	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+	if err := fx.Store.MarkDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
 		t.Fatalf("newest staging promotion was blocked by a different scope: %v", err)
 	}
 	newRow, err := fx.Store.DeploymentByID(fx.Ctx, newer.ID)

@@ -116,8 +116,16 @@ func cmdDelayedTaskAdd(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	// The help has always advertised `delayed-task add --app <slug> <duration>`;
+	// production-us hunt #4 found the parser rejecting that spelling. A lone
+	// positional is the relative delay, and it cannot be combined with
+	// either explicit timing flag.
+	if len(positional) == 1 && *delay == "" && *scheduledAt == "" {
+		*delay = positional[0]
+		positional = nil
+	}
 	if len(positional) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (--scheduled-at <RFC3339>|--delay <duration>) [--payload <json|@file|->] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "delayed-task")
+		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (<duration>|--delay <duration>|--scheduled-at <RFC3339>) [--payload <json|@file|->] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "delayed-task")
 		return 1
 	}
 	if !validateDelayedTaskAddFlags(app, scheduledAt, delay) {
@@ -270,39 +278,49 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	return set
 }
 
-// cmdDelayedTaskList shows one newest-first page for an app.
+// cmdDelayedTaskList shows newest-first pages for an app.
 func cmdDelayedTaskList(args []string) int {
 	fs := newFlagSet("delayed-task list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	before := fs.String("before", "", "pagination cursor from next_before")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", 20, "max rows (1..200)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *app == "" || *limit < 1 || *limit > 200 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task list --app <slug> [--before <id>] [--limit <1..200>]", "delayed-task")
+		PrintUsage(os.Stderr, "usage: gregale delayed-task list --app <slug> [--cursor <id>] [--all] [--limit <1..200>]", "delayed-task")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListDelayedTasks(context.Background(), *app, *before, *limit)
+	var resp api.ListDelayedTasksResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.DelayedTaskResponse, string, error) {
+		current, err := client.ListDelayedTasks(ctx, *app, cursor, *limit)
+		return current.Tasks, current.NextBefore, err
+	})
+	resp.Tasks, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not list delayed tasks", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.ListDelayedTasksResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Tasks) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no delayed tasks)")
-		return 0
 	}
 	for _, task := range resp.Tasks {
 		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", task.ID, task.ScheduledAt.Format(time.RFC3339), task.State, task.Method, task.Path)
 	}
 	if resp.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", resp.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale delayed-task list --app '%s' --cursor '%s' --limit %d", strings.ReplaceAll(*app, "'", "'\"'\"'"), strings.ReplaceAll(resp.NextBefore, "'", "'\"'\"'"), *limit)
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }

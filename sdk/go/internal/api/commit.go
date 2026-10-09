@@ -8,16 +8,33 @@ import (
 )
 
 type CommitSourceResponse struct {
-	ID              string     `json:"id"`
-	AppID           string     `json:"app_id"`
-	Name            string     `json:"name"`
-	Enabled         bool       `json:"enabled"`
-	OperationPolicy string     `json:"operation_policy,omitempty"`
-	RelayStatus     string     `json:"relay_status,omitempty"`
-	LastCheckedAt   *time.Time `json:"last_checked_at,omitempty"`
-	PendingEvents   *int64     `json:"pending_events,omitempty"`
-	BlockedEvents   *int64     `json:"blocked_events,omitempty"`
-	OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
+	ID                   string     `json:"id"`
+	AppID                string     `json:"app_id"`
+	Name                 string     `json:"name"`
+	Enabled              bool       `json:"enabled"`
+	OperationPolicy      string     `json:"operation_policy,omitempty"`
+	ContractVersion      int        `json:"contract_version"`
+	AllowTenantSelection bool       `json:"allow_tenant_selection"`
+	RelayStatus          string     `json:"relay_status,omitempty"`
+	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	PendingEvents        *int64     `json:"pending_events,omitempty"`
+	BlockedEvents        *int64     `json:"blocked_events,omitempty"`
+	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`
+}
+
+// CommitRouting is account-owner-authorized routing, separate from event data.
+// Version 2 sources explicitly opt in; a payload field never grants identity.
+type CommitRouting struct {
+	Version          int             `json:"version"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Key              json.RawMessage `json:"key"`
+}
+
+type CreateCommitSourceRequest struct {
+	Name                 string `json:"name"`
+	OperationPolicy      string `json:"operation_policy"`
+	ContractVersion      int    `json:"contract_version,omitempty"`
+	AllowTenantSelection bool   `json:"allow_tenant_selection,omitempty"`
 }
 
 func (c *Client) GetCommitSource(ctx context.Context, source string) (CommitSourceResponse, error) {
@@ -37,13 +54,15 @@ type CommitReceiptResponse struct {
 }
 
 type CommitOperationResponse struct {
-	ID          string     `json:"id"`
-	ReceiptID   string     `json:"receipt_id"`
-	SourceID    string     `json:"source_id"`
-	EventID     string     `json:"event_id"`
-	State       string     `json:"state"`
-	AcceptedAt  time.Time  `json:"accepted_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ID          string                  `json:"id"`
+	ReceiptID   string                  `json:"receipt_id"`
+	SourceID    string                  `json:"source_id"`
+	EventID     string                  `json:"event_id"`
+	State       string                  `json:"state"`
+	Result      json.RawMessage         `json:"result,omitempty"`
+	Effects     []OperationEffectRecord `json:"effects,omitempty"`
+	AcceptedAt  time.Time               `json:"accepted_at"`
+	CompletedAt *time.Time              `json:"completed_at,omitempty"`
 }
 
 func (c *Client) GetCommitOperation(ctx context.Context, id string) (CommitOperationResponse, error) {
@@ -53,9 +72,10 @@ func (c *Client) GetCommitOperation(ctx context.Context, id string) (CommitOpera
 }
 
 type CommitEventRequest struct {
-	ID   string          `json:"id"`
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Data    json.RawMessage `json:"data"`
+	Routing *CommitRouting  `json:"routing,omitempty"`
 }
 
 type CommitBlockedEventResponse struct {
@@ -81,8 +101,12 @@ func (c *Client) ReplayCommitBlockedEvent(ctx context.Context, source, event str
 }
 
 func (c *Client) CreateCommitSource(ctx context.Context, slug, name, operationPolicy string) (CommitSourceResponse, error) {
+	return c.CreateCommitSourceWithOptions(ctx, slug, CreateCommitSourceRequest{Name: name, OperationPolicy: operationPolicy})
+}
+
+func (c *Client) CreateCommitSourceWithOptions(ctx context.Context, slug string, request CreateCommitSourceRequest) (CommitSourceResponse, error) {
 	var out CommitSourceResponse
-	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/commit-sources", map[string]string{"name": name, "operation_policy": operationPolicy}, &out)
+	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/commit-sources", request, &out)
 	return out, err
 }
 func (c *Client) SetCommitSourceEnabled(ctx context.Context, source string, enabled bool) (CommitSourceResponse, error) {

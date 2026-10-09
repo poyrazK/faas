@@ -102,6 +102,7 @@ type multiSink struct {
 	onAccount  func(method string) (int, any)
 	onApps     func(method string, path string) (int, any)
 	onListApp  func(slug string) (int, any)
+	onGetApp   func(slug string) (int, any)
 	onRename   func(slug string) (int, any, []byte)
 	onScale    func(slug string, body []byte) (int, any)
 	onRestart  func(slug string) (int, any)
@@ -140,6 +141,9 @@ func (s *multiSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/v1/apps") && strings.HasSuffix(path, "/restart"):
 		slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/restart")
 		status, payload := s.onRestart(slug)
+		writeJSONTestStatus(w, status, payload)
+	case s.onGetApp != nil && r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/apps/") && !strings.Contains(strings.TrimPrefix(path, "/v1/apps/"), "/"):
+		status, payload := s.onGetApp(strings.TrimPrefix(path, "/v1/apps/"))
 		writeJSONTestStatus(w, status, payload)
 	case strings.HasPrefix(path, "/v1/apps") && r.Method == "PATCH":
 		slug := strings.TrimPrefix(path, "/v1/apps/")
@@ -893,7 +897,7 @@ func TestCmdAppScale_RequiresLogin(t *testing.T) {
 
 // TestCmdAppScale_Min1_EchoesResidentCost (issue #65 D3) pins the
 // always-resident GB-h/mo echo after `gregale app <slug> scale --min 1`
-// on a Pro plan. Cost = (512+8) × 1 × 30 / 1024 ≈ 15.2 GB-h/mo.
+// on a Pro plan. Cost = (512+8) × 1 × 720 / 1024 ≈ 365.6 GB-h/mo.
 func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	sink := &multiSink{
 		onAccount: func(string) (int, any) {
@@ -918,7 +922,7 @@ func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	for _, want := range []string{
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
-		"~15.2 GB-h/mo",
+		"~365.6 GB-h/mo",
 		"1000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {
@@ -1307,6 +1311,8 @@ func TestCmdAppScale_RequireAuthnFalse(t *testing.T) {
 		return http.StatusOK, api.AppResponse{Slug: "jane-api"}
 	}, onAccount: func(string) (int, any) {
 		return http.StatusOK, api.AccountResponse{Plan: "pro"}
+	}, onGetApp: func(string) (int, any) {
+		return http.StatusOK, api.AppResponse{Slug: "jane-api", RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeBearer}}
 	}}
 	srv := httptest.NewServer(sink)
 	defer srv.Close()
@@ -1324,6 +1330,35 @@ func TestCmdAppScale_RequireAuthnFalse(t *testing.T) {
 	}
 	if req.PublicAuth == nil || req.PublicAuth.Mode != api.AppPublicAuthModeOpen {
 		t.Errorf("public_auth = %+v, want mode=open", req.PublicAuth)
+	}
+}
+
+// production-us hunt #5 (H5-37): --no-require-authn reset an IP allowlist
+// to open, so an app restricted to one address answered every caller.
+func TestCmdAppScale_NoRequireAuthnKeepsOwnerChosenPublicAuth(t *testing.T) {
+	for _, mode := range []string{api.AppPublicAuthModeIPAllowlist, api.AppPublicAuthModeBasic, api.AppPublicAuthModeInternalOnly} {
+		sink := &multiSink{onScale: func(string, []byte) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api"}
+		}, onAccount: func(string) (int, any) {
+			return http.StatusOK, api.AccountResponse{Plan: "pro"}
+		}, onGetApp: func(string) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api", RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: mode}}
+		}}
+		srv := httptest.NewServer(sink)
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_x")
+		if code := cmdAppScale("jane-api", []string{"--no-require-authn"}); code != 0 {
+			srv.Close()
+			t.Fatalf("%s: exit = %d", mode, code)
+		}
+		srv.Close()
+		var req api.UpdateAppRequest
+		if err := json.Unmarshal(sink.lastBody, &req); err != nil {
+			t.Fatalf("%s: decode body: %v", mode, err)
+		}
+		if req.RequireAuthn == nil || *req.RequireAuthn || req.PublicAuth != nil {
+			t.Fatalf("%s: require_authn=%v public_auth=%+v, want only the token requirement dropped", mode, req.RequireAuthn, req.PublicAuth)
+		}
 	}
 }
 
@@ -1445,8 +1480,8 @@ func TestCmdAppRename_ConflictRendersProblem(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	stderr, restore := captureStderr(t)
 	defer restore()
-	if code := cmdAppRename("hello", "taken"); code != 1 {
-		t.Errorf("cmdAppRename conflict = %d, want 1", code)
+	if code := cmdAppRename("hello", "taken"); code != 5 {
+		t.Errorf("cmdAppRename conflict = %d, want 5", code)
 	}
 	if !strings.Contains(stderr.String(), "Slug already in use") {
 		t.Errorf("conflict detail should surface on stderr: %q", stderr.String())
@@ -2022,6 +2057,9 @@ func TestTemplates_NodeRuntimeFloor(t *testing.T) {
 			want := ">=22"
 			if name == "function-node24" {
 				want = ">=24"
+			} else if templates.CategoryFor(name) == "operations" {
+				// Match the installed SDK's Web Crypto/runtime compatibility floor.
+				want = ">=22.10.0"
 			}
 			if pkg.Engines.Node != want {
 				t.Fatalf("engines.node = %q, want %q", pkg.Engines.Node, want)
@@ -2652,8 +2690,14 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		// First call: 200 with a JSON payload.
-		if atomic.AddInt32(&calls, 1) == 1 {
+		// First call: an empty receive, which production answers on an idle
+		// poll (hunt #4: it printed a blank line). Second: a JSON payload.
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if n == 2 {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(api.QueueReceiveResponse{
 				ID:      "qrow-1",
@@ -2690,6 +2734,11 @@ func TestGregaleQueueTail_PrintsDequeuedRow(t *testing.T) {
 	}
 	if !strings.Contains(out, `"hello": "world"`) {
 		t.Fatalf("stdout missing pretty-printed payload; got %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" && line != "" {
+			t.Fatalf("an idle poll printed a blank line; stdout %q", out)
+		}
 	}
 
 	const maxSIGINTAttempts = 3

@@ -6,13 +6,13 @@ import (
 )
 
 func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool {
-	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+	if !validRuntimeAppSecretFence(result.Fence) || result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
 		!ValidSecretRuntimeWorkloadName(result.WorkloadName) ||
 		!ValidSecretReloadOutcome(result.Revision, result.Projection, result.Signal, result.ErrorCode) {
 		return false
 	}
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 || (!result.Fence.empty() && candidate.Scope != result.Fence.Scope) {
 			return false
 		}
 	}
@@ -20,7 +20,7 @@ func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool
 }
 
 func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult) bool {
-	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
+	if !validRuntimeAppSecretFence(result.Fence) || result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
 		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) ||
 		(result.Generation != "" && !ValidSecretProcessGeneration(result.Generation)) {
 		return false
@@ -29,7 +29,7 @@ func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult
 		return false
 	}
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 || (!result.Fence.empty() && candidate.Scope != result.Fence.Scope) {
 			return false
 		}
 	}

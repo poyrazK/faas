@@ -21,12 +21,90 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "subscription-execution-health":
+		return cmdEventsSubscriptionExecutionHealth(args[1:])
+	case "schema-rollout-preview":
+		return cmdEventsSchemaRollout(args[1:])
+	case "subscription-circuit-status":
+		return cmdEventsSubscriptionCircuit(args[1:], "status")
+	case "subscription-circuit-set":
+		return cmdEventsSubscriptionCircuit(args[1:], "set")
+	case "subscription-circuit-disable":
+		return cmdEventsSubscriptionCircuit(args[1:], "disable")
+	case "subscription-circuit-reset":
+		return cmdEventsSubscriptionCircuit(args[1:], "reset")
+	case "subscription-pause":
+		return cmdEventsSubscriptionControl(args[1:], "pause")
+	case "subscription-resume":
+		return cmdEventsSubscriptionControl(args[1:], "resume")
+	case "subscription-versions-status":
+		return cmdEventsSubscriptionVersions(args[1:], "status")
+	case "subscription-versions-set":
+		return cmdEventsSubscriptionVersions(args[1:], "set")
+	case "subscription-versions-reset":
+		return cmdEventsSubscriptionVersions(args[1:], "reset")
+	case "subscription-retry-status":
+		return cmdEventsSubscriptionRetry(args[1:], "status")
+	case "subscription-retry-set":
+		return cmdEventsSubscriptionRetry(args[1:], "set")
+	case "subscription-retry-reset":
+		return cmdEventsSubscriptionRetry(args[1:], "reset")
+	case "subscription-health":
+		return cmdEventsSubscriptionHealth(args[1:])
+	case "subscription-status":
+		return cmdEventsSubscriptionControl(args[1:], "status")
+	case "recovery-preflight":
+		return cmdEventsRecoveryPreflight(args[1:])
+	case "recovery-health":
+		return cmdEventsRecoveryHealth(args[1:])
+	case "recovery-history":
+		return cmdEventsRecoveryHistory(args[1:])
+	case "recovery-list":
+		return cmdEventsRecoveryList(args[1:])
+	case "recovery-preview":
+		return cmdEventsBulkRecovery(args[1:], true)
+	case "recovery-create":
+		return cmdEventsBulkRecovery(args[1:], false)
+	case "recovery-status":
+		return cmdEventsRecoveryJob(args[1:], "status")
+	case "recovery-cancel":
+		return cmdEventsRecoveryJob(args[1:], "cancel")
+	case "recovery-pause":
+		return cmdEventsRecoveryJob(args[1:], "pause")
+	case "recovery-resume":
+		return cmdEventsRecoveryJob(args[1:], "resume")
+	case "recovery-rate":
+		return cmdEventsRecoveryRate(args[1:])
+	case "recovery-items":
+		return cmdEventsRecoveryItems(args[1:])
+	case "backlog":
+		return cmdEventsBacklog(args[1:])
 	case "preview":
 		return cmdEventsPreview(args[1:])
+	case "replay-preview":
+		return cmdEventsReplayPreview(args[1:])
+	case "workflow-replay-preview":
+		return cmdEventsWorkflowReplayPreview(args[1:])
+	case "backfill":
+		return cmdEventsBackfill(args[1:])
+	case "workflow-backfill":
+		return cmdEventsWorkflowBackfill(args[1:])
+	case "backfill-status":
+		return cmdEventsBackfillStatus(args[1:])
+	case "backfill-items":
+		return cmdEventsBackfillItems(args[1:])
+	case "backfill-retry":
+		return cmdEventsBackfillRetry(args[1:])
+	case "inspect":
+		return cmdEventsInspect(args[1:])
+	case "recover":
+		return cmdEventsRecover(args[1:])
+	case "attempts":
+		return cmdEventsAttempts(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":
@@ -85,8 +163,9 @@ func cmdEventsReplayRetryableFanoutFailures(args []string) int {
 
 // cmdEventsReplayFanoutFailure retries one terminal pre-invocation recipient.
 func cmdEventsReplayFanoutFailure(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "allow-expired")
 	fs := newFlagSet("events replay", flag.ContinueOnError)
+	allowExpired := fs.Bool("allow-expired", false, "explicitly bypass delivery age for this replay generation")
 	eventID := fs.String("event-id", "", "published event id from events deliveries")
 	eventSource := fs.String("event-source", "", "published event source from events deliveries")
 	subscriptionID := fs.String("subscription-id", "", "failed subscription id from events deliveries")
@@ -103,7 +182,7 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.ReplayEventFanoutFailure(context.Background(), positional[0], api.ReplayEventFanoutFailureRequest{
-		EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
+		AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
 		SubscriptionID: strings.TrimSpace(*subscriptionID),
 	})
 	if err != nil {
@@ -152,7 +231,7 @@ func cmdEventsPreview(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -185,7 +264,7 @@ func cmdEventsPreview(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Event preview %s %s (id %s)\n", resp.Source, resp.Type, resp.EventID)
-	_, _ = fmt.Fprintf(osStdout, "Would deliver: %d  |  Filtered: %d  |  Other mismatches: %d\n", resp.MatchedCount, resp.FilterMismatchCount, resp.OtherMismatchCount)
+	_, _ = fmt.Fprintf(osStdout, "Would deliver: %d  |  Filtered: %d  |  Schema version mismatches: %d  |  Other mismatches: %d\n", resp.MatchedCount, resp.FilterMismatchCount, resp.SchemaVersionMismatchCount, resp.OtherMismatchCount)
 	if resp.CandidateCount == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no enabled subscriptions match this source and type)")
 		return 0
@@ -215,29 +294,32 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 // focused operational view for event-triggered invocations and routing
 // failures that happen before invocation creation.
 func cmdEventsDeliveries(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("events deliveries", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "narrow event filter to one published source; requires --event-id")
 	eventID := fs.String("event-id", "", "filter by published event id")
 	deliveryState := fs.String("state", "", "filter by delivery state; failed includes recipient fanout failures")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	fanoutBefore := fs.String("fanout-before", "", "pagination cursor (NextFanoutBefore from a prior call)")
-	limit := fs.Int("limit", 20, "max deliveries (1..200)")
+	limit := fs.Int("limit", 20, "page size per stream (1..200)")
+	all := fs.Bool("all", false, "walk both streams using their independent cursors")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		(strings.TrimSpace(*eventSource) != "" && strings.TrimSpace(*eventID) == "") ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventDeliveriesPageByEventIdentity(context.Background(), positional[0],
-		strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), *deliveryState, *before, *fanoutBefore, *limit)
+	resp, err := collectEventDeliveryPages(context.Background(), *before, *fanoutBefore, *all, func(ctx context.Context, before, fanoutBefore string) (api.EventDeliveryListResponse, error) {
+		return client.ListEventDeliveriesPageByEventIdentity(ctx, positional[0],
+			strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), *deliveryState, before, fanoutBefore, *limit)
+	})
 	if err != nil {
 		return printErr("Could not list event deliveries", err)
 	}
@@ -246,7 +328,6 @@ func cmdEventsDeliveries(args []string) int {
 	}
 	if len(resp.Deliveries) == 0 && len(resp.FanoutFailures) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no event deliveries)")
-		return 0
 	}
 	if len(resp.Deliveries) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "INVOCATION\tINVOCATION_SOURCE\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
@@ -263,9 +344,6 @@ func cmdEventsDeliveries(args []string) int {
 				oneLine(delivery.LastError),
 			)
 		}
-		if resp.NextBefore != "" {
-			_, _ = fmt.Fprintf(osStdout, "... more invocations — pass --before %s\n", resp.NextBefore)
-		}
 	}
 	if len(resp.FanoutFailures) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "PRE-INVOCATION FANOUT FAILURES")
@@ -278,6 +356,9 @@ func cmdEventsDeliveries(args []string) int {
 			)
 		}
 	}
+	if resp.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more invocations — pass --before %s\n", resp.NextBefore)
+	}
 	if resp.NextFanoutBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more fanout failures — pass --fanout-before %s\n", resp.NextFanoutBefore)
 	}
@@ -287,37 +368,47 @@ func cmdEventsDeliveries(args []string) int {
 // cmdEventsFanoutHistory shows immutable pre-invocation routing outcomes and
 // explicit replay requests for one event recipient set.
 func cmdEventsFanoutHistory(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("events fanout-history", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "published event source")
 	eventID := fs.String("event-id", "", "published event id")
 	subscriptionID := fs.String("subscription-id", "", "narrow history to one recipient")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
-	limit := fs.Int("limit", 20, "max history rows (1..200)")
+	limit := fs.Int("limit", 20, "page size (1..200)")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*eventID) == "" ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--before CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventFanoutAttemptHistory(context.Background(), positional[0],
-		strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), strings.TrimSpace(*subscriptionID), *before, *limit)
+	var resp api.EventFanoutAttemptHistoryResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.EventFanoutAttemptResponse, string, error) {
+		page, err := client.ListEventFanoutAttemptHistory(ctx, positional[0],
+			strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), strings.TrimSpace(*subscriptionID), cursor, *limit)
+		resp = page
+		return page.History, page.NextBefore, err
+	})
+	resp.History, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not list event fanout history", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.EventFanoutAttemptHistoryResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.History) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no event fanout history)")
-		return 0
 	}
 	_, _ = fmt.Fprintln(osStdout, "EVENT\tSOURCE\tSUBSCRIPTION\tACTION\tSTATE\tATTEMPT\tFAILURE_CODE\tRETRYABLE\tRECORDED\tERROR")
 	for _, row := range resp.History {
@@ -327,7 +418,7 @@ func cmdEventsFanoutHistory(args []string) int {
 			row.Retryable, row.OccurredAt.Format(time.RFC3339), oneLine(row.LastError))
 	}
 	if resp.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more history — pass --before %s\n", resp.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "... more history — pass --cursor %s\n", resp.NextBefore)
 	}
 	return 0
 }
@@ -338,10 +429,12 @@ func cmdEventsFanoutHistory(args []string) int {
 func cmdEventsSubscriptions(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events subscriptions", flag.ContinueOnError)
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
+	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr != nil || len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale events subscriptions <app>", "events")
 		return 1
 	}
@@ -360,19 +453,21 @@ func cmdEventsSubscriptions(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "(no event subscriptions)")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "ID\tSOURCE\tTYPE\tFILTER\tENABLED\tUPDATED")
+	_, _ = fmt.Fprintln(osStdout, "ID\tSOURCE\tTYPE\tFILTER\tORDERED\tENABLED\tUPDATED\tVERSIONS")
 	for _, subscription := range resp.Subscriptions {
 		filter := string(subscription.Filter)
 		if filter == "" {
 			filter = "{}"
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%t\t%s\n",
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%t\t%t\t%s\t%s\n",
 			subscription.ID,
 			subscription.Source,
 			subscription.Type,
 			filter,
+			subscription.Ordered,
 			subscription.Enabled,
 			subscription.UpdatedAt.Format(time.RFC3339),
+			eventSchemaVersionsLabel(subscription.SchemaVersions),
 		)
 	}
 	return 0
@@ -419,7 +514,7 @@ func cmdEventsPublish(args []string) int {
 	if eventID == "" {
 		eventID = uuid.NewString()
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -454,5 +549,8 @@ func cmdEventsPublish(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Event %s accepted for account %s.", resp.ID, resp.AccountID)
+	if resp.ReceiptURL != "" {
+		_, _ = fmt.Fprintf(osStdout, "Receipt: %s\n", resp.ReceiptURL)
+	}
 	return 0
 }

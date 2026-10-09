@@ -18,6 +18,13 @@ func TestCmdLogsDocumentedArgumentOrder(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			called := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/deployments/dep-1" {
+					// logs --deployment checks whether the deployment ever
+					// served before choosing runtime or build logs.
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprint(w, `{"id":"dep-1","status":"live"}`)
+					return
+				}
 				called = true
 				if r.URL.Path != "/v1/apps/myapp/logs" {
 					t.Errorf("path = %s", r.URL.Path)

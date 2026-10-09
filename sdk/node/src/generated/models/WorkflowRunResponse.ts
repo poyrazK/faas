@@ -13,6 +13,14 @@ export type WorkflowRunResponse = {
   cancelled_at?: string;
   id: string;
   app_id: string;
+  /**
+   * Immutable deployment used by this run's app handlers. Absent for legacy unpinned runs.
+   */
+  deployment_id?: string;
+  /**
+   * Platform tenant authorized for this workflow run
+   */
+  platform_tenant_id?: string | null;
   workflow_name: string;
   status: 'pending' | 'running' | 'awaiting_event' | 'succeeded' | 'failed' | 'dead';
   current_step?: string | null;

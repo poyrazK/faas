@@ -836,16 +836,20 @@ func cmdEdgeRulesUpdate(args []string) int {
 // for CI/scripted paths (issue #312 pattern). Returns 1 if the
 // user cancels (per requireTyped semantics).
 func cmdEdgeRulesRm(args []string) int {
-	flags, positional := splitArgsForFlags(args, "quiet")
+	flags, positional := splitArgsForFlags(args, "quiet", "yes")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--yes]", "edge-rules")
 		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	id := fs.Arg(0)
 	if !*quiet {

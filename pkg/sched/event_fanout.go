@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -19,7 +20,7 @@ const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
-const eventFanoutRecipientMaxAttempts = 12
+const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
 type eventFanoutRouteError struct {
 	code      string
@@ -31,6 +32,10 @@ func (e *eventFanoutRouteError) Error() string { return e.err.Error() }
 func (e *eventFanoutRouteError) Unwrap() error { return e.err }
 
 func eventFanoutFailureDetails(err error) (string, bool) {
+	var admissionErr *state.EventRecipientAdmissionError
+	if errors.As(err, &admissionErr) {
+		return admissionErr.FailureCode, admissionErr.Retryable
+	}
 	var routeErr *eventFanoutRouteError
 	if errors.As(err, &routeErr) {
 		return routeErr.code, routeErr.retryable
@@ -86,7 +91,7 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 			}
 			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
-				Source: row.Source, Type: row.Type, Filter: row.Filter,
+				Source: row.Source, Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions,
 			}, now, false); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
@@ -120,6 +125,9 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		return fmt.Errorf("sched: encode event invocation payload: %w", err)
 	}
 	now := time.Now().UTC()
+	if l.now != nil {
+		now = l.now().UTC()
+	}
 	var routeErrs []error
 	for _, recipient := range work.RecipientSnapshot {
 		previous := work.RecipientProgress[recipient.ID]
@@ -128,36 +136,78 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			previous.State == state.PublishedEventRecipientFailed {
 			continue
 		}
+		if state.EventSchemaVersionMismatch(recipient, work.Payload) {
+			filtered := state.EventSchemaVersionFilteredProgress(previous, previous.Attempts, now)
+			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, filtered); err != nil {
+				return err
+			}
+			work.RecipientProgress[recipient.ID] = filtered
+			continue
+		}
+		if state.EventDeliveryExpired(recipient, work.CreatedAt, previous, now) {
+			expired := state.EventDeliveryExpiredProgress(previous, previous.Attempts, now)
+			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, expired); err != nil {
+				return err
+			}
+			work.RecipientProgress[recipient.ID] = expired
+			continue
+		}
+		// Legacy receipts schedule default routing retries when the receipt is
+		// released. Only explicit policies and admission controls add an
+		// independent recipient wait within a claimed legacy receipt.
+		if previous.NextAttemptAt != nil && previous.NextAttemptAt.After(now) &&
+			(recipient.RoutingRetryPolicy != nil || previous.CapacityScope != "" || previous.DeliveryControlReason != "") {
+			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+			continue
+		}
 		if len(recipient.Workflow) != 0 && !l.workflowsDispatched {
 			// Keep workflow recipients pending while the preview runtime is
 			// disabled. Ordinary subscriptions can finish independently.
 			routeErrs = append(routeErrs, errors.New("workflow event runtime is disabled"))
 			continue
 		}
+		if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
+			reason, next, err := breaker.AcquireEventCircuitPermit(ctx, &state.PublishedEventRecipientWork{OutboxID: work.ID, Recipient: recipient, ClaimToken: work.ClaimToken, LeaseUntil: work.LeaseUntil}, now)
+			if err != nil {
+				return fmt.Errorf("sched: acquire event circuit permit: %w", err)
+			}
+			if reason != "" {
+				wait := state.EventCircuitWaitProgress(previous, previous.Attempts+1, reason, next)
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = wait
+				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				continue
+			}
+		}
+		startedAt := time.Now()
 		var matched bool
 		var routeErr error
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
+			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+				OutboxID: work.ID, SubscriptionID: recipient.ID, ClaimToken: work.ClaimToken,
+			})
+			if err == nil {
+				work.RecipientProgress[recipient.ID] = result.Progress
+				work.Delivered = result.ReceiptSettled
+				if result.Progress.State == state.PublishedEventRecipientPending {
+					routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				}
+				continue
+			}
+			matched, routeErr = result.Matched, err
 		} else {
 			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
 		}
-		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, UpdatedAt: now}
-		switch {
-		case routeErr == nil && matched:
-			outcome.State = state.PublishedEventRecipientEnqueued
-		case routeErr == nil:
-			outcome.State = state.PublishedEventRecipientFiltered
-		case !matched || errors.Is(routeErr, state.ErrNotFound):
-			outcome.State = state.PublishedEventRecipientFailed
-			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
-			outcome.LastError = routeErr.Error()
-		case outcome.Attempts >= eventFanoutRecipientMaxAttempts:
-			outcome.State = state.PublishedEventRecipientFailed
-			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
-			outcome.LastError = routeErr.Error()
-		default:
-			outcome.State = state.PublishedEventRecipientPending
-			outcome.LastError = routeErr.Error()
+		finishedAt := time.Now().UTC()
+		if l.now != nil {
+			finishedAt = l.now().UTC()
+		}
+		outcome, _ := eventRoutingRetryOutcome(recipient, previous, previous.Attempts+1, previous.Attempts+1-previous.CapacityDeferrals, previous.CapacityDeferrals, 0, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.ID, recipient.ID, 0, previous.Attempts+1-previous.CapacityDeferrals))
+		if outcome.State == state.PublishedEventRecipientPending {
 			routeErrs = append(routeErrs, fmt.Errorf("subscription %s: %w", recipient.ID, routeErr))
 		}
 		if len(outcome.LastError) > 1024 {
@@ -173,7 +223,11 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 				"attempts", outcome.Attempts, "err", outcome.LastError)
 		}
 	}
-	return errors.Join(routeErrs...)
+	err = errors.Join(routeErrs...)
+	if eventFanoutCapacityWait(err) {
+		return state.ErrEventDeliveryCapacity
+	}
+	return err
 }
 
 func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
@@ -181,7 +235,7 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		return l.routeObjectNotification(ctx, envelope, row, now)
 	}
 	matched, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source,
-		Type: row.Type, Filter: row.Filter}).Match(envelope)
+		Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions}).Match(envelope)
 	if err != nil {
 		return false, fmt.Errorf("subscription %s: %w", row.ID, &eventFanoutRouteError{
 			code: state.EventFanoutFailureCodeInvalidSubscription, err: err,
@@ -215,8 +269,7 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 			})
 		}
 	}
-	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
-	invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	invocationID := state.PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, row.ID)
 	if !requireActiveApp || !row.WorkSnapshotCaptured {
 		if cancellations, ok := l.engine.store.(state.WorkCancellationStore); ok {
 			if _, lookupErr := cancellations.WorkCancellationByID(ctx, invocationID); lookupErr == nil {
@@ -385,10 +438,14 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if !ok {
 		return
 	}
+	// Disabling adoption must still drain previously adopted receipts.
+	defer l.observeEventRoutingHealth(ctx)
+	defer l.runEventRecipientSweep(ctx)
 	now := time.Now().UTC()
 	if l.now != nil {
 		now = l.now().UTC()
 	}
+	l.runEventHistoryPrune(ctx, now)
 	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
@@ -396,16 +453,49 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 					l.log.Warn("sched: prune delivered event identities failed", "err", err)
 				}
 			} else {
+				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
+					if _, err := backfills.PruneEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+						l.log.Warn("sched: prune completed event replay backfills failed", "err", err)
+					}
+				}
+				if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
+					if _, err := recovery.PruneEventRecoveries(ctx, now, api.EventRecoveryItemsPageMax); err != nil && l.log != nil {
+						l.log.Warn("sched: prune event recovery jobs failed", "err", err)
+					}
+				}
 				l.eventFanoutLastPrune = now
 			}
 		}
 	}
+	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
+		for i := 0; i < eventFanoutRecoveryBatch; i++ {
+			worked, err := recovery.ProcessNextEventRecovery(ctx, now)
+			if err != nil {
+				if l.log != nil {
+					l.log.Warn("sched: process event recovery failed", "err", err)
+				}
+				break
+			}
+			if !worked {
+				break
+			}
+		}
+	}
+	l.runEventReplayBackfillSweep(ctx, now)
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
 		now := time.Now().UTC()
 		if l.now != nil {
 			now = l.now().UTC()
 		}
-		work, err := store.ClaimDuePublishedEvent(ctx, now)
+		var work *state.PublishedEventWork
+		var err error
+		_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
+		_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
+		if adoption, ok := store.(state.PublishedEventRecipientAdoptionClaimStore); ok && l.eventRecipientClaims && recipientSupported && workflowSupported {
+			work, err = adoption.ClaimDuePublishedEventForRecipientAdoption(ctx, now)
+		} else {
+			work, err = store.ClaimDuePublishedEvent(ctx, now)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return
 		}
@@ -416,7 +506,12 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			return
 		}
 		var routeErr error
-		if work.SnapshotCaptured {
+		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
+			routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
+			if routeErr == nil {
+				continue
+			}
+		} else if work.SnapshotCaptured {
 			routeErr = l.routePublishedEventSnapshot(ctx, work)
 		} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
 			// Receipts accepted before the snapshot migration retain their
@@ -425,11 +520,226 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		} else {
 			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
 		}
-		if routeErr != nil && l.log != nil {
+		if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
 			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+		}
+		if work.Delivered {
+			continue
 		}
 		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
 			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
 		}
 	}
+}
+
+func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
+	store, ok := l.engine.store.(state.EventReplayBackfillStore)
+	if !ok {
+		return
+	}
+	for i := 0; i < eventFanoutRecoveryBatch; i++ {
+		worked, err := store.ProcessNextEventReplayBackfill(ctx, now)
+		if err != nil {
+			if l.log != nil {
+				l.log.Warn("sched: process event replay backfill page failed", "err", err)
+			}
+			return
+		}
+		if !worked {
+			return
+		}
+	}
+}
+
+// WithEventRecipientClaims overrides the default independent recipient adoption.
+// Disable adoption during mixed-version upgrades; adopted work always drains.
+func (l *Loop) WithEventRecipientClaims(enabled bool) *Loop {
+	l.eventRecipientClaims = enabled
+	return l
+}
+
+func (l *Loop) runEventRecipientSweep(ctx context.Context) {
+	store, ok := l.engine.store.(state.PublishedEventRecipientWorkStore)
+	if !ok {
+		return
+	}
+	for i := 0; i < eventFanoutRecoveryBatch; i++ {
+		now := time.Now().UTC()
+		if l.now != nil {
+			now = l.now().UTC()
+		}
+		work, err := store.ClaimDuePublishedEventRecipient(ctx, now, l.workflowsDispatched)
+		if errors.Is(err, state.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			if l.log != nil {
+				l.log.Error("sched: claim event recipient failed", "err", err)
+			}
+			return
+		}
+		if state.EventSchemaVersionMismatch(work.Recipient, work.Payload) {
+			filtered := state.EventSchemaVersionFilteredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+			if err := store.FinishPublishedEventRecipient(ctx, work, filtered, now); err != nil && l.log != nil {
+				l.log.Error("sched: filter event schema version", "err", err)
+			}
+			continue
+		}
+		if state.EventDeliveryExpired(work.Recipient, work.AcceptedAt, work.PreviousProgress, now) {
+			expired := state.EventDeliveryExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+			if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
+				l.log.Error("sched: expire event delivery", "err", err)
+			}
+			continue
+		}
+		if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
+			reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
+			if err != nil {
+				reason, next = "circuit_probe_wait", now.Add(time.Second)
+				if l.log != nil {
+					l.log.Error("sched: acquire event circuit permit failed", "err", err)
+				}
+			}
+			if reason != "" {
+				wait := state.EventCircuitWaitProgress(work.PreviousProgress, work.TotalAttempts, reason, next)
+				if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+					l.log.Error("sched: defer event circuit delivery", "err", err)
+				}
+				continue
+			}
+		}
+		startedAt := time.Now()
+		var envelope events.Envelope
+		routeErr := json.Unmarshal(work.Payload, &envelope)
+		if routeErr == nil {
+			routeErr = envelope.Validate()
+		}
+		var eventPayload []byte
+		if routeErr == nil {
+			eventPayload, routeErr = json.Marshal(envelope)
+		}
+		matched := false
+		if routeErr == nil {
+			if len(work.Recipient.Workflow) != 0 {
+				admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+				if !ok {
+					routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
+						err: errors.New("workflow recipient admission store is unavailable")}
+				} else {
+					result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
+						OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+						ClaimToken: work.ClaimToken, Generation: work.Generation,
+					})
+					if err == nil {
+						continue
+					}
+					matched, routeErr = result.Matched, err
+				}
+			} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
+				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+					ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
+				})
+				if err == nil {
+					continue
+				}
+				matched, routeErr = result.Matched, err
+			} else {
+				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true)
+			}
+		}
+		finishedAt := time.Now().UTC()
+		if l.now != nil {
+			finishedAt = l.now().UTC()
+		}
+		progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
+		if len(progress.LastError) > 1024 {
+			progress.LastError = progress.LastError[:1024]
+		}
+
+		if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
+			l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
+				"subscription_id", work.Recipient.ID, "err", err)
+		} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
+			l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
+				"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
+				"retryable", progress.Retryable, "err", progress.LastError)
+		}
+	}
+}
+
+// Advisory wakes follow the commit. The invocation drain also polls, so a
+// lost notification or an unknown commit response cannot lose admitted work.
+func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEventRecipientAdmissionStore, claim state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	result, err := store.AdmitPublishedEventRecipient(ctx, claim)
+	if err == nil && result.CapacityDeferred {
+		l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
+	}
+	if err == nil && result.InvocationCreated && l.pool != nil {
+		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
+			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, result.DeliveryID, result.AppID, state.InvocationAsyncInvoke))
+	}
+	return result, err
+}
+
+func (l *Loop) observeEventRoutingHealth(ctx context.Context) {
+	if l.ops == nil {
+		return
+	}
+	if store, ok := l.engine.store.(state.EventRoutingHealthStore); ok {
+		h, err := store.EventRoutingHealth(ctx)
+		if err == nil {
+			l.ops.SetEventRoutingHealth(h.CapacityWaiting, h.OldestPendingSeconds)
+		}
+	}
+}
+
+// Inspect every joined error so a real failure alongside a capacity wait still
+// produces a failure warning. Single wrappers preserve the same classification.
+func eventFanoutCapacityWait(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		for _, child := range children {
+			if !eventFanoutCapacityWait(child) {
+				return false
+			}
+		}
+		return len(children) > 0
+	}
+	if child := errors.Unwrap(err); child != nil {
+		return eventFanoutCapacityWait(child)
+	}
+	return errors.Is(err, state.ErrEventDeliveryCapacity)
+}
+
+// Detail retention is independent of receipt settlement. Parent SKIP LOCKED
+// locks make this maintenance yield to active routing and operator replay.
+func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
+	if now.Sub(l.eventFanoutHistoryLastPrune) < 10*time.Second {
+		return
+	}
+	retention, ok := l.engine.store.(state.EventFanoutHistoryRetentionStore)
+	if !ok {
+		return
+	}
+	if _, err := retention.PruneEventFanoutHistory(ctx, now, api.EventRoutingHistoryPruneBatch); err != nil {
+		if l.log != nil {
+			l.log.Warn("sched: compact routing history failed", "err", err)
+		}
+		return
+	}
+	l.eventFanoutHistoryLastPrune = now
+}
+
+func (l *Loop) eventRecipientAdoptionSupported(work *state.PublishedEventWork) bool {
+	for _, recipient := range work.RecipientSnapshot {
+		if len(recipient.Workflow) != 0 {
+			_, supported := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+			return supported
+		}
+	}
+	return true
 }

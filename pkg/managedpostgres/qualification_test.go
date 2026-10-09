@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,9 +26,12 @@ type qualificationProvider struct {
 	issueErr          error
 	spec              Spec
 	pointInTime       time.Time
+	restoreSource     string
 	privilegeErr      error
 	privilegeEvidence *CredentialPrivilegeEvidence
 	isolationErr      error
+	readOnlyErr       error
+	readOnlyEvidence  *ReadOnlyCredentialEvidence
 }
 
 func (p *qualificationProvider) Capabilities() Capabilities { return p.capabilities }
@@ -38,18 +42,24 @@ func (p *qualificationProvider) Provision(_ context.Context, request ProvisionRe
 	if p.resourceID == "" {
 		p.resourceID = "provider-resource"
 	}
-	return ObservedDatabase{ProviderResourceID: p.resourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
+	return ObservedDatabase{ProviderResourceID: p.resourceID, DataResourceID: p.resourceID + "/data", Status: ProviderStatusReady, Spec: request.Spec}, nil
 }
 
 func (p *qualificationProvider) Restore(_ context.Context, request RestoreRequest) (ObservedDatabase, error) {
 	p.restore++
 	p.pointInTime = request.PointInTime
-	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
+	p.restoreSource = request.SourceResourceID
+	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, DataResourceID: "restored-" + request.ResourceID,
+		Status: ProviderStatusReady, Spec: request.Spec, RestoreLineage: &RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}}, nil
 }
 
 func (p *qualificationProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	p.inspect++
-	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: ProviderStatusReady, Spec: p.spec}, nil
+	o := ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: providerResourceID + "/data", Status: ProviderStatusReady, Spec: p.spec}
+	if strings.HasPrefix(providerResourceID, "restored-") {
+		o.RestoreLineage = &RestoreLineage{SourceResourceID: p.restoreSource, PointInTime: p.pointInTime}
+	}
+	return o, nil
 }
 
 func (*qualificationProvider) Update(context.Context, UpdateRequest) (ObservedDatabase, error) {
@@ -97,6 +107,13 @@ func (p *qualificationProvider) ProbeCredentialPrivileges(context.Context, strin
 }
 func (p *qualificationProvider) VerifyRestoreCredentialIsolation(context.Context, CredentialMaterial, CredentialMaterial) error {
 	return p.isolationErr
+}
+
+func (p *qualificationProvider) ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error) {
+	if p.readOnlyEvidence != nil {
+		return *p.readOnlyEvidence, p.readOnlyErr
+	}
+	return ReadOnlyCredentialEvidence{Restricted: true, PasswordRecovered: true, RotationPreservesData: true, Revoked: true}, p.readOnlyErr
 }
 
 func (p *qualificationProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
@@ -148,10 +165,10 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
-	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 1 || provider.issue != 3 || provider.revoke != 2 || provider.delete != 3 {
+	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 2 || provider.issue != 3 || provider.revoke != 2 || provider.delete != 3 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 35 {
+	if len(report.Checks) != 40 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
@@ -191,7 +208,7 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 	values := map[string]string{
 		EnvironmentEnv:              "staging",
 		QualificationEnv:            "true",
-		QualificationVersionEnv:     "3",
+		QualificationVersionEnv:     strconv.Itoa(QualificationArtifactVersion),
 		QualificationBackendEnv:     backend.ID,
 		QualificationFingerprintEnv: backend.Fingerprint,
 		QualificationUntilEnv:       now.Add(time.Hour).Format(time.RFC3339),
@@ -204,7 +221,7 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 		"production":        func(values map[string]string) { values[EnvironmentEnv] = "production" },
 		"approval":          func(values map[string]string) { values[QualificationEnv] = "false" },
 		"unversioned":       func(values map[string]string) { delete(values, QualificationVersionEnv) },
-		"previous contract": func(values map[string]string) { values[QualificationVersionEnv] = "2" },
+		"previous contract": func(values map[string]string) { values[QualificationVersionEnv] = "4" },
 		"expired": func(values map[string]string) {
 			values[QualificationUntilEnv] = now.Add(-time.Minute).Format(time.RFC3339)
 		},
@@ -383,7 +400,7 @@ func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
 		Approval:           &approval,
 		ApprovalEnv: map[string]string{
 			QualificationEnv:            "true",
-			QualificationVersionEnv:     "3",
+			QualificationVersionEnv:     strconv.Itoa(QualificationArtifactVersion),
 			QualificationBackendEnv:     approval.BackendID,
 			QualificationFingerprintEnv: approval.BackendFingerprint,
 			QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),
@@ -515,7 +532,7 @@ func passingLifecycleQualificationReport() LifecycleQualificationReport {
 	for _, name := range requiredLifecycleQualificationChecks {
 		checks = append(checks, QualificationCheck{Name: name, Passed: true})
 	}
-	return LifecycleQualificationReport{Checks: checks}
+	return LifecycleQualificationReport{Mode: DurableLifecycleMode, Checks: checks}
 }
 
 type restoreQualificationProvider struct {

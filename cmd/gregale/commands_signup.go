@@ -74,6 +74,9 @@ func cmdSignup(args []string) int {
 	if *passwordStdin {
 		return signupFromStdin()
 	}
+	if nonInteractive {
+		return printErr("Signup requires input", errors.New("use --email-only EMAIL or --password-stdin in non-interactive mode"))
+	}
 	return signupInteractive()
 }
 
@@ -199,6 +202,9 @@ func signupMagicLink(email string) int {
 	if err := c.PostAuthSignupMagicLink(ctx, email); err != nil {
 		return printErr("Could not send magic link", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]string{"status": "ok"}))
+	}
 	_, _ = fmt.Fprintln(osStdout, "Check your email — a one-time signup link is on the way.")
 	return 0
 }
@@ -237,6 +243,9 @@ func looksLikeCLIEmail(s string) bool {
 // line on stderr to know what is being asked. After a TTY read we print
 // a trailing newline so the next prompt lands on a fresh line.
 func readInteractivePassword(br *bufio.Reader, prompt string) (string, error) {
+	if nonInteractive {
+		return "", errors.New("interactive secret input is disabled; supply the command's explicit secret or stdin option")
+	}
 	fmt.Fprint(os.Stderr, prompt)
 	if f, ok := osStdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		pwBytes, err := term.ReadPassword(int(f.Fd()))

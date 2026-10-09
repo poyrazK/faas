@@ -1,26 +1,34 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.commit_routing import CommitRouting
+
 
 T = TypeVar("T", bound="CommitEventRequest")
 
 
 @_attrs_define
 class CommitEventRequest:
-    """At-least-once handoff. Repeating the identity with identical JSON data returns the original receipt; changed type or
-    data conflicts.
+    """At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt;
+    changed type, data or routing conflicts.
 
     """
 
     id: UUID
     type_: str
     data: Any
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+    routing: CommitRouting | Unset = UNSET
+    """Version 2 routing authority is granted by the account owner on the source. Customer identity is separate
+    from untrusted event data. Business keys share a queue only within the same policy and customer scope; scalar
+    types remain distinct. Canonical keys are limited to 256 bytes including the type prefix."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -29,8 +37,12 @@ class CommitEventRequest:
 
         data = self.data
 
+        routing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.routing, Unset):
+            routing = self.routing.to_dict()
+
         field_dict: dict[str, Any] = {}
-        field_dict.update(self.additional_properties)
+
         field_dict.update(
             {
                 "id": id,
@@ -38,11 +50,15 @@ class CommitEventRequest:
                 "data": data,
             }
         )
+        if routing is not UNSET:
+            field_dict["routing"] = routing
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.commit_routing import CommitRouting
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -50,27 +66,18 @@ class CommitEventRequest:
 
         data = d.pop("data")
 
+        _routing = d.pop("routing", UNSET)
+        routing: CommitRouting | Unset
+        if isinstance(_routing, Unset):
+            routing = UNSET
+        else:
+            routing = CommitRouting.from_dict(_routing)
+
         commit_event_request = cls(
             id=id,
             type_=type_,
             data=data,
+            routing=routing,
         )
 
-        commit_event_request.additional_properties = d
         return commit_event_request
-
-    @property
-    def additional_keys(self) -> list[str]:
-        return list(self.additional_properties.keys())
-
-    def __getitem__(self, key: str) -> Any:
-        return self.additional_properties[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.additional_properties[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.additional_properties[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.additional_properties

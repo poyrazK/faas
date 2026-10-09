@@ -551,10 +551,15 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath string
+	HealthcheckPath          string
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is the declared ADR-137 lifecycle mode from WakeRequest.
+	// Worker and job instances have no HTTP contract, so the plan-default
+	// /healthz liveness probe does not apply to them.
+	ExecutionMode string
 
 	// WorkloadNames (issue #463 / ADR-069 / PR-B) is the set of
 	// workload names whose cgroup child scopes vmmd wrote under
@@ -1675,7 +1680,7 @@ func (m *Manager) WithTailTerminalStamper(s TailTerminalStamper) *Manager {
 //
 // Reason is a stable short string from the probe set {timeout,
 // conn_refused, conn_err, non_200, unauthorized}, or one of the
-// source classifications {liveness_infrastructure,
+// source classifications {image_healthcheck_unhealthy, liveness_infrastructure,
 // liveness_process_exited}. The probe set is the same closed set the
 // vmmd_guest_liveness_probe_seconds histogram emits. Process-exit
 // reconciliation also uses the process_exited classification. The schedd
@@ -2015,15 +2020,16 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 // Surfaced as a boolean here so the schedd side encodes the policy
 // without vmmd hard-coding it.
 type LivenessProbeConfig struct {
-	Path                string
-	GRPC                bool
-	GRPCService         string
-	Port                int
-	PeriodSeconds       int
-	TimeoutSeconds      int
-	ConsecutiveFailures int
-	CooldownSeconds     int
-	IdleResetOnDestroy  bool
+	ImageHealthcheckRequired bool
+	Path                     string
+	GRPC                     bool
+	GRPCService              string
+	Port                     int
+	PeriodSeconds            int
+	TimeoutSeconds           int
+	ConsecutiveFailures      int
+	CooldownSeconds          int
+	IdleResetOnDestroy       bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2218,6 +2224,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// instanceHasNoHTTPContract reports whether the instance is a declared
+// worker/job (ADR-137), or a legacy undeclared app the guest characterized
+// as a worker, so no port answers the plan-default HTTP liveness probe.
+func instanceHasNoHTTPContract(inst *Instance) bool {
+	switch inst.ExecutionMode {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return true
+	case "":
+		return inst.Characterization.ObservedClass == api.ExecutionModeWorker
+	}
+	return false
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
@@ -2270,7 +2289,27 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			}
 		}
 	}
-	if cfg.PeriodSeconds <= 0 {
+	noHTTPContract := false
+	m.mu.Lock()
+	if inst := m.live[instance]; inst != nil {
+		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
+		noHTTPContract = instanceHasNoHTTPContract(inst)
+	}
+	m.mu.Unlock()
+	// A declared image command is its liveness contract. Do not invent the
+	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
+	// liveness overrides remain additional independent probes.
+	if cfg.ImageHealthcheckRequired && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	// A worker never listens, so the plan-default /healthz probe fails three
+	// times and destroys a healthy worker ~10 s after every boot (H8-16).
+	// Process exit still reports through ProcessExited, and an explicit
+	// override or image HEALTHCHECK remains the worker's liveness contract.
+	if noHTTPContract && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	if cfg.PeriodSeconds <= 0 && !cfg.ImageHealthcheckRequired {
 		return
 	}
 	m.log.Debug("liveness: starting probe loop",
@@ -3342,6 +3381,8 @@ type WakeRequest struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3665,6 +3706,8 @@ type ColdBootRequest struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget forwarded to
 	// WakeRequest. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3719,12 +3762,13 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		DisableStartupCPUBoost: req.DisableStartupCPUBoost,
-		ExecutionMode:          req.ExecutionMode,
+		HealthcheckPath:          req.HealthcheckPath,
+		HealthcheckGRPC:          req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		StartupDeadlineS:         req.StartupDeadlineS,
+		DisableStartupCPUBoost:   req.DisableStartupCPUBoost,
+		ExecutionMode:            req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
 		// WakeRequest.Runtime for the contract.
@@ -4199,6 +4243,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if req.ExecutionOnly && req.AppTaskOnly {
 		err = fmt.Errorf("wake %s: execution-only and app-task-only modes are mutually exclusive", req.Instance)
 		return nil, err
+	}
+	if req.ImageHealthcheckRequired && (req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly) {
+		return nil, fmt.Errorf("image healthcheck requires an application boot")
 	}
 	if req.KeepPaused && req.Snapshot == nil {
 		err = fmt.Errorf("wake %s: keep_paused requires a snapshot", req.Instance)
@@ -4676,9 +4723,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
-		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
-		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),
-		StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
+		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
+		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
@@ -4951,10 +5000,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			VsockDevice: NewVsockDevice(lease.Slot),
 			// Per-deployment readiness action. The HTTP path and gRPC
 			// mode/service are forwarded together; both target :8080.
-			HealthcheckPath:        req.HealthcheckPath,
-			HealthcheckGRPC:        req.HealthcheckGRPC,
-			HealthcheckGRPCService: req.HealthcheckGRPCService,
-			StartupDeadlineS:       req.StartupDeadlineS,
+			HealthcheckPath:          req.HealthcheckPath,
+			HealthcheckGRPC:          req.HealthcheckGRPC,
+			HealthcheckGRPCService:   req.HealthcheckGRPCService,
+			ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+			StartupDeadlineS:         req.StartupDeadlineS,
 			// One-shot guests use a vsock dispatch protocol rather than the app
 			// HTTP listener. App tasks remain networked; executions do not.
 			SkipReady:         req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
@@ -5061,11 +5111,12 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		Tap:        nc.Tap,
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		ExecutionMode:          req.ExecutionMode,
+		HealthcheckPath:          req.HealthcheckPath,
+		HealthcheckGRPC:          req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		StartupDeadlineS:         req.StartupDeadlineS,
+		ExecutionMode:            req.ExecutionMode,
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.
 		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
@@ -5253,6 +5304,7 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	}
 	m.nextProcessGeneration++
 	lease.processGeneration = m.nextProcessGeneration
+	lease.profileStartedAt = time.Now()
 	m.processGenerations[lease.Instance] = lease.processGeneration
 	delete(m.pendingProcessExits, lease.Instance)
 	return lease
@@ -5488,6 +5540,10 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
+		// The migration destination verifies this capture's backing identity
+		// like any restore (ADR-510). Without it every live migration was
+		// refused and cold-booted on the destination (H5-12).
+		m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
 		return info, nil
 	}
 	// Preserve best-effort recovery after an expired RPC, but let Destroy
@@ -5533,6 +5589,15 @@ func (m *Manager) TriggerExtensionHook(ctx context.Context, instance, phase stri
 	return hooker.TriggerExtensionHook(ctx, inst.Lease, phase, metadata)
 }
 
+// ImageHealthcheckRequiredFor reads the stored boot contract for warm-resume
+// acknowledgement. A caller cannot upgrade an older instance by setting a flag.
+func (m *Manager) ImageHealthcheckRequiredFor(instance string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	return inst != nil && inst.ImageHealthcheckRequired
+}
+
 // ResumeVM resumes a migration-prepared instance and restarts its liveness
 // monitor. It is idempotent at the VMM layer, which lets cancel and lease
 // expiry safely race with a late acknowledgement.
@@ -5556,6 +5621,20 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	if inst.ImageHealthcheckRequired {
+		checker, ok := m.vmm.(interface {
+			WaitImageHealthcheck(context.Context, Lease, int) error
+		})
+		if !ok {
+			return fmt.Errorf("resume_vm %s: image healthcheck capability unavailable", instance)
+		}
+		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+			return fmt.Errorf("resume_vm %s: resume hook: %w", instance, err)
+		}
+		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)

@@ -3,15 +3,27 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Result of publishing a message to an endpoint-scoped channel.
+ * Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
  */
 export type ManagedRealtimePublishResponse = {
   /**
-   * Number of local owner queues that accepted the message.
+   * Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work.
    */
   queued: number;
   /**
-   * Whether one or more active realtime nodes did not accept the publish.
+   * Live and resumable subscribers targeted across reachable nodes.
+   */
+  subscribers?: number;
+  /**
+   * Subscribers whose bounded output queues were full.
+   */
+  queue_full?: number;
+  /**
+   * Target subscribers that could not be queued for another per-connection reason.
+   */
+  failed?: number;
+  /**
+   * Whether a node or any target subscriber did not accept the publish.
    */
   partial?: boolean;
   /**
@@ -22,5 +34,13 @@ export type ManagedRealtimePublishResponse = {
    * Active realtime nodes that did not accept the publish request.
    */
   nodes_unavailable?: number;
+  /**
+   * Committed channel sequence; present when durable is true.
+   */
+  sequence?: number;
+  /**
+   * Whether this publish was committed to retained channel history before fan-out.
+   */
+  durable?: boolean;
 };
 

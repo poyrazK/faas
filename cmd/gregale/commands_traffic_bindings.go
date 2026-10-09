@@ -3,14 +3,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target api.DeploymentResponse, servingID string, age time.Duration, allowUnsupported, requireAck bool) int {
+func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target api.DeploymentResponse, servingID string, age time.Duration, allowUnsupported, requireAck bool, removalGates ...*routeRemovalGateReport) int {
 	req := api.BindingPromotionRequest{MaxVerificationAge: age.String(), AllowUnsupported: allowUnsupported, RequireApplicationAck: requireAck}
 	if servingID != "" {
 		req.ExpectedServingDeploymentID = &servingID
@@ -25,11 +24,17 @@ func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target 
 		scope = "default"
 	}
 	if report == nil || !report.Passed || !sameBindingDeployment(report.DeploymentID, target.ID) || !sameBindingDeployment(report.ExpectedDeploymentID, target.ID) ||
-		report.Scope != scope || report.CheckedAt.IsZero() || report.MaxVerificationAge != age.String() || report.AllowUnsupported != allowUnsupported || report.RequireApplicationAck != requireAck || len(report.Blockers) != 0 ||
+		report.Scope != scope || report.CheckedAt.IsZero() || !bindingPromotionPolicyAtLeast(report, age, allowUnsupported, requireAck) || len(report.Blockers) != 0 ||
 		!sameBindingDeployment(receipt.Deployment.ID, target.ID) || receipt.Deployment.TrafficPercent != 100 || receipt.ToPercent != 100 {
 		return printErr("Traffic promote failed", fmt.Errorf("server did not confirm a passed bindings check for the requested deployment and policy; inspect traffic before retrying"))
 	}
 	if jsonOutput {
+		if len(removalGates) > 0 && removalGates[0] != nil {
+			return jsonOut(writeJSON(struct {
+				api.BindingPromotionResponse
+				RouteRemovalGate *routeRemovalGateReport `json:"route_removal_gate,omitempty"`
+			}{receipt, removalGates[0]}))
+		}
 		return jsonOut(writeJSON(receipt))
 	}
 	if receipt.AlreadyPromoted {
@@ -41,16 +46,10 @@ func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target 
 }
 
 func printBindingPromotionError(err error) int {
-	code := printErr("Traffic promote failed", err)
-	var apiError *APIError
-	if !jsonOutput && errors.As(err, &apiError) && apiError.Problem.BindingsCheck != nil {
-		for _, blocker := range apiError.Problem.BindingsCheck.Blockers {
-			_, _ = fmt.Fprintf(osStderr, "  %s: %s", blocker.Code, blocker.Message)
-			if blocker.Binding != "" {
-				_, _ = fmt.Fprintf(osStderr, " (binding=%s scope=%s)", blocker.Binding, blocker.Scope)
-			}
-			_, _ = fmt.Fprintln(osStderr)
-		}
-	}
-	return code
+	return printErr("Traffic promote failed", err)
+}
+
+func bindingPromotionPolicyAtLeast(report *api.BindingCheckReport, age time.Duration, allowUnsupported, requireAck bool) bool {
+	checkedAge, err := time.ParseDuration(report.MaxVerificationAge)
+	return err == nil && checkedAge > 0 && checkedAge <= age && (!report.AllowUnsupported || allowUnsupported) && (!requireAck || report.RequireApplicationAck)
 }

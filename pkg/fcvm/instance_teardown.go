@@ -51,6 +51,11 @@ type instanceCleanup struct {
 	net           netns.Config
 	workloadNames []string
 	complete      bool
+	// failed is set when a cleanup attempt returned an error. An entry is
+	// also present while a teardown is still running (DestroyWithExport
+	// retains it before waiting for the guest and exporting), and only
+	// failed entries may be retried in the background.
+	failed bool
 }
 
 func (m *Manager) retainCleanup(lease Lease, nc netns.Config, workloadNames []string) *instanceCleanup {
@@ -76,6 +81,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		return nil
 	}
 	if err := m.cleanupOwned(ctx, retained); err != nil {
+		retained.failed = true
 		m.log.Warn("cleanup pending; retaining instance lease", "instance", lease.Instance, "err", err)
 		return err
 	}
@@ -219,6 +225,53 @@ func (m *Manager) joinForTeardown(ctx context.Context, instance string) error {
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 	return nil
+}
+
+// RetryPendingCleanups re-runs teardown for every instance whose cleanup
+// failed and is still retained. A failed teardown keeps its lease, slot and
+// writable clone until some caller runs Destroy again, and for a parked
+// instance nothing does: production-us hunt #4 found one retained since an
+// `app restart` whose replacement briefly shared its bind source (ADR-631).
+// cleanup is idempotent and serialised per instance, so a concurrent Destroy
+// is safe.
+//
+// Only teardowns whose last attempt failed are retried. DestroyWithExport
+// retains its instance before waiting for the guest and exporting its drive,
+// and builderd holds that call open for the whole build; retrying such an
+// in-flight entry killed running builder VMs and unmounted their drive under
+// the export (production-us rc.244: every build failed with EBADMSG).
+func (m *Manager) RetryPendingCleanups(ctx context.Context) (completed, pending int) {
+	m.mu.Lock()
+	retained := make([]*instanceCleanup, 0, len(m.pendingCleanup))
+	for instance, r := range m.pendingCleanup {
+		// A registered teardown flight owns this instance until it returns.
+		if m.instanceStops[instance] != nil {
+			continue
+		}
+		retained = append(retained, r)
+	}
+	m.mu.Unlock()
+	for _, r := range retained {
+		if ctx.Err() != nil {
+			return completed, pending
+		}
+		// TryLock: an entry whose mutex is held is being torn down right
+		// now; that caller reports its own outcome.
+		if !r.mu.TryLock() {
+			continue
+		}
+		retry := r.failed && !r.complete
+		r.mu.Unlock()
+		if !retry {
+			continue
+		}
+		if err := m.cleanup(ctx, r.lease, r.net, r.workloadNames); err != nil {
+			pending++
+			continue
+		}
+		completed++
+	}
+	return completed, pending
 }
 
 func (m *Manager) teardownIdentity(instance string) *Instance {

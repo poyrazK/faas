@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -76,6 +77,8 @@ class AppManifest:
     """
 
     entrypoint: list[str]
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
@@ -148,7 +151,8 @@ class AppManifest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     favicon: None | str | Unset = UNSET
     """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET
@@ -178,6 +182,10 @@ class AppManifest:
 
     def to_dict(self) -> dict[str, Any]:
         entrypoint = self.entrypoint
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
 
         env: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env, Unset):
@@ -351,6 +359,8 @@ class AppManifest:
                 "entrypoint": entrypoint,
             }
         )
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
         if env is not UNSET:
             field_dict["env"] = env
         if env_secrets is not UNSET:
@@ -428,12 +438,20 @@ class AppManifest:
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
         entrypoint = cast(list[str], d.pop("entrypoint"))
+
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
 
         _env = d.pop("env", UNSET)
         env: AppManifestEnv | Unset
@@ -775,6 +793,7 @@ class AppManifest:
 
         app_manifest = cls(
             entrypoint=entrypoint,
+            profiling=profiling,
             env=env,
             env_secrets=env_secrets,
             working_dir=working_dir,

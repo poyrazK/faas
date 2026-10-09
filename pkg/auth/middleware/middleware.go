@@ -765,6 +765,28 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "customer-operations/submissions/lookup" {
+		return method == http.MethodPost
+	}
+	if suffix == "customer-operations" {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+	if suffix == "customer-operation-milestones" {
+		return method == http.MethodGet
+	}
+	if strings.HasPrefix(suffix, "customer-operations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" {
+			return ((parts[2] == "events" || parts[2] == "milestones") && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+		}
+		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
+			return method == http.MethodGet
+		}
+		return false
+	}
 	if strings.HasPrefix(suffix, "invocations/") {
 		parts := strings.Split(suffix, "/")
 		if len(parts) == 2 && parts[1] != "" {
@@ -777,7 +799,28 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	}
 	if strings.HasPrefix(suffix, "apps/") {
 		parts := strings.Split(suffix, "/")
-		return method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "operations"
+		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "runs" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 6 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" && parts[5] == "preview" {
+			return true
+		}
+		if method == http.MethodPut && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" {
+			return true
+		}
+		if method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "events:publish" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 5 && parts[1] != "" && parts[2] == "events" && parts[3] == "receipts" && parts[4] != "" {
+			return true
+		}
+		if method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "operations" {
+			return true
+		}
+		return method == http.MethodPost && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] != "" && parts[4] == "runs"
 	}
 	if strings.HasPrefix(suffix, "operations/") {
 		parts := strings.Split(suffix, "/")
@@ -785,6 +828,23 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" && parts[2] == "cancel" {
+			return method == http.MethodPost
+		}
+		return false
+	}
+	if strings.HasPrefix(suffix, "workflows/runs/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 3 && parts[2] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 4 && parts[2] != "" && (parts[3] == "cancel" || parts[3] == "resume") {
+			return method == http.MethodPost
+		}
+		if len(parts) == 4 && parts[2] != "" {
+			return ((parts[3] == "callbacks" || parts[3] == "diagnostics") && method == http.MethodGet) ||
+				(parts[3] == "events" && method == http.MethodPost)
+		}
+		if len(parts) == 5 && parts[2] != "" && parts[3] == "callbacks" && parts[4] != "" {
 			return method == http.MethodPost
 		}
 		return false

@@ -34,14 +34,19 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	if dep.SourceBytes > int64(limits.SourceTarballMaxMB)*1024*1024 {
 		return state.Deployment{}, api.ErrSourceTooLarge(limits, dep.SourceBytes)
 	}
+	specs, err := s.retryOperationDefinitions(ctx, app, dep)
+	if err != nil {
+		return state.Deployment{}, err
+	}
 	if dep.Kind == state.DeploymentKindImage || dep.Kind == "" {
-		return s.enqueueImageRetry(ctx, dep, from)
+		return s.enqueueImageRetry(ctx, dep, from, specs)
 	}
 	build, err := s.store.BuildByDeployment(ctx, dep.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return state.Deployment{}, err
 	}
 	result, err := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
+		OperationDefinitions: specs, OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, dep.Scope, specs),
 		RetryOf: dep.ID, RetryFrom: from, AppID: app.ID, Kind: dep.Kind,
 		SourcePath: dep.SourcePath, SourceBytes: dep.SourceBytes,
 		SourceBuildID: build.ID,
@@ -60,9 +65,13 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	return created, err
 }
 
-func (s *server) enqueueImageRetry(ctx context.Context, dep state.Deployment, from state.StageName) (state.Deployment, error) {
+func (s *server) enqueueImageRetry(ctx context.Context, dep state.Deployment, from state.StageName, specs []api.OperationDefinitionSpec) (state.Deployment, error) {
 	created, err := s.store.RetryDeploymentFromStage(ctx, dep.ID, from)
 	if err != nil {
+		return state.Deployment{}, err
+	}
+	if err := s.installRetryOperations(ctx, created, specs); err != nil {
+		_ = s.store.FailSourceDeployment(context.WithoutCancel(ctx), created.ID, "operation contract retry failed")
 		return state.Deployment{}, err
 	}
 	payload, _ := json.Marshal(map[string]string{

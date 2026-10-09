@@ -1,10 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go >= 1.24. One binary per cmd/ dir.
-# (Bumped from 1.23: cmd/vmmd-stream-bridge uses the Go 1.24+
-# http.Protocols API for H2C — srv.Protocols.SetUnencryptedHTTP2(true).
-# go.mod pins 1.25.13; this comment is the floor for the toolchain
-# so a developer on 1.23.x sees a clean compile error rather than
-# a runtime panic.)
+# Go 1.26 with the patched 1.26.9 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -13,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -50,6 +45,10 @@ test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale C
 .PHONY: test-commit-native
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh
+
+.PHONY: test-managed-operation-native
+test-managed-operation-native: ## Run native Firecracker managed workflow recovery and effect delivery acceptance
+	@GO="$(GO)" sh scripts/test-managed-operation-native.sh
 
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
@@ -364,6 +363,22 @@ coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per pa
 migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres needed)
 	$(GO) test -tags no_pg -race -count=1 -run 'TestMigrations' ./migrations/...
 
+RNG_ADDON_ZIG_VERSION := 0.16.0
+RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
+
+.PHONY: rng-addon rng-addon-check
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-687; needs zig $(RNG_ADDON_ZIG_VERSION))
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
+
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-687)
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
+	  cmp -s "$$tmp/reseed.node" guest/init/rngpreload/reseed.node || \
+	  { echo "rng-addon-check: committed reseed.node is not the build of reseed.c; run make rng-addon"; exit 1; }
+	@echo "rng-addon-check: OK"
+
 .PHONY: migration-new
 migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make migration-new NAME=add_job_priority"; exit 1)
@@ -556,6 +571,12 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-profiling-acceptance
+native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters and native restore with evidence
+	@result=0; bash scripts/ci/run-native-profiling-acceptance.sh || result=$$?; \
+	python3 scripts/ci/profile-verdict.py --evidence "$${GREGALE_PROFILE_EVIDENCE:-profile-native-evidence}" || result=1; \
+	exit $$result
+
 native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
 	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
 
@@ -673,8 +694,9 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.4.0) + repository policy gates
-	@$(GO) tool golangci-lint run
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+	@python3 scripts/ci/check_gosec_baseline.py
+	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
@@ -969,9 +991,7 @@ clean: ## Remove build artifacts
 # sqlc install path. CI drops the tarball at $$HOME/.local/sqlc/bin/sqlc
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
 # the local-dev convention so make sqlc-check works without a `go
-# install` round-trip — which is necessary on Go < 1.26 because
-# sqlc v1.31.1's go.mod requires go >= 1.26.0 and the ubuntu-latest
-# runner is on Go 1.25.12 with GOTOOLCHAIN=local.
+# install` round-trip and compiling sqlc's large dependency tree.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this
@@ -991,11 +1011,11 @@ SQLC_URL     ?= https://github.com/sqlc-dev/sqlc/releases/download/$(SQLC_VER)/s
 
 .PHONY: sqlc
 sqlc: ## Install sqlc at the pinned version (idempotent)
-	@if command -v $(SQLC) >/dev/null 2>&1; then \
+	@set -e; if command -v $(SQLC) >/dev/null 2>&1; then \
 	  $(SQLC) version 2>&1 | grep -q $(SQLC_VER) && { echo "sqlc $(SQLC_VER) installed"; exit 0; }; \
-	fi
-	@mkdir -p "$(HOME)/.local/sqlc/bin"
-	@tar_path="$$(mktemp)"; \
+	fi; \
+	mkdir -p "$(HOME)/.local/sqlc/bin"; \
+	tar_path="$$(mktemp)"; \
 	if command -v curl >/dev/null 2>&1; then \
 	  curl --fail --silent --show-error --location --output "$$tar_path" "$(SQLC_URL)" || { \
 	    echo "make sqlc: curl download failed; falling back to go install" >&2; \
@@ -1007,23 +1027,34 @@ sqlc: ## Install sqlc at the pinned version (idempotent)
 	  exit 0; \
 	fi; \
 	tar --extract --gzip --file "$$tar_path" --directory "$$(dirname $$tar_path)"; \
-	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc" && chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
+	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc"; \
+	chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
 	echo "sqlc $(SQLC_VER) installed at $(HOME)/.local/sqlc/bin/sqlc"
 
 .PHONY: sqlc-generate
-sqlc-generate: sqlc ## (re)generate pkg/state/sqlc/*.go from queries.sql + schema.sql
+sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and schema
 	$(SQLC) generate
 
 .PHONY: sqlc-check
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/event*_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
+	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
+	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
+	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
+	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
+	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
+	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  diff -r pkg/state/sqlc "$$tmp/pkg/state/sqlc" || \
-	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }
+	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	    diff -r "$$package" "$$tmp/$$package" || \
+	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
+	  done
 	@echo "sqlc-check: OK"
 
 .PHONY: migrate-up
@@ -1096,7 +1127,7 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
-	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
+	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
@@ -1272,6 +1303,26 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
+.PHONY: data-api-check data-api-acceptance data-api-packaging-check data-api-browser-acceptance
+data-api-check: ## Runtime and typed application client unit checks
+	@bash scripts/test-data-api.sh
+
+data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
+	@bash scripts/test-data-api.sh --integration
+
+data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
+	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
+
+data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
+	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: data-api-staging-check data-api-staging-canary
+data-api-staging-check: ## Staging canary harness contracts without provider calls
+	@node --test tests/data-api/staging/canary.test.mjs
+
+data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
+	@bash scripts/ci/run-data-api-staging-canary.sh
+
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml
 	@cd sdk/python && .venv/bin/python scripts/gen.py
@@ -1377,7 +1428,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -1454,3 +1505,13 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 .PHONY: test-commit-sdk
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
+
+.PHONY: test-operation-sdk test-customer-operation-sdk check-operation-sdk-schema
+test-operation-sdk:
+	sh scripts/test-operation-sdk.sh
+
+test-customer-operation-sdk: test-operation-sdk
+	sh scripts/test-customer-operation-sdk.sh
+
+check-operation-sdk-schema:
+	python3 scripts/gen-operation-inbox-schema.py --check

@@ -31,6 +31,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,6 +150,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
+	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -164,6 +166,7 @@ func ansibleRoleSkips() map[string]bool {
 		"gatewayd-internal": true,
 		"s3-gatewayd":       true,
 		"realtimed":         true,
+		"profiled":          true,
 	}
 }
 
@@ -254,10 +257,35 @@ func runBundleCreate(args []string) error {
 	if err := releasebundle.Write(args[0], manifest); err != nil {
 		return err
 	}
-	if err := releasebundle.Verify(args[0], manifest); err != nil {
+	// Build has just hashed every file. Re-hashing them all with Verify
+	// doubled the hashing work of bundle-create (about half of the ~95 s it
+	// took on the CD runner) and could only catch a concurrent rewrite
+	// between the two passes. Confirm instead that the manifest on
+	// disk is exactly the one built. The control plane verifies the installed
+	// bundle again before anything in it runs, and deployctl deploy verifies
+	// it before activation.
+	if err := confirmWrittenManifest(args[0], manifest); err != nil {
 		return err
 	}
-	fmt.Printf("release bundle %s verified (%d files)\n", manifest.ReleaseID, len(manifest.Files))
+	fmt.Printf("release bundle %s created (%d files)\n", manifest.ReleaseID, len(manifest.Files))
+	return nil
+}
+
+// confirmWrittenManifest proves the manifest on disk under root decodes,
+// validates, and is exactly built.
+func confirmWrittenManifest(root string, built releasebundle.Manifest) error {
+	written, err := releasebundle.Read(root)
+	if err != nil {
+		return err
+	}
+	want, wantErr := json.Marshal(built)
+	got, gotErr := json.Marshal(written)
+	if err := errors.Join(wantErr, gotErr); err != nil {
+		return fmt.Errorf("encode release manifest: %w", err)
+	}
+	if !bytes.Equal(want, got) {
+		return errors.New("written release manifest does not match the built manifest")
+	}
 	return nil
 }
 

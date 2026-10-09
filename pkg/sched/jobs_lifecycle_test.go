@@ -931,3 +931,47 @@ func TestLateJobExitAfterBootFailureCannotSettleQueuedRetry(t *testing.T) {
 		t.Fatalf("stale VM not cleaned up: instance=%+v err=%v", ins, err)
 	}
 }
+
+// TestHandleJobExitRecordsDeadLetterWhenRetryBudgetIsSpent — on
+// production-us a task whose retries were exhausted still showed
+// retryable/retry on its final attempt, so `jobs attempts` promised a retry
+// that never came. The final attempt now records dead_letter /
+// retry_budget_exhausted, and the run's dead-letter count still rises.
+func TestHandleJobExitRecordsDeadLetterWhenRetryBudgetIsSpent(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	retryMax := 0
+	rules := &workpolicy.FailureRules{
+		Version:          workpolicy.Version,
+		Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"upstream_unavailable"}, Action: "retry"}},
+		UnmatchedFailure: "retry", UncertainOutcome: "hold",
+	}
+	run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, &retryMax, nil, nil, 1,
+		state.JobRunOptions{FailureRules: rules})
+	if err != nil {
+		t.Fatalf("JobRunCreate: %v", err)
+	}
+	const instanceID, leaseToken = "job-dlq-instance", "job-dlq-lease"
+	if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	manifest := json.RawMessage(`{"version":1,"artifacts":[],"outcome_code":"upstream_unavailable"}`)
+	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken, manifest); err != nil {
+		t.Fatalf("HandleJobExit: %v", err)
+	}
+	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+	if err != nil || task.Status != "failed" {
+		t.Fatalf("task = %+v, err %v; want failed (no retry left)", task, err)
+	}
+	attempts, err := store.JobTaskAttemptList(context.Background(), run.ID, 0, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].WorkDecision == nil ||
+		attempts[0].WorkDecision.Action != "dead_letter" || attempts[0].WorkDecision.Reason != "retry_budget_exhausted" ||
+		attempts[0].WorkDecision.Classification == "" {
+		t.Fatalf("final attempt decision = %+v, err %v; want <classification>/dead_letter retry_budget_exhausted", attempts, err)
+	}
+	got, err := store.JobRunGetByID(context.Background(), run.ID)
+	if err != nil || got.DeadLetterCount != 1 {
+		t.Fatalf("run dead letters = %d, err %v; want 1", got.DeadLetterCount, err)
+	}
+}

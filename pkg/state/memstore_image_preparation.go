@@ -67,7 +67,8 @@ func (m *MemStore) PublishImagePreparationLayer(ctx context.Context, id, token, 
 	}
 	d.RootfsPath, d.RootfsKey, d.RootfsBytes = path, key, bytes
 	p.Phase, p.UpdatedAt = ImageLayerPublished, time.Now().UTC()
-	m.deployments[id], m.imagePreparations[id] = d, p
+	m.putDeploymentLocked(id, d)
+	m.imagePreparations[id] = p
 	return nil
 }
 
@@ -145,6 +146,6 @@ func (m *MemStore) TransitionImagePreparation(ctx context.Context, id, token str
 		return ErrConflict
 	}
 	d.Status, d.Error = status, ""
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }

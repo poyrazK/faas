@@ -10,6 +10,8 @@ import (
 	"io"
 	"math"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -17,14 +19,29 @@ import (
 )
 
 func cmdRoutesHealth(args []string) int {
+	if len(args) > 0 && args[0] == "profile-history" {
+		return cmdRoutesHealthProfileHistory(args[1:])
+	}
+	if len(args) > 0 && args[0] == "suggest" {
+		return cmdRoutesHealthSuggest(args[1:])
+	}
+	if len(args) > 0 && args[0] == "review" {
+		return cmdRoutesHealthReview(args[1:])
+	}
+	if len(args) > 0 && args[0] == "review-release" {
+		return cmdRoutesHealthReviewRelease(args[1:])
+	}
 	if len(args) > 0 && args[0] == "investigate" {
 		return cmdRoutesHealthInvestigate(args[1:])
+	}
+	if len(args) > 0 && args[0] == "correlate" {
+		return cmdRoutesHealthCorrelate(args[1:])
 	}
 	if len(args) > 0 && args[0] == "explain" {
 		return cmdRoutesHealthExplain(args[1:])
 	}
 	if len(args) == 0 || args[0] != "get" && args[0] != "set" && args[0] != "report" {
-		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|report|explain|investigate> APP [flags]"))
+		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|suggest|review|review-release|report|profile-history|explain|investigate|correlate> [APP] [flags]"))
 	}
 	action := args[0]
 	flags, positional := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customers", "customer-details")
@@ -98,7 +115,7 @@ func cmdRoutesHealth(args []string) int {
 				return code
 			}
 		} else {
-			renderRouteHealthReport(report)
+			renderRouteHealthReport(report, positional[0])
 		}
 		if fail && report.Status != "healthy" {
 			return 1
@@ -234,7 +251,7 @@ func validateRouteHealthReport(r api.RouteHealthReport, deployment string) error
 	}
 	return nil
 }
-func renderRouteHealthReport(r api.RouteHealthReport) {
+func renderRouteHealthReport(r api.RouteHealthReport, appSlug string) {
 	_, _ = fmt.Fprintf(osStdout, "Route health: %s (%s, revision %d)\nCandidate: %s (%s)\nStable: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, r.Mode, r.Revision, r.DeploymentID, previewReportText(r.CandidateCommitSHA), r.StableDeploymentID, previewReportText(r.StableCommitSHA))
 	for _, f := range r.Routes {
 		_, _ = fmt.Fprintf(osStdout, "\n%s %s: %s\n", f.Method, previewReportText(f.Path), f.Status)
@@ -256,7 +273,75 @@ func renderRouteHealthReport(r api.RouteHealthReport) {
 			}
 		}
 	}
+	renderCanaryProfileSignal(r.ProfileSignal, appSlug)
 	renderRouteCustomerHealth(r.Customers)
+}
+
+func renderCanaryProfileSignal(signal *api.CanaryProfileSignal, appSlug string) {
+	if signal == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "\nCanary profile signal: %s (stage %d; %s, %ds; policy revision %d; attempt %d)\n", signal.Status, signal.CanaryStep, signal.Metric, signal.WindowSeconds, signal.PolicyRevision, signal.Attempts)
+	_, _ = fmt.Fprintf(osStdout, "  Report only; does not affect advancement or rollback. %s\n", previewReportText(signal.Reason))
+	if signal.CheckedAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "  Last checked: %s\n", signal.CheckedAt.UTC().Format(time.RFC3339))
+	}
+	if signal.NextAttemptAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "  Next attempt: %s\n", signal.NextAttemptAt.UTC().Format(time.RFC3339))
+	}
+	if signal.CompletedAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "  Completed: %s\n", signal.CompletedAt.UTC().Format(time.RFC3339))
+	}
+	if signal.ComparisonURL != "" && signal.Baseline != nil && signal.Candidate != nil {
+		baseline, candidate := *signal.Baseline, *signal.Candidate
+		_, _ = fmt.Fprintf(osStdout, "  Full comparison: gregale debug profiles %s --deployment-id %s --runtime %s --start %s --end %s --baseline-id %s --baseline-start %s --baseline-end %s\n",
+			appSlug, candidate.DeploymentID, candidate.Runtime, candidate.Start.Format(time.RFC3339Nano), candidate.End.Format(time.RFC3339Nano),
+			baseline.DeploymentID, baseline.Start.Format(time.RFC3339Nano), baseline.End.Format(time.RFC3339Nano))
+	}
+	if signal.BaselineSource != nil || signal.CandidateSource != nil {
+		_, _ = fmt.Fprintln(osStdout, "  Source revisions:")
+		if source := signal.BaselineSource; source != nil {
+			if source.Available {
+				_, _ = fmt.Fprintf(osStdout, "    Stable: %s@%s %s\n", source.Repository, source.CommitSHA, source.CommitURL)
+			} else {
+				_, _ = fmt.Fprintf(osStdout, "    Stable: unavailable (%s)\n", previewReportText(source.Reason))
+			}
+		}
+		if source := signal.CandidateSource; source != nil {
+			if source.Available {
+				_, _ = fmt.Fprintf(osStdout, "    Canary: %s@%s %s\n", source.Repository, source.CommitSHA, source.CommitURL)
+			} else {
+				_, _ = fmt.Fprintf(osStdout, "    Canary: unavailable (%s)\n", previewReportText(source.Reason))
+			}
+		}
+	}
+	if signal.Total != nil {
+		_, _ = fmt.Fprintf(osStdout, "  Sampled CPU/s: stable %.6f, canary %.6f, delta %+.6f\n", signal.Total.BaselineCPUPerSecond, signal.Total.CandidateCPUPerSecond, signal.Total.DeltaCPUPerSecond)
+		if metric := signal.Total.CPUPerRequest; metric != nil {
+			_, _ = fmt.Fprintf(osStdout, "  Sampled CPU/request: stable %.8f, canary %.8f, delta %+.8f\n", metric.BaselineCPUSecondsPerRequest, metric.CandidateCPUSecondsPerRequest, metric.DeltaCPUSecondsPerRequest)
+		}
+	}
+	for _, evidence := range signal.Evidence {
+		frames := make([]string, 0, len(evidence.Frames))
+		for _, frame := range evidence.Frames {
+			name := frame.Name
+			if frame.File != "" {
+				name += " (" + frame.File
+				if frame.Line > 0 {
+					name += fmt.Sprintf(":%d", frame.Line)
+				}
+				name += ")"
+			}
+			if frame.BaselineSource != nil {
+				name += " [stable " + frame.BaselineSource.URL + "]"
+			}
+			if frame.CandidateSource != nil {
+				name += " [canary " + frame.CandidateSource.URL + "]"
+			}
+			frames = append(frames, name)
+		}
+		_, _ = fmt.Fprintf(osStdout, "  Threshold evidence: %s\n", previewReportText(strings.Join(frames, " → ")))
+	}
 }
 
 func validateRouteHealthVerdicts(r api.RouteHealthReport) error {

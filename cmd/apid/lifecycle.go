@@ -91,6 +91,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		RestartPolicy:                req.RestartPolicy,
 		AfterRestore:                 req.AfterRestore,
 		BeforeCheckpoint:             req.BeforeCheckpoint,
+		Profiling:                    req.Profiling,
 		StartupDeadlineS:             req.StartupDeadlineS,
 		MaxRetries:                   req.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -125,7 +126,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 	if manifest.WorkerReplicas != nil {
 		workerReplicas = &state.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
-			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
 		}
 	}
 	stopGracePeriodS := 0
@@ -137,6 +138,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
 		BeforeCheckpoint:             manifest.BeforeCheckpoint,
+		Profiling:                    manifest.Profiling,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriodS:             stopGracePeriodS,
@@ -171,7 +173,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 	if manifest.WorkerReplicas != nil {
 		workerReplicas = &api.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
-			Metric: manifest.WorkerReplicas.Metric, Target: manifest.WorkerReplicas.Target,
+			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
 		}
 	}
 	var stopGrace time.Duration
@@ -183,6 +185,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		RestartPolicy:                manifest.RestartPolicy,
 		AfterRestore:                 manifest.AfterRestore,
 		BeforeCheckpoint:             manifest.BeforeCheckpoint,
+		Profiling:                    manifest.Profiling,
 		StartupDeadlineS:             manifest.StartupDeadlineS,
 		MaxRetries:                   manifest.MaxRetries,
 		StopGracePeriod:              stopGrace,
@@ -209,7 +212,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.AfterRestore != nil ||
-		req.BeforeCheckpoint != nil ||
+		req.BeforeCheckpoint != nil || req.Profiling != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
 		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
@@ -217,6 +220,10 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		return api.AppManifest{}, false
 	}
 	manifest := apiManifestFromState(app.Manifest)
+	if req.Profiling != nil {
+		cfg := *req.Profiling
+		manifest.Profiling = &cfg
+	}
 	if req.ExecutionMode != nil {
 		manifest.ExecutionMode = *req.ExecutionMode
 	}
@@ -314,6 +321,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.RestartPolicy = manifest.RestartPolicy
 	updated.AfterRestore = manifest.AfterRestore
 	updated.BeforeCheckpoint = manifest.BeforeCheckpoint
+	updated.Profiling = manifest.Profiling
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
 	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS

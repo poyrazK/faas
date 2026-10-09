@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.deployment_response import DeploymentResponse
+    from ..models.profile_canary_gate_decision import ProfileCanaryGateDecision
     from ..models.route_gate_decision import RouteGateDecision
     from ..models.route_health_decision import RouteHealthDecision
 
@@ -29,6 +30,8 @@ class CanaryAdvanceResponse:
     because the ref shape is non-secret by design."""
     audit_id: str
     """The deployment_audit row id, stringified for SDK portability."""
+    profile_gate: ProfileCanaryGateDecision | Unset = UNSET
+    """Current profiling gate decision for an owned canary stage and its exact stable predecessor."""
     route_health: RouteHealthDecision | Unset = UNSET
     """Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact
     saved evidence with the advance response and traffic audit."""
@@ -41,6 +44,10 @@ class CanaryAdvanceResponse:
         deployment = self.deployment.to_dict()
 
         audit_id = self.audit_id
+
+        profile_gate: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profile_gate, Unset):
+            profile_gate = self.profile_gate.to_dict()
 
         route_health: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_health, Unset):
@@ -58,6 +65,8 @@ class CanaryAdvanceResponse:
                 "audit_id": audit_id,
             }
         )
+        if profile_gate is not UNSET:
+            field_dict["profile_gate"] = profile_gate
         if route_health is not UNSET:
             field_dict["route_health"] = route_health
         if route_gate is not UNSET:
@@ -68,6 +77,7 @@ class CanaryAdvanceResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.deployment_response import DeploymentResponse
+        from ..models.profile_canary_gate_decision import ProfileCanaryGateDecision
         from ..models.route_gate_decision import RouteGateDecision
         from ..models.route_health_decision import RouteHealthDecision
 
@@ -75,6 +85,13 @@ class CanaryAdvanceResponse:
         deployment = DeploymentResponse.from_dict(d.pop("deployment"))
 
         audit_id = d.pop("audit_id")
+
+        _profile_gate = d.pop("profile_gate", UNSET)
+        profile_gate: ProfileCanaryGateDecision | Unset
+        if isinstance(_profile_gate, Unset):
+            profile_gate = UNSET
+        else:
+            profile_gate = ProfileCanaryGateDecision.from_dict(_profile_gate)
 
         _route_health = d.pop("route_health", UNSET)
         route_health: RouteHealthDecision | Unset
@@ -93,6 +110,7 @@ class CanaryAdvanceResponse:
         canary_advance_response = cls(
             deployment=deployment,
             audit_id=audit_id,
+            profile_gate=profile_gate,
             route_health=route_health,
             route_gate=route_gate,
         )

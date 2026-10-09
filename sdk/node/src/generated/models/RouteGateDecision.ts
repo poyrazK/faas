@@ -10,7 +10,11 @@ export type RouteGateDecision = {
   revision: number;
   deployment_id: string;
   status: 'allowed' | 'blocked' | 'report_only';
-  reasons: Array<'evidence_unavailable' | 'check_missing' | 'check_incomplete' | 'check_stale' | 'verdict_unknown' | 'requirements_violated' | 'use_canary_advance'>;
+  reasons: Array<string>;
   check_queued: boolean;
+  /**
+   * Exact persisted successor-review receipts accepted inside this advance transaction.
+   */
+  lifecycle_approval_ids?: Array<string>;
 };
 

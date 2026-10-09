@@ -22,6 +22,10 @@ func NormalizePublicSignRequest(r SignRequest, maxBytes int64) (SignRequest, err
 	if err := r.Validate(maxBytes); err != nil {
 		return r, err
 	}
+	if r.Protection != nil {
+		p := r.Protection.ForWrite()
+		r.Protection = &p
+	}
 	if r.ExpiresIn == 0 {
 		r.ExpiresIn = int64(api.DefaultObjectSignedURLTTL / time.Second)
 	}
@@ -85,6 +89,28 @@ func PublicSignedObjectHeaders(r SignRequest) (http.Header, error) {
 			h.Set("X-Amz-Server-Side-Encryption-Bucket-Key-Enabled", strconv.FormatBool(*e.BucketKeyEnabled))
 		}
 	}
+	if p := r.Protection; p != nil {
+		if r := p.Retention; r != nil {
+			h.Set("X-Amz-Object-Lock-Mode", r.Mode)
+			if r.RetainUntilDate != nil {
+				h.Set("X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.UTC().Format(time.RFC3339Nano))
+			}
+			if r.EventHold != "" {
+				h.Set("X-Amz-Object-Lock-Event-Hold", r.EventHold)
+			}
+			if r.EventHoldDuration != nil {
+				if r.EventHoldDuration.Days != nil {
+					h.Set("X-Amz-Object-Lock-Event-Hold-Duration-Days", strconv.FormatInt(int64(*r.EventHoldDuration.Days), 10))
+				}
+				if r.EventHoldDuration.Years != nil {
+					h.Set("X-Amz-Object-Lock-Event-Hold-Duration-Years", strconv.FormatInt(int64(*r.EventHoldDuration.Years), 10))
+				}
+			}
+		}
+		if hold := p.LegalHold; hold != nil {
+			h.Set("X-Amz-Object-Lock-Legal-Hold", hold.Status)
+		}
+	}
 	return h, nil
 }
 
@@ -113,6 +139,9 @@ func presignPublicRequest(ctx context.Context, endpoint, region, bucket, access,
 	u.Path = "/" + bucket + "/" + r.Key
 	if query == nil {
 		query = url.Values{}
+	}
+	if r.VersionID != "" {
+		query.Set("versionId", r.VersionID)
 	}
 	query.Set("X-Amz-Expires", strconv.FormatInt(r.ExpiresIn, 10))
 	u.RawQuery = query.Encode()

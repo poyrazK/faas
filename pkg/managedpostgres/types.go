@@ -9,16 +9,18 @@ import (
 	"regexp"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 var (
-	ErrUnavailable   = errors.New("managed postgres unavailable")
-	ErrNotFound      = errors.New("managed postgres resource not found")
-	ErrConflict      = errors.New("managed postgres resource conflict")
-	ErrInvalid       = errors.New("invalid managed postgres request")
-	ErrUnsupported   = errors.New("managed postgres feature unsupported")
-	ErrQuotaExceeded = errors.New("managed postgres quota exceeded")
-	ErrUsageStale    = errors.New("managed postgres usage is stale")
+	ErrUnavailable   = pgerrors.ErrUnavailable
+	ErrNotFound      = pgerrors.ErrNotFound
+	ErrConflict      = pgerrors.ErrConflict
+	ErrInvalid       = pgerrors.ErrInvalid
+	ErrUnsupported   = pgerrors.ErrUnsupported
+	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
+	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
 type State string
@@ -104,7 +106,11 @@ type ProvisionRequest struct {
 }
 
 type UpdateRequest struct {
+	// ResourceID is the persisted provider lifecycle identity. DataResourceID
+	// pins its exact dataset; an adapter must never substitute a current default.
 	ResourceID     string
+	DataResourceID string
+	PreviousSpec   Spec
 	Spec           Spec
 	Generation     int64
 	IdempotencyKey string
@@ -112,9 +118,53 @@ type UpdateRequest struct {
 
 type ObservedDatabase struct {
 	ProviderResourceID string
-	Status             ProviderStatus
-	ComputeState       ComputeState
-	Spec               Spec
+	// DataResourceID identifies the exact observed dataset, never a mutable
+	// default selector. ProviderResourceID still owns lifecycle cleanup.
+	// Providers without this evidence leave it empty; they cannot supply a
+	// source for a complete stage clone.
+	DataResourceID string
+	Status         ProviderStatus
+	ComputeState   ComputeState
+	Spec           Spec
+	// RestoreLineage comes from the provider's actual target metadata or an
+	// independently verified mapping to its historical position, never from
+	// echoing a RestoreRequest. A missing observation cannot qualify an
+	// isolated stage database. SourceResourceID must identify the exact source
+	// (for example a Neon branch), not a mutable default selector.
+	RestoreLineage *RestoreLineage
+}
+
+type RestoreLineage struct {
+	SourceResourceID string
+	PointInTime      time.Time
+}
+
+// RestoreProof is a private receipt of a successful provider observation.
+// It contains no credential material and is tied to one target generation.
+type RestoreProof struct {
+	DatabaseID, AccountID, OperationID string
+	BackendID, BackendFingerprint      string
+	ProviderResourceID                 string
+	DataResourceID                     string
+	SourceDatabaseID                   string
+	Lineage                            RestoreLineage
+	Spec                               Spec
+	Generation                         int64
+	ObservedAt                         time.Time
+}
+
+// CloneRestoreProofStore atomically commits the receipt with readiness.
+// Separate stores cannot substitute a ready state for provider evidence.
+type CloneRestoreProofStore interface {
+	FinishCloneRestoreProvision(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
+	GetCloneRestoreProof(context.Context, string, string) (RestoreProof, error)
+}
+
+// DataResourceProvisionStore commits the observed data identity and readiness
+// together under the same provisioning lease. A ready legacy row cannot be
+// pinned by simply resolving its current default selector.
+type DataResourceProvisionStore interface {
+	FinishProvisionWithDataResource(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
 }
 
 // ScaleToZeroProbeResult is the non-sensitive evidence produced by an
@@ -142,7 +192,10 @@ type DeleteRequest struct {
 	// RestoreSourceResourceID lets an adapter recover a restore branch when
 	// the target provider ID was not persisted before a worker crashed.
 	RestoreSourceResourceID string
-	IdempotencyKey          string
+	// RestorePointInTime fences discovery-based cleanup of a restore whose
+	// target identity was never acknowledged. The name alone is insufficient.
+	RestorePointInTime time.Time
+	IdempotencyKey     string
 }
 
 // RestoreRequest creates a new logical database from a source provider
@@ -154,6 +207,14 @@ type RestoreRequest struct {
 	Spec             Spec
 	PointInTime      time.Time
 	IdempotencyKey   string
+}
+
+// RestoreInspector verifies an existing target against its pinned source and
+// point. Providers whose metadata expresses historical positions instead of
+// timestamps can resolve that mapping independently. This inspection must not
+// create a resource or substitute a mutable source selector.
+type RestoreInspector interface {
+	InspectRestore(context.Context, string, RestoreRequest) (ObservedDatabase, error)
 }
 
 type DeleteResult struct {
@@ -180,6 +241,8 @@ const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
 	CredentialMigration CredentialAccess = "migration"
+	// Data API logins receive only api-schema DML, without owner memberships.
+	CredentialDataAPI CredentialAccess = "data_api"
 )
 
 type EndpointRole string
@@ -516,6 +579,8 @@ type Capabilities struct {
 	ScaleToZero        bool
 	PooledConnections  bool
 	PointInTimeRestore bool
+	ClassResize        bool
+	ScaleToZeroUpdate  bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -534,6 +599,12 @@ func (c Capabilities) Validate() error {
 		return ErrInvalid
 	}
 	if c.MaxRestoreWindowSeconds < 0 || c.MaxStorageBytes < 0 {
+		return ErrInvalid
+	}
+	if c.ScaleToZeroUpdate && !c.ScaleToZero {
+		return ErrInvalid
+	}
+	if c.ClassResize && len(c.ServiceClasses) < 2 {
 		return ErrInvalid
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
@@ -559,7 +630,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 			return ErrInvalid
 		}
 	}
@@ -576,7 +647,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -634,6 +705,18 @@ type CredentialPrivilegeProber interface {
 	ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error)
 }
 
+// ReadOnlyCredentialProber proves the portable read-only access contract on
+// disposable resources. Advertising read_only requires this live evidence.
+type ReadOnlyCredentialProber interface {
+	ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error)
+}
+
+// DataAPICredentialProber verifies schema isolation, RLS, recovery and retirement
+// on a disposable resource before the backend can advertise data_api bindings.
+type DataAPICredentialProber interface {
+	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
+}
+
 // RestoreCredentialIsolationProber verifies that the source login cannot
 // authenticate against the restored target.
 type RestoreCredentialIsolationProber interface {
@@ -668,21 +751,23 @@ type Database struct {
 	ProviderResourceID string
 	// AccountingRequired is persisted before the first provider mutation and
 	// survives failure, retries, and deletion. It must never be cleared.
-	AccountingRequired      bool
-	RestoreSourceDatabaseID string
-	RestoreSourceResourceID string
-	RestorePointInTime      time.Time
-	State                   State
-	DesiredGeneration       int64
-	ObservedGeneration      int64
-	LastErrorCode           string
-	LeaseToken              string
-	LeaseUntil              time.Time
-	AttemptCount            int32
-	RetryAt                 time.Time
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	DeletedAt               *time.Time
+	AccountingRequired          bool
+	DataResourceID              string
+	RestoreSourceDatabaseID     string
+	RestoreSourceResourceID     string
+	RestorePointInTime          time.Time
+	EnvironmentCloneOperationID string
+	State                       State
+	DesiredGeneration           int64
+	ObservedGeneration          int64
+	LastErrorCode               string
+	LeaseToken                  string
+	LeaseUntil                  time.Time
+	AttemptCount                int32
+	RetryAt                     time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
+	DeletedAt                   *time.Time
 }
 
 type BindingState string
@@ -750,6 +835,14 @@ type Store interface {
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
+}
+
+// CustomerDatabaseStore excludes operation-owned targets until the owning
+// clone has published them. Internal lifecycle and accounting readers still
+// need the complete catalogue, including private pending targets.
+type CustomerDatabaseStore interface {
+	GetCustomerDatabase(context.Context, string, string) (Database, error)
+	ListCustomerDatabases(context.Context, string) ([]Database, error)
 }
 
 // UsageDatabaseCursor is the keyset position of the last database a usage

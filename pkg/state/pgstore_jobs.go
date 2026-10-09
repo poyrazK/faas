@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -325,10 +327,8 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 	if err := tx.QueryRow(ctx, `select id::text from jobs where id = $1::uuid and status <> 'deleted' for update`, id).Scan(&lockedID); err != nil {
 		return Job{}, mapErr(err)
 	}
-	var active bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from job_runs r
-	    join job_tasks t on t.run_id = r.id
-	    where r.job_id = $1::uuid and t.status in ('queued','claimed'))`, id).Scan(&active); err != nil {
+	active, err := sqlc.New().CustomerOperationJobHasOrdinaryActiveTasks(ctx, tx, mustPgUUID(id))
+	if err != nil {
 		return Job{}, err
 	}
 	if active {
@@ -393,9 +393,8 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 	if err := tx.QueryRow(ctx, `select id::text from jobs where id = $1::uuid and status <> 'deleted' for update`, id).Scan(&lockedID); err != nil {
 		return Job{}, mapErr(err)
 	}
-	var active bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from job_runs r join job_tasks t on t.run_id = r.id
-		where r.job_id = $1::uuid and t.status in ('queued','claimed'))`, id).Scan(&active); err != nil {
+	active, err := sqlc.New().CustomerOperationJobHasOrdinaryActiveTasks(ctx, tx, mustPgUUID(id))
+	if err != nil {
 		return Job{}, err
 	}
 	if active {
@@ -998,6 +997,12 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 // and creates a linked run. The current image must resolve to the same digest
 // so replay never silently runs the old command against different bits.
 func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(sourceRunID)); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return JobRun{}, nil, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return JobRun{}, nil, err
@@ -1092,11 +1097,16 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 	}
 	fanned := make([]JobTask, 0, len(failed))
 	for i, task := range failed {
+		// A replay of a replay keeps the root run's partition index.
+		origin := task.TaskIndex
+		if task.SourceTaskIndex != nil {
+			origin = *task.SourceTaskIndex
+		}
 		created, err := scanJobTask(tx.QueryRow(ctx, `insert into job_tasks
 			(run_id,task_index,status,input_id,input_ref,source_task_index)
 			values ($1::uuid,$2,'queued',nullif($3,''),nullif($4,''),$5)
 			returning `+jobTaskSelectCols,
-			run.ID, i, task.InputID, task.InputRef, task.TaskIndex))
+			run.ID, i, task.InputID, task.InputRef, origin))
 		if err != nil {
 			return JobRun{}, nil, err
 		}
@@ -1367,6 +1377,13 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		return JobRun{}, fmt.Errorf("state: begin job run recompute: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, tx, mustPgUUID(runID)); err != nil {
+		return JobRun{}, err
+	} else if owned {
+		if _, _, err := lockOperationJobTx(ctx, tx, runID); err != nil {
+			return JobRun{}, err
+		}
+	}
 	_, err = tx.Exec(ctx, `update job_tasks t set status = 'cancelled',
 		error_class = 'cancelled', error_message = 'fail_fast after permanent task failure',
 		finished_at = now()
@@ -1385,6 +1402,9 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 	}
 	run, err := queryJobRunRecompute(ctx, tx, runID, false)
 	if err != nil {
+		return JobRun{}, err
+	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
 		return JobRun{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1465,7 +1485,14 @@ func (s *PgStore) JobRunCancel(ctx context.Context, runID string) (JobRun, error
 	if err != nil {
 		return JobRun{}, fmt.Errorf("state: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(ctx) }()
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, tx, mustPgUUID(runID)); err != nil {
+		return JobRun{}, err
+	} else if owned {
+		if _, _, err := lockOperationJobTx(ctx, tx, runID); err != nil {
+			return JobRun{}, err
+		}
+	} //nolint:errcheck // no-op after Commit
 
 	// 1. Cancel every non-terminal task. WHERE guards on
 	//    status NOT IN (terminal set) make this idempotent.
@@ -1504,6 +1531,9 @@ func (s *PgStore) JobRunCancel(ctx context.Context, runID string) (JobRun, error
 		return JobRun{}, err
 	}
 
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return JobRun{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return JobRun{}, fmt.Errorf("state: commit job run cancel: %w", err)
 	}
@@ -1606,6 +1636,23 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("state: commit claim tasks: %w", err)
 	}
+	native, err := sqlc.New().QueuedCustomerOperationJobTasks(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, task := range tasks {
+		seen[task.RunID] = true
+	}
+	for _, row := range native {
+		if !seen[pgUUIDString(row.RunID)] {
+			tasks = append(tasks, operationJobTaskFromSQL(row))
+		}
+	}
+	sort.SliceStable(tasks, func(i, j int) bool { return tasks[i].CreatedAt.Before(tasks[j].CreatedAt) })
+	if limit > 0 && len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
 	return tasks, nil
 }
 
@@ -1683,6 +1730,9 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit mark job task claimed: %w", err)
 	}
@@ -1695,6 +1745,9 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 // change. Holding the operation row lock through commit makes the task write
 // linearize before or after replacement.
 func lockJobRunExclusiveOwner(ctx context.Context, tx pgx.Tx, runID string) error {
+	if err := guardOperationJobTx(ctx, tx, runID); err != nil {
+		return err
+	}
 	var operationID string
 	var generation int64
 	if err := tx.QueryRow(ctx, `select coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0)
@@ -1811,6 +1864,9 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 	if tag.RowsAffected() == 0 {
 		return Instance{}, ErrNotFound
 	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return Instance{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, fmt.Errorf("state: commit create-and-claim job instance: %w", err)
 	}
@@ -1890,6 +1946,17 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return err
 	}
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, tx, mustPgUUID(runID)); err != nil {
+		return err
+	} else if owned {
+		op, task, err := lockOperationJobTx(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		if !requireClaim || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) || !operationJobDeadline(op, task).After(time.Now()) {
+			return ErrOperationStaleAttempt
+		}
+	}
 	tag, err := tx.Exec(ctx,
 		`update job_tasks set
 		   status        = $2,
@@ -1923,6 +1990,9 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit mark job task terminal: %w", err)
 	}
@@ -1937,6 +2007,12 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("state: begin retry job task: %w", err)
@@ -1996,6 +2072,11 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 // while the task remains at attempt 1, and a late boot failure must not touch
 // a replacement attempt or a task already settled by exit/cancellation.
 func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("state: begin fail boot job task: %w", err)
@@ -2036,6 +2117,9 @@ func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex i
 	if err != nil {
 		return false, fmt.Errorf("state: fail boot for job task (%s, %d): %w", runID, taskIndex, err)
 	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("state: commit fail boot job task: %w", err)
 	}
@@ -2068,6 +2152,12 @@ func (s *PgStore) JobTaskDeferQueued(ctx context.Context, runID string, taskInde
 // (admission denied, run-lookup race, per-account quota at cap).
 // Claimed vmmd boot failures use JobTaskFailBoot instead.
 func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("state: begin requeue job task: %w", err)
@@ -2112,6 +2202,11 @@ func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex in
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskCancel(ctx context.Context, runID string, taskIndex int) error {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
+		return err
+	} else if owned {
+		return s.cancelOperationJobTask(ctx, runID, taskIndex)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set
 		   status = 'cancelled',
@@ -2153,6 +2248,11 @@ func (s *PgStore) JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]Jo
 // JobTaskReapClaimed is a fenced, atomic retry/dead-letter transition.
 // Expiry is checked again so a heartbeat after JobTaskFindStuck wins safely.
 func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
@@ -2232,6 +2332,9 @@ func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskInde
 		if _, err := queryJobRunRecompute(ctx, tx, runID, false); err != nil {
 			return false, err
 		}
+	}
+	if err := syncOperationJobTx(ctx, tx, runID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, err

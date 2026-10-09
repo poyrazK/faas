@@ -21,7 +21,7 @@ func (s *Server) ReportFrameworkReady(ctx context.Context, req *scheddpb.Framewo
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "instance_id is required")
 	}
-	if _, err := authorizeInstance(ctx, s.owner, s.resolver, id); err != nil {
+	if _, err := s.authorizeInstance(ctx, id); err != nil {
 		return nil, err
 	}
 	engine, ok := s.engine.(frameworkReadyEngine)

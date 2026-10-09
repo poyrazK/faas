@@ -17,7 +17,7 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 	}{
 		{"edge-rules create", []string{"--app <slug>", "--kind <KIND>", "--match-host <HOST>", "--throttle-requests-per-second <RPS>", "--redirect-to <URL>", "--cache-max-age-seconds <N>", "--budget-ms <MS>"}},
 		{"cors allow", []string{"gregale cors allow <slug> <origin>", "--method <VERB>"}},
-		{"cors rm", []string{"gregale cors rm <rule-id>"}},
+		{"cors rm", []string{"gregale cors rm [<slug>] <rule-id>"}},
 		{"keys rotate", []string{"gregale keys rotate <key-id>"}},
 		{"crons run", []string{"gregale crons run <cron-id>"}},
 		{"webhooks add", []string{"--app <slug>", "--target-url <URL>", "--event <EVENT>"}},
@@ -26,6 +26,8 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		{"alerts add", []string{"--app <slug>", "--name <NAME>", "--metric <METRIC>", "--threshold <N>", "--webhook-url <URL>"}},
 		{"queue send", []string{"gregale queue send <slug>"}},
 		{"jobs run", []string{"gregale jobs run <job-name>"}},
+		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
+		{"data-api sync", []string{"gregale data-api sync --config <FILE> <name>", "--config <FILE>", "--timeout <DURATION>"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

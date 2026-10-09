@@ -395,12 +395,15 @@ func activeServiceRollouts(deployments []state.Deployment) map[string]state.Depl
 func previousServiceDeployment(rollout state.Deployment, deployments []state.Deployment) state.Deployment {
 	var previous state.Deployment
 	for _, dep := range deployments {
-		if dep.ID == rollout.ID || dep.Status != state.DeployLive ||
+		if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && dep.ID != pinned {
+			continue
+		}
+		if dep.ID == rollout.ID || dep.AppID != rollout.AppID || dep.Status != state.DeployLive ||
 			serviceRolloutScope(dep) != serviceRolloutScope(rollout) ||
 			state.IsServiceRollout(dep) {
 			continue
 		}
-		if !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
+		if rollout.ServiceRolloutHandoff.PredecessorDeploymentID == "" && !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
 			continue
 		}
 		if previous.ID == "" || dep.CreatedAt.After(previous.CreatedAt) ||
@@ -487,6 +490,13 @@ func (e *Engine) drainServiceDeploymentInstances(ctx context.Context, deployment
 // service rollout helper above intentionally scopes to service replicas; a
 // rollback of a hot request deployment needs the same lifecycle handoff or a
 // one-instance plan can remain occupied by the superseded revision.
+//
+// Every schedd receives the deployment_changed notification; only the app's
+// owner drains (production-us hunt #8: three schedds parked the same
+// instance at once, failing with "exclusive operation busy" and "illegal
+// edge stopped→parked", and the instances lingered until the idle timeout).
+// The reaper repeats this drain for superseded deployments that still have
+// live instances, so a lost or failed notification is repaired.
 func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID string, preserveSnapshot bool) {
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
@@ -496,6 +506,16 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load deployment drain", "deployment", deploymentID, "err", err)
 		}
+		return
+	}
+	app, err := e.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load app for deployment drain", "deployment", deploymentID, "app", dep.AppID, "err", err)
+		}
+		return
+	}
+	if !e.ownsApp(app) {
 		return
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, dep.AppID)
@@ -859,6 +879,11 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 }
 
 func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
+	if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && previous.ID != pinned {
+		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhasePending, "predecessor_missing", nil)
+		return false
+	}
+
 	if previous.ID != "" {
 		if _, err := e.store.BeginServiceRolloutCutover(ctx, rollout.ID); err != nil {
 			if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {

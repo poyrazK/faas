@@ -7,6 +7,18 @@ import (
 	"strconv"
 )
 
+func (c *Client) GetManagedPostgresCapabilities(ctx context.Context, region string) (ManagedPostgresCapabilities, error) {
+	var out ManagedPostgresCapabilities
+	path := "/v1/postgres/capabilities"
+	if region != "" {
+		path += "?region=" + url.QueryEscape(region)
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return ManagedPostgresCapabilities{}, err
+	}
+	return out, nil
+}
+
 func (c *Client) ListManagedPostgresAccountingDiagnostics(ctx context.Context, accountID, afterID string, limit int) (ManagedPostgresAccountingDiagnosticsResponse, error) {
 	var out ManagedPostgresAccountingDiagnosticsResponse
 	query := url.Values{}
@@ -24,9 +36,45 @@ func (c *Client) ListManagedPostgresAccountingDiagnostics(ctx context.Context, a
 	return out, err
 }
 
+func (c *Client) PreviewManagedPostgresUsageImport(ctx context.Context, accountID string, request ManagedPostgresUsageImportRequest) (ManagedPostgresUsageImportResult, error) {
+	var out ManagedPostgresUsageImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/usage-imports/preview", request, &out)
+	return out, err
+}
+
+func (c *Client) ApplyManagedPostgresUsageImport(ctx context.Context, accountID string, request ManagedPostgresUsageImportRequest) (ManagedPostgresUsageImportResult, error) {
+	var out ManagedPostgresUsageImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/usage-imports", request, &out)
+	return out, err
+}
+
 func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUsageResponse, error) {
 	var out ManagedPostgresUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/account/managed-postgres-usage", nil, &out)
+	return out, err
+}
+
+func (c *Client) PreviewManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
+	var out ManagedPostgresAccountingReconciliationResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations/preview", request, &out)
+	return out, err
+}
+
+func (c *Client) ApplyManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
+	var out ManagedPostgresAccountingReconciliationResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations", request, &out)
+	return out, err
+}
+
+func (c *Client) ResizeManagedPostgresDatabase(ctx context.Context, id string, request ResizeManagedPostgresDatabaseRequest) (ManagedPostgresResize, error) {
+	var out ManagedPostgresResize
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/resize", request, &out)
+	return out, err
+}
+
+func (c *Client) GetManagedPostgresResize(ctx context.Context, databaseID, resizeID string) (ManagedPostgresResize, error) {
+	var out ManagedPostgresResize
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/resizes/"+url.PathEscape(resizeID), nil, &out)
 	return out, err
 }
 

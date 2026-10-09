@@ -46,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -57,6 +58,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -295,8 +297,8 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	uploadSessionCreatedTotal().WithLabelValues(string(acct.Plan)).Inc()
 
 	s.log.Info("upload session opened",
-		"upload_id", uploadID, "app_slug", req.AppSlug,
-		"total_size", req.TotalSize, "chunk_size", chunkSize,
+		"upload_id", uploadID, "app_slug", logsanitize.Field(req.AppSlug),
+		slog.Int64("total_size", req.TotalSize), "chunk_size", chunkSize,
 		"plan", acct.Plan, "account", acct.ID)
 
 	writeJSON(w, http.StatusCreated, startUploadResponse{
@@ -749,39 +751,41 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
-		AppID:                  app.ID,
-		Kind:                   kind,
-		SourcePath:             row.PartPath,
-		SourceBytes:            row.ReceivedBytes,
-		SourceRoot:             opts.SourceRoot,
-		Handler:                opts.Handler,
-		FunctionRuntime:        functionRuntimeForApp(app),
-		SourceURL:              sourceURL,
-		CommitSHA:              opts.CommitSHA,
-		Source:                 "upload-session:" + uploadID,
-		LogSpool:               spoolRoot(),
-		Log:                    s.log,
-		ActorUserID:            acct.ID,
-		ActorVia:               routeKindForRequest(r),
-		ActorFromIP:            middleware.ClientIP(r),
-		ActorPusherLogin:       "",
-		Reason:                 opts.Reason,
-		Tag:                    opts.Tag,
-		DeployedBy:             opts.DeployedBy,
-		PRNumber:               opts.PRNumber,
-		RollbackOn5xx:          opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
-		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
-		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
-		ReleaseCommand:         releaseCommand.command,
-		ReleaseCommandShell:    releaseCommand.shell,
-		Scope:                  rolloutReq.Scope,
-		HostingObserver:        s.ops,
-		HostingFlow:            "first_deploy",
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
+		OperationDefinitions:      sourceOperationSpecs(manifest),
+		OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, rolloutReq.Scope, sourceOperationSpecs(manifest)),
+		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
+		AppID:                     app.ID,
+		Kind:                      kind,
+		SourcePath:                row.PartPath,
+		SourceBytes:               row.ReceivedBytes,
+		SourceRoot:                opts.SourceRoot,
+		Handler:                   opts.Handler,
+		FunctionRuntime:           functionRuntimeForApp(app),
+		SourceURL:                 sourceURL,
+		CommitSHA:                 opts.CommitSHA,
+		Source:                    "upload-session:" + uploadID,
+		LogSpool:                  spoolRoot(),
+		Log:                       s.log,
+		ActorUserID:               acct.ID,
+		ActorVia:                  routeKindForRequest(r),
+		ActorFromIP:               middleware.ClientIP(r),
+		ActorPusherLogin:          "",
+		Reason:                    opts.Reason,
+		Tag:                       opts.Tag,
+		DeployedBy:                opts.DeployedBy,
+		PRNumber:                  opts.PRNumber,
+		RollbackOn5xx:             opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
+		DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
+		Workflows:                 marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:                  append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:     append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ReleaseCommand:            releaseCommand.command,
+		ReleaseCommandShell:       releaseCommand.shell,
+		Scope:                     rolloutReq.Scope,
+		HostingObserver:           s.ops,
+		HostingFlow:               "first_deploy",
+		ServiceRollout:            app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

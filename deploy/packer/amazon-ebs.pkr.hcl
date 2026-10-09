@@ -78,7 +78,7 @@ build {
   // shared — the cloud-specific surface is the source block only.
   provisioner "shell" {
     script          = "scripts/install-go.sh"
-    environment_vars = ["GO_VERSION=1.25.13"]
+    environment_vars = ["GO_VERSION=1.26.9"]
   }
   provisioner "shell" { script = "scripts/compile-daemons.sh" }
   provisioner "shell" { script = "scripts/compile-runners.sh" }

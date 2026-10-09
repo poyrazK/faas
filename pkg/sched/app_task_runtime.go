@@ -56,6 +56,10 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if securityQuarantineErr(dep) != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("%w: deployment is security quarantined", state.ErrAppTaskDeploymentUnavailable)
 	}
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task workload settings: %w", err)
+	}
 	acct, err := e.store.AccountByID(ctx, request.AccountID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)
@@ -84,27 +88,27 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
-	refs, err := envSecretsFromDep(dep)
-	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
-	}
-	sealedEnv, err := e.loadSealedEnvDeliveryForTask(ctx, app.AccountID, app.ID, dep.Scope, refs, task.Kind == state.AppTaskKindRelease)
+	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
-	apiEnv, err := appendEnvironmentGitOpsServiceBindings(e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope), sealedEnv.Entries, dep)
+	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: request.ArtifactKey,
+		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv.Entries,
+		SealedEnv: runtimeValues.MainSecrets.Entries,
 		APIEnv: appendPlatformIdentity(apiEnv,
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),

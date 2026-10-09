@@ -116,15 +116,17 @@ type fakeVMM struct {
 	killErr    error
 	// snapshotHook runs after Snapshot records the capture, outside v.mu,
 	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
-	snapshotHook  func(Lease)
-	killed        []string
-	restored      []string
-	restoreSpecs  []RestoreSpec
-	snapshotted   []string
-	bootCount     int
-	coldBootSpecs []ColdBootSpec
-	jobBootSpecs  []JobColdBootSpec
-	jobStarts     []string
+	snapshotHook func(Lease)
+	killed       []string
+	// destroyWithExportHook runs inside DestroyWithExport before it returns.
+	destroyWithExportHook func()
+	restored              []string
+	restoreSpecs          []RestoreSpec
+	snapshotted           []string
+	bootCount             int
+	coldBootSpecs         []ColdBootSpec
+	jobBootSpecs          []JobColdBootSpec
+	jobStarts             []string
 	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
 	// default (nil) matches production-success semantics. V6 tests that need
 	// the dial-failure path flip this.
@@ -731,7 +733,11 @@ func (v *fakeVMM) Kill(_ context.Context, l Lease) error {
 func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, error) {
 	v.mu.Lock()
 	v.destroyedWithExport = append(v.destroyedWithExport, l.Instance)
+	hook := v.destroyWithExportHook
 	v.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return v.destroyWithExportExit, v.destroyWithExportErr
 }
 

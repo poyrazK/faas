@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: right; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; }
+    .cost-filter { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
+    .cost-filter label { display: grid; gap: 0.25rem; }
+    .cost-filter input, .cost-filter select, .cost-filter button { padding: 0.4rem 0.55rem; font: inherit; }
+    .summary { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1rem 0; }
+    .summary div { display: grid; gap: 0.2rem; }
+    .summary small, .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 4px; font-size: 0.85rem; white-space: nowrap; }
+    .badge.complete { background: #d1fae5; color: #065f46; }
+    .badge.partial { background: #fef3c7; color: #92400e; }
+    .notice { padding: 0.7rem; background: #fff8c5; border: 1px solid #e2cf6e; }
+    details { margin-top: 0.3rem; text-align: left; }
+    details small { display: block; max-width: 32rem; color: #6b7280; }
+    @media (max-width: 750px) { table { font-size: 0.85rem; } th, td { padding: 0.4rem 0.25rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/app-costs">App costs</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>App costs · {{.Data.Month}}</h1>
+    <p>Compare retained compute and interface-egress costs attributed to each app. The amounts include each app&#39;s allocated share of the account usage allowance.</p>
+    <form class="cost-filter" method="get" action="/dashboard/app-costs">
+      <label for="cost-month">Month
+        <input id="cost-month" type="month" name="cost_month" value="{{.Data.SelectedMonth}}" max="{{.Data.MaxMonth}}" required>
+      </label>
+      <label for="cost-sort">Sort by
+        <select id="cost-sort" name="sort">
+          <option value="cost"{{if eq .Data.Sort "cost"}} selected{{end}}>Highest total cost</option>
+          <option value="compute"{{if eq .Data.Sort "compute"}} selected{{end}}>Highest compute cost</option>
+          <option value="egress"{{if eq .Data.Sort "egress"}} selected{{end}}>Highest egress cost</option>
+          <option value="app"{{if eq .Data.Sort "app"}} selected{{end}}>App name A–Z</option>
+        </select>
+      </label>
+      <button type="submit">Show costs</button>
+    </form>
+    {{if .Data.SelectionNotice}}<p class="muted" role="status">{{.Data.SelectionNotice}}</p>{{end}}
+    {{if .Data.Unavailable}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{else}}
+      <section class="summary" aria-label="Cost summary">
+        <div><small>App-attributed known usage</small><strong>{{.Data.AppAttributedTotal}}</strong></div>
+        <div><small>All known retained usage</small><strong>{{.Data.KnownUsageTotal}}</strong></div>
+        <div><small>As of</small><strong>{{.Data.AsOf}}</strong></div>
+      </section>
+      <p class="muted">These are retained compute and interface-egress amounts, not invoice totals. App rows include allocations tagged to each app; the account total may also include separately attributed jobs and unallocated usage. Source coverage is account-wide.</p>
+      {{if .Data.MissingBillComponents}}
+        <p class="muted">The report excludes these bill components: {{range $i, $component := .Data.MissingBillComponents}}{{if $i}}, {{end}}{{$component}}{{end}}.</p>
+      {{end}}
+      {{if .Data.Apps}}
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>App</th><th>Lifecycle</th><th>Compute</th><th>Interface egress</th><th>Total known cost</th><th>Source coverage</th></tr></thead>
+            <tbody>
+              {{range .Data.Apps}}
+                <tr>
+                  <th scope="row">{{if .URL}}<a href="{{.URL}}"><code>{{.Slug}}</code></a>{{else}}<code>{{.Slug}}</code>{{end}}</th>
+                  <td>{{.Lifecycle}}</td>
+                  <td>{{.ComputeCost}}</td>
+                  <td>{{.EgressCost}}</td>
+                  <td><strong>{{.TotalCost}}</strong></td>
+                  <td><span class="badge {{.CoverageClass}}">{{.CoverageStatus}}</span><details><summary>Details</summary><small>{{.CoverageDetails}}</small></details></td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{else}}
+        <p>No apps have attributed costs for {{.Data.Month}}. <a href="/dashboard/apps">View apps</a>.</p>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · retained usage cost overview</footer>
+</body>
+</html>

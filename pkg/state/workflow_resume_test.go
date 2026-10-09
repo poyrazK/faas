@@ -94,6 +94,10 @@ func TestWorkflowResumePreservesProgressAndFencesOldWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		failResumeRun(t, store, run, "send")
+		preview, err := store.(WorkflowRunDiagnosticsStore).GetWorkflowRunDiagnostics(ctx, WorkflowDiagnosticsOptions{RunID: run.ID, AccountID: app.AccountID})
+		if err != nil || !preview.Resume.Eligible || strings.Join(preview.Resume.ReopenedSteps, ",") != "child,send" || strings.Join(preview.Resume.PreservedSteps, ",") != "done,off,off-child" {
+			t.Fatalf("preview changed guard-false or completed paths: %+v %v", preview, err)
+		}
 		resumable := store.(WorkflowResumeStore)
 		resumed, record, _, err := resumable.ResumeWorkflowRun(ctx, resumeOptions(run, app, 0))
 		if err != nil || resumed.ResumeCount != 1 || resumed.Status != WorkflowRunStatusPending || resumed.FinishedAt != nil || resumed.LastError != nil {
@@ -209,6 +213,72 @@ func TestWorkflowResumeConcurrentRequestsAndQuota(t *testing.T) {
 		history, _ := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
 		if unchanged.ResumeCount != 1 || unchanged.Status != WorkflowRunStatusDead || len(history) != 1 {
 			t.Fatal("rejected resume changed state")
+		}
+	})
+}
+
+func TestWorkflowResumePreservesAndFencesPlatformTenantIdentity(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		ctx := context.Background()
+		app, _ := seedWorkflowSchedule(t, store, "allow")
+		required := true
+		if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{PlatformTenantRequired: &required, SetPlatformTenantRequired: true}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := json.Marshal(simpleResumeSpec())
+		if err != nil {
+			t.Fatal(err)
+		}
+		unbound := &WorkflowRun{AppID: app.ID, WorkflowName: "recover", DefinitionSnapshot: snapshot}
+		if err := store.CreateWorkflowRun(ctx, unbound); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateWorkflowSteps(ctx, unbound.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		failResumeRun(t, store, unbound, "send")
+		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(unbound, app, 0)); !errors.Is(err, ErrWorkflowResumeUnavailable) {
+			t.Fatalf("unbound run on tenant-required app resume error=%v, want unavailable", err)
+		}
+		tenants, ok := store.(PlatformTenantStore)
+		if !ok {
+			t.Fatal("workflow store does not implement platform tenant storage")
+		}
+		tenant, _, err := tenants.CreatePlatformTenant(ctx, app.AccountID, "resume-customer", "Resume customer", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "recover", Input: json.RawMessage(`{"invoice":42}`), DefinitionSnapshot: snapshot}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send", Input: run.Input}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		failResumeRun(t, store, run, "send")
+
+		options := resumeOptions(run, app, 0)
+		options.PlatformTenantID = uuid.NewString()
+		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options); !errors.Is(err, ErrWorkflowRunNotFound) {
+			t.Fatalf("foreign tenant resume error=%v, want not found", err)
+		}
+		consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "resume-customer", "Resume customer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tenants.LinkPlatformTenantConsumer(ctx, app.AccountID, tenant.ID, consumer.ID); err != nil {
+			t.Fatal(err)
+		}
+		options.PlatformTenantID = tenant.ID
+		resumed, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options)
+		if err != nil || resumed.Status != WorkflowRunStatusPending || resumed.PlatformTenantID != tenant.ID {
+			t.Fatalf("resumed tenant run=%+v err=%v", resumed, err)
 		}
 	})
 }

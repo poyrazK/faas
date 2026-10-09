@@ -36,7 +36,17 @@ def test_object_lock_nested_configuration() -> None:
         assert request.headers["Authorization"] == "Bearer token"
         assert request.url.path.startswith(f"/v1/apps/demo/buckets/{bucket}/object-lock")
         if request.url.path.endswith("-capabilities"):
-            return httpx.Response(200, json={"bucket_configuration": True, "default_event_hold": True})
+            return httpx.Response(
+                200,
+                json={
+                    "bucket_configuration": True,
+                    "default_event_hold": True,
+                    "version_retention": True,
+                    "version_legal_hold": True,
+                    "version_event_hold": True,
+                    "write_event_hold": True,
+                },
+            )
         if request.method == "PUT":
             assert json.loads(request.content) == {"configuration": configuration.to_dict()}
         return httpx.Response(
@@ -57,7 +67,12 @@ def test_object_lock_nested_configuration() -> None:
         base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
     ) as client:
         caps = get_object_bucket_object_lock_capabilities.sync("demo", bucket, client=client)
-        assert isinstance(caps, ObjectLockCapabilities) and caps.default_event_hold
+        assert (
+            isinstance(caps, ObjectLockCapabilities)
+            and caps.default_event_hold
+            and caps.version_event_hold
+            and caps.write_event_hold
+        )
         created = put_object_bucket_object_lock.sync(
             "demo", bucket, client=client, body=ObjectBucketObjectLockRequest(configuration=configuration)
         )

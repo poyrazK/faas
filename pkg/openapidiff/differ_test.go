@@ -156,10 +156,93 @@ paths:
 	}
 }
 
-// TestCompare_RequiredAdded_FiresBreak — adding a new required
-// property on a previously-optional schema is a break: existing
-// clients will omit the field and the server will 400. Removing
-// a required field is the inverse and is NOT a break.
+func TestCompareDetailedReportsChangedResponseUnionAsUnknown(t *testing.T) {
+	baseline := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"value":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}}}}}}}}}`
+	changed := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"value":{"oneOf":[{"type":"string"},{"type":"boolean"}]}}}}}}}}}}}`
+	reordered := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"value":{"oneOf":[{"type":"integer"},{"type":"string"}]}}}}}}}}}}}`
+
+	base, err := LoadBytes([]byte(baseline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSpec, err := LoadBytes([]byte(changed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reorderedSpec, err := LoadBytes([]byte(reordered))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comparison := CompareDetailed(base, changedSpec)
+	if len(comparison.Breaks) != 0 || len(comparison.Unknowns) != 1 {
+		t.Fatalf("changed union comparison = %+v, want one unknown and no confirmed break", comparison)
+	}
+	unknown := comparison.Unknowns[0]
+	if unknown.Path != "/items" || unknown.Method != "get" || unknown.Status != "200" ||
+		unknown.PathInSchema != "properties.value" || unknown.Code != SchemaUnknownUnsupportedUnionChange {
+		t.Fatalf("unknown finding = %+v, want the changed union location", unknown)
+	}
+
+	comparison = CompareDetailed(base, reorderedSpec)
+	if len(comparison.Breaks) != 0 || len(comparison.Unknowns) != 0 {
+		t.Fatalf("reordering union alternatives should be noise, got %+v", comparison)
+	}
+}
+
+func TestCompareDetailedReportsUnsupportedResponseFacetChangesAsUnknown(t *testing.T) {
+	baseline := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","failed"]},"id":{"type":"string","format":"uuid"}}}}}}}}}}}`
+	changed := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","pending"]},"id":{"type":"string","format":"uuid"}}}}}}}}}}}`
+	unchanged := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","failed"]},"id":{"type":"string","format":"uuid"}}}}}}}}}}}`
+
+	load := func(document string) *Spec {
+		t.Helper()
+		spec, err := LoadBytes([]byte(document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return spec
+	}
+	base := load(baseline)
+
+	comparison := CompareDetailed(base, load(changed))
+	if len(comparison.Breaks) != 0 || len(comparison.Unknowns) != 1 {
+		t.Fatalf("changed response enum comparison = %+v, want one unknown and no confirmed break", comparison)
+	}
+	unknown := comparison.Unknowns[0]
+	if unknown.Path != "/items" || unknown.Method != "get" || unknown.Status != "200" ||
+		unknown.PathInSchema != "properties.state" || unknown.Code != SchemaUnknownUnsupportedSchemaChange {
+		t.Fatalf("unknown finding = %+v, want the changed enum property location", unknown)
+	}
+
+	comparison = CompareDetailed(base, load(unchanged))
+	if len(comparison.Breaks) != 0 || len(comparison.Unknowns) != 0 {
+		t.Fatalf("unchanged unsupported facets should be noise, got %+v", comparison)
+	}
+}
+
+func TestCompareDetailedReportsUnsupportedItemFacetChangesAsUnknown(t *testing.T) {
+	baseline := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"array","items":{"type":"string","format":"uuid"}}}}}}}}}}`
+	changed := `{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"array","items":{"type":"string","format":"date-time"}}}}}}}}}}`
+	base, err := LoadBytes([]byte(baseline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prop, err := LoadBytes([]byte(changed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparison := CompareDetailed(base, prop)
+	if len(comparison.Breaks) != 0 || len(comparison.Unknowns) != 1 ||
+		comparison.Unknowns[0].PathInSchema != "items" ||
+		comparison.Unknowns[0].Code != SchemaUnknownUnsupportedSchemaChange {
+		t.Fatalf("item format comparison = %+v, want one unknown at items", comparison)
+	}
+}
+
+// TestCompare_RequiredAdded_FiresBreak keeps the established breaking
+// classification when a response property becomes guaranteed in the
+// published contract.
 func TestCompare_RequiredAdded_FiresBreak(t *testing.T) {
 	baseYAML := `
 openapi: 3.1.0
@@ -316,11 +399,9 @@ paths:
 	}
 }
 
-// TestCompare_RequiredRemoved_NotABreak — the inverse of the
-// required-added case. Clients sending an extra field are
-// tolerant; the server gains flexibility. The differ stays
-// silent.
-func TestCompare_RequiredRemoved_NotABreak(t *testing.T) {
+// TestCompare_RequiredRemoved_FiresBreak catches a lost response guarantee:
+// clients can no longer rely on this field being present.
+func TestCompare_RequiredRemoved_FiresBreak(t *testing.T) {
 	baseYAML := `
 openapi: 3.1.0
 paths:
@@ -353,8 +434,11 @@ paths:
 	base, _ := LoadBytes([]byte(baseYAML))
 	prop, _ := LoadBytes([]byte(propYAML))
 	breaks := Compare(base, prop)
-	if len(breaks) != 0 {
-		t.Fatalf("required→optional must not break; got %d: %+v", len(breaks), breaks)
+	if len(breaks) != 1 {
+		t.Fatalf("required→optional must emit one response compatibility finding; got %d: %+v", len(breaks), breaks)
+	}
+	if breaks[0].Kind != SchemaKindRequiredRemoved || breaks[0].PathInSchema != "properties.id" {
+		t.Fatalf("required→optional finding = %+v", breaks[0])
 	}
 }
 

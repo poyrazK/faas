@@ -7,6 +7,10 @@ import type { EventPreviewSubscription } from './EventPreviewSubscription.js';
  * Read-only event-routing preview; counts cover all candidates while lists are bounded samples.
  */
 export type PreviewEventResponse = {
+  /**
+   * Candidates excluded by schema version selection.
+   */
+  schema_version_mismatch_count?: number;
   event_id: string;
   source: string;
   type: string;

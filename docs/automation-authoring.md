@@ -10,6 +10,29 @@ waits, and failure handlers as needed. Validate reports errors without executing
 or saving steps; publishing makes the saved draft available to future runs.
 This change contains backend APIs only; no dashboard editor is included.
 
+New runs capture the app's live default deployment as `deployment_id`. A run
+that starts on deployment A continues using A's handler code after deployment B
+becomes live, including after a timer, event/callback wait, retry, or manual
+resume. Condition checks, failure handlers, and `for_each` items use the same
+pin. Internal events and verified webhooks capture and retain code when accepted,
+even if run admission waits for capacity. Publishing an automation changes future
+definition snapshots; it does not change an existing run's code or definition.
+
+The run API and generated SDKs expose `deployment_id`; CLI run lists and
+inspection show the deployment. Historical runs without a recorded pin omit this
+field and display `legacy (unpinned)`. Those runs keep best-effort routing.
+Pinned code stays retained while its run/event history exists, including the
+existing 30-day terminal run retention for resumptions. Unreferenced code becomes
+eligible for ordinary cleanup. Retention does not extend public revision access
+or keep a VM resident. If pinned code is unavailable, execution fails instead of
+switching deployments. Start a new run to use newly deployed handlers.
+
+Pins guarantee this app's deployed handler code. Runtime configuration and
+credential revocation follow existing deployment and integration rules. External
+provider behavior and downstream project service releases are not pinned. Side
+effects still require idempotency.
+
+
 For example, save an event automation through the API:
 
 ```http
@@ -21,6 +44,8 @@ Content-Type: application/json
   "definition": {
     "name": "paid-invoice",
     "trigger": { "type": "event", "source": "billing", "event_type": "invoice.paid" },
+    "max_concurrent_runs": 4,
+    "max_concurrent_actions": 8,
     "steps": [
       { "name": "record", "path": "/record-payment", "input": { "invoice_id": "{{input.data.invoice_id}}" } },
       { "name": "receipt", "path": "/send-receipt", "depends_on": ["record"], "retry": { "max_attempts": 4, "backoff": "exponential" } }
@@ -28,6 +53,42 @@ Content-Type: application/json
   }
 }
 ```
+
+Set `max_concurrent_runs` to cap active instances of one automation. Omit it or
+set it to `0` to use only the app plan limit; valid explicit caps are 1–200.
+Runs waiting in the queue have status `pending` and have not started. Started
+runs keep their slot through retries and event/callback waits. Pending queue size
+remains bounded by the plan's total active-run quota.
+
+For scheduled automations, `overlap: "allow"` admits each due occurrence and
+queues it when the per-automation cap is full. `overlap: "skip"` keeps its
+existing behavior and records a skipped occurrence instead. Event and manual
+starts queue by default when a workflow's concurrency cap is full, provided
+the app still has plan quota. The cap is part of the run's definition snapshot;
+publishing a new cap affects newly admitted runs.
+
+Set `max_concurrent_actions` to cap active app-handler, managed outbound, and
+condition-check calls across runs of the same automation. Omit it or set it to
+`0` to keep the current behavior. Event, callback, and duration waits do not use
+an action slot. A run that reaches the cap stays pending and the scheduler
+retries it as slots become available; each run keeps the action limit from its
+immutable definition snapshot.
+
+Manual run creation accepts an optional `Idempotency-Key`. Reuse the same key
+and input after a timeout or lost response to receive the original run, even if
+the workflow was published again in the meantime. The request fingerprint
+ignores JSON whitespace and object-key order. Reusing a key with different input
+returns `409`; use a new key for a new run. The key remains reserved while its
+run is retained.
+
+```sh
+gregale workflows run --app billing --input '{"invoice_id":"inv_42"}' \
+  --idempotency-key invoice-paid-inv_42 paid-invoice
+```
+
+The API accepts the same header on `POST /v1/apps/{slug}/workflows/{name}/runs`.
+The Go, Node, and Python SDKs expose the optional header; the CLI flag is useful
+when a script needs to repeat a start request after an uncertain result.
 
 Use the returned `version` in the publish request:
 
@@ -47,9 +108,64 @@ consecutive. Read/validation use read scope; writes use deployment write scope.
 YAML continues to own a name until you explicitly take it over when publishing
 through the API (`take_over_manifest: true`). Later app deployments preserve
 the API publication. Deleting it can restore the current YAML definition,
-which requires explicit acknowledgement (`restore_manifest: true`). Drafts do
-not change the published automation. Definition quotas count YAML and saved draft
-names together, with the plan's existing workflow limits.
+which requires explicit acknowledgement (`restore_manifest: true`). The CLI
+delete command also requires the current version and `--yes`; pass
+`--restore-manifest` to acknowledge that the YAML definition may take ownership
+again. Drafts do not change the published automation. Definition quotas count
+YAML and saved draft names together, with the plan's existing workflow limits.
+
+## Author automations with the CLI
+
+The CLI accepts the same definition as YAML or JSON. Validate it before saving a
+draft, then pass the version returned by each write to the next command:
+
+```sh
+gregale automations list --app billing
+gregale automations get --app billing --name paid-invoice
+gregale automations health --app billing --name paid-invoice
+gregale automations pause --app billing --name paid-invoice --expected-version 8
+gregale automations resume --app billing --name paid-invoice --expected-version 9
+gregale automations get --app billing --name paid-invoice --definition-out paid-invoice.json
+gregale automations get --app billing --name paid-invoice --definition-out published.json --published
+gregale automations revisions list --app billing --name paid-invoice
+gregale automations revisions show --app billing --name paid-invoice --revision 42
+gregale automations validate --app billing --file paid-invoice.yaml
+gregale automations apply --app billing --file paid-invoice.yaml --expected-version 0
+gregale automations publish --app billing --name paid-invoice --expected-version 1
+gregale automations restore --app billing --name paid-invoice --revision 42 --expected-version 47
+gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
+```
+
+List and get show the current version, publication version, ownership, and enabled
+state without returning definition contents. Definition export is explicit: use
+`--definition-out` to write the draft as JSON to a new file, or combine it with
+`--published` to export the published definition. Exported files use mode `0600`,
+and the command will not overwrite an existing path. Machine-readable get/list
+output remains metadata-only.
+
+Use `--expected-version 0` only when creating a new draft. For an existing
+automation, use its current version from the most recent response or API read. A
+version conflict means another writer changed the draft; reload it before
+retrying. Publishing is a separate step. If the name is currently owned by the
+app's YAML manifest, pass `--take-over-manifest` only when you intend the saved
+automation to take ownership.
+
+Revision listing defaults to 50 entries and accepts `--limit` (1..100) and
+`--offset` for paging. Revision details show the timestamp, definition hash, and
+whether the snapshot was migrated from legacy publication history. Definitions
+stay out of normal terminal and JSON output; `revisions show --definition-out`
+exports one to a new mode-`0600` JSON file. `automations restore` requires the
+current `--expected-version` and saves the selected snapshot as a new draft. Use
+`0` if the automation was deleted. The restore command does not publish; validate
+and publish the new draft separately.
+
+Delete an automation with its current version and explicit `--yes` confirmation.
+If the published automation took over a YAML-owned name, include
+`--restore-manifest` to allow the current YAML definition to own that name again:
+
+```sh
+gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes --restore-manifest
+```
 
 Pause automatic starts to stop future scheduled/event admissions. Existing runs
 and already accepted events continue. Republishing preserves pause. Resume to
@@ -57,13 +173,255 @@ start new automatic admissions again; schedules skip missed minutes and re-arm
 at the next evaluation. Manual sample runs remain possible while paused and
 execute the published definition with real app side effects.
 
+Use `automations pause` and `automations resume` for a published automation.
+Both require the current `--expected-version`; a successful change advances the
+automation version but does not publish a definition or add a revision. Read the
+automation again before retrying after a version conflict.
+
+## Find workflow runs
+
+The CLI can narrow an app's run history by exact workflow name, status, and
+inclusive creation-time bounds:
+
+```sh
+gregale workflows list --app billing --workflow-name paid-invoice --status failed
+gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z \
+  --created-before 2026-10-05T23:59:59Z --limit 50
+```
+
+Timestamps must use RFC3339, and `--created-after` must not be later than
+`--created-before`. The CLI keeps the existing 50-run page size and supports
+`--limit` up to 100 plus `--offset` for paging. The same filters are available
+through the API:
+
+```http
+GET /v1/apps/billing/workflows/runs?workflow_name=paid-invoice&status=failed&created_after=2026-10-01T00:00:00Z&created_before=2026-10-05T23:59:59Z&limit=50
+```
+
+The filtered `total` and page use the same criteria. Results remain ordered newest
+first; `limit` and `offset` keep their existing behavior. Go, Node, and Python
+clients expose these filters. No dashboard editor is included.
+
+## Cancel queued workflow runs
+
+Pending runs can include a retry or a previously parked run, so use
+`started_at` to identify work that has never begun. Preview only the run IDs you
+intend to cancel, then repeat that exact selection with the explicit action:
+
+```sh
+gregale workflows list --app billing --workflow-name paid-invoice --status pending
+gregale workflows cancel-queued-preview --app billing --workflow-name paid-invoice \
+  --run-id <run-id>
+gregale workflows cancel-queued --app billing --workflow-name paid-invoice \
+  --run-id <run-id> --yes
+```
+
+You can select up to 20 runs per request by repeating `--run-id`. The optional
+`--workflow-name` guards the selection against a name mismatch. Only pending
+runs with no `started_at` value are eligible. The preview is advisory; the
+action rechecks each run while holding the dispatcher claim lock. If dispatch
+claims a run after preview, that run is reported as `already_started` or
+`not_queued` and is left alone. A previously cancelled run is reported as
+`already_cancelled`. Started runs, including retries and parked
+waits, continue to use the single-run `workflows cancel` command.
+
+The action commits eligible cancellations as one bounded batch. Outcomes are
+returned for every selected ID; an eligible run becomes `failed` and receives
+`cancelled_at`. Missing IDs and runs outside the selected app share the
+`not_found` outcome.
+
+The API exposes the same flow through
+`POST /v1/apps/{slug}/workflows/runs:cancel-preview` and
+`POST /v1/apps/{slug}/workflows/runs:cancel-queued` with a JSON body containing
+`run_ids` and optional `workflow_name`.
+
+## Inspect automation health
+
+Get a bounded operational summary for one saved automation from the CLI, or use
+the API directly:
+
+```sh
+gregale automations health --app billing --name paid-invoice
+gregale automations health --app billing --name paid-invoice \
+  --created-after 2026-10-01T00:00:00Z --created-before 2026-10-05T23:59:59Z
+```
+
+The CLI accepts RFC3339 bounds and prints run totals, current active and queued
+counts, success rate, p50/p95 durations, latest run/success/failure IDs, and the
+most frequently failed steps.
+Use `--json` for the bounded machine-readable response. The summary omits run
+inputs, outputs, and errors.
+
+The API endpoint is:
+
+```http
+GET /v1/apps/billing/automations/paid-invoice/health?created_after=2026-10-01T00:00:00Z
+```
+
+The default window is the previous seven days, and callers can select at most
+30 days with inclusive RFC3339 `created_after` and `created_before` timestamps.
+The response includes run counts by status, current `active_run_count` and
+`queued_run_count` (independent of the requested time window), success rate, p50/p95 durations,
+the latest run/success/failure, and up to ten frequently failed logical steps.
+Failures from individual loop items are grouped under their parent step. Run
+inputs, outputs, and error messages are never included. Go, Node, and Python
+clients expose this endpoint.
+
+The optional `queue` object reports current waiting reasons, independently of
+the historical window. The CLI prints its observation time, app dispatch
+occupancy and limits, waiting/due/stale counts, oldest due age, and nonzero
+reason counts. App occupancy includes all automations and tenants in the app;
+waiting counts belong to the selected automation. Live running claims consume
+dispatch capacity; parked waits and pending retries can still consume a
+workflow's `max_concurrent_runs` budget.
+
+| Queue reason | Meaning at observation |
+| --- | --- |
+| `ready` | Due and passes the app, tenant and workflow run limits |
+| `scheduled` | Its next scheduling deadline is in the future |
+| `retry_backoff` | Waiting for a pending step's retry deadline |
+| `parked_wait` | An intentional wait has a future wake or timeout |
+| `app_capacity` | The app's live dispatch claims fill its budget |
+| `tenant_capacity` | That tenant's live claims within the app fill its budget |
+| `workflow_capacity` | The run's captured workflow concurrency limit is full |
+
+Each waiting run contributes to one reason. Future deadlines take precedence,
+followed by app, tenant and workflow limits. Due timers, event/callback timeouts
+and stale leases are included in admission checks; expired leases do not occupy
+capacity. Oldest due age includes blocked work and starts at eligibility rather
+than an intentional wait's start. The reason counts sum to `waiting_run_count`,
+which includes started pending retries and parked waits as well as fresh runs.
+
+`ready` describes dispatch admission. Fair turns, runtime gates, action budgets
+and handler invocation limits can still delay execution. `parked_wait` groups
+timers, conditions, events and callbacks; inspect the run's steps for details.
+The snapshot does not estimate queue position, completion time or global worker
+saturation. Older servers may omit `queue`; the CLI reports diagnostics as
+unavailable. No customer payloads, errors or tenant identities are returned.
+
 The preview runtime requires `FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and the
 existing gateway executor configuration. The list response reports when runtime,
 plan, app maintenance, tenant requirements, or missing deployment prevents
 execution. Saving and validating drafts alone does not enable the runtime.
-Full revision history is deferred.
+
+## React to finished workflow runs
+
+Subscribe an app webhook to `workflow.finished` to notify your service or an
+external automation tool when a durable run succeeds, fails, or reaches the dead
+state:
+
+```http
+POST /v1/apps/billing/webhooks
+Content-Type: application/json
+
+{
+  "target_url": "https://automation.example.com/gregale",
+  "webhook_secret": "replace-with-a-random-secret",
+  "event_filter": ["workflow.finished"],
+  "delivery_format": "cloudevents"
+}
+```
+
+The event is committed with the terminal status change and delivered through
+the durable webhook outbox. A resumed run emits another event if it later
+finishes; use the CloudEvent ID or webhook delivery ID to deduplicate retries.
+The payload includes `app_id`, `run_id`, `workflow_name`, `status`,
+`finished_at`, and `resume_count`. It omits run input, output, and error text.
+Use `GET /v1/workflows/runs/{id}` with an authorized API key to fetch run
+details. The webhook event filter is app-scoped; account-wide release
+subscriptions do not receive workflow outcomes.
+
+## Review and restore published revisions
+
+Every successful publish appends an immutable revision containing the definition,
+publication version, recording time, account, and API key when key authentication
+was used. Saving drafts and pausing or resuming automatic starts do not create
+history entries. The response includes `definition_hash`, the SHA-256 hash of the
+canonical JSON encoding of that revision's definition.
+
+List revisions newest first, with up to 100 entries per page:
+
+```http
+GET /v1/apps/billing/automations/paid-invoice/revisions?limit=50&offset=0
+```
+
+Read one immutable definition with
+`GET /v1/apps/{slug}/automations/{name}/revisions/{version}`. Restore it as a new
+draft using the current automation version from the latest read:
+
+```http
+POST /v1/apps/billing/automations/paid-invoice/revisions/42/restore
+Idempotency-Key: restore-paid-invoice-42
+Content-Type: application/json
+
+{"expected_version": 47}
+```
+
+Restoring does not publish the definition or alter runs and accepted events.
+Validate and publish the restored draft separately; a YAML-owned name still
+requires explicit takeover at publish time. If the automation was deleted, use
+`expected_version: 0` to restore its draft. Draft updates remain protected by
+optimistic version checks.
+
+When history is introduced, Gregale seeds the latest available publication for
+each existing API-owned automation as a `legacy_snapshot`. Its `recorded_at` is
+the migration time, and earlier definitions and the original publication time
+cannot be recovered. Future publishes are recorded individually. Go, Node, and
+Python clients expose list, get, and restore methods. No dashboard editor is
+included. Export the history before rolling this migration back; its down
+migration removes the retained revisions.
 
 ## Simulate before publishing
+
+Run the same simulation from the CLI before saving or publishing. Provide the
+definition, sample input, and action mocks as separate files:
+
+```sh
+gregale automations simulate --app billing --file paid-invoice.yaml \
+  --input-file sample-input.json --mock-outputs-file mock-outputs.json \
+  --mock-attempts-file attempt-mocks.json
+```
+
+`sample-input.json` contains one JSON value. `mock-outputs.json` maps action
+step names to their simulated JSON results; a loop can use
+`--mock-item-outputs-file` with a map of `for_each` step names to arrays.
+`--mock-attempts-file` maps action names to ordered outcomes so you can test
+retries and failure handlers without invoking an action. For example:
+
+```json
+{
+  "charge": [
+    { "outcome": "failure", "http_status": 503 },
+    { "outcome": "success", "output": { "charged": true } }
+  ]
+}
+```
+
+Attempt outcomes are `success` with any JSON `output`, `failure` with either an
+`error` message or non-2xx `http_status`, or `timeout`. Ordinary actions retry
+server errors and transport errors up to their configured maximum (three
+attempts by default); managed integrations also require safe-to-repeat behavior
+and retry selected transient statuses. If another retry outcome is needed but
+not supplied, the trace says `would_retry` and dependent or exception-handler
+steps remain unresolved. A terminal failure activates `on_failure` and makes
+`{{failure}}` available to that handler with the source step, status, attempt
+count and mocked message. HTTP failure messages contain the status code only,
+since response bodies are not part of the mock format.
+
+For a wait step with an `on_timeout` route, provide one timeout outcome in this
+file, such as `{ "payment_event": [{ "outcome": "timeout" }] }`. It resolves
+the wait with `{"timeout":true}` and activates its timeout handler. Action
+timeout outcomes also require `on_timeout`. Outcomes after a success, timeout,
+non-retryable failure or exhausted retry limit are rejected. The existing
+`--mock-outputs-file` format remains a shorthand for one successful action
+result and cannot be combined with attempt mocks for the same step.
+
+The human trace shows mapped sample input/output values, attempt summaries,
+branch decisions, blocked steps, and warnings. `--json` returns the complete
+bounded trace. Simulation
+does not invoke the app, call integrations, create runs, or publish events. Add
+`--require-complete` in CI to fail when the supplied mocks leave steps unresolved;
+without it, partial traces remain useful during interactive authoring.
 
 Send a definition and sample workflow input to
 `POST /v1/apps/{slug}/automations:simulate`. Simulation needs read scope and
@@ -102,21 +460,22 @@ for their predecessor, and the parent remains `expanded` until every result is
 provided. An empty loop resolves to `[]`. Completed loops and joins have state
 `resolved`, with the same ordered aggregation and branch selection as execution.
 False guards and dependency skips propagate through the trace. Unused mocks
-produce warnings. Unknown step names or mocks for waits/control steps return 400.
+produce warnings. Unknown step names or mocks for control steps return 400.
 
-Waits remain `would_wait`; dependent actions are blocked. Simulation does not
-advance time, deliver callbacks/events, call condition checkers, inject failures
-or model retries. Exception handlers remain blocked until the source outcome
-is known, and are skipped with `route_not_taken` after a successful mock or
-skipped source. Input/guard evaluation errors appear as trace errors and issues;
-no failure-handler context is fabricated. An action with `on_timeout` cannot
-mock the exact reserved output `{"timeout":true}`: this would represent a timeout
-outcome and returns 400. Other output shapes remain ordinary successful mocks.
+Waits without a timeout mock remain `would_wait`; dependent actions are blocked.
+Simulation does not advance time, deliver callbacks/events or call condition
+checkers. Exception handlers remain blocked until the source outcome is known,
+and are skipped with `route_not_taken` after an ineligible terminal outcome.
+Input/guard evaluation errors appear as trace errors and issues. An action with
+`on_timeout` cannot use the exact reserved output `{"timeout":true}` in
+`mock_outputs`; represent that outcome explicitly with `mock_attempts` instead.
 
 `definition_valid` reports structural, plan and binding validation independently
 of sample-data issues. Invalid definitions return 200 with issues and an empty
-trace. `complete` means every root resolved or skipped under your supplied mocks;
-it does not verify real handler behavior, trigger admission or live availability.
+trace. `complete` means every root reached a known terminal outcome under your
+supplied mocks; a fully modeled failed execution can be complete even though it
+is not a successful workflow run. It does not verify real handler behavior,
+trigger admission or live availability.
 `definition_hash` is SHA-256 of the serialized submitted definition, not a saved
 revision or a semantic hash of differently ordered raw JSON. Root rows follow
 deterministic dependency order, with loop item rows immediately after their parent.
@@ -248,6 +607,7 @@ Use `for_each` to apply one action to every item in a JSON array. The
   "name": "send",
   "for_each": {
     "items": "input.recipients",
+    "max_parallel": 4,
     "action": {
       "run": "send_receipt",
       "input": {
@@ -256,34 +616,50 @@ Use `for_each` to apply one action to every item in a JSON array. The
         "invoice_id": "{{input.input.invoice_id}}"
       },
       "timeout": "30s",
-      "retry": { "max_attempts": 3, "backoff": "exponential" }
+      "retry": { "max_attempts": 3, "backoff": "exponential" },
+      "when": { "ref": "input.item.active", "op": "eq", "value": true }
     }
-  }
+  },
+  "on_item_failure": "continue"
 }
 ```
 
-Items run sequentially. Gregale snapshots the array and prepares every mapped
-input before executing the first item. Retried and recovered items reuse those
-inputs, and completed items stay complete. Without an action `input`, the handler
-receives the item itself. Explicit mappings read `input.item`, the zero-based
-`input.index`, and `input.input` for the original run input. They may also read
-outputs of the parent's direct dependencies. Data containing template delimiters
-stays literal; it is never evaluated again.
+Gregale snapshots the array and prepares every mapped input before executing the
+first item. `max_parallel` limits active item calls to 1–16; omit it or set it to
+`0` for sequential execution. Items are admitted in input order within a bounded
+window, while collected results always keep their original order. Retried and
+recovered items reuse their inputs, and completed items stay complete. Without an
+action `input`, the handler receives the item itself. Explicit mappings read
+`input.item`, the zero-based `input.index`, and `input.input` for the original run
+input. They may also read outputs of the parent's direct dependencies. Data
+containing template delimiters stays literal; it is never evaluated again.
 
 `items` is a reference without braces, such as `input.recipients` or
 `steps.lookup.output.recipients`. A referenced step must be in the parent's
 `depends_on`. A missing or non-array source fails before any action runs.
 The action accepts exactly one `run`, `path` or managed `outbound` target and may
-specify input, method, timeout and retry. A parent guard can skip the whole batch.
-Nested loops, body guards/dependencies, waits, joins and exception routes are
-not supported in this first version.
+specify input, method, timeout, retry and an optional `when` guard. The guard is
+evaluated once per item against `input.item`, `input.index` and `input.input`, and
+may read outputs of the parent's direct dependencies. A false guard skips that
+item without making a handler call. Its position is preserved as `null` in the
+parent output. A parent guard can still skip the whole batch. Nested loops,
+per-item dependencies, waits, joins and exception routes are not supported.
 
-The parent's output is an array of successful item outputs in input order;
-downstream steps depend on `send` and read `{{steps.send.output}}`. An empty list
+Downstream steps depend on `send` and read `{{steps.send.output}}`. An empty list
 succeeds with `[]`. Successful non-JSON handler responses become JSON strings;
-empty responses become null. Processing stops on an item failure, retains the
-completed prefix on the parent, and skips remaining items. Downstream actions
-requiring the batch do not run after that failure.
+empty responses become null. By default processing stops on the first item
+failure, retains the completed prefix and skips remaining items. Set
+`on_item_failure` to `continue` to attempt the remaining items; Gregale then
+returns an input-order array with `null` for guarded and unsuccessful positions, and
+marks the parent failed after all items finish if any item failed, or dead if
+any item is dead. Downstream
+actions requiring the batch do not run after a failed parent. Resuming a failed
+batch retries failed items while completed items remain complete.
+
+With `max_parallel` above `1`, an item failure stops Gregale from starting further
+items under the default policy. Calls that were already active are allowed to
+finish before the parent is marked failed. With `on_item_failure: continue`, the
+batch keeps admitting remaining items up to the configured limit.
 
 Each item has a stable Idempotency-Key across retries and recovery. App handlers
 must deduplicate that key for side effects: an interrupted request can execute
@@ -312,8 +688,10 @@ first if needed. See [ADR-572](adr/572-bounded-workflow-iteration.md).
 ## External service actions
 
 An `outbound` step calls an existing managed integration bound to the automation's
-app. Use its canonical UUID and an allowed fixed relative path. Gregale injects
-the integration's sealed credential inside outboundd. For example:
+app. Use its canonical UUID and a relative path within the integration's allowed
+route. A whole path segment can reference run input or an earlier step output;
+the resolved value is URL-escaped as one segment. Static query keys can have
+templated scalar values, which Gregale URL-encodes. For example:
 
 ```json
 {
@@ -321,7 +699,8 @@ the integration's sealed credential inside outboundd. For example:
   "outbound": {
     "integration_id": "00000000-0000-0000-0000-000000000001",
     "method": "POST",
-    "path": "/v1/contacts",
+    "path": "/v1/contacts/{{input.contact_id}}",
+    "query": { "source": "{{input.source}}" },
     "idempotency_supported": true
   },
   "input": { "email": "{{input.data.customer.email}}" },
@@ -333,8 +712,11 @@ Replace the example UUID with your bound integration. Set
 `idempotency_supported` only when that provider operation deduplicates the
 Idempotency-Key header. Mutations without it have one attempt; an uncertain
 result after a crash is terminal. GET/HEAD may retry and send no request body.
-Permissions and revocation apply at execution time. This version accepts no
-custom headers, query parameters, dynamic paths, or arbitrary external URLs.
+Workflow input and declared dependency outputs can be used in path segments and
+query values. Gregale escapes every value and checks the resolved path against
+the integration and app binding permissions at execution time. Permissions and
+revocation apply on every call. Customer definitions still cannot select an
+arbitrary URL, origin, or authentication header.
 
 Successful output is `{ "status": 200, "body": { ... } }`. Later steps can use
 `{{steps.update-crm.output.body.id}}`. Failures expose HTTP status and a bounded
@@ -417,7 +799,133 @@ drain accepted webhook fanout, export bindings/receipts and remove bindings
 before stopping updated binaries and rolling the migration back. See
 [ADR-574](adr/574-verified-webhook-automation-starts.md).
 
+## Start from a generic signed webhook
+
+Use a generic inbound endpoint when the sender is not Stripe. Create it with
+`provider: "generic"` and a random secret containing at least 32 bytes, then
+bind it to a published automation using the same automation-binding API above.
+The one-time endpoint URL is the public routing capability; the signing secret
+is sealed at rest and can be rotated through the endpoint update API.
+
+Send a JSON request with these headers:
+
+```text
+X-Gregale-Event-ID: order_123_paid
+X-Gregale-Event-Type: order.paid
+X-Gregale-Timestamp: <unix-seconds>
+X-Gregale-Signature: sha256=<lowercase hex HMAC-SHA256>
+```
+
+Compute the signature over the exact request bytes using the endpoint secret:
+
+```text
+HMAC-SHA256(secret,
+  timestamp + "\n" + event_id + "\n" + event_type + "\n" + raw_json_body)
+```
+
+The timestamp is Unix seconds and must be within five minutes of Gregale's
+clock. Event IDs must contain 1–256 visible ASCII bytes with no spaces. Event
+types must match `^[a-z][a-z0-9_.]{0,255}$`. The ID, type, timestamp and raw
+body are covered by the signature. Re-sign each retry with a fresh timestamp
+while reusing the same event ID and content; changing content or type for a
+retained ID returns 409. Deduplication follows the existing 30-day event
+identity retention.
+
+An accepted automation run receives a CloudEvents envelope with source
+`gregale.inbound.generic.ENDPOINT_ID`, the signed event ID and type, and the
+complete submitted JSON as `data`. The durable receipt and existing event
+fanout handle retries and filters. Without an automation binding, Gregale
+delivers the verified JSON to the configured app path and includes the verified
+event metadata in `x-gregale-webhook-*` request headers.
+
+Apply migration `20261006062359228_generic_inbound_webhook.sql` before creating
+generic endpoints. The down migration is forward-only; remove generic endpoints
+before rolling back application binaries.
+
+## Preview scheduled fire times
+
+Inspect a deployed schedule before relying on its cadence or catch-up behavior:
+
+```sh
+gregale workflows schedules preview --app billing --workflow nightly
+gregale --json workflows schedules preview --app billing --workflow nightly --count 8
+gregale workflows schedules preview --app billing --workflow nightly \
+  --at 2027-03-28T00:00:00Z --since 2027-03-27T00:00:00Z
+```
+
+The preview uses the effective schedule and durable evaluation cursor. `--at`
+simulates an evaluator time; `--since` simulates the prior evaluation time so
+you can see how a delayed scheduler would handle missed fires. Both accept
+RFC3339 timestamps. The preview reports upcoming fires in the schedule's IANA
+timezone with numeric UTC offsets. Fixed wall times shifted into a spring DST
+gap run at the first valid minute; repeated fall-fold wall times run once at
+their first occurrence. Interval expressions follow cron interval behavior as
+the local clock changes, so their fall-fold intervals can repeat.
+
+The catch-up result distinguishes a current fire, coalescing to the latest
+eligible fire, skipped missed fires, and fires outside the configured recovery
+window. A new or changed schedule arms its durable cursor on the next evaluator
+pass before admitting a later occurrence. The preview changes no cursor and
+starts no workflow; it does not reserve quota or promise worker availability.
+Its result is an observation, so live schedule edits or cursor advancement can
+change the next decision.
+
+The account route is
+`GET /v1/apps/{slug}/workflows/schedules/{name}/preview`; tenant-bound callers
+use `GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview`
+to preview only their own configurable schedule. Go clients expose
+`GetWorkflowSchedulePreview` and `GetPlatformTenantSelfWorkflowSchedulePreview`;
+Node and Python SDKs expose the same two operations. No migration is needed.
+See [ADR-645](adr/645-workflow-schedule-preview.md).
+
 ## Resume after a terminal failure
+
+Inspect a run and preview its continuation before changing it:
+
+```sh
+gregale workflows diagnose 00000000-0000-4000-8000-000000000001
+gregale --json workflows diagnose 00000000-0000-4000-8000-000000000001
+```
+
+`GET /v1/workflows/runs/{id}/diagnostics` returns the same read-only snapshot.
+It shows the durable queue reason, future wake, due age, expired worker lease,
+original code pin and step status/kind. Step kinds distinguish timer, event,
+callback and condition waits. `ready` means dispatch admission is open; it does
+not guarantee an available worker or immediate execution.
+
+The `resume` object reports `eligible`, the observed `expected_resume_count`,
+sorted `reopened_steps` and `preserved_steps`, and `blockers` with a stable `code`,
+fixed `message` and optional `step_name`. Preserved names include successful
+actions and branches whose persisted state remains unchanged. A structurally
+valid plan can have temporary admission blockers, such as maintenance or a full
+active-run quota; its proposed reopened names remain visible.
+
+| Code | Meaning |
+| --- | --- |
+| `run_not_failed` | The run is still active or has succeeded |
+| `handler_executed` | A failure/timeout handler or its continuation already executed |
+| `unsafe_mutation` | An attempted external mutation lacks declared provider idempotency |
+| `failed_control_step` | A failed wait or join cannot be reopened |
+| `failure_before_dispatch` | No executor attempt exists for the failure |
+| `active_step` / `active_attempt` | A call or wait is still active |
+| `tenant_unavailable` | The tenant is inactive or its app link was removed |
+| `pinned_deployment_unavailable` | The original handler code cannot be served |
+| `integration_unavailable` | A current credential or permitted integration binding is unavailable |
+| `active_run_quota` | Other active runs fill the app's admission quota |
+| `runtime_disabled` | Execution is disabled on the responding API server |
+
+The planner reports its first deterministic blocker plus independent admission
+blockers. The snapshot omits inputs, outputs, error text, credentials and tenant
+identity; use authorized run/step inspection for payloads and error details.
+Reads do not execute actions or reserve capacity. Resume rechecks the gates and
+generation, so an eligible preview can become stale before submission. Read-only
+API keys can preview; resume still requires write permission. Tenant-bound read
+tokens use `GET /v1/platform-tenant-self/workflows/runs/{id}/diagnostics`, restricted
+to their own runs and current app links. Both routes use `Cache-Control: no-store`.
+Go `GetWorkflowRunDiagnostics`, Node `WorkflowsService.getWorkflowRunDiagnostics`
+and Python `workflows.get_workflow_run_diagnostics` expose the account route,
+with corresponding tenant-self methods. No new migration is needed.
+See [ADR-644](adr/644-workflow-run-diagnostics-and-resume-preview.md).
 
 After resolving a provider outage or integration configuration issue, inspect
 `GET /v1/workflows/runs/{id}` and send its current `resume_count`:
@@ -437,12 +945,25 @@ winner. Each run permits up to 16 resumptions and uses the normal active-run
 quota. Resume requires a live default deployment, an eligible account/app,
 valid integration bindings and the workflow runtime to be enabled.
 
+The CLI exposes the same recovery flow. `workflows status` displays the current
+resume count; pass that value to `workflows resume`. Keep the count and key the
+same if you repeat a request after a timeout, and use `workflows resumes` to
+inspect the continuation audit history:
+
+```sh
+gregale workflows status 00000000-0000-4000-8000-000000000001
+gregale workflows resume 00000000-0000-4000-8000-000000000001 --expected-resume-count 0 --idempotency-key invoice-batch-resume-1
+gregale workflows resumes 00000000-0000-4000-8000-000000000001
+```
+
 Successful actions and batch items retain their results. Failed actions receive
 a fresh configured retry budget; attempt numbers continue increasing. A failed
 batch resumes at its failed item and processes the remaining snapshotted items
 in order. The original workflow definition, inputs and guard decisions remain
 unchanged. Publishing a new definition does not change this run. App actions
-continue to use the current default deployment, as they do during retries.
+retain the original handler deployment across retries and resumptions. Legacy
+unpinned runs retain their existing best-effort routing; diagnostics label them
+explicitly. Start a new run to use newly deployed code.
 
 The same logical action Idempotency-Key is reused. App handlers must deduplicate
 it across the full retry/resume period. Managed mutations must declare actual
@@ -464,3 +985,148 @@ the current retry budget. Resume history is retained for as long as the run.
 Apply migration `20261003180000001_workflow_resume.sql` and update/drain scheduler
 workers before customers use the endpoint. Drain or cancel resumed runs before
 downgrading; export resume history before rolling the migration back.
+
+## Admission history and reliability alerts
+
+Inspect the last 30 days of due schedule outcomes with
+`gregale workflows schedule-history --app reports --limit 100` or
+`GET /v1/apps/{slug}/workflows/schedules/occurrences`. Both started and skipped
+minutes are retained, including `skipped_quota` and `skipped_overlap`; each
+started occurrence includes its run ID even after the run expires. History
+contains no workflow input or output. Use `--platform-tenant-id` to inspect one
+customer and `--cursor` with the returned next cursor for another page.
+History starts when this version is deployed; earlier outcomes are not backfilled.
+An expired history cursor returns an empty page.
+
+Recover a selected skipped occurrence with a preview followed by an explicit
+replay:
+
+```sh
+gregale workflows schedule-history replay-preview --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+gregale workflows schedule-history replay --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+```
+
+Repeat `--occurrence-id` to select up to 20 occurrences; the service processes
+them in scheduled order. Preview reports eligibility against the current live
+deployment, definition, tenant settings, overlap state, and quota. It reserves
+nothing, so replay rechecks all conditions. A replay uses the original nominal
+`scheduled_for` time and current trigger input. It is blocked if the deployment
+or definition changed, the schedule is disabled, a tenant link is no longer
+active, overlap is active, or the app quota is full. History displays the
+resulting replay run ID, and retries of the same occurrence return that ID
+without creating another run. Legacy history without a definition fingerprint
+cannot be replayed. See [ADR-654](adr/654-controlled-workflow-schedule-replay.md).
+
+Tenant/workflow pairs share the app's active-run quota and are evaluated in
+least-recently-admitted order. Admission priority persists through scheduler
+restarts, skipped minutes, deployment changes, and run retention. Paused
+schedules are excluded. This distributes scarce admissions across customers;
+quota skips consume the selected occurrence and are not retried automatically.
+
+### Recovering missed scheduled starts
+
+Schedules skip missed fires by default. For reports or reconciliation jobs that
+should recover after downtime, opt into the latest eligible missed fire:
+
+```yaml
+trigger:
+  type: schedule
+  schedule: '0 7 * * *'
+  timezone: Europe/Istanbul
+  catch_up: latest
+  catch_up_window: 2h
+```
+
+`catch_up` accepts `skip` (the default) or `latest`. The recovery window defaults
+to one hour and accepts duration strings between one minute and 24 hours. A
+7:00 job observed again at 7:20 starts once with a nominal fire time of 7:00.
+If several fires were missed, only the latest one inside the window is selected;
+if the current minute is due, it takes precedence. Older missed fires are
+discarded. No historical runs start on the first observation or after re-arming
+for a deployment, trigger change, tenant cadence update, or automation resume.
+
+Recovery still observes overlap and the shared run quota. A rejected occurrence
+is recorded as skipped and consumed, including the older coalesced interval;
+freeing a slot does not replay it. History exposes `scheduled_for` and
+`evaluated_at` so the original fire and recovery time remain visible. Coalesced
+and expired fires are not backfilled into history.
+
+The policy also applies to gaps caused by maintenance, runtime gates, or an
+unavailable tenant link. Tenant schedules inherit the owner's recovery policy
+while applying their own saved cadence and timezone. Tenants cannot change the
+policy or window. `gregale workflows schedules --app reports` and the schedule
+inspection APIs show the effective policy and window.
+
+Update validators and scheduler workers before publishing catch-up options.
+Remove the options and drain or cancel affected snapshot runs before downgrading
+to a runtime that does not understand them.
+
+Existing alert rules accept five notification-only workflow metrics:
+
+| Metric | Observation |
+| --- | --- |
+| `workflow_failures` | Failed or dead runs completed in the selected window; excludes cancellation |
+| `workflow_schedule_quota_skips` | Due schedule occurrences skipped for app quota in the selected window |
+| `workflow_pending_age_seconds` | Age of the oldest eligible pending run since it became eligible; excludes future retries; zero if none |
+| `workflow_waiting_age_seconds` | Age of the oldest currently awaiting step, zero if none |
+| `workflow_due_age_seconds` | Age since the oldest pending run, elapsed parked wake or expired lease became due; excludes future waits and live running claims; zero if none |
+
+Scope an alert to one app or the authenticated account. Age signals describe
+current state rather than a window average. Waiting age includes intentional
+timers, callbacks, conditions, and event waits, so choose thresholds suitable
+for the workflow. These metrics support webhook notifications only.
+
+For sustained backlog, enable the opt-in `automation_backlog` preset for an
+app on Hobby or higher. It sends a signed webhook when an automation has been
+due for at least five minutes, with a 30-minute default cooldown:
+
+```sh
+printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable automation_backlog \
+  --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The preset covers all automations in the selected app. Its age signal matches
+queue health, including work blocked by concurrency limits, overdue timers and
+event/callback timeouts, and expired worker leases. Intentional future waits and
+retry backoff do not count. `window_spec` does not average or restrict this
+current-state age. The next evaluator tick observes a threshold breach; a
+sustained breach can notify again after cooldown. A cleared backlog returns
+the rule to `ok` without a separate recovery webhook.
+
+To choose a different threshold, create a custom alert using
+`workflow_due_age_seconds`, comparison `gte`, and a threshold in seconds.
+After a notification, inspect `gregale automations health --app billing --name
+AUTOMATION` for waiting reasons and `gregale workflows list --app billing` for
+the runs. Notifications contain aggregate values rather than run payloads or
+tenant identities. Apply the backlog-alert migration and update all evaluators
+before enabling this preset. Remove its rules before downgrading.
+
+App-handler steps retry HTTP 408, 425, and 429 using the configured attempt
+budget. A downstream `Retry-After` (seconds or HTTP date) extends ordinary
+backoff, capped at one hour, and survives scheduler restarts. Ordinary 4xx
+validation/authorization errors remain terminal. All attempts retain the
+same step idempotency key; app handlers must deduplicate their side effects.
+Unsafe outbound actions keep their existing no-retry policy.
+
+Workflow dispatch uses four execution slots per scheduler. Every tick fills
+available slots, and each slot drains at most eight runs. Eligible applications
+and tenant scopes within an application take turns according to their persisted
+last claim; older due work wins within a scope. A large backlog cannot keep an
+eligible scope behind all its older runs.
+
+At most two unexpired running automation claims belong to one app, and at most
+one belongs to one tenant within that app, across upgraded scheduler workers.
+An app may queue runs while dispatch slots are idle, because these caps reserve
+capacity for other apps.
+Timers, callbacks, condition waits and pending retries release dispatch capacity
+while parked. These dispatch caps are separate from the plan's active-run quota,
+`max_concurrent_runs`, handler invocation limits and foreach parallelism. A wait
+may still consume the workflow definition's concurrency budget.
+
+Fair selection survives worker restarts and history pruning. Executing handlers
+finish or time out before their slots become available; dispatch does not
+preempt them or guarantee latency when all slots are busy. Apply the database
+migration before upgrading workers; all workers must be upgraded for the new
+dispatch caps and fairness to apply consistently.

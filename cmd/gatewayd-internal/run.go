@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -48,6 +47,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/caddyserver/certmagic"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -66,10 +66,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
+	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -237,11 +240,34 @@ func trafficResilienceEnabled(name string) bool {
 // circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
 // fixed-TTL quarantine exactly. Returning nil here is therefore the
 // flag-off path, and returning a DefaultConfig group is the flag-on one.
-func egressBreakerGroup() *circuit.Group {
+//
+// The same group is installed on the public handler (H4-68), and source tunes
+// each app's breakers from its kind=circuit_breaker rule. A nil source keeps
+// DefaultConfig for every app.
+func egressBreakerGroup(source gateway.CircuitRuleSource, log *slog.Logger) *circuit.Group {
 	if !trafficResilienceEnabled("FAAS_GATEWAY_CIRCUIT_BREAKER") {
 		return nil
 	}
-	return circuit.NewGroup(circuit.DefaultConfig(), nil)
+	g := circuit.NewGroup(circuit.DefaultConfig(), nil)
+	if source != nil {
+		g = g.WithConfigFor(gateway.NewCircuitConfigs(source, log).ForKey)
+	}
+	return g
+}
+
+// circuitRuleSource loads an app's kind=circuit_breaker rules for breaker
+// tuning.
+func circuitRuleSource(store interface {
+	ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+}) gateway.CircuitRuleSource {
+	return func(ctx context.Context, appID string) ([]gateway.EdgeRuleCircuitBreakerResolved, error) {
+		rules, err := store.ListEdgeRulesForApp(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		compiled, _ := compileCircuitBreakerRules(rules)
+		return compiled, nil
+	}
 }
 
 // rawStreamEnabledFromEnv (issue #676 / ADR-080 follow-up) resolves the
@@ -840,6 +866,13 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			req.Header.Set(key, value)
 		}
 	}
+	// Workflow step headers are authored by schedd's workflow orchestrator.
+	// Any other persisted envelope (queued, replayed, CLI) cannot assert them.
+	if inv.Source != state.InvocationSource("workflow") {
+		for _, name := range []string{api.WorkflowRunIDHeader, api.WorkflowStepHeader, api.WorkflowAttemptHeader} {
+			req.Header.Del(name)
+		}
+	}
 	// CLI invoke, queue, task, and cron payloads are JSON values, but their
 	// persisted envelopes need not carry HTTP headers. Common guest frameworks
 	// will otherwise ignore the body. Preserve an explicit customer media type
@@ -869,9 +902,30 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if state.InvocationHasOperation(inv) {
+		var proof map[string]string
+		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
+			return inv, 0, nil, err
+		}
+		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationReceiptVersionHeader, api.OperationReceiptBindingHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader} {
+			if value := proof[name]; value != "" {
+				req.Header.Set(name, value)
+			}
+		}
+	}
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
+	} else if inv.ManagedOperationID != "" {
+		req.Header.Set(api.TenantIDHeader, inv.ManagedOperationAccountID)
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ManagedOperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ManagedOperationGeneration, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
 	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
@@ -884,6 +938,16 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		rec.Code = http.StatusOK
 	}
 	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
+	inv.ResponseRetryAfter = ""
+	if retryAt := api.WorkflowRetryAfter(rec.Header().Get("Retry-After"), time.Now().UTC()); !retryAt.IsZero() {
+		// HTTP dates have whole-second precision. Round up so serializing a
+		// delta-seconds hint never brings the retry deadline forward.
+		rounded := retryAt.Truncate(time.Second)
+		if rounded.Before(retryAt) {
+			rounded = rounded.Add(time.Second)
+		}
+		inv.ResponseRetryAfter = rounded.Format(http.TimeFormat)
+	}
 	body := rec.Body.Bytes()
 	if len(body) > 0 {
 		// Function handlers conventionally return JSON. Preserve valid JSON
@@ -939,10 +1003,12 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen       func(network, addr string) (net.Listener, error)
-	listenPacket func(network, addr string) (net.PacketConn, error)
-	newSrv       func(addr string, handler http.Handler) *http.Server
-	backend      gateway.Backend
+	// Private identity is built only with the process-wide drain tracker.
+	runtimeIngressIdentity http.Handler
+	listen                 func(network, addr string) (net.Listener, error)
+	listenPacket           func(network, addr string) (net.PacketConn, error)
+	newSrv                 func(addr string, handler http.Handler) *http.Server
+	backend                gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -1423,6 +1489,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
+	runtimeGatewaySession, runtimeGatewaySlot := "", ""
+	var runtimeActivity *activity.Tracker
+	runtimeDrainEnabled, err := privateRuntimeDrainEnabled(osGetenv)
+	if err != nil {
+		return err
+	}
+	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
+		runtimeGatewaySession = uuid.NewString()
+		runtimeGatewaySlot = strings.TrimSpace(osGetenv("FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID"))
+		if err := gatewayconfirmation.ValidateIdentity(runtimeGatewaySlot, runtimeGatewaySession); err != nil {
+			return fmt.Errorf("private runtime gateway slot configuration: %w", err)
+		}
+		runtimeActivity, err = activity.New(runtimeGatewaySession)
+		if runtimeDrainEnabled {
+			runtimeActivity, err = activity.NewWithFences(runtimeGatewaySession)
+		}
+		if err != nil {
+			return fmt.Errorf("private runtime gateway activity configuration: %w", err)
+		}
+		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession, "gateway_slot_id", runtimeGatewaySlot)
+	}
+	deps.runtimeIngressIdentity, err = privateRuntimeIngressIdentity(osGetenv, runtimeGatewaySlot, runtimeGatewaySession)
+	if err != nil {
+		return err
+	}
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
@@ -1447,32 +1538,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 				return gateway.App{}, false, err
 			}
-			acct, err := pgStore.AccountByID(ctx, app.AccountID)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			liveDeployments, err := pgStore.LiveDeployments(ctx, app.ID)
-			if err != nil && !errors.Is(err, state.ErrNotFound) {
-				return gateway.App{}, false, err
-			}
-			companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			concurrencyOverflow := ""
-			maxQueueWaitMS := 0
-			maxQueueDepth := 0
-			wakeMaxQueueDepth := 0
-			wakeMaxQueueWaitSeconds := 0
-			if app.ScalingPolicy != nil {
-				concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
-				maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
-				maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
-				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
-				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
-			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), PlatformTenantRequired: app.PlatformTenantRequired, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PreAuthRateLimit: app.Manifest.PreAuthRateLimit, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return router.toApp(ctx, app)
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1611,7 +1677,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// picker's weight table. The adapter translates
 		// state.Deployment to gateway.DeploymentWeightsRow
 		// (the gateway package does not import pkg/state).
-		WithStore(weightsStoreAdapter{store: pgStore}).
+		WithStore(weightsStoreAdapter{store: pgStore, sessionID: runtimeGatewaySession, slotID: runtimeGatewaySlot, drainTracker: runtimeActivity, drainEnabled: runtimeDrainEnabled}).
 		// Issue #72 / ADR-125: mirror dispatch and debugger replay
 		// consume the same enabled-rule cache. The adapter keeps the
 		// gateway package independent of pkg/state while allowing replay
@@ -1663,6 +1729,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go watchInvalidations(ctx, pool, backend, log, invalidationsReady, osGetenv("FAAS_NODE_NAME"))
 	deps.invalidationsReady = invalidationsReady
 
+	if runtimeGatewaySession != "" {
+		var repairStore gatewayconfirmation.Store = pgStore
+		if runtimeDrainEnabled {
+			repairStore = gatewayconfirmation.DrainRepair{Store: pgStore, Tracker: runtimeActivity}
+		}
+		go gatewayconfirmation.Run(ctx, repairStore, backend, log)
+		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
+	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
 	// gateway traffic (spec §4.1, ADR-018) — without this a busy app parks once
@@ -1763,19 +1837,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, version.Scope), synthWakeSleep)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			target := gateway.Target{
 				AppID:               appID,
 				InstanceID:          instanceID,
@@ -1813,20 +1880,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
 			wakeScope := version.Scope
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, wakeScope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, wakeScope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, wakeScope), synthWakeSleep)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
@@ -1887,13 +1947,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return app.PublicAuthMode
 		})
-	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, stepName string, attempt int) error {
+	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
 			return fmt.Errorf("load workflow run: %w", err)
 		}
-		if run.AppID != appID {
-			return fmt.Errorf("workflow run belongs to another app")
+		if run.AppID != appID || run.PlatformTenantID != platformTenantID {
+			return fmt.Errorf("workflow run app or tenant identity does not match")
 		}
 		if run.Status != state.WorkflowRunStatusRunning {
 			return fmt.Errorf("workflow run is %s", run.Status)
@@ -1912,6 +1972,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return nil
 		}
 		return fmt.Errorf("workflow step %q not found", stepName)
+	})
+	deps.synth.WithManagedWorkflowOperationIdentity(func(ctx context.Context, appID, runID, stepName string) (string, bool, error) {
+		run, err := pgStore.GetWorkflowRun(ctx, runID)
+		if err != nil || run.AppID != appID {
+			return "", false, errors.New("workflow run is unavailable")
+		}
+		var definition api.WorkflowSpec
+		if err := json.Unmarshal(run.DefinitionSnapshot, &definition); err != nil {
+			return "", false, fmt.Errorf("decode managed workflow definition: %w", err)
+		}
+		enabled := false
+		for _, step := range definition.Steps {
+			if step.Name == stepName {
+				enabled = step.ManagedOperation
+				break
+			}
+		}
+		if !enabled {
+			return "", false, nil
+		}
+		app, err := pgStore.AppByID(ctx, appID)
+		if err != nil || app.AccountID == "" {
+			return "", false, errors.New("workflow application owner is unavailable")
+		}
+		return app.AccountID, true, nil
 	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N
@@ -2034,7 +2119,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
 	// the cache has its production mTLS/overlay wiring before schedd can
@@ -2522,6 +2608,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if err := configureOperationRoutes(handler, deps); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {
@@ -2543,6 +2632,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithAPIDiscovery(true)
 	}
 	if deps.pgStore != nil {
+		handler.WithHealthOutcomeLookup(healthOutcomeLookup(deps.pgStore))
 		handler.WithMirrorResultStore(deps.pgStore).WithMirrorSlotLeaseStore(deps.pgStore)
 	}
 	if deps.pool != nil {
@@ -2918,7 +3008,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalDialErr != nil {
 		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
 	}
-	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
+	// so a slow journal never delays or fails a customer request.
+	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
 		if journalClient == nil {
 			return errors.New("request ID journal apid client unavailable")
 		}
@@ -2936,7 +3028,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("apid did not record the request ID journal entry")
 		}
 		return nil
-	})
+	}, deps.metrics, log)
+	go journalQueue.Run(ctx)
+	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
 		defer func() {
 			if err := journalClient.Close(); err != nil {
@@ -2945,9 +3039,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
-	if requestTelemetryEnabled {
+	{
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{
-			Enabled:     true,
+			Enabled:     requestTelemetryEnabled,
 			RingSize:    4096,
 			OnOverwrite: deps.metrics.IncRequestTelemetryOverwritten,
 		}, log)
@@ -2956,11 +3050,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// private endpoint cannot silently downgrade to plaintext.
 		apidRTTarget := cfg.GetRequestTelemetryTarget(osGetenv)
 		rtTLS, rtTLSErr := cfg.LoadAppErrorsTLS()
-		if rtTLSErr != nil {
+		if rtTLSErr != nil && requestTelemetryEnabled {
 			return fmt.Errorf("gatewayd: load request telemetry TLS: %w", rtTLSErr)
 		}
-		rtCli, dialErr := apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+		var rtCli *apidgrpc.RequestTelemetryClientImpl
+		dialErr := rtTLSErr
+		if rtTLSErr == nil {
+			rtCli, dialErr = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+		}
 		var rtShippedTotal int64
+		coverageBootID := uuid.NewString()
+		var coverageSequence int64
+		coverageNode := cfg.NodeName
+		if coverageNode == "" {
+			coverageNode = state.DefaultLocalNodeName
+		}
 		publisher := gateway.NewRequestTelemetryPublisher(gateway.RequestTelemetryPublisherConfig{
 			Enabled:        true,
 			FlushInterval:  5 * time.Second,
@@ -2968,7 +3072,41 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			MaxRetries:     3,
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
+			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
+				if rtTLSErr != nil {
+					return rtTLSErr
+				}
+				coverageSequence++
+				heartbeatCtx, cancel := context.WithTimeout(heartbeatCtx, 2*time.Second)
+				defer cancel()
+				if rtCli == nil {
+					var err error
+					rtCli, err = apidgrpc.DialRequestTelemetry(heartbeatCtx, apidRTTarget, rtTLS)
+					if err != nil {
+						return err
+					}
+				}
+				appGaps := make([]*apidpb.TelemetryAppGap, 0, len(report.AppGaps))
+				for _, gap := range report.AppGaps {
+					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount)})
+				}
+				receipt, err := rtCli.RecordTelemetryCoverage(heartbeatCtx, &apidpb.TelemetryCoverage{
+					NodeName: coverageNode, BootId: coverageBootID, Sequence: coverageSequence, Enabled: report.Enabled,
+					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
+					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
+					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
+				})
+				if err != nil {
+					return err
+				}
+				if receipt == nil || !receipt.GetRecorded() {
+					return errors.New("telemetry coverage was not recorded")
+				}
+				return nil
+			},
 		}, recorder, func(ctx context.Context, rows []gateway.RequestTelemetryRow) error {
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
 			if rtCli == nil {
 				// DialRequestTelemetry is intentionally lazy. If the
 				// initial dial failed (or the connection was invalidated
@@ -3041,38 +3179,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				rtCli = nil
 				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
-			// Drain responses to detect per-row failures. The
-			// publisher's retry-with-backoff covers transient
-			// errors here; rate-limit + db_error outcomes are
-			// surfaced via Prometheus counters in the apid
-			// receiver (PR-B stage 4).
-			for {
-				resp, rerr := stream.Recv()
-				if rerr != nil {
-					// io.EOF is the canonical end-of-stream.
-					if errors.Is(rerr, io.EOF) {
-						break
-					}
-					_ = rtCli.Close()
-					rtCli = nil
-					return fmt.Errorf("recv request_telemetry response: %w", rerr)
-				}
-				if resp == nil {
-					break
-				}
-				if resp.GetOutcome() == "rate_limited" {
-					log.Debug("request_telemetry: row rate_limited",
-						"retry_after_ms", resp.GetRetryAfterMs())
-				}
-				if resp.GetOutcome() == "db_error" {
-					// The usage ledger is idempotent by event_id, so retrying
-					// this collapsed row is safe even if the response arrived
-					// after the apid transaction committed. A database error
-					// must not be counted as shipped merely because the stream
-					// itself stayed open.
-					return errors.New("request_telemetry receiver rejected row: db_error")
-				}
+			if err := acknowledgeTelemetryRows(stream, rows); err != nil {
+				_ = rtCli.Close()
+				rtCli = nil
+				return err
 			}
+
 			for _, row := range rows {
 				if row.Count > 0 {
 					rtShippedTotal += int64(row.Count)
@@ -3110,12 +3222,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer publisher.Stop()
 		// Expose counters for the dashboard via /metrics; read by
 		// the existing Prometheus scrape.
-		log.Info("request_telemetry recorder enabled",
+		log.Info("request_telemetry coverage publisher started",
+			"collection_enabled", requestTelemetryEnabled,
 			"ring_size", 4096,
 			"flush_interval", 5*time.Second,
 			"apid_target", apidRTTarget)
-	} else {
-		log.Info("request_telemetry recorder disabled (FAAS_REQUEST_TELEMETRY_ENABLED == \"false\")")
 	}
 
 	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after
@@ -3596,6 +3707,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
+		// ADR-201 §2: one instance-health breaker for the service proxy and
+		// the public path (H4-68), tuned per app by kind=circuit_breaker.
+		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
+		handler.WithCircuitBreaker(breaker)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
@@ -3630,7 +3745,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker:     egressBreakerGroup(),
+			Breaker:     breaker,
 			Metrics:     deps.metrics,
 			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.
@@ -3764,6 +3879,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux.Handle("/", publicHandler)
 		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
 		publicListenerHandler = mux
+	}
+	if deps.runtimeIngressIdentity != nil {
+		publicListenerHandler = ingress.Wrap(publicListenerHandler, deps.runtimeIngressIdentity)
+		if deps.synth != nil {
+			deps.synth.SetHandler(publicListenerHandler)
+		}
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run
@@ -4259,11 +4380,15 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store *state.PgStore
+	store        liveDeploymentStore
+	sessionID    string
+	slotID       string
+	drainTracker *activity.Tracker
+	drainEnabled bool
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
-	deps, err := a.store.LiveDeployments(ctx, appID)
+	deps, err := productionLiveDeployments(ctx, a.store, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -4275,6 +4400,18 @@ func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) 
 		})
 	}
 	return out, nil
+}
+
+// DeploymentWeightsInstalled is called only after the picker swaps weights.
+func (a weightsStoreAdapter) DeploymentWeightsInstalled(ctx context.Context, appID string, rows []gateway.DeploymentWeightsRow) error {
+	if a.sessionID == "" {
+		return nil
+	}
+	store, ok := a.store.(state.RuntimeUpgradeGatewayStore)
+	if !ok {
+		return state.ErrInvalidArgument
+	}
+	return gatewayconfirmation.RecordInstalled(ctx, store, a.sessionID, appID, rows)
 }
 
 // mirrorRulesStoreAdapter adapts the state-layer mirror rule projection to

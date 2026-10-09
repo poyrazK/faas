@@ -86,7 +86,119 @@ for HTTP health checks; an older gateway cannot verify a candidate.
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
+## Randomness after a snapshot restore
+
+A scaled-to-zero app wakes from a snapshot of its running process, so any
+random generator the process held in memory is restored with it. The guest
+kernel is reseeded on every wake, so anything that reads the kernel on each
+call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
+`secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
+
+For Node and Python, Gregale also reseeds the process itself before a woken
+instance serves traffic (ADR-687). It covers Node `crypto` (and the OpenSSL
+state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
+and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
+process cannot confirm the reseed, the instance cold-boots instead of waking
+from the snapshot.
+
+Reseed these yourself, or avoid keeping them across a snapshot:
+
+- generators in other runtimes, such as Go `math/rand`, Java `Random` and
+  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- generator objects your code created before the snapshot, such as Python
+  `random.Random()` or `numpy.random.default_rng()`;
+- `Math.random` inside Node worker threads;
+- sidecars that run from their own root filesystem.
+
+Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
+Node and Python reseed. Only do that for an app that never generates tokens,
+keys, nonces or identifiers.
+
 ## Support boundaries
+
+Compose project services may use prebuilt `image:` references without a build
+context. Stateless images join the deployment and dependency graph; database
+and cache images remain managed-resource requirements. Scan plans display the
+image declaration, and the image worker resolves tags to immutable references
+before materialization. The first published TCP container target selects the
+main port, and Compose commands retain the image ENTRYPOINT. Image workloads
+return a deployment ID without a build ID. Source-defined operations on these
+workloads currently require an atomic image admission path and are rejected.
+After CI pushes an image, the [image-published trigger](image-published-deployments.md)
+deploys its exact digest with durable per-workload and scope deduplication.
+New project image deployments also capture their accepted Compose CMD contract;
+queued images and retries retain it after app configuration changes. See
+[ADR-686](adr/686-frozen-project-image-commands.md). Historical deployments without
+that record keep their existing command behavior.
+
+Compose `depends_on: {backend: {condition: service_healthy}}` now holds the
+dependent workload's initial release until the captured backend deployment is
+live with traffic in the same environment. A failed dependency or a fixed
+15-minute wait deadline fails the candidate while the previous release keeps
+serving. `gregale deploys status` and the dashboard stage summary show the
+blocker. This gates release activation; candidate processes can boot while
+waiting. Declarations allow at most 100 dependency conditions per workload.
+Completion conditions, optional healthy dependencies, and healthy managed or job
+targets are rejected.
+See [ADR-685](adr/685-compose-dependency-release-gates.md).
+
+Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
+
+```yaml
+services:
+  api:
+    image: ghcr.io/team/api:production
+    healthcheck:
+      test: [CMD-SHELL, 'curl -f http://localhost:$${PORT}/ready || exit 1']
+      interval: 15s
+      timeout: 250ms
+      start_period: 20s
+      start_interval: 500ms
+      retries: 3
+```
+
+String tests use `CMD-SHELL`; list tests accept `CMD`, `CMD-SHELL`, or `NONE`.
+`disable: true` disables an inherited image check. Omitted or zero timing/retry
+values and empty tests inherit image settings. Durations preserve exact timing;
+positive values must be at least 1ms. `$$` preserves a dollar for the guest
+command; scanning does not read the host environment to interpolate variables.
+The check runs inside the image and requires its executable or shell to exist.
+Accepted overrides, including the choice to inherit, survive app edits, retries,
+and rollback. JSON scan plans expose them as `image_healthcheck`.
+
+Newly assembled image deployments require a fresh successful command check
+before serving readiness, alongside the existing network or worker readiness
+and public-route verification. Startup grace, retries, and command timeouts
+apply within the startup deadline. A failed or missing result blocks promotion;
+boot, restore, and warm-pool resume cannot reuse a previous pass. `NONE` and
+absent checks retain ordinary readiness. Previously assembled deployments need
+reassembly or redeployment to gain this gate. Native boot/restore qualification
+remains pending. Compose dependency release gates are described above. Compose
+healthcheck overrides on source-built services are not applied and produce a
+scan warning.
+See [ADR-682](adr/682-compose-image-healthchecks.md) and
+[ADR-683](adr/683-image-healthcheck-readiness.md).
+
+Required primary image checks also drive runtime recovery. Each serving
+instance executes fresh command attempts using the effective interval, timeout,
+startup grace, and consecutive failure threshold. Repeated command failures
+request scheduler-owned teardown and cold recovery, even if HTTP stays open.
+The declared command replaces implicit HTTP liveness, so the image does not
+need a /healthz endpoint. Explicit HTTP/gRPC liveness remains additional.
+Successful checks clear the failure streak; process replacement and serving
+resume start fresh monitoring. Missing or invalid transport proof requests
+infrastructure recovery without consuming the app's permanent restart budget.
+The existing restart circuit limits repeated confirmed failures. Failure
+diagnostics use image_healthcheck_unhealthy without publishing command output.
+Matching guest and vmmd support is required; older image rootfs releases need
+reassembly. Native lifecycle qualification remains pending. See
+[ADR-684](adr/684-image-healthcheck-runtime-recovery.md).
+
+Automatic image promotion also checks for newer accepted releases in the same
+app and environment scope. Older in-flight candidates become superseded, and
+GitHub-triggered images recheck their recorded source branch before cutover.
+Explicit rollback retains its existing behavior. See
+[ADR-681](adr/681-image-deployment-promotion-ordering.md).
 
 | Concern | Current contract | Qualification boundary |
 |---|---|---|

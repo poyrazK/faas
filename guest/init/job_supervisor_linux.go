@@ -711,11 +711,12 @@ func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) error {
 		var ack [1]byte
 		n, readErr := unix.Read(sock, ack[:])
 		_ = unix.Close(sock)
-		if readErr != nil || n != 1 || ack[0] != 0 {
+		ackValue := ack[0]
+		if readErr != nil || n != 1 || ackValue != 0 {
 			if readErr != nil {
 				lastErr = fmt.Errorf("read ack: %w", readErr)
 			} else {
-				lastErr = fmt.Errorf("invalid ack n=%d value=%d", n, ack[0])
+				lastErr = fmt.Errorf("invalid ack n=%d value=%d", n, ackValue)
 			}
 			log.Warn("job-exit vsock ack", "err", lastErr, "attempt", i)
 			if i < attempts-1 {

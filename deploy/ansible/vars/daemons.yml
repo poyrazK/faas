@@ -15,10 +15,18 @@ faas_control_plane_units:
 faas_compute_only_units:
   - faas-vmmd.service
   - faas-realtimed.service
+  - faas-profiled.service
   - faas-schedd.service
   - faas-gatewayd-internal.service
   - faas-builderd.service
   - faas-imaged.service
+
+# Units the playbooks install but leave disabled until an operator configures
+# and enables them (roles/profiled_service: profiling stays operator-only until
+# native lifecycle acceptance passes). Strict fleet verification requires them
+# only once enabled; enabled units are still health-probed like the rest.
+faas_operator_enabled_units:
+  - faas-profiled.service
 
 faas_legacy_units:
   - faas-gatewayd.service
@@ -37,6 +45,7 @@ faas_control_plane_observability_units:
 # preferred by fleet_verify. Mirrors daemonunitspec.Lifecycle.
 faas_daemon_probes:
   faas-vmmd.service: { probe: unix, target: /run/faas/vmmd.sock, readyz_url: "http://127.0.0.1:9104/readyz" }
+  faas-profiled.service: { probe: unix, target: /run/faas/profiled.sock, readyz_url: "http://127.0.0.1:9160/readyz" }
   faas-realtimed.service: { probe: tcp, target: "127.0.0.1:9107", readyz_url: "http://127.0.0.1:9107/readyz" }
   faas-apid.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:9101/readyz" }
   faas-schedd.service: { probe: unix, target: /run/faas/schedd.sock, readyz_url: "http://127.0.0.1:9103/readyz" }
