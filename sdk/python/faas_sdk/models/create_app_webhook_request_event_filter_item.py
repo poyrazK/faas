@@ -1,6 +1,7 @@
 from typing import Literal
 
 CreateAppWebhookRequestEventFilterItem = Literal[
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",
@@ -36,6 +37,7 @@ CreateAppWebhookRequestEventFilterItem = Literal[
 ]
 
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",

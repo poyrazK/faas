@@ -980,6 +980,20 @@ type MemStore struct {
 	// 2026-08-01, putting the row's Minute before the current
 	// monthStart and silently filtering it out). Protected by m.mu.
 	clock func() time.Time
+	// Runtime and health projections introduced by this feature stack.
+	runtimeUpgradeGatewayReceipts   map[string]runtimeUpgradeGatewayReceipt
+	runtimeUpgradeVerifications     map[string]RuntimeUpgradeVerificationJournal
+	runtimeUpgradeGatewayRoster     RuntimeUpgradeGatewayRoster
+	runtimeUpgradeGatewayHeartbeats map[string]runtimeUpgradeGatewayHeartbeat
+	runtimeReleases                 map[string]RuntimeRelease
+	runtimeReleaseQualifications    map[string]RuntimeReleaseQualification
+	runtimeArtifactBindings         map[string]string
+	runtimeUpgradeTargets           map[string]runtimeUpgradeTarget
+	runtimeUpgradeBaselines         map[string]RuntimeUpgradeBaseline
+	runtimeUpgradeAcceptances       map[string]RuntimeUpgradeAcceptance
+	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
+	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
+	appHealthHistory                map[string]appHealthRecord
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -4265,6 +4279,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
+			delete(m.appHealthHistory, id)
 		}
 		return nil, err
 	}
@@ -4978,6 +4993,9 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := m.checkRuntimeUpgradeRecoveryLocked(d.AppID); err != nil {
+		return Deployment{}, 0, err
+	}
 	before := d
 	rolloutState := NormalizeRolloutState(d.RolloutState)
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
@@ -5155,6 +5173,11 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		}
 	}
 
+	// Plan every weight before mutating any row, including upgrade fences.
+	d.TrafficPercent = newPercent
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return Deployment{}, err
+	}
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5190,23 +5213,25 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		return Deployment{}, err
 	}
 	d.TrafficPercent = newPercent
-	m.putDeploymentLocked(id, d)
-	for i, s := range siblings {
-		other := m.deployments[s.ID]
+	sum := newPercent
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
-		m.putDeploymentLocked(s.ID, other)
-	}
-
-	// Σ invariant (defensive tripwire).
-	var sum int
-	for _, row := range m.deployments {
-		if row.AppID == appID && row.Status == DeployLive {
-			sum += row.TrafficPercent
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return Deployment{}, err
 		}
+		sum += other.TrafficPercent
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
 	}
+	m.putDeploymentLocked(id, d)
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
+		other.TrafficPercent = newWeights[i]
+		m.putDeploymentLocked(sibling.ID, other)
+	}
+
 	return d, nil
 }
 
@@ -6483,6 +6508,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	delete(m.apps, id)
+	delete(m.appHealthHistory, id)
 	return nil
 }
 
@@ -7606,6 +7632,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 	// have rewritten, and the divergence goes unnoticed until production.
 	reason = normalizeRolloutReason(reason)
 
+	if err := m.checkRuntimeUpgradeRecoveryLocked(appID); err != nil {
+		return Deployment{}, 0, err
+	}
 	// Find the active deployment for this app: rollout_state ∈
 	// ('pending','rolling_out') and status='live'. There can be
 	// at most one active rollout per app at a time (canary
@@ -8349,6 +8378,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 	proposal := d
 	proposal.Status = status
+	if err := m.checkRuntimeUpgradeTrafficLocked(proposal); err != nil {
+		return err
+	}
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}
@@ -8421,7 +8453,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -8489,6 +8521,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !m.runtimeUpgradeTrafficAllowedLocked(d) &&
+		(d.TrafficPercent > 0 || !d.TrafficPercentExplicit || d.CanaryTotalSteps > 0 || IsServiceRollout(d)) {
+		return ErrConflict
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
@@ -8614,6 +8650,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
+			if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+				return err
+			}
 			updatedSiblings[sibling.ID] = other
 		}
 		proposed := map[string]int{id: d.TrafficPercent}
@@ -8730,6 +8769,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return err
+		}
 		updatedSiblings[sibling.ID] = other
 	}
 	proposed := map[string]int{id: d.TrafficPercent}
@@ -9189,6 +9231,16 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	if pin, ok := m.runtimeUpgradeTargets[failedID]; ok {
+		if !pin.matches(newDep) {
+			return Deployment{}, ErrConflict
+		}
+		m.runtimeUpgradeTargets[newDep.ID] = pin
+	}
+	if baseline, ok := m.runtimeUpgradeBaselines[failedID]; ok {
+		baseline.DeploymentID = newDep.ID
+		m.runtimeUpgradeBaselines[newDep.ID] = baseline
+	}
 	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
 		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
 	}
@@ -9293,7 +9345,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 			continue
 		}
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
+		if !m.runtimeUpgradeTrafficAllowedLocked(d) || d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
 		if targetID == "" || m.rollbackMoreRecentLocked(d, latest) {
@@ -9438,6 +9490,9 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return err
+	}
 	m.putDeploymentLocked(id, d)
 	return nil
 }
@@ -10498,6 +10553,11 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return Build{}, 0, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
+	}
+	for _, op := range m.runtimeUpgradeOperations {
+		if op.DeploymentID == deploymentID && op.Phase != RuntimeUpgradePrepared && op.Phase != RuntimeUpgradeWaiting {
+			return Build{}, 0, ErrConflict
+		}
 	}
 	dep := m.deployments[deploymentID]
 	if dep.Status != DeployPending && dep.Status != DeployBuilding {
@@ -21472,6 +21532,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			delete(m.apps, aid)
+			delete(m.appHealthHistory, aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
 			delete(m.routeMonitorConfigs, aid)

@@ -770,6 +770,56 @@ func (q *Queries) AdvanceProjectEnvironmentCloneOperationStatus(ctx context.Cont
 	return result.RowsAffected(), nil
 }
 
+const advanceRuntimeUpgradeOperation = `-- name: AdvanceRuntimeUpgradeOperation :one
+UPDATE runtime_upgrade_operations SET phase=$1::text,blocker=$2::text,wake_id=$3::uuid,
+ next_attempt_at=clock_timestamp()+make_interval(secs=>$4::int),lease_token=NULL,lease_until=NULL,
+ finished_at=CASE WHEN $1::text IN ('complete','blocked') THEN clock_timestamp() ELSE NULL END
+WHERE id=$5::uuid AND lease_token=$6::uuid AND lease_until>clock_timestamp()
+RETURNING id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path
+`
+
+type AdvanceRuntimeUpgradeOperationParams struct {
+	Phase           string
+	Blocker         string
+	WakeID          pgtype.UUID
+	IntervalSeconds int32
+	ID              pgtype.UUID
+	LeaseToken      pgtype.UUID
+}
+
+func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg AdvanceRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, advanceRuntimeUpgradeOperation,
+		arg.Phase,
+		arg.Blocker,
+		arg.WakeID,
+		arg.IntervalSeconds,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
 const appBindingRefreshInventory = `-- name: AppBindingRefreshInventory :many
 SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
  (o.payload::jsonb->>'wake_id')::text AS wake_id,
@@ -971,6 +1021,53 @@ func (q *Queries) AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlu
 		&i.Manifest,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const appHealthHistoryTarget = `-- name: AppHealthHistoryTarget :one
+SELECT id::text FROM apps WHERE id = $1::text::uuid AND account_id = $2::text::uuid AND status <> 'deleted'
+`
+
+type AppHealthHistoryTargetParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHealthHistoryTargetParams) (string, error) {
+	row := db.QueryRow(ctx, appHealthHistoryTarget, arg.AppID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const appHealthNotificationRecipients = `-- name: AppHealthNotificationRecipients :one
+SELECT a.slug, COALESCE((
+ SELECT jsonb_object_agg(eligible.id::text, eligible.revision) FROM (
+  SELECT w.id, extract(epoch FROM w.updated_at)::text AS revision FROM app_webhooks w JOIN accounts ac ON ac.id = w.account_id
+  WHERE w.app_id = a.id AND w.account_id = a.account_id AND w.scope = 'app' AND w.enabled
+  AND ac.status = 'active' AND ac.abuse_hold_at IS NULL
+  AND 'app.health.changed' = ANY(w.event_filter)
+  ORDER BY w.id LIMIT $1::integer
+ ) eligible
+), '{}'::jsonb)::jsonb AS recipients
+FROM apps a WHERE a.id = $2::text::uuid AND a.account_id = $3::text::uuid
+`
+
+type AppHealthNotificationRecipientsParams struct {
+	RecipientLimit int32
+	AppID          string
+	AccountID      string
+}
+
+type AppHealthNotificationRecipientsRow struct {
+	Slug       string
+	Recipients []byte
+}
+
+func (q *Queries) AppHealthNotificationRecipients(ctx context.Context, db DBTX, arg AppHealthNotificationRecipientsParams) (AppHealthNotificationRecipientsRow, error) {
+	row := db.QueryRow(ctx, appHealthNotificationRecipients, arg.RecipientLimit, arg.AppID, arg.AccountID)
+	var i AppHealthNotificationRecipientsRow
+	err := row.Scan(&i.Slug, &i.Recipients)
 	return i, err
 }
 
@@ -1417,6 +1514,25 @@ func (q *Queries) AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParam
 		arg.TailSeconds,
 	)
 	return err
+}
+
+const applyDeploymentRuntimeUpgradeCutover = `-- name: ApplyDeploymentRuntimeUpgradeCutover :execrows
+UPDATE deployments SET traffic_percent=CASE WHEN id=$1::uuid THEN 100 ELSE 0 END
+WHERE (id=$1::uuid AND status='live' AND traffic_percent=0 AND traffic_percent_explicit)
+ OR (id=$2::uuid AND status='live' AND traffic_percent=100)
+`
+
+type ApplyDeploymentRuntimeUpgradeCutoverParams struct {
+	DeploymentID        pgtype.UUID
+	ServingDeploymentID pgtype.UUID
+}
+
+func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg ApplyDeploymentRuntimeUpgradeCutoverParams) (int64, error) {
+	result, err := db.Exec(ctx, applyDeploymentRuntimeUpgradeCutover, arg.DeploymentID, arg.ServingDeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
@@ -1987,6 +2103,33 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx
 	return i, err
 }
 
+const bindDeploymentRuntimeRelease = `-- name: BindDeploymentRuntimeRelease :one
+WITH active AS (
+ SELECT a.account_id,d.rootfs_key FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.id=$2 AND d.rootfs_key=$3
+ AND NOT EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id
+  AND (t.release_id<>$1::text OR t.source_sha256<>COALESCE(d.source_sha256,'')))
+ AND d.status IN ('pending','building','imaging') FOR UPDATE OF d
+)
+INSERT INTO runtime_artifact_bindings (account_id,rootfs_key,release_id)
+SELECT account_id,rootfs_key,$1::text FROM active
+ON CONFLICT (account_id,rootfs_key) DO UPDATE SET release_id=runtime_artifact_bindings.release_id
+WHERE runtime_artifact_bindings.release_id=excluded.release_id RETURNING release_id
+`
+
+type BindDeploymentRuntimeReleaseParams struct {
+	ReleaseID    string
+	DeploymentID pgtype.UUID
+	RootfsKey    string
+}
+
+func (q *Queries) BindDeploymentRuntimeRelease(ctx context.Context, db DBTX, arg BindDeploymentRuntimeReleaseParams) (string, error) {
+	row := db.QueryRow(ctx, bindDeploymentRuntimeRelease, arg.ReleaseID, arg.DeploymentID, arg.RootfsKey)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
+}
+
 const bindEnvironmentGitOpsQueue = `-- name: BindEnvironmentGitOpsQueue :execrows
 INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
 VALUES ($1::uuid, $2::text, $3::text, $4::uuid)
@@ -2281,6 +2424,66 @@ func (q *Queries) CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const cancelRuntimeUpgradeBuilds = `-- name: CancelRuntimeUpgradeBuilds :many
+WITH candidates AS (
+ SELECT b.id,b.status FROM builds b WHERE b.deployment_id=$1 AND b.status IN ('queued','running') ORDER BY b.id FOR UPDATE OF b
+), cancelled AS (
+ UPDATE builds b SET status='cancelled',cancelled_at=clock_timestamp(),cancelled_by_deployment_cascade=true
+ FROM candidates c WHERE b.id=c.id RETURNING b.id
+), cleanup AS (
+ INSERT INTO builder_vm_cleanup(build_id) SELECT c.id FROM cancelled c JOIN candidates old ON old.id=c.id WHERE old.status='running'
+ ON CONFLICT(build_id) DO NOTHING RETURNING build_id
+)
+SELECT c.id FROM cancelled c CROSS JOIN (SELECT count(*) FROM cleanup) ensured ORDER BY c.id
+`
+
+func (q *Queries) CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, cancelRuntimeUpgradeBuilds, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cancelRuntimeUpgradeCandidate = `-- name: CancelRuntimeUpgradeCandidate :exec
+UPDATE deployments SET status='cancelled',cancelled_at=clock_timestamp(),cancelled_by_principal=$1::text,cancel_reason='user'
+WHERE id=$2::uuid AND traffic_percent=0 AND traffic_percent_explicit AND status IN ('pending','building','imaging','snapshotting')
+`
+
+type CancelRuntimeUpgradeCandidateParams struct {
+	AccountID    string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error {
+	_, err := db.Exec(ctx, cancelRuntimeUpgradeCandidate, arg.AccountID, arg.DeploymentID)
+	return err
+}
+
+const cancelRuntimeUpgradeReleaseTasks = `-- name: CancelRuntimeUpgradeReleaseTasks :exec
+UPDATE app_tasks SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,
+ cancel_requested_at=CASE WHEN status IN ('restoring','running') THEN COALESCE(cancel_requested_at,clock_timestamp()) ELSE cancel_requested_at END,
+ finished_at=CASE WHEN status='queued' THEN clock_timestamp() ELSE finished_at END,updated_at=clock_timestamp()
+WHERE deployment_id=$1 AND kind='release' AND status IN ('queued','restoring','running')
+`
+
+func (q *Queries) CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, cancelRuntimeUpgradeReleaseTasks, deploymentID)
+	return err
+}
+
 const cancelUploadSession = `-- name: CancelUploadSession :exec
 UPDATE upload_sessions
    SET status = 'cancelled'
@@ -2479,6 +2682,148 @@ func (q *Queries) CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg C
 	var jsonb_build_object []byte
 	err := row.Scan(&jsonb_build_object)
 	return jsonb_build_object, err
+}
+
+const checkpointRuntimeUpgradeOperationControl = `-- name: CheckpointRuntimeUpgradeOperationControl :one
+UPDATE runtime_upgrade_operations SET phase=$1::text,blocker=$2::text,wake_id=$3::uuid,
+ lease_token=NULL,lease_until=NULL,next_attempt_at=clock_timestamp(),
+ finished_at=CASE WHEN $1::text IN ('complete','blocked','cancelled') THEN clock_timestamp() ELSE NULL END
+WHERE id=$4::uuid AND phase IN ('reserved','prepared','waiting') RETURNING id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path
+`
+
+type CheckpointRuntimeUpgradeOperationControlParams struct {
+	Phase   string
+	Blocker string
+	WakeID  pgtype.UUID
+	ID      pgtype.UUID
+}
+
+func (q *Queries) CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, checkpointRuntimeUpgradeOperationControl,
+		arg.Phase,
+		arg.Blocker,
+		arg.WakeID,
+		arg.ID,
+	)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const checkpointRuntimeUpgradeVerification = `-- name: CheckpointRuntimeUpgradeVerification :one
+WITH checkpoint AS MATERIALIZED (SELECT clock_timestamp() AS checked_at)
+UPDATE runtime_upgrade_verifications SET
+ phase=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'expired' ELSE $1::text END,
+ reason=CASE WHEN deadline_at<=checkpoint.checked_at THEN 'deadline_exceeded' ELSE $2::text END,
+ last_observation=$3::jsonb,
+ next_attempt_at=checkpoint.checked_at+make_interval(secs=>$4::int),lease_token=NULL,lease_until=NULL,
+ finished_at=CASE WHEN deadline_at<=checkpoint.checked_at OR $1::text<>'pending' THEN checkpoint.checked_at ELSE NULL END
+FROM checkpoint
+WHERE operation_id=$5::uuid AND lease_token=$6::uuid AND lease_until>checkpoint.checked_at AND phase='pending'
+ AND ($1::text<>'verified' OR $7::timestamptz>checkpoint.checked_at) RETURNING runtime_upgrade_verifications.operation_id, runtime_upgrade_verifications.gateway_sessions, runtime_upgrade_verifications.cutover_at, runtime_upgrade_verifications.created_at, runtime_upgrade_verifications.deadline_at, runtime_upgrade_verifications.phase, runtime_upgrade_verifications.reason, runtime_upgrade_verifications.last_observation, runtime_upgrade_verifications.next_attempt_at, runtime_upgrade_verifications.lease_token, runtime_upgrade_verifications.lease_until, runtime_upgrade_verifications.finished_at, runtime_upgrade_verifications.gateway_roster_revision
+`
+
+type CheckpointRuntimeUpgradeVerificationParams struct {
+	Phase             string
+	Reason            string
+	LastObservation   []byte
+	IntervalSeconds   int32
+	OperationID       pgtype.UUID
+	LeaseToken        pgtype.UUID
+	EvidenceExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, checkpointRuntimeUpgradeVerification,
+		arg.Phase,
+		arg.Reason,
+		arg.LastObservation,
+		arg.IntervalSeconds,
+		arg.OperationID,
+		arg.LeaseToken,
+		arg.EvidenceExpiresAt,
+	)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.GatewayRosterRevision,
+	)
+	return i, err
+}
+
+const claimAppHealth = `-- name: ClaimAppHealth :one
+WITH candidate AS (
+ SELECT a.id, a.account_id FROM apps a
+ LEFT JOIN app_health_collection_state h ON h.app_id = a.id
+ WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
+ AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+ AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
+ AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
+ ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+)
+INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
+SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
+ON CONFLICT (app_id) DO UPDATE SET lease_token = EXCLUDED.lease_token, lease_started_at = EXCLUDED.lease_started_at, lease_until = EXCLUDED.lease_until
+WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_state.lease_until <= $1::timestamptz
+RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until
+`
+
+type ClaimAppHealthParams struct {
+	CheckedNow pgtype.Timestamptz
+	Token      string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+type ClaimAppHealthRow struct {
+	AppID          string
+	AccountID      string
+	LeaseToken     pgtype.Text
+	LeaseStartedAt pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
+	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
+	var i ClaimAppHealthRow
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.LeaseToken,
+		&i.LeaseStartedAt,
+		&i.LeaseUntil,
+	)
+	return i, err
 }
 
 const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one
@@ -4257,6 +4602,73 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx co
 	return i, err
 }
 
+const claimRuntimeUpgradeOperation = `-- name: ClaimRuntimeUpgradeOperation :one
+WITH due AS (
+ SELECT id FROM runtime_upgrade_operations WHERE (phase IN ('prepared','waiting') OR (phase='reserved' AND deadline_at<=clock_timestamp()))
+ AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp())
+ ORDER BY next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE runtime_upgrade_operations o SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>$1::int)
+FROM due WHERE o.id=due.id RETURNING o.id, o.account_id, o.app_id, o.deployment_id, o.serving_deployment_id, o.target_release_id, o.source_sha256, o.qualification_report_sha256, o.phase, o.blocker, o.wake_id, o.created_at, o.deadline_at, o.next_attempt_at, o.lease_token, o.lease_until, o.finished_at, o.source_path
+`
+
+func (q *Queries) ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, claimRuntimeUpgradeOperation, leaseSeconds)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const claimRuntimeUpgradeVerification = `-- name: ClaimRuntimeUpgradeVerification :one
+WITH due AS (
+ SELECT operation_id FROM runtime_upgrade_verifications WHERE phase='pending'
+ AND (next_attempt_at<=clock_timestamp() OR deadline_at<=clock_timestamp()) AND (lease_until IS NULL OR lease_until<=clock_timestamp())
+ ORDER BY next_attempt_at,created_at,operation_id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE runtime_upgrade_verifications v SET lease_token=gen_random_uuid(),lease_until=clock_timestamp()+make_interval(secs=>$1::int)
+FROM due WHERE v.operation_id=due.operation_id RETURNING v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at, v.gateway_roster_revision
+`
+
+func (q *Queries) ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, claimRuntimeUpgradeVerification, leaseSeconds)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.GatewayRosterRevision,
+	)
+	return i, err
+}
+
 const claimServiceRecovery = `-- name: ClaimServiceRecovery :one
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,
@@ -5697,6 +6109,40 @@ func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const copyDeploymentRuntimeUpgradeBaseline = `-- name: CopyDeploymentRuntimeUpgradeBaseline :exec
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at)
+SELECT $1::uuid,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at
+FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$2::uuid
+`
+
+type CopyDeploymentRuntimeUpgradeBaselineParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeBaselineParams) error {
+	_, err := db.Exec(ctx, copyDeploymentRuntimeUpgradeBaseline, arg.TargetDeploymentID, arg.SourceDeploymentID)
+	return err
+}
+
+const copyDeploymentRuntimeUpgradeTarget = `-- name: CopyDeploymentRuntimeUpgradeTarget :exec
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT $1::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
+FROM deployment_runtime_upgrade_targets WHERE deployment_id=$2::uuid
+`
+
+type CopyDeploymentRuntimeUpgradeTargetParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeTargetParams) error {
+	_, err := db.Exec(ctx, copyDeploymentRuntimeUpgradeTarget, arg.TargetDeploymentID, arg.SourceDeploymentID)
+	return err
 }
 
 const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
@@ -9322,6 +9768,32 @@ func (q *Queries) EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg
 	var column_1 []byte
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const enqueueAppHealthNotification = `-- name: EnqueueAppHealthNotification :exec
+INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+VALUES($1::text::uuid, $2::text::uuid, 'app.health.changed',
+ $3::text::uuid, $4::jsonb, $5::text[]::uuid[])
+ON CONFLICT (event, source_id) DO NOTHING
+`
+
+type EnqueueAppHealthNotificationParams struct {
+	AccountID    string
+	AppID        string
+	SourceID     string
+	Payload      []byte
+	RecipientIds []string
+}
+
+func (q *Queries) EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueAppHealthNotification,
+		arg.AccountID,
+		arg.AppID,
+		arg.SourceID,
+		arg.Payload,
+		arg.RecipientIds,
+	)
+	return err
 }
 
 const enqueueEnvironmentGitOps = `-- name: EnqueueEnvironmentGitOps :exec
@@ -12954,6 +13426,69 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const findRuntimeRelease = `-- name: FindRuntimeRelease :one
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 AND source_ref=$3 AND guest_init_sha256=$4 AND layout_version=$5
+`
+
+type FindRuntimeReleaseParams struct {
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+}
+
+func (q *Queries) FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, findRuntimeRelease,
+		arg.Runtime,
+		arg.Architecture,
+		arg.SourceRef,
+		arg.GuestInitSha256,
+		arg.LayoutVersion,
+	)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const finishAppHealthCollection = `-- name: FinishAppHealthCollection :exec
+UPDATE app_health_collection_state SET assessment = $1::jsonb, assessment_key = $2::text,
+ notification_state = $3::jsonb,
+ checked_at = $4::timestamptz, next_check_at = $5::timestamptz,
+ lease_token = NULL, lease_started_at = NULL, lease_until = NULL
+WHERE app_id = $6::text::uuid
+`
+
+type FinishAppHealthCollectionParams struct {
+	Assessment        []byte
+	AssessmentKey     string
+	NotificationState []byte
+	CheckedAt         pgtype.Timestamptz
+	NextCheckAt       pgtype.Timestamptz
+	AppID             string
+}
+
+func (q *Queries) FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error {
+	_, err := db.Exec(ctx, finishAppHealthCollection,
+		arg.Assessment,
+		arg.AssessmentKey,
+		arg.NotificationState,
+		arg.CheckedAt,
+		arg.NextCheckAt,
+		arg.AppID,
+	)
+	return err
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -14182,6 +14717,43 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getArtifactRuntimeRelease = `-- name: GetArtifactRuntimeRelease :one
+SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at FROM runtime_artifact_bindings b JOIN runtime_releases r ON r.id=b.release_id
+WHERE b.account_id=$1 AND b.rootfs_key=$2
+`
+
+type GetArtifactRuntimeReleaseParams struct {
+	AccountID pgtype.UUID
+	RootfsKey string
+}
+
+func (q *Queries) GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg GetArtifactRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, getArtifactRuntimeRelease, arg.AccountID, arg.RootfsKey)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBuildRuntimeBaseRef = `-- name: GetBuildRuntimeBaseRef :one
+SELECT runtime_base_ref FROM build_provenance WHERE build_id=$1
+`
+
+func (q *Queries) GetBuildRuntimeBaseRef(ctx context.Context, db DBTX, buildID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, getBuildRuntimeBaseRef, buildID)
+	var runtime_base_ref string
+	err := row.Scan(&runtime_base_ref)
+	return runtime_base_ref, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -14794,6 +15366,106 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 		&i.LastProbedAt,
 		&i.LastSeenAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeUpgradeAcceptance = `-- name: GetDeploymentRuntimeUpgradeAcceptance :one
+SELECT deployment_id, target_release_id, rootfs_key, instance_id, node_id, wake_id, profile, configuration_fingerprint, secret_fingerprint, qualification_report_sha256, started_at, ready_at FROM deployment_runtime_upgrade_acceptances WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeAcceptance(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeAcceptance, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeAcceptance, deploymentID)
+	var i DeploymentRuntimeUpgradeAcceptance
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.TargetReleaseID,
+		&i.RootfsKey,
+		&i.InstanceID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.Profile,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.QualificationReportSha256,
+		&i.StartedAt,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeUpgradeBaseline = `-- name: GetDeploymentRuntimeUpgradeBaseline :one
+SELECT deployment_id, serving_deployment_id, serving_rootfs_key, serving_runtime_release_id, target_release_id, configuration_fingerprint, secret_fingerprint, input_fingerprint, input_secret_fingerprint, captured_at FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeBaseline, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeBaseline, deploymentID)
+	var i DeploymentRuntimeUpgradeBaseline
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.ServingRootfsKey,
+		&i.ServingRuntimeReleaseID,
+		&i.TargetReleaseID,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.InputFingerprint,
+		&i.InputSecretFingerprint,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeUpgradeCutover = `-- name: GetDeploymentRuntimeUpgradeCutover :one
+SELECT deployment_id, serving_deployment_id, target_release_id, wake_id, qualification_report_sha256, cutover_at FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeCutover, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeCutover, deploymentID)
+	var i DeploymentRuntimeUpgradeCutover
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.WakeID,
+		&i.QualificationReportSha256,
+		&i.CutoverAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeUpgradeTarget = `-- name: GetDeploymentRuntimeUpgradeTarget :one
+SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at, (t.source_sha256=COALESCE(d.source_sha256,'') AND t.source_root=COALESCE(d.source_root,'')
+ AND t.source_bytes=d.source_bytes AND t.kind=d.kind AND t.handler=COALESCE(d.handler,''))::boolean AS source_matches
+FROM deployment_runtime_upgrade_targets t JOIN runtime_releases r ON r.id=t.release_id JOIN deployments d ON d.id=t.deployment_id
+WHERE t.deployment_id=$1::uuid
+`
+
+type GetDeploymentRuntimeUpgradeTargetRow struct {
+	ID              string
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+	BaseSha256      string
+	CreatedAt       pgtype.Timestamptz
+	SourceMatches   bool
+}
+
+func (q *Queries) GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeTarget, deploymentID)
+	var i GetDeploymentRuntimeUpgradeTargetRow
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+		&i.SourceMatches,
 	)
 	return i, err
 }
@@ -15794,6 +16466,145 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 	return i, err
 }
 
+const getRuntimeRelease = `-- name: GetRuntimeRelease :one
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE id=$1
+`
+
+func (q *Queries) GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, getRuntimeRelease, id)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRuntimeReleaseQualification = `-- name: GetRuntimeReleaseQualification :one
+SELECT release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256 FROM runtime_release_qualifications WHERE release_id=$1
+`
+
+func (q *Queries) GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, getRuntimeReleaseQualification, releaseID)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
+const getRuntimeUpgradeOperation = `-- name: GetRuntimeUpgradeOperation :one
+SELECT id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path FROM runtime_upgrade_operations WHERE id=$1
+`
+
+func (q *Queries) GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, getRuntimeUpgradeOperation, id)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const getRuntimeUpgradeOperationForDeployment = `-- name: GetRuntimeUpgradeOperationForDeployment :one
+SELECT id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path FROM runtime_upgrade_operations WHERE deployment_id=$1
+`
+
+func (q *Queries) GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, getRuntimeUpgradeOperationForDeployment, deploymentID)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const getRuntimeUpgradeVerification = `-- name: GetRuntimeUpgradeVerification :one
+SELECT v.operation_id, v.gateway_sessions, v.cutover_at, v.created_at, v.deadline_at, v.phase, v.reason, v.last_observation, v.next_attempt_at, v.lease_token, v.lease_until, v.finished_at, v.gateway_roster_revision FROM runtime_upgrade_verifications v JOIN runtime_upgrade_operations o ON o.id=v.operation_id
+WHERE v.operation_id=$1::uuid AND o.account_id=$2::uuid
+`
+
+type GetRuntimeUpgradeVerificationParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, getRuntimeUpgradeVerification, arg.OperationID, arg.AccountID)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.GatewayRosterRevision,
+	)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
@@ -16241,6 +17052,29 @@ func (q *Queries) HasProjectEnvironmentClonePostgresVerificationAttempts(ctx con
 	return exists, err
 }
 
+const heartbeatRuntimeUpgradeGateway = `-- name: HeartbeatRuntimeUpgradeGateway :execrows
+WITH heartbeat AS MATERIALIZED (SELECT clock_timestamp() AS seen_at)
+INSERT INTO runtime_upgrade_gateway_heartbeats(slot_id,gateway_session_id,roster_revision,seen_at,expires_at)
+SELECT $1::uuid,$2::uuid,r.revision,heartbeat.seen_at,heartbeat.seen_at+make_interval(secs=>$3::int)
+FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision CROSS JOIN heartbeat
+WHERE h.singleton AND r.gateway_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+ON CONFLICT (slot_id) DO UPDATE SET gateway_session_id=EXCLUDED.gateway_session_id,roster_revision=EXCLUDED.roster_revision,seen_at=EXCLUDED.seen_at,expires_at=EXCLUDED.expires_at
+`
+
+type HeartbeatRuntimeUpgradeGatewayParams struct {
+	SlotID           pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	LeaseSeconds     int32
+}
+
+func (q *Queries) HeartbeatRuntimeUpgradeGateway(ctx context.Context, db DBTX, arg HeartbeatRuntimeUpgradeGatewayParams) (int64, error) {
+	result, err := db.Exec(ctx, heartbeatRuntimeUpgradeGateway, arg.SlotID, arg.GatewaySessionID, arg.LeaseSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const holdProjectEnvironmentCloneConfiguration = `-- name: HoldProjectEnvironmentCloneConfiguration :one
 UPDATE project_environment_clone_configuration_guards g
 SET state='held',operation_id=$1::uuid,source_environment=$2::text,
@@ -16490,6 +17324,35 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertAppHealthHistory = `-- name: InsertAppHealthHistory :exec
+INSERT INTO app_health_history(id, app_id, account_id, observed_at, kind, encoded_bytes, entry)
+VALUES($1::text::uuid, $2::text::uuid, $3::text::uuid,
+ $4::timestamptz, $5::text, $6::integer, $7::jsonb)
+`
+
+type InsertAppHealthHistoryParams struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ObservedAt   pgtype.Timestamptz
+	Kind         string
+	EncodedBytes int32
+	Entry        []byte
+}
+
+func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg InsertAppHealthHistoryParams) error {
+	_, err := db.Exec(ctx, insertAppHealthHistory,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.ObservedAt,
+		arg.Kind,
+		arg.EncodedBytes,
+		arg.Entry,
 	)
 	return err
 }
@@ -17438,6 +18301,153 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDeploymentRuntimeUpgradeAcceptance = `-- name: InsertDeploymentRuntimeUpgradeAcceptance :one
+INSERT INTO deployment_runtime_upgrade_acceptances(deployment_id,target_release_id,rootfs_key,instance_id,node_id,wake_id,
+ profile,configuration_fingerprint,secret_fingerprint,qualification_report_sha256,started_at,ready_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT (deployment_id) DO NOTHING
+RETURNING deployment_id, target_release_id, rootfs_key, instance_id, node_id, wake_id, profile, configuration_fingerprint, secret_fingerprint, qualification_report_sha256, started_at, ready_at
+`
+
+type InsertDeploymentRuntimeUpgradeAcceptanceParams struct {
+	DeploymentID              pgtype.UUID
+	TargetReleaseID           string
+	RootfsKey                 string
+	InstanceID                pgtype.UUID
+	NodeID                    pgtype.UUID
+	WakeID                    pgtype.UUID
+	Profile                   string
+	ConfigurationFingerprint  string
+	SecretFingerprint         string
+	QualificationReportSha256 string
+	StartedAt                 pgtype.Timestamptz
+	ReadyAt                   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeAcceptance(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeAcceptanceParams) (DeploymentRuntimeUpgradeAcceptance, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeAcceptance,
+		arg.DeploymentID,
+		arg.TargetReleaseID,
+		arg.RootfsKey,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.WakeID,
+		arg.Profile,
+		arg.ConfigurationFingerprint,
+		arg.SecretFingerprint,
+		arg.QualificationReportSha256,
+		arg.StartedAt,
+		arg.ReadyAt,
+	)
+	var i DeploymentRuntimeUpgradeAcceptance
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.TargetReleaseID,
+		&i.RootfsKey,
+		&i.InstanceID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.Profile,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.QualificationReportSha256,
+		&i.StartedAt,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertDeploymentRuntimeUpgradeBaseline = `-- name: InsertDeploymentRuntimeUpgradeBaseline :one
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT(deployment_id) DO UPDATE SET deployment_id=deployment_runtime_upgrade_baselines.deployment_id
+WHERE deployment_runtime_upgrade_baselines.serving_deployment_id=EXCLUDED.serving_deployment_id
+ AND deployment_runtime_upgrade_baselines.serving_rootfs_key=EXCLUDED.serving_rootfs_key
+ AND deployment_runtime_upgrade_baselines.serving_runtime_release_id=EXCLUDED.serving_runtime_release_id
+ AND deployment_runtime_upgrade_baselines.target_release_id=EXCLUDED.target_release_id
+ AND deployment_runtime_upgrade_baselines.configuration_fingerprint=EXCLUDED.configuration_fingerprint
+ AND deployment_runtime_upgrade_baselines.secret_fingerprint=EXCLUDED.secret_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_fingerprint=EXCLUDED.input_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_secret_fingerprint=EXCLUDED.input_secret_fingerprint
+RETURNING deployment_id, serving_deployment_id, serving_rootfs_key, serving_runtime_release_id, target_release_id, configuration_fingerprint, secret_fingerprint, input_fingerprint, input_secret_fingerprint, captured_at
+`
+
+type InsertDeploymentRuntimeUpgradeBaselineParams struct {
+	DeploymentID             pgtype.UUID
+	ServingDeploymentID      pgtype.UUID
+	ServingRootfsKey         string
+	ServingRuntimeReleaseID  string
+	TargetReleaseID          string
+	ConfigurationFingerprint string
+	SecretFingerprint        string
+	InputFingerprint         string
+	InputSecretFingerprint   string
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeBaselineParams) (DeploymentRuntimeUpgradeBaseline, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeBaseline,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.ServingRootfsKey,
+		arg.ServingRuntimeReleaseID,
+		arg.TargetReleaseID,
+		arg.ConfigurationFingerprint,
+		arg.SecretFingerprint,
+		arg.InputFingerprint,
+		arg.InputSecretFingerprint,
+	)
+	var i DeploymentRuntimeUpgradeBaseline
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.ServingRootfsKey,
+		&i.ServingRuntimeReleaseID,
+		&i.TargetReleaseID,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.InputFingerprint,
+		&i.InputSecretFingerprint,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const insertDeploymentRuntimeUpgradeCutover = `-- name: InsertDeploymentRuntimeUpgradeCutover :one
+INSERT INTO deployment_runtime_upgrade_cutovers(deployment_id,serving_deployment_id,target_release_id,wake_id,qualification_report_sha256,cutover_at)
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING deployment_id, serving_deployment_id, target_release_id, wake_id, qualification_report_sha256, cutover_at
+`
+
+type InsertDeploymentRuntimeUpgradeCutoverParams struct {
+	DeploymentID              pgtype.UUID
+	ServingDeploymentID       pgtype.UUID
+	TargetReleaseID           string
+	WakeID                    pgtype.UUID
+	QualificationReportSha256 string
+	CutoverAt                 pgtype.Timestamptz
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeCutoverParams) (DeploymentRuntimeUpgradeCutover, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeCutover,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.TargetReleaseID,
+		arg.WakeID,
+		arg.QualificationReportSha256,
+		arg.CutoverAt,
+	)
+	var i DeploymentRuntimeUpgradeCutover
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.WakeID,
+		&i.QualificationReportSha256,
+		&i.CutoverAt,
+	)
+	return i, err
 }
 
 const insertEnvironmentDesiredRevision = `-- name: InsertEnvironmentDesiredRevision :one
@@ -20373,6 +21383,289 @@ func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg Ins
 		arg.Receipt,
 	)
 	return err
+}
+
+const insertRuntimeUpgradeExternalFenceAuthority = `-- name: InsertRuntimeUpgradeExternalFenceAuthority :exec
+INSERT INTO runtime_upgrade_external_fence_authorities(id,public_key) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeExternalFenceAuthorityParams struct {
+	ID        pgtype.UUID
+	PublicKey []byte
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceAuthorityParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceAuthority, arg.ID, arg.PublicKey)
+	return err
+}
+
+const insertRuntimeUpgradeExternalFenceIntent = `-- name: InsertRuntimeUpgradeExternalFenceIntent :exec
+INSERT INTO runtime_upgrade_external_fence_intents(id,withdrawal_id,authority_id,challenge,gateway_revision,public_revision,machine_id,boot_id,resource_id,scope_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeExternalFenceIntentParams struct {
+	ID              pgtype.UUID
+	WithdrawalID    pgtype.UUID
+	AuthorityID     pgtype.UUID
+	Challenge       pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	MachineID       string
+	BootID          pgtype.UUID
+	ResourceID      string
+	ScopeSha256     string
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceIntent(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceIntentParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceIntent,
+		arg.ID,
+		arg.WithdrawalID,
+		arg.AuthorityID,
+		arg.Challenge,
+		arg.GatewayRevision,
+		arg.PublicRevision,
+		arg.MachineID,
+		arg.BootID,
+		arg.ResourceID,
+		arg.ScopeSha256,
+	)
+	return err
+}
+
+const insertRuntimeUpgradeExternalFenceReceipt = `-- name: InsertRuntimeUpgradeExternalFenceReceipt :exec
+INSERT INTO runtime_upgrade_external_fence_receipts(withdrawal_id,intent_id,receipt_id,envelope,envelope_sha256,enforced_at,issued_at,observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
+`
+
+type InsertRuntimeUpgradeExternalFenceReceiptParams struct {
+	WithdrawalID   pgtype.UUID
+	IntentID       pgtype.UUID
+	ReceiptID      pgtype.UUID
+	Envelope       []byte
+	EnvelopeSha256 string
+	EnforcedAt     pgtype.Timestamptz
+	IssuedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRuntimeUpgradeExternalFenceReceipt(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeExternalFenceReceiptParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeExternalFenceReceipt,
+		arg.WithdrawalID,
+		arg.IntentID,
+		arg.ReceiptID,
+		arg.Envelope,
+		arg.EnvelopeSha256,
+		arg.EnforcedAt,
+		arg.IssuedAt,
+	)
+	return err
+}
+
+const insertRuntimeUpgradeGatewayRoster = `-- name: InsertRuntimeUpgradeGatewayRoster :one
+INSERT INTO runtime_upgrade_gateway_rosters(revision,slot_ids,gateway_sessions) VALUES ($1,$2,$3) RETURNING revision, slot_ids, gateway_sessions, created_at
+`
+
+type InsertRuntimeUpgradeGatewayRosterParams struct {
+	Revision        pgtype.UUID
+	SlotIds         []pgtype.UUID
+	GatewaySessions []pgtype.UUID
+}
+
+func (q *Queries) InsertRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeGatewayRosterParams) (RuntimeUpgradeGatewayRoster, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradeGatewayRoster, arg.Revision, arg.SlotIds, arg.GatewaySessions)
+	var i RuntimeUpgradeGatewayRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.SlotIds,
+		&i.GatewaySessions,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRuntimeUpgradeNativePublicStartup = `-- name: InsertRuntimeUpgradeNativePublicStartup :exec
+INSERT INTO runtime_upgrade_native_public_startups (
+ public_session_id,slot_id,gateway_revision,public_revision,config_sha256,machine_id,boot_id,pid,start_ticks,pid_namespace,net_namespace,
+ review,review_sha256,envelope,envelope_sha256,observed_at,recorded_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (public_session_id) DO NOTHING
+`
+
+type InsertRuntimeUpgradeNativePublicStartupParams struct {
+	PublicSessionID pgtype.UUID
+	SlotID          pgtype.UUID
+	GatewayRevision pgtype.UUID
+	PublicRevision  pgtype.UUID
+	ConfigSha256    string
+	MachineID       string
+	BootID          pgtype.UUID
+	Pid             int32
+	StartTicks      string
+	PidNamespace    string
+	NetNamespace    string
+	Review          []byte
+	ReviewSha256    string
+	Envelope        []byte
+	EnvelopeSha256  string
+	ObservedAt      pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeNativePublicStartupParams) error {
+	_, err := db.Exec(ctx, insertRuntimeUpgradeNativePublicStartup,
+		arg.PublicSessionID,
+		arg.SlotID,
+		arg.GatewayRevision,
+		arg.PublicRevision,
+		arg.ConfigSha256,
+		arg.MachineID,
+		arg.BootID,
+		arg.Pid,
+		arg.StartTicks,
+		arg.PidNamespace,
+		arg.NetNamespace,
+		arg.Review,
+		arg.ReviewSha256,
+		arg.Envelope,
+		arg.EnvelopeSha256,
+		arg.ObservedAt,
+		arg.RecordedAt,
+	)
+	return err
+}
+
+const insertRuntimeUpgradeOperation = `-- name: InsertRuntimeUpgradeOperation :one
+INSERT INTO runtime_upgrade_operations(id,account_id,app_id,deployment_id,serving_deployment_id,target_release_id,source_sha256,qualification_report_sha256,phase,source_path,deadline_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text,$10::text,clock_timestamp()+make_interval(secs=>$11::int)) RETURNING id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path
+`
+
+type InsertRuntimeUpgradeOperationParams struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	DeploymentID              pgtype.UUID
+	ServingDeploymentID       pgtype.UUID
+	TargetReleaseID           string
+	SourceSha256              string
+	QualificationReportSha256 string
+	Phase                     string
+	SourcePath                string
+	DeadlineSeconds           int32
+}
+
+// Private apid runtime upgrade executor (ADR-690).
+func (q *Queries) InsertRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradeOperation,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.TargetReleaseID,
+		arg.SourceSha256,
+		arg.QualificationReportSha256,
+		arg.Phase,
+		arg.SourcePath,
+		arg.DeadlineSeconds,
+	)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const insertRuntimeUpgradePublicEdgeRoster = `-- name: InsertRuntimeUpgradePublicEdgeRoster :one
+INSERT INTO runtime_upgrade_public_edge_rosters(revision,gateway_roster_revision,topology_sha256,slot_ids,public_sessions,config_sha256s) VALUES ($1,$2,$3,$4,$5,$6) RETURNING revision, gateway_roster_revision, topology_sha256, slot_ids, public_sessions, config_sha256s, created_at
+`
+
+type InsertRuntimeUpgradePublicEdgeRosterParams struct {
+	Revision              pgtype.UUID
+	GatewayRosterRevision pgtype.UUID
+	TopologySha256        string
+	SlotIds               []pgtype.UUID
+	PublicSessions        []pgtype.UUID
+	ConfigSha256s         []string
+}
+
+func (q *Queries) InsertRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradePublicEdgeRosterParams) (RuntimeUpgradePublicEdgeRoster, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradePublicEdgeRoster,
+		arg.Revision,
+		arg.GatewayRosterRevision,
+		arg.TopologySha256,
+		arg.SlotIds,
+		arg.PublicSessions,
+		arg.ConfigSha256s,
+	)
+	var i RuntimeUpgradePublicEdgeRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.GatewayRosterRevision,
+		&i.TopologySha256,
+		&i.SlotIds,
+		&i.PublicSessions,
+		&i.ConfigSha256s,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRuntimeUpgradeVerification = `-- name: InsertRuntimeUpgradeVerification :one
+INSERT INTO runtime_upgrade_verifications(operation_id,gateway_sessions,cutover_at,deadline_at,gateway_roster_revision)
+VALUES ($1,$2,$3,$3::timestamptz+make_interval(secs=>$4::int),$5) RETURNING operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at, gateway_roster_revision
+`
+
+type InsertRuntimeUpgradeVerificationParams struct {
+	OperationID           pgtype.UUID
+	GatewaySessions       []pgtype.UUID
+	CutoverAt             pgtype.Timestamptz
+	DeadlineSeconds       int32
+	GatewayRosterRevision pgtype.UUID
+}
+
+// Private immutable reviewed participants and durable verification (ADR-694).
+func (q *Queries) InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, insertRuntimeUpgradeVerification,
+		arg.OperationID,
+		arg.GatewaySessions,
+		arg.CutoverAt,
+		arg.DeadlineSeconds,
+		arg.GatewayRosterRevision,
+	)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.GatewayRosterRevision,
+	)
+	return i, err
 }
 
 const insertScheduledWorkflowRun = `-- name: InsertScheduledWorkflowRun :one
@@ -23825,6 +25118,50 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppHealthHistory = `-- name: ListAppHealthHistory :many
+SELECT entry FROM app_health_history
+WHERE app_id = $1::text::uuid AND account_id = $2::text::uuid
+AND observed_at >= $3::timestamptz
+AND ($4::text = '' OR (observed_at, id) < ($5::timestamptz, NULLIF($4::text, '')::uuid))
+ORDER BY observed_at DESC, id DESC LIMIT $6::integer
+`
+
+type ListAppHealthHistoryParams struct {
+	AppID     string
+	AccountID string
+	OldestAt  pgtype.Timestamptz
+	BeforeID  string
+	BeforeAt  pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listAppHealthHistory,
+		arg.AppID,
+		arg.AccountID,
+		arg.OldestAt,
+		arg.BeforeID,
+		arg.BeforeAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppPendingRestarts = `-- name: ListAppPendingRestarts :many
 WITH latest AS (
  SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
@@ -27108,7 +28445,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -27222,6 +28559,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.GithubInstallationID,
 			&i.EnvironmentWorkloadRuntime,
 			&i.ServingEndedAt,
+			&i.RuntimeUpgradeRoutingToken,
 		); err != nil {
 			return nil, err
 		}
@@ -29817,6 +31155,111 @@ func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRuntimeReleases = `-- name: ListRuntimeReleases :many
+SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
+`
+
+type ListRuntimeReleasesParams struct {
+	Runtime      string
+	Architecture string
+	Limit        int32
+}
+
+func (q *Queries) ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error) {
+	rows, err := db.Query(ctx, listRuntimeReleases, arg.Runtime, arg.Architecture, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeRelease{}
+	for rows.Next() {
+		var i RuntimeRelease
+		if err := rows.Scan(
+			&i.ID,
+			&i.Runtime,
+			&i.Architecture,
+			&i.SourceRef,
+			&i.GuestInitSha256,
+			&i.LayoutVersion,
+			&i.BaseSha256,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRuntimeUpgradeGatewayDrainRepairApps = `-- name: ListRuntimeUpgradeGatewayDrainRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs=>$1::integer)
+AND d.app_id::text>$2::text AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT $3::integer
+`
+
+type ListRuntimeUpgradeGatewayDrainRepairAppsParams struct {
+	MaxAgeSeconds int32
+	AfterAppID    string
+	PageLimit     int32
+}
+
+func (q *Queries) ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listRuntimeUpgradeGatewayDrainRepairApps, arg.MaxAgeSeconds, arg.AfterAppID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var d_app_id string
+		if err := rows.Scan(&d_app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRuntimeUpgradeGatewayRepairApps = `-- name: ListRuntimeUpgradeGatewayRepairApps :many
+SELECT DISTINCT d.app_id::text FROM deployment_runtime_upgrade_cutovers c JOIN deployments d ON d.id=c.deployment_id
+WHERE c.cutover_at>=clock_timestamp()-make_interval(secs => $1::integer)
+AND d.app_id::text>$2::text AND d.status='live' AND d.traffic_percent=100 AND d.deleted_at IS NULL
+ORDER BY d.app_id::text LIMIT $3::integer
+`
+
+type ListRuntimeUpgradeGatewayRepairAppsParams struct {
+	MaxAgeSeconds int32
+	AfterAppID    string
+	PageLimit     int32
+}
+
+func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listRuntimeUpgradeGatewayRepairApps, arg.MaxAgeSeconds, arg.AfterAppID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var d_app_id string
+		if err := rows.Scan(&d_app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
 LEFT JOIN service_recovery r ON r.app_id = a.id
@@ -30740,6 +32183,50 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 	return i, err
 }
 
+const lockAppHealthCollection = `-- name: LockAppHealthCollection :one
+SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h
+JOIN apps a ON a.id = h.app_id AND a.account_id = h.account_id
+WHERE h.app_id = $1::text::uuid AND h.account_id = $2::text::uuid
+AND h.lease_token = $3::text AND h.lease_until > $4::timestamptz
+AND h.lease_started_at = $5::timestamptz
+AND a.status <> 'deleted' AND a.deleted_at IS NULL
+AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+FOR UPDATE OF h
+`
+
+type LockAppHealthCollectionParams struct {
+	AppID      string
+	AccountID  string
+	Token      string
+	CheckedNow pgtype.Timestamptz
+	StartedAt  pgtype.Timestamptz
+}
+
+type LockAppHealthCollectionRow struct {
+	Assessment        []byte
+	AssessmentKey     pgtype.Text
+	CheckedAt         pgtype.Timestamptz
+	NotificationState []byte
+}
+
+func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error) {
+	row := db.QueryRow(ctx, lockAppHealthCollection,
+		arg.AppID,
+		arg.AccountID,
+		arg.Token,
+		arg.CheckedNow,
+		arg.StartedAt,
+	)
+	var i LockAppHealthCollectionRow
+	err := row.Scan(
+		&i.Assessment,
+		&i.AssessmentKey,
+		&i.CheckedAt,
+		&i.NotificationState,
+	)
+	return i, err
+}
+
 const lockAppSecretRuntimeProcess = `-- name: LockAppSecretRuntimeProcess :one
 SELECT p.generation, p.active, p.started_at
 FROM app_secret_runtime_processes p JOIN apps a ON a.id = p.app_id
@@ -31328,6 +32815,18 @@ func (q *Queries) LockDeploymentHostingVerification(ctx context.Context, db DBTX
 	var i LockDeploymentHostingVerificationRow
 	err := row.Scan(&i.Status, &i.StageState)
 	return i, err
+}
+
+const lockDeploymentTrafficApp = `-- name: LockDeploymentTrafficApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1 AND a.status<>'deleted' FOR UPDATE OF a
+`
+
+func (q *Queries) LockDeploymentTrafficApp(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockDeploymentTrafficApp, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one
@@ -33834,6 +35333,34 @@ func (q *Queries) LockRuntimeConfigWorkloadSpec(ctx context.Context, db DBTX, de
 	return items, nil
 }
 
+const lockRuntimeReleaseQualification = `-- name: LockRuntimeReleaseQualification :one
+SELECT release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256 FROM runtime_release_qualifications WHERE release_id=$1 FOR SHARE
+`
+
+func (q *Queries) LockRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, lockRuntimeReleaseQualification, releaseID)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
 const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
 FOR SHARE
@@ -34026,6 +35553,334 @@ func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRuntimeUpgradeAcceptanceServing = `-- name: LockRuntimeUpgradeAcceptanceServing :one
+SELECT d.id FROM deployments d
+JOIN deployment_runtime_upgrade_baselines b ON b.serving_deployment_id=d.id
+WHERE b.deployment_id=$1 FOR SHARE OF d
+`
+
+func (q *Queries) LockRuntimeUpgradeAcceptanceServing(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeAcceptanceServing, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeUpgradeBaselineCandidate = `-- name: LockRuntimeUpgradeBaselineCandidate :one
+SELECT d.id FROM deployments d
+WHERE d.id=$1::uuid AND d.status='pending'
+ AND d.traffic_percent=0 AND d.traffic_percent_explicit
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+FOR UPDATE OF d
+`
+
+func (q *Queries) LockRuntimeUpgradeBaselineCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeBaselineCandidate, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeUpgradeCancelApp = `-- name: LockRuntimeUpgradeCancelApp :one
+SELECT id FROM apps WHERE id=$1::uuid AND account_id=$2::uuid FOR UPDATE
+`
+
+type LockRuntimeUpgradeCancelAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockRuntimeUpgradeCancelApp(ctx context.Context, db DBTX, arg LockRuntimeUpgradeCancelAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeCancelApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeUpgradeCutoverDeployments = `-- name: LockRuntimeUpgradeCutoverDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeCutoverDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeUpgradeCutoverDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeUpgradeDrainDeployments = `-- name: LockRuntimeUpgradeDrainDeployments :many
+SELECT id FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2 FOR SHARE
+`
+
+type LockRuntimeUpgradeDrainDeploymentsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+func (q *Queries) LockRuntimeUpgradeDrainDeployments(ctx context.Context, db DBTX, arg LockRuntimeUpgradeDrainDeploymentsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeUpgradeDrainDeployments, arg.AppID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeUpgradeExternalFenceAuthority = `-- name: LockRuntimeUpgradeExternalFenceAuthority :one
+SELECT id, public_key, created_at, revoked_at FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeExternalFenceAuthority, id)
+	var i RuntimeUpgradeExternalFenceAuthority
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradeExternalFenceWithdrawal = `-- name: LockRuntimeUpgradeExternalFenceWithdrawal :one
+SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeExternalFenceWithdrawal(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradePublicEdgeWithdrawal, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeExternalFenceWithdrawal, id)
+	var i RuntimeUpgradePublicEdgeWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.SlotID,
+		&i.PublicSessionID,
+		&i.ConfigSha256,
+		&i.RosterRevision,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradeGatewayRosterHead = `-- name: LockRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeGatewayRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const lockRuntimeUpgradeOperation = `-- name: LockRuntimeUpgradeOperation :one
+SELECT id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path FROM runtime_upgrade_operations WHERE id=$1 AND lease_token=$2 AND lease_until>clock_timestamp()
+ AND phase IN ('reserved','prepared','waiting') FOR UPDATE
+`
+
+type LockRuntimeUpgradeOperationParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+func (q *Queries) LockRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg LockRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeOperation, arg.ID, arg.LeaseToken)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradeOperationControl = `-- name: LockRuntimeUpgradeOperationControl :one
+SELECT id, account_id, app_id, deployment_id, serving_deployment_id, target_release_id, source_sha256, qualification_report_sha256, phase, blocker, wake_id, created_at, deadline_at, next_attempt_at, lease_token, lease_until, finished_at, source_path FROM runtime_upgrade_operations WHERE id=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockRuntimeUpgradeOperationControlParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// Private reservation and controls (ADR-692).
+func (q *Queries) LockRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg LockRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeOperationControl, arg.ID, arg.AccountID)
+	var i RuntimeUpgradeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.TargetReleaseID,
+		&i.SourceSha256,
+		&i.QualificationReportSha256,
+		&i.Phase,
+		&i.Blocker,
+		&i.WakeID,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.SourcePath,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradePublicEdgeActivityRow = `-- name: LockRuntimeUpgradePublicEdgeActivityRow :many
+SELECT slot_id FROM runtime_upgrade_public_edge_activity WHERE slot_id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeActivityRow(ctx context.Context, db DBTX, slotID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeUpgradePublicEdgeActivityRow, slotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var slot_id pgtype.UUID
+		if err := rows.Scan(&slot_id); err != nil {
+			return nil, err
+		}
+		items = append(items, slot_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeUpgradePublicEdgeActivityTable = `-- name: LockRuntimeUpgradePublicEdgeActivityTable :exec
+LOCK TABLE runtime_upgrade_public_edge_activity IN ROW EXCLUSIVE MODE
+`
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeActivityTable(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockRuntimeUpgradePublicEdgeActivityTable)
+	return err
+}
+
+const lockRuntimeUpgradePublicEdgeRosterHead = `-- name: LockRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR UPDATE
+`
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradePublicEdgeRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const lockRuntimeUpgradePublicEdgeWithdrawal = `-- name: LockRuntimeUpgradePublicEdgeWithdrawal :one
+SELECT id, slot_id, public_session_id, config_sha256, roster_revision, created_at FROM runtime_upgrade_public_edge_withdrawals WHERE slot_id=$1 AND public_session_id=$2 AND config_sha256=$3 FOR UPDATE
+`
+
+type LockRuntimeUpgradePublicEdgeWithdrawalParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+}
+
+func (q *Queries) LockRuntimeUpgradePublicEdgeWithdrawal(ctx context.Context, db DBTX, arg LockRuntimeUpgradePublicEdgeWithdrawalParams) (RuntimeUpgradePublicEdgeWithdrawal, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradePublicEdgeWithdrawal, arg.SlotID, arg.PublicSessionID, arg.ConfigSha256)
+	var i RuntimeUpgradePublicEdgeWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.SlotID,
+		&i.PublicSessionID,
+		&i.ConfigSha256,
+		&i.RosterRevision,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
+`
+
+// Runtime update preparation: lock in the app -> deployment order used by
+// queue admission, so pinning cannot race a claimed or queued build (ADR-737).
+func (q *Queries) LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeTargetApp, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeUpgradeVerification = `-- name: LockRuntimeUpgradeVerification :one
+SELECT operation_id, gateway_sessions, cutover_at, created_at, deadline_at, phase, reason, last_observation, next_attempt_at, lease_token, lease_until, finished_at, gateway_roster_revision FROM runtime_upgrade_verifications WHERE operation_id=$1 AND lease_token=$2 AND lease_until>clock_timestamp() AND phase='pending' FOR UPDATE
+`
+
+type LockRuntimeUpgradeVerificationParams struct {
+	OperationID pgtype.UUID
+	LeaseToken  pgtype.UUID
+}
+
+func (q *Queries) LockRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg LockRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeVerification, arg.OperationID, arg.LeaseToken)
+	var i RuntimeUpgradeVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.GatewaySessions,
+		&i.CutoverAt,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.Phase,
+		&i.Reason,
+		&i.LastObservation,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.FinishedAt,
+		&i.GatewayRosterRevision,
+	)
+	return i, err
 }
 
 const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
@@ -35908,6 +37763,64 @@ SELECT pg_notify('deployment_changed', $1::text)
 
 func (q *Queries) NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error {
 	_, err := db.Exec(ctx, notifyRouteHealthRecovery, payload)
+	return err
+}
+
+const notifyRuntimeUpgradeCancellation = `-- name: NotifyRuntimeUpgradeCancellation :exec
+SELECT pg_notify('build_changed',json_build_object('build_id',$1::text,'deployment_id',$2::text,
+ 'status','cancelled','reason','user','cascade',true)::text)
+`
+
+type NotifyRuntimeUpgradeCancellationParams struct {
+	BuildID      string
+	DeploymentID string
+}
+
+func (q *Queries) NotifyRuntimeUpgradeCancellation(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCancellationParams) error {
+	_, err := db.Exec(ctx, notifyRuntimeUpgradeCancellation, arg.BuildID, arg.DeploymentID)
+	return err
+}
+
+const notifyRuntimeUpgradeCandidateCancelled = `-- name: NotifyRuntimeUpgradeCandidateCancelled :exec
+SELECT pg_notify('deployment_changed',json_build_object('kind','cancel','app_id',$1::text,'deployment_id',$2::text)::text)
+`
+
+type NotifyRuntimeUpgradeCandidateCancelledParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) NotifyRuntimeUpgradeCandidateCancelled(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCandidateCancelledParams) error {
+	_, err := db.Exec(ctx, notifyRuntimeUpgradeCandidateCancelled, arg.AppID, arg.DeploymentID)
+	return err
+}
+
+const notifyRuntimeUpgradeCutover = `-- name: NotifyRuntimeUpgradeCutover :exec
+SELECT pg_notify('deployment_changed',json_build_object('kind','traffic','app_id',$1::text,
+ 'deployment_id',$2::text,'traffic_percent',100)::text)
+`
+
+type NotifyRuntimeUpgradeCutoverParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) NotifyRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeCutoverParams) error {
+	_, err := db.Exec(ctx, notifyRuntimeUpgradeCutover, arg.AppID, arg.DeploymentID)
+	return err
+}
+
+const notifyRuntimeUpgradeOperationBuild = `-- name: NotifyRuntimeUpgradeOperationBuild :exec
+SELECT pg_notify('build_queued',json_build_object('build',$1::text,'deployment',d.id,'app',d.app_id,'kind',d.kind,'source',d.kind)::text) FROM deployments d WHERE d.id=$2::uuid
+`
+
+type NotifyRuntimeUpgradeOperationBuildParams struct {
+	BuildID      string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) NotifyRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX, arg NotifyRuntimeUpgradeOperationBuildParams) error {
+	_, err := db.Exec(ctx, notifyRuntimeUpgradeOperationBuild, arg.BuildID, arg.DeploymentID)
 	return err
 }
 
@@ -44413,6 +46326,45 @@ func (q *Queries) PinCustomerOperationReleaseMembers(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const pinDeploymentRuntimeUpgradeTarget = `-- name: PinDeploymentRuntimeUpgradeTarget :one
+WITH candidate AS (
+ SELECT d.id, d.source_sha256, COALESCE(d.source_root,'') AS source_root, d.source_bytes, d.kind, COALESCE(d.handler,'') AS handler
+ FROM deployments d JOIN apps a ON a.id=d.app_id JOIN runtime_releases r ON r.id=$1::text
+ WHERE d.id=$2::uuid AND d.status='pending' AND a.type='function' AND a.runtime=r.runtime
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND a.status='active' AND COALESCE(a.manifest->>'build_dockerfile','')='' AND d.environment_workload_runtime IS NULL
+ AND d.kind IN ('tarball','github','preview') AND d.source_sha256=$3::text AND d.source_bytes>0
+ AND octet_length(COALESCE(d.source_root,''))<=$4::integer
+ AND octet_length(COALESCE(d.handler,''))<=$4::integer
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+ FOR UPDATE OF d
+)
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT id,$1::text,source_sha256,source_root,source_bytes,kind,handler FROM candidate
+ON CONFLICT (deployment_id) DO UPDATE SET release_id=deployment_runtime_upgrade_targets.release_id
+WHERE deployment_runtime_upgrade_targets.release_id=EXCLUDED.release_id AND deployment_runtime_upgrade_targets.source_sha256=EXCLUDED.source_sha256
+RETURNING release_id
+`
+
+type PinDeploymentRuntimeUpgradeTargetParams struct {
+	ReleaseID        string
+	DeploymentID     pgtype.UUID
+	SourceSha256     string
+	SourceFieldLimit int32
+}
+
+func (q *Queries) PinDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg PinDeploymentRuntimeUpgradeTargetParams) (string, error) {
+	row := db.QueryRow(ctx, pinDeploymentRuntimeUpgradeTarget,
+		arg.ReleaseID,
+		arg.DeploymentID,
+		arg.SourceSha256,
+		arg.SourceFieldLimit,
+	)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
+}
+
 const pinManagedPostgresCutoverDatabases = `-- name: PinManagedPostgresCutoverDatabases :execrows
 UPDATE managed_postgres_databases SET cutover_id=$1::text::uuid
 WHERE id::text=ANY($2::text[]) AND cutover_id IS NULL AND state='ready'
@@ -44840,6 +46792,42 @@ func (q *Queries) PruneAccountCustomerOperationStreams(ctx context.Context, db D
 	return err
 }
 
+const pruneAppHealthHistory = `-- name: PruneAppHealthHistory :exec
+DELETE FROM app_health_history WHERE app_id = $1::text::uuid AND id IN (
+ SELECT id FROM (
+ SELECT id, observed_at, row_number() OVER (ORDER BY observed_at DESC, id DESC) AS n,
+ sum(encoded_bytes) OVER (ORDER BY observed_at DESC, id DESC) AS total_bytes
+ FROM app_health_history WHERE app_id = $1::text::uuid
+ ) retained WHERE n > $2::integer OR total_bytes > $3::integer OR observed_at < $4::timestamptz
+)
+`
+
+type PruneAppHealthHistoryParams struct {
+	AppID      string
+	MaxEntries int32
+	MaxBytes   int32
+	OldestAt   pgtype.Timestamptz
+}
+
+func (q *Queries) PruneAppHealthHistory(ctx context.Context, db DBTX, arg PruneAppHealthHistoryParams) error {
+	_, err := db.Exec(ctx, pruneAppHealthHistory,
+		arg.AppID,
+		arg.MaxEntries,
+		arg.MaxBytes,
+		arg.OldestAt,
+	)
+	return err
+}
+
+const pruneAppRuntimeUpgradeGatewayDrains = `-- name: PruneAppRuntimeUpgradeGatewayDrains :exec
+DELETE FROM runtime_upgrade_gateway_drains WHERE app_id=$1 AND expires_at<=statement_timestamp()
+`
+
+func (q *Queries) PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, pruneAppRuntimeUpgradeGatewayDrains, appID)
+	return err
+}
+
 const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
 WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
  WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
@@ -44972,6 +46960,46 @@ func (q *Queries) PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const pruneExpiredAppHealthHistory = `-- name: PruneExpiredAppHealthHistory :execrows
+DELETE FROM app_health_history WHERE id IN (
+ SELECT id FROM app_health_history WHERE observed_at < $1::timestamptz
+ ORDER BY observed_at, id LIMIT $2::integer
+)
+`
+
+type PruneExpiredAppHealthHistoryParams struct {
+	OldestAt   pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneExpiredAppHealthHistory, arg.OldestAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneExpiredRuntimeUpgradeGatewayReceipts = `-- name: PruneExpiredRuntimeUpgradeGatewayReceipts :execrows
+DELETE FROM runtime_upgrade_gateway_receipts WHERE (app_id,gateway_session_id) IN (
+ SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_receipts
+ WHERE installed_at<clock_timestamp()-make_interval(secs => $1::integer)
+ ORDER BY installed_at LIMIT $2::integer)
+`
+
+type PruneExpiredRuntimeUpgradeGatewayReceiptsParams struct {
+	MaxAgeSeconds int32
+	PageLimit     int32
+}
+
+func (q *Queries) PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneExpiredRuntimeUpgradeGatewayReceipts, arg.MaxAgeSeconds, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
 DELETE FROM route_check_history WHERE id IN (
     SELECT id FROM (
@@ -45031,6 +47059,34 @@ type PruneRouteMonitorIncidentsParams struct {
 
 func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error {
 	_, err := db.Exec(ctx, pruneRouteMonitorIncidents, arg.AppID, arg.MaxEntries, arg.MaxBytes)
+	return err
+}
+
+const pruneRuntimeUpgradeGatewayDrains = `-- name: PruneRuntimeUpgradeGatewayDrains :execrows
+DELETE FROM runtime_upgrade_gateway_drains WHERE (app_id,gateway_session_id) IN
+ (SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_drains WHERE expires_at<=statement_timestamp()
+ ORDER BY expires_at LIMIT $1)
+`
+
+func (q *Queries) PruneRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, limit int32) (int64, error) {
+	result, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayDrains, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneRuntimeUpgradeGatewayReceipts = `-- name: PruneRuntimeUpgradeGatewayReceipts :exec
+DELETE FROM runtime_upgrade_gateway_receipts WHERE app_id=$1 AND installed_at < clock_timestamp()-make_interval(secs => $2::integer)
+`
+
+type PruneRuntimeUpgradeGatewayReceiptsParams struct {
+	AppID         pgtype.UUID
+	MaxAgeSeconds int32
+}
+
+func (q *Queries) PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error {
+	_, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayReceipts, arg.AppID, arg.MaxAgeSeconds)
 	return err
 }
 
@@ -45374,6 +47430,99 @@ func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg 
 		&i.RequestCount,
 	)
 	return i, err
+}
+
+const publishRuntimeRelease = `-- name: PublishRuntimeRelease :one
+INSERT INTO runtime_releases (id,runtime,architecture,source_ref,guest_init_sha256,layout_version,base_sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (runtime,architecture,source_ref,guest_init_sha256,layout_version)
+DO UPDATE SET id=runtime_releases.id RETURNING id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at
+`
+
+type PublishRuntimeReleaseParams struct {
+	ID              string
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+	BaseSha256      string
+}
+
+func (q *Queries) PublishRuntimeRelease(ctx context.Context, db DBTX, arg PublishRuntimeReleaseParams) (RuntimeRelease, error) {
+	row := db.QueryRow(ctx, publishRuntimeRelease,
+		arg.ID,
+		arg.Runtime,
+		arg.Architecture,
+		arg.SourceRef,
+		arg.GuestInitSha256,
+		arg.LayoutVersion,
+		arg.BaseSha256,
+	)
+	var i RuntimeRelease
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const publishRuntimeUpgradeGatewayRoster = `-- name: PublishRuntimeUpgradeGatewayRoster :execrows
+UPDATE runtime_upgrade_gateway_roster_head SET revision=$1::uuid
+WHERE singleton AND revision IS NOT DISTINCT FROM $2::uuid
+`
+
+type PublishRuntimeUpgradeGatewayRosterParams struct {
+	Revision         pgtype.UUID
+	ExpectedRevision pgtype.UUID
+}
+
+func (q *Queries) PublishRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradeGatewayRosterParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeUpgradeGatewayRoster, arg.Revision, arg.ExpectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const publishRuntimeUpgradeOperationBuild = `-- name: PublishRuntimeUpgradeOperationBuild :execrows
+UPDATE deployments SET status='building',build_id=$1::uuid WHERE id=$2::uuid AND status='pending'
+`
+
+type PublishRuntimeUpgradeOperationBuildParams struct {
+	BuildID      pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) PublishRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX, arg PublishRuntimeUpgradeOperationBuildParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeUpgradeOperationBuild, arg.BuildID, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const publishRuntimeUpgradePublicEdgeRoster = `-- name: PublishRuntimeUpgradePublicEdgeRoster :execrows
+UPDATE runtime_upgrade_public_edge_roster_head SET revision=$1::uuid WHERE singleton AND revision IS NOT DISTINCT FROM $2::uuid
+`
+
+type PublishRuntimeUpgradePublicEdgeRosterParams struct {
+	Revision         pgtype.UUID
+	ExpectedRevision pgtype.UUID
+}
+
+func (q *Queries) PublishRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradePublicEdgeRosterParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeUpgradePublicEdgeRoster, arg.Revision, arg.ExpectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeAccountManagedPostgresCreationReceipts = `-- name: PurgeAccountManagedPostgresCreationReceipts :exec
@@ -46823,6 +48972,25 @@ func (q *Queries) QueueRetryDeliveryClaims(ctx context.Context, db DBTX, arg Que
 	return err
 }
 
+const queueRuntimeUpgradeOperationBuild = `-- name: QueueRuntimeUpgradeOperationBuild :one
+INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
+SELECT $1::uuid,d.id,d.kind,d.source_bytes,'queued',d.log_path FROM deployments d
+WHERE d.id=$2::uuid AND d.status='pending' AND d.traffic_percent=0 AND d.traffic_percent_explicit
+ AND NOT EXISTS(SELECT 1 FROM builds b WHERE b.deployment_id=d.id) RETURNING id
+`
+
+type QueueRuntimeUpgradeOperationBuildParams struct {
+	BuildID      pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) QueueRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX, arg QueueRuntimeUpgradeOperationBuildParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, queueRuntimeUpgradeOperationBuild, arg.BuildID, arg.DeploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const queueStateForBinding = `-- name: QueueStateForBinding :one
 select
   count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
@@ -47014,6 +49182,53 @@ func (q *Queries) ReadAppEnvironmentSecretReferenceSnapshot(ctx context.Context,
 		&i.SuppressedKeys,
 		&i.Count,
 	)
+	return i, err
+}
+
+const readAppHealthCollection = `-- name: ReadAppHealthCollection :one
+SELECT h.assessment FROM app_health_collection_state h JOIN apps a ON a.id = h.app_id
+WHERE h.app_id = $1::text::uuid AND a.account_id = $2::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadAppHealthCollectionParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadAppHealthCollection(ctx context.Context, db DBTX, arg ReadAppHealthCollectionParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readAppHealthCollection, arg.AppID, arg.AccountID)
+	var assessment []byte
+	err := row.Scan(&assessment)
+	return assessment, err
+}
+
+const readAppHealthHistoryCursor = `-- name: ReadAppHealthHistoryCursor :one
+SELECT observed_at, id::text FROM app_health_history
+WHERE id = $1::text::uuid AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+AND observed_at >= $4::timestamptz
+`
+
+type ReadAppHealthHistoryCursorParams struct {
+	ID        string
+	AppID     string
+	AccountID string
+	OldestAt  pgtype.Timestamptz
+}
+
+type ReadAppHealthHistoryCursorRow struct {
+	ObservedAt pgtype.Timestamptz
+	ID         string
+}
+
+func (q *Queries) ReadAppHealthHistoryCursor(ctx context.Context, db DBTX, arg ReadAppHealthHistoryCursorParams) (ReadAppHealthHistoryCursorRow, error) {
+	row := db.QueryRow(ctx, readAppHealthHistoryCursor,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.OldestAt,
+	)
+	var i ReadAppHealthHistoryCursorRow
+	err := row.Scan(&i.ObservedAt, &i.ID)
 	return i, err
 }
 
@@ -48271,6 +50486,37 @@ func (q *Queries) ReadManagedWorkflowStepForUpdate(ctx context.Context, db DBTX,
 	var i ReadManagedWorkflowStepForUpdateRow
 	err := row.Scan(&i.Status, &i.Attempt)
 	return i, err
+}
+
+const readPendingRuntimeUpgradePublicEdgeWithdrawals = `-- name: ReadPendingRuntimeUpgradePublicEdgeWithdrawals :many
+SELECT w.id, w.slot_id, w.public_session_id, w.config_sha256, w.roster_revision, w.created_at FROM runtime_upgrade_public_edge_withdrawals w WHERE NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id) AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id) ORDER BY w.id LIMIT $1
+`
+
+func (q *Queries) ReadPendingRuntimeUpgradePublicEdgeWithdrawals(ctx context.Context, db DBTX, limit int32) ([]RuntimeUpgradePublicEdgeWithdrawal, error) {
+	rows, err := db.Query(ctx, readPendingRuntimeUpgradePublicEdgeWithdrawals, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradePublicEdgeWithdrawal{}
+	for rows.Next() {
+		var i RuntimeUpgradePublicEdgeWithdrawal
+		if err := rows.Scan(
+			&i.ID,
+			&i.SlotID,
+			&i.PublicSessionID,
+			&i.ConfigSha256,
+			&i.RosterRevision,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProductionDeadLetterEvent = `-- name: ReadProductionDeadLetterEvent :one
@@ -51312,6 +53558,591 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const readRuntimeUpgradeBaselineDeployments = `-- name: ReadRuntimeUpgradeBaselineDeployments :many
+SELECT d.id::text AS id, d.app_id::text AS app_id, COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+ d.status,d.source_bytes,COALESCE(d.source_root,'')::text AS source_root,d.traffic_percent,d.traffic_percent_explicit,
+ d.min_instances,d.rollback_on_5xx,d.canary_total_steps,d.canary_preset,d.canary_stages,d.rollout_state,d.deleted_at,d.environment_workload_runtime,
+ (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
+FROM deployments d JOIN deployments candidate ON candidate.app_id=d.app_id
+WHERE candidate.id=$1::uuid
+ AND (d.id=candidate.id OR d.id=$2::uuid OR d.status='live')
+ORDER BY d.id
+`
+
+type ReadRuntimeUpgradeBaselineDeploymentsParams struct {
+	DeploymentID        pgtype.UUID
+	ServingDeploymentID pgtype.UUID
+}
+
+type ReadRuntimeUpgradeBaselineDeploymentsRow struct {
+	ID                         string
+	AppID                      string
+	Scope                      string
+	Status                     string
+	SourceBytes                pgtype.Int8
+	SourceRoot                 string
+	TrafficPercent             int32
+	TrafficPercentExplicit     bool
+	MinInstances               int32
+	RollbackOn5xx              bool
+	CanaryTotalSteps           int32
+	CanaryPreset               string
+	CanaryStages               []byte
+	RolloutState               string
+	DeletedAt                  pgtype.Timestamptz
+	EnvironmentWorkloadRuntime []byte
+	Artifact                   []byte
+}
+
+func (q *Queries) ReadRuntimeUpgradeBaselineDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeBaselineDeploymentsParams) ([]ReadRuntimeUpgradeBaselineDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeBaselineDeployments, arg.DeploymentID, arg.ServingDeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeBaselineDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeBaselineDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.SourceBytes,
+			&i.SourceRoot,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.MinInstances,
+			&i.RollbackOn5xx,
+			&i.CanaryTotalSteps,
+			&i.CanaryPreset,
+			&i.CanaryStages,
+			&i.RolloutState,
+			&i.DeletedAt,
+			&i.EnvironmentWorkloadRuntime,
+			&i.Artifact,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeCutoverOwner = `-- name: ReadRuntimeUpgradeCutoverOwner :one
+SELECT d.app_id::text AS app_id,a.account_id::text AS account_id
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1 AND d.deleted_at IS NULL AND a.status='active' AND a.deleted_at IS NULL
+`
+
+type ReadRuntimeUpgradeCutoverOwnerRow struct {
+	AppID     string
+	AccountID string
+}
+
+// ADR-689: private apid cutover, original environment -> app -> deployment order.
+func (q *Queries) ReadRuntimeUpgradeCutoverOwner(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeCutoverOwnerRow, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeCutoverOwner, id)
+	var i ReadRuntimeUpgradeCutoverOwnerRow
+	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
+}
+
+const readRuntimeUpgradeDrainClock = `-- name: ReadRuntimeUpgradeDrainClock :one
+SELECT clock_timestamp()::timestamptz AS checked_at
+`
+
+func (q *Queries) ReadRuntimeUpgradeDrainClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeDrainClock)
+	var checked_at pgtype.Timestamptz
+	err := row.Scan(&checked_at)
+	return checked_at, err
+}
+
+const readRuntimeUpgradeDrainDeployments = `-- name: ReadRuntimeUpgradeDrainDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at,runtime_upgrade_routing_token::text
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id LIMIT $2
+`
+
+type ReadRuntimeUpgradeDrainDeploymentsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+type ReadRuntimeUpgradeDrainDeploymentsRow struct {
+	ID                         string
+	AppID                      string
+	Scope                      string
+	Status                     string
+	TrafficPercent             int32
+	TrafficPercentExplicit     bool
+	DeletedAt                  pgtype.Timestamptz
+	RuntimeUpgradeRoutingToken string
+}
+
+// Private forwarding drain facts, ADR-697. Snapshot and receipt writes use SQLC.
+func (q *Queries) ReadRuntimeUpgradeDrainDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeDrainDeploymentsParams) ([]ReadRuntimeUpgradeDrainDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeDrainDeployments, arg.AppID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeDrainDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeDrainDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.DeletedAt,
+			&i.RuntimeUpgradeRoutingToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeEligibleFailureFallback = `-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
+SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.id<>$2::uuid
+ AND d.status='live' AND d.deleted_at IS NULL
+ AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+  OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
+   JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
+   WHERE c.deployment_id=d.id AND c.target_release_id=t.release_id AND c.target_release_id=a.target_release_id
+    AND c.wake_id=a.wake_id AND c.qualification_report_sha256=a.qualification_report_sha256 AND a.rootfs_key=d.rootfs_key))
+ORDER BY d.traffic_percent DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
+`
+
+type ReadRuntimeUpgradeEligibleFailureFallbackParams struct {
+	AppID    pgtype.UUID
+	FailedID pgtype.UUID
+}
+
+func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeEligibleFailureFallbackParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const readRuntimeUpgradeExternalFenceIntent = `-- name: ReadRuntimeUpgradeExternalFenceIntent :one
+SELECT id, withdrawal_id, authority_id, challenge, gateway_revision, public_revision, machine_id, boot_id, resource_id, scope_sha256, created_at FROM runtime_upgrade_external_fence_intents WHERE id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeExternalFenceIntent(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceIntent, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeExternalFenceIntent, id)
+	var i RuntimeUpgradeExternalFenceIntent
+	err := row.Scan(
+		&i.ID,
+		&i.WithdrawalID,
+		&i.AuthorityID,
+		&i.Challenge,
+		&i.GatewayRevision,
+		&i.PublicRevision,
+		&i.MachineID,
+		&i.BootID,
+		&i.ResourceID,
+		&i.ScopeSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradeExternalFenceReceipt = `-- name: ReadRuntimeUpgradeExternalFenceReceipt :one
+SELECT withdrawal_id, intent_id, receipt_id, envelope, envelope_sha256, enforced_at, issued_at, observed_at FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeExternalFenceReceipt(ctx context.Context, db DBTX, withdrawalID pgtype.UUID) (RuntimeUpgradeExternalFenceReceipt, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeExternalFenceReceipt, withdrawalID)
+	var i RuntimeUpgradeExternalFenceReceipt
+	err := row.Scan(
+		&i.WithdrawalID,
+		&i.IntentID,
+		&i.ReceiptID,
+		&i.Envelope,
+		&i.EnvelopeSha256,
+		&i.EnforcedAt,
+		&i.IssuedAt,
+		&i.ObservedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradeGatewayDeployments = `-- name: ReadRuntimeUpgradeGatewayDeployments :many
+SELECT id::text,app_id::text,scope,status,traffic_percent,traffic_percent_explicit,deleted_at
+FROM deployments WHERE app_id=$1 AND status='live' ORDER BY id
+`
+
+type ReadRuntimeUpgradeGatewayDeploymentsRow struct {
+	ID                     string
+	AppID                  string
+	Scope                  string
+	Status                 string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	DeletedAt              pgtype.Timestamptz
+}
+
+// adr: 693
+func (q *Queries) ReadRuntimeUpgradeGatewayDeployments(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ReadRuntimeUpgradeGatewayDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeGatewayDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeGatewayDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayDrains = `-- name: ReadRuntimeUpgradeGatewayDrains :many
+SELECT app_id, gateway_session_id, slot_id, operation_id, deployment_id, serving_deployment_id, gateway_roster_revision, routing_revision, fence_id, activity_version, active_forwards, cutover_at, observed_at, expires_at FROM runtime_upgrade_gateway_drains WHERE app_id=$1 ORDER BY gateway_session_id LIMIT $2
+`
+
+type ReadRuntimeUpgradeGatewayDrainsParams struct {
+	AppID pgtype.UUID
+	Limit int32
+}
+
+func (q *Queries) ReadRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeGatewayDrainsParams) ([]RuntimeUpgradeGatewayDrain, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayDrains, arg.AppID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayDrain{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayDrain
+		if err := rows.Scan(
+			&i.AppID,
+			&i.GatewaySessionID,
+			&i.SlotID,
+			&i.OperationID,
+			&i.DeploymentID,
+			&i.ServingDeploymentID,
+			&i.GatewayRosterRevision,
+			&i.RoutingRevision,
+			&i.FenceID,
+			&i.ActivityVersion,
+			&i.ActiveForwards,
+			&i.CutoverAt,
+			&i.ObservedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayHeartbeats = `-- name: ReadRuntimeUpgradeGatewayHeartbeats :many
+SELECT slot_id, gateway_session_id, roster_revision, seen_at, expires_at FROM runtime_upgrade_gateway_heartbeats WHERE roster_revision=$1 ORDER BY slot_id
+`
+
+func (q *Queries) ReadRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX, rosterRevision pgtype.UUID) ([]RuntimeUpgradeGatewayHeartbeat, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayHeartbeats, rosterRevision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayHeartbeat{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayHeartbeat
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.GatewaySessionID,
+			&i.RosterRevision,
+			&i.SeenAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayReceipts = `-- name: ReadRuntimeUpgradeGatewayReceipts :many
+SELECT app_id, gateway_session_id, deployment_id, cutover_at, installed_at FROM runtime_upgrade_gateway_receipts WHERE app_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]RuntimeUpgradeGatewayReceipt, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeGatewayReceipts, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradeGatewayReceipt{}
+	for rows.Next() {
+		var i RuntimeUpgradeGatewayReceipt
+		if err := rows.Scan(
+			&i.AppID,
+			&i.GatewaySessionID,
+			&i.DeploymentID,
+			&i.CutoverAt,
+			&i.InstalledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeGatewayRoster = `-- name: ReadRuntimeUpgradeGatewayRoster :one
+SELECT r.revision, r.slot_ids, r.gateway_sessions, r.created_at FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision WHERE h.singleton
+`
+
+// Private desired gateway roster (apid) and operational liveness (gatewayd), ADR-695.
+func (q *Queries) ReadRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX) (RuntimeUpgradeGatewayRoster, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeGatewayRoster)
+	var i RuntimeUpgradeGatewayRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.SlotIds,
+		&i.GatewaySessions,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradeNativePublicStartup = `-- name: ReadRuntimeUpgradeNativePublicStartup :one
+SELECT public_session_id, slot_id, gateway_revision, public_revision, config_sha256, machine_id, boot_id, pid, start_ticks, pid_namespace, net_namespace, review, review_sha256, envelope, envelope_sha256, observed_at, recorded_at FROM runtime_upgrade_native_public_startups WHERE public_session_id=$1
+`
+
+// Private immutable selected native startup provenance (ADR-711).
+func (q *Queries) ReadRuntimeUpgradeNativePublicStartup(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (RuntimeUpgradeNativePublicStartup, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeNativePublicStartup, publicSessionID)
+	var i RuntimeUpgradeNativePublicStartup
+	err := row.Scan(
+		&i.PublicSessionID,
+		&i.SlotID,
+		&i.GatewayRevision,
+		&i.PublicRevision,
+		&i.ConfigSha256,
+		&i.MachineID,
+		&i.BootID,
+		&i.Pid,
+		&i.StartTicks,
+		&i.PidNamespace,
+		&i.NetNamespace,
+		&i.Review,
+		&i.ReviewSha256,
+		&i.Envelope,
+		&i.EnvelopeSha256,
+		&i.ObservedAt,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradeOperationCandidate = `-- name: ReadRuntimeUpgradeOperationCandidate :one
+SELECT d.status,COALESCE(d.source_path,'')::text AS source_path,COALESCE(d.source_sha256,'')::text AS source_sha256,
+ COALESCE(d.rootfs_key,'')::text AS rootfs_key,COALESCE(d.rootfs_path,'')::text AS rootfs_path,d.image_digest,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,d.rollout_state,d.environment_workload_runtime,
+ COALESCE(d.build_id::text,'')::text AS build_id,
+ COALESCE((SELECT b.status FROM builds b WHERE b.id=d.build_id AND b.deployment_id=d.id),'')::text AS build_status, d.deleted_at,COALESCE(a.manifest->>'execution_mode','') IN ('job','service') AS unsupported_mode,
+ EXISTS(SELECT 1 FROM builds b WHERE b.deployment_id=d.id) AS has_build
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1
+`
+
+type ReadRuntimeUpgradeOperationCandidateRow struct {
+	Status                     string
+	SourcePath                 string
+	SourceSha256               string
+	RootfsKey                  string
+	RootfsPath                 string
+	ImageDigest                string
+	TrafficPercent             int32
+	TrafficPercentExplicit     bool
+	CanaryTotalSteps           int32
+	RolloutState               string
+	EnvironmentWorkloadRuntime []byte
+	BuildID                    string
+	BuildStatus                string
+	DeletedAt                  pgtype.Timestamptz
+	UnsupportedMode            bool
+	HasBuild                   bool
+}
+
+func (q *Queries) ReadRuntimeUpgradeOperationCandidate(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeOperationCandidateRow, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradeOperationCandidate, id)
+	var i ReadRuntimeUpgradeOperationCandidateRow
+	err := row.Scan(
+		&i.Status,
+		&i.SourcePath,
+		&i.SourceSha256,
+		&i.RootfsKey,
+		&i.RootfsPath,
+		&i.ImageDigest,
+		&i.TrafficPercent,
+		&i.TrafficPercentExplicit,
+		&i.CanaryTotalSteps,
+		&i.RolloutState,
+		&i.EnvironmentWorkloadRuntime,
+		&i.BuildID,
+		&i.BuildStatus,
+		&i.DeletedAt,
+		&i.UnsupportedMode,
+		&i.HasBuild,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradePublicEdgeActivity = `-- name: ReadRuntimeUpgradePublicEdgeActivity :many
+SELECT slot_id, public_session_id, public_roster_revision, config_sha256, guard_enabled, activity_version, coverage_known, pending_forwards, current_forwards, previous_forwards, observed_at, expires_at FROM runtime_upgrade_public_edge_activity WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2
+`
+
+type ReadRuntimeUpgradePublicEdgeActivityParams struct {
+	PublicRosterRevision pgtype.UUID
+	Limit                int32
+}
+
+func (q *Queries) ReadRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX, arg ReadRuntimeUpgradePublicEdgeActivityParams) ([]RuntimeUpgradePublicEdgeActivity, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradePublicEdgeActivity, arg.PublicRosterRevision, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradePublicEdgeActivity{}
+	for rows.Next() {
+		var i RuntimeUpgradePublicEdgeActivity
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.PublicSessionID,
+			&i.PublicRosterRevision,
+			&i.ConfigSha256,
+			&i.GuardEnabled,
+			&i.ActivityVersion,
+			&i.CoverageKnown,
+			&i.PendingForwards,
+			&i.CurrentForwards,
+			&i.PreviousForwards,
+			&i.ObservedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradePublicEdgeGuards = `-- name: ReadRuntimeUpgradePublicEdgeGuards :many
+SELECT slot_id, public_session_id, public_roster_revision, config_sha256, guard_enabled, observed_at, expires_at FROM runtime_upgrade_public_edge_guards WHERE public_roster_revision=$1 ORDER BY slot_id LIMIT $2
+`
+
+type ReadRuntimeUpgradePublicEdgeGuardsParams struct {
+	PublicRosterRevision pgtype.UUID
+	Limit                int32
+}
+
+func (q *Queries) ReadRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX, arg ReadRuntimeUpgradePublicEdgeGuardsParams) ([]RuntimeUpgradePublicEdgeGuard, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradePublicEdgeGuards, arg.PublicRosterRevision, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeUpgradePublicEdgeGuard{}
+	for rows.Next() {
+		var i RuntimeUpgradePublicEdgeGuard
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.PublicSessionID,
+			&i.PublicRosterRevision,
+			&i.ConfigSha256,
+			&i.GuardEnabled,
+			&i.ObservedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradePublicEdgeRoster = `-- name: ReadRuntimeUpgradePublicEdgeRoster :one
+SELECT r.revision, r.gateway_roster_revision, r.topology_sha256, r.slot_ids, r.public_sessions, r.config_sha256s, r.created_at FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE h.singleton
+`
+
+// Private reviewed public-edge inventory and guard observations (ADR-699).
+func (q *Queries) ReadRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX) (RuntimeUpgradePublicEdgeRoster, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradePublicEdgeRoster)
+	var i RuntimeUpgradePublicEdgeRoster
+	err := row.Scan(
+		&i.Revision,
+		&i.GatewayRosterRevision,
+		&i.TopologySha256,
+		&i.SlotIds,
+		&i.PublicSessions,
+		&i.ConfigSha256s,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readRuntimeUpgradePublicEdgeWithdrawalReceipt = `-- name: ReadRuntimeUpgradePublicEdgeWithdrawalReceipt :one
+SELECT withdrawal_id, fence_id, activity_version, admission_closed, coverage_known, active_forwards, observed_at FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=$1
+`
+
+func (q *Queries) ReadRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, withdrawalID pgtype.UUID) (RuntimeUpgradePublicEdgeWithdrawalReceipt, error) {
+	row := db.QueryRow(ctx, readRuntimeUpgradePublicEdgeWithdrawalReceipt, withdrawalID)
+	var i RuntimeUpgradePublicEdgeWithdrawalReceipt
+	err := row.Scan(
+		&i.WithdrawalID,
+		&i.FenceID,
+		&i.ActivityVersion,
+		&i.AdmissionClosed,
+		&i.CoverageKnown,
+		&i.ActiveForwards,
+		&i.ObservedAt,
+	)
+	return i, err
+}
+
 const readSavedRouteRequirements = `-- name: ReadSavedRouteRequirements :one
 SELECT jsonb_build_object('app_id', saved.app_id, 'revision', saved.revision, 'sha256', saved.sha256, 'requirements', saved.requirements, 'updated_at', saved.updated_at) AS saved
 FROM saved_route_requirements AS saved JOIN apps AS a ON a.id = saved.app_id
@@ -53414,6 +56245,258 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recordRuntimeReleaseQualification = `-- name: RecordRuntimeReleaseQualification :one
+INSERT INTO runtime_release_qualifications(release_id,profile,architecture,host_id,kernel_boot_id,source_commit,
+ kernel_sha256,firecracker_sha256,report_sha256,test_metal_sha256,leakcheck_sha256,started_at,completed_at)
+SELECT $1::text,$2::text,$3::text,$4::uuid,
+ $5::uuid,$6::text,$7::text,$8::text,
+ $9::text,$10::text,$11::text,
+ $12::timestamptz,$13::timestamptz
+FROM runtime_releases r WHERE r.id=$1::text AND r.architecture=$3::text
+ON CONFLICT(release_id) DO UPDATE SET release_id=runtime_release_qualifications.release_id
+WHERE runtime_release_qualifications.revoked_at IS NULL AND
+ ROW(runtime_release_qualifications.profile,runtime_release_qualifications.architecture,runtime_release_qualifications.host_id,
+ runtime_release_qualifications.kernel_boot_id,runtime_release_qualifications.source_commit,runtime_release_qualifications.kernel_sha256,
+ runtime_release_qualifications.firecracker_sha256,runtime_release_qualifications.report_sha256,runtime_release_qualifications.test_metal_sha256,
+ runtime_release_qualifications.leakcheck_sha256,runtime_release_qualifications.started_at,runtime_release_qualifications.completed_at)
+ = ROW(EXCLUDED.profile,EXCLUDED.architecture,EXCLUDED.host_id,EXCLUDED.kernel_boot_id,EXCLUDED.source_commit,EXCLUDED.kernel_sha256,
+ EXCLUDED.firecracker_sha256,EXCLUDED.report_sha256,EXCLUDED.test_metal_sha256,EXCLUDED.leakcheck_sha256,EXCLUDED.started_at,EXCLUDED.completed_at)
+RETURNING release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256
+`
+
+type RecordRuntimeReleaseQualificationParams struct {
+	ReleaseID         string
+	Profile           string
+	Architecture      string
+	HostID            pgtype.UUID
+	KernelBootID      pgtype.UUID
+	SourceCommit      string
+	KernelSha256      string
+	FirecrackerSha256 string
+	ReportSha256      string
+	TestMetalSha256   string
+	LeakcheckSha256   string
+	StartedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+}
+
+// Operator-owned native runtime qualification (ADR-739), never customer intent.
+func (q *Queries) RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, recordRuntimeReleaseQualification,
+		arg.ReleaseID,
+		arg.Profile,
+		arg.Architecture,
+		arg.HostID,
+		arg.KernelBootID,
+		arg.SourceCommit,
+		arg.KernelSha256,
+		arg.FirecrackerSha256,
+		arg.ReportSha256,
+		arg.TestMetalSha256,
+		arg.LeakcheckSha256,
+		arg.StartedAt,
+		arg.CompletedAt,
+	)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
+const recordRuntimeUpgradeGatewayDrain = `-- name: RecordRuntimeUpgradeGatewayDrain :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_gateway_drains(app_id,gateway_session_id,slot_id,operation_id,deployment_id,serving_deployment_id,
+ gateway_roster_revision,routing_revision,fence_id,activity_version,cutover_at,observed_at,expires_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::uuid,$6::uuid,$7::uuid,
+ $8::text,$9::uuid,$10::text,$11::timestamptz,
+ observation.observed_at,observation.observed_at+make_interval(secs=>$12::integer)
+FROM observation JOIN runtime_upgrade_gateway_heartbeats h ON h.slot_id=$3::uuid
+JOIN runtime_upgrade_gateway_roster_head head ON head.singleton AND head.revision=h.roster_revision
+WHERE h.gateway_session_id=$2::uuid AND h.roster_revision=$7::uuid
+AND h.seen_at<=observation.observed_at AND h.expires_at>observation.observed_at
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_drains d WHERE d.app_id=$1::uuid AND d.gateway_session_id=$2::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_drains d WHERE d.app_id=$1::uuid)<$13::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET slot_id=EXCLUDED.slot_id,operation_id=EXCLUDED.operation_id,
+ deployment_id=EXCLUDED.deployment_id,serving_deployment_id=EXCLUDED.serving_deployment_id,
+ gateway_roster_revision=EXCLUDED.gateway_roster_revision,routing_revision=EXCLUDED.routing_revision,fence_id=EXCLUDED.fence_id,
+ activity_version=EXCLUDED.activity_version,cutover_at=EXCLUDED.cutover_at,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+WHERE runtime_upgrade_gateway_drains.activity_version::numeric<=EXCLUDED.activity_version::numeric
+`
+
+type RecordRuntimeUpgradeGatewayDrainParams struct {
+	AppID                 pgtype.UUID
+	GatewaySessionID      pgtype.UUID
+	SlotID                pgtype.UUID
+	OperationID           pgtype.UUID
+	DeploymentID          pgtype.UUID
+	ServingDeploymentID   pgtype.UUID
+	GatewayRosterRevision pgtype.UUID
+	RoutingRevision       string
+	FenceID               pgtype.UUID
+	ActivityVersion       string
+	CutoverAt             pgtype.Timestamptz
+	LeaseSeconds          int32
+	SessionLimit          int32
+}
+
+func (q *Queries) RecordRuntimeUpgradeGatewayDrain(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayDrainParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradeGatewayDrain,
+		arg.AppID,
+		arg.GatewaySessionID,
+		arg.SlotID,
+		arg.OperationID,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.GatewayRosterRevision,
+		arg.RoutingRevision,
+		arg.FenceID,
+		arg.ActivityVersion,
+		arg.CutoverAt,
+		arg.LeaseSeconds,
+		arg.SessionLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradeGatewayReceipt = `-- name: RecordRuntimeUpgradeGatewayReceipt :execrows
+INSERT INTO runtime_upgrade_gateway_receipts(app_id,gateway_session_id,deployment_id,cutover_at)
+SELECT $1::uuid,$2::uuid,deployment_id,cutover_at
+FROM deployment_runtime_upgrade_cutovers WHERE deployment_id=$3::uuid
+AND (EXISTS(SELECT 1 FROM runtime_upgrade_gateway_receipts WHERE app_id=$1::uuid AND gateway_session_id=$2::uuid)
+ OR (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE app_id=$1::uuid)<$4::integer)
+ON CONFLICT(app_id,gateway_session_id) DO UPDATE SET deployment_id=EXCLUDED.deployment_id,cutover_at=EXCLUDED.cutover_at,installed_at=clock_timestamp()
+`
+
+type RecordRuntimeUpgradeGatewayReceiptParams struct {
+	AppID            pgtype.UUID
+	GatewaySessionID pgtype.UUID
+	DeploymentID     pgtype.UUID
+	SessionLimit     int32
+}
+
+func (q *Queries) RecordRuntimeUpgradeGatewayReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradeGatewayReceipt,
+		arg.AppID,
+		arg.GatewaySessionID,
+		arg.DeploymentID,
+		arg.SessionLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradePublicEdgeActivity = `-- name: RecordRuntimeUpgradePublicEdgeActivity :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_public_edge_activity(slot_id,public_session_id,public_roster_revision,config_sha256,guard_enabled,activity_version,coverage_known,pending_forwards,current_forwards,previous_forwards,observed_at,expires_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,true,$5::bigint,$6::boolean,$7::int,$8::int,$9::int,o.observed_at,o.observed_at+make_interval(secs=>$10::int) FROM observation o
+ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id,public_roster_revision=EXCLUDED.public_roster_revision,config_sha256=EXCLUDED.config_sha256,guard_enabled=EXCLUDED.guard_enabled,activity_version=EXCLUDED.activity_version,coverage_known=EXCLUDED.coverage_known,pending_forwards=EXCLUDED.pending_forwards,current_forwards=EXCLUDED.current_forwards,previous_forwards=EXCLUDED.previous_forwards,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+`
+
+type RecordRuntimeUpgradePublicEdgeActivityParams struct {
+	SlotID               pgtype.UUID
+	PublicSessionID      pgtype.UUID
+	PublicRosterRevision pgtype.UUID
+	ConfigSha256         string
+	ActivityVersion      int64
+	CoverageKnown        bool
+	PendingForwards      int32
+	CurrentForwards      int32
+	PreviousForwards     int32
+	LeaseSeconds         int32
+}
+
+func (q *Queries) RecordRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeActivityParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradePublicEdgeActivity,
+		arg.SlotID,
+		arg.PublicSessionID,
+		arg.PublicRosterRevision,
+		arg.ConfigSha256,
+		arg.ActivityVersion,
+		arg.CoverageKnown,
+		arg.PendingForwards,
+		arg.CurrentForwards,
+		arg.PreviousForwards,
+		arg.LeaseSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradePublicEdgeGuard = `-- name: RecordRuntimeUpgradePublicEdgeGuard :execrows
+WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+INSERT INTO runtime_upgrade_public_edge_guards(slot_id,public_session_id,public_roster_revision,config_sha256,guard_enabled,observed_at,expires_at)
+SELECT $1::uuid,$2::uuid,r.revision,$3::text,true,o.observed_at,o.observed_at+make_interval(secs=>$4::int)
+FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision
+JOIN runtime_upgrade_gateway_roster_head g ON g.revision=r.gateway_roster_revision CROSS JOIN observation o
+WHERE h.singleton AND g.singleton
+ AND r.public_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+ AND r.config_sha256s[array_position(r.slot_ids,$1::uuid)]=$3::text
+ON CONFLICT (slot_id) DO UPDATE SET public_session_id=EXCLUDED.public_session_id,public_roster_revision=EXCLUDED.public_roster_revision,config_sha256=EXCLUDED.config_sha256,guard_enabled=EXCLUDED.guard_enabled,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at
+`
+
+type RecordRuntimeUpgradePublicEdgeGuardParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+	LeaseSeconds    int32
+}
+
+func (q *Queries) RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeGuardParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradePublicEdgeGuard,
+		arg.SlotID,
+		arg.PublicSessionID,
+		arg.ConfigSha256,
+		arg.LeaseSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordRuntimeUpgradePublicEdgeWithdrawalReceipt = `-- name: RecordRuntimeUpgradePublicEdgeWithdrawalReceipt :execrows
+INSERT INTO runtime_upgrade_public_edge_withdrawal_receipts(withdrawal_id,fence_id,activity_version,admission_closed,coverage_known,active_forwards,observed_at)
+VALUES ($1,$2,$3,true,true,0,clock_timestamp()) ON CONFLICT (withdrawal_id) DO NOTHING
+`
+
+type RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams struct {
+	WithdrawalID    pgtype.UUID
+	FenceID         pgtype.UUID
+	ActivityVersion int64
+}
+
+func (q *Queries) RecordRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRuntimeUpgradePublicEdgeWithdrawalReceipt, arg.WithdrawalID, arg.FenceID, arg.ActivityVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec
@@ -55955,6 +59038,55 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	return current_inflight, err
 }
 
+const reserveRuntimeUpgradeCandidate = `-- name: ReserveRuntimeUpgradeCandidate :one
+INSERT INTO deployments(id,app_id,scope,kind,image_digest,status,source_path,source_bytes,source_root,source_sha256,handler,source_url,commit_sha,
+ override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,override_healthcheck,
+ override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
+ full_rootfs_allow_auto,full_rootfs_override,release_command,release_command_shell,disable_startup_cpu_boost,
+ min_instances,rollback_on_5xx,traffic_percent,traffic_percent_explicit,reason,deployed_via)
+SELECT $1::uuid,d.app_id,d.scope,d.kind,'','pending',$2::text,d.source_bytes,d.source_root,d.source_sha256,d.handler,d.source_url,d.commit_sha,
+ d.override_entrypoint,d.override_cmd,d.override_env,d.override_env_secrets,d.override_port,d.override_healthcheck,
+ d.override_liveness_probe,d.override_readiness_probe,d.override_main_depends_on,d.sidecars,d.workflows,
+ d.full_rootfs_allow_auto,d.full_rootfs_override,d.release_command,d.release_command_shell,d.disable_startup_cpu_boost,
+ d.min_instances,d.rollback_on_5xx,0,true,'runtime-upgrade:'||$3::text,'api'
+FROM deployments d JOIN apps a ON a.id=d.app_id JOIN accounts ac ON ac.id=a.account_id
+WHERE d.id=$4::uuid AND d.app_id=$5::uuid AND a.account_id=$6::uuid
+ AND a.status='active' AND a.deleted_at IS NULL AND a.type='function' AND COALESCE(a.manifest->>'build_dockerfile','')=''
+ AND COALESCE(a.manifest->>'execution_mode','') NOT IN ('job','service')
+ AND ac.status='active' AND ac.abuse_hold_at IS NULL
+ AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent=100 AND d.source_sha256=$7::text
+ AND d.source_bytes>0 AND d.source_bytes<=$8::bigint AND d.kind IN ('tarball','github','preview')
+ AND d.canary_total_steps=0 AND d.rollout_state<>'rolling_out' AND COALESCE(d.environment_workload_runtime,'{}'::jsonb)='{}'::jsonb
+RETURNING id
+`
+
+type ReserveRuntimeUpgradeCandidateParams struct {
+	DeploymentID   pgtype.UUID
+	SourcePath     string
+	OperationID    string
+	ServingID      pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceSha256   string
+	SourceMaxBytes int64
+}
+
+func (q *Queries) ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, reserveRuntimeUpgradeCandidate,
+		arg.DeploymentID,
+		arg.SourcePath,
+		arg.OperationID,
+		arg.ServingID,
+		arg.AppID,
+		arg.AccountID,
+		arg.SourceSha256,
+		arg.SourceMaxBytes,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const resetCustomerOperationDelivery = `-- name: ResetCustomerOperationDelivery :execrows
 UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,
  last_error='',last_response_code=0,next_attempt_at=$1::timestamptz,updated_at=$1::timestamptz
@@ -55997,6 +59129,33 @@ DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1
 
 func (q *Queries) ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error {
 	_, err := db.Exec(ctx, resetManagedPostgresReconciliationCoverage, databaseID)
+	return err
+}
+
+const resetRuntimeUpgradeGatewayHeartbeats = `-- name: ResetRuntimeUpgradeGatewayHeartbeats :exec
+DELETE FROM runtime_upgrade_gateway_heartbeats
+`
+
+func (q *Queries) ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, resetRuntimeUpgradeGatewayHeartbeats)
+	return err
+}
+
+const resetRuntimeUpgradePublicEdgeActivity = `-- name: ResetRuntimeUpgradePublicEdgeActivity :exec
+DELETE FROM runtime_upgrade_public_edge_activity
+`
+
+func (q *Queries) ResetRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, resetRuntimeUpgradePublicEdgeActivity)
+	return err
+}
+
+const resetRuntimeUpgradePublicEdgeGuards = `-- name: ResetRuntimeUpgradePublicEdgeGuards :exec
+DELETE FROM runtime_upgrade_public_edge_guards
+`
+
+func (q *Queries) ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, resetRuntimeUpgradePublicEdgeGuards)
 	return err
 }
 
@@ -56304,7 +59463,7 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
@@ -57086,6 +60245,55 @@ type RevokeManagedPostgresCutoverCredentialParams struct {
 
 func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error) {
 	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeRuntimeReleaseQualification = `-- name: RevokeRuntimeReleaseQualification :one
+UPDATE runtime_release_qualifications SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revocation_sha256=$1::text
+WHERE release_id=$2::text AND report_sha256=$3::text
+ AND (revoked_at IS NULL OR revocation_sha256=$1::text)
+RETURNING release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256
+`
+
+type RevokeRuntimeReleaseQualificationParams struct {
+	Reason         string
+	ReleaseID      string
+	ExpectedReport string
+}
+
+func (q *Queries) RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, revokeRuntimeReleaseQualification, arg.Reason, arg.ReleaseID, arg.ExpectedReport)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
+const revokeRuntimeUpgradeExternalFenceAuthority = `-- name: RevokeRuntimeUpgradeExternalFenceAuthority :execrows
+UPDATE runtime_upgrade_external_fence_authorities SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, revokeRuntimeUpgradeExternalFenceAuthority, id)
 	if err != nil {
 		return 0, err
 	}
@@ -58172,6 +61380,53 @@ func (q *Queries) RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg Runtim
 	return result.RowsAffected(), nil
 }
 
+const runtimeUpgradeNativePublicStartupEligible = `-- name: RuntimeUpgradeNativePublicStartupEligible :one
+SELECT EXISTS (
+ SELECT 1 FROM runtime_upgrade_public_edge_rosters r
+ JOIN runtime_upgrade_public_edge_roster_head p ON p.singleton AND p.revision=r.revision
+ JOIN runtime_upgrade_gateway_roster_head g ON g.singleton AND g.revision=r.gateway_roster_revision
+ JOIN runtime_upgrade_public_edge_guards f ON f.slot_id=$1::uuid AND f.public_session_id=$2::uuid
+  AND f.public_roster_revision=r.revision AND f.config_sha256=$3::text
+ WHERE r.revision=$4::uuid AND r.gateway_roster_revision=$5::uuid
+  AND r.public_sessions[array_position(r.slot_ids,$1::uuid)]=$2::uuid
+  AND r.config_sha256s[array_position(r.slot_ids,$1::uuid)]=$3::text
+  AND f.guard_enabled AND f.observed_at<=clock_timestamp() AND f.expires_at>clock_timestamp()
+  AND NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$2::uuid)
+)
+`
+
+type RuntimeUpgradeNativePublicStartupEligibleParams struct {
+	SlotID          pgtype.UUID
+	PublicSessionID pgtype.UUID
+	ConfigSha256    string
+	PublicRevision  pgtype.UUID
+	GatewayRevision pgtype.UUID
+}
+
+func (q *Queries) RuntimeUpgradeNativePublicStartupEligible(ctx context.Context, db DBTX, arg RuntimeUpgradeNativePublicStartupEligibleParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeUpgradeNativePublicStartupEligible,
+		arg.SlotID,
+		arg.PublicSessionID,
+		arg.ConfigSha256,
+		arg.PublicRevision,
+		arg.GatewayRevision,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const runtimeUpgradePublicEdgeSessionWithdrawn = `-- name: RuntimeUpgradePublicEdgeSessionWithdrawn :one
+SELECT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=$1)
+`
+
+func (q *Queries) RuntimeUpgradePublicEdgeSessionWithdrawn(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, runtimeUpgradePublicEdgeSessionWithdrawn, publicSessionID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const safeReleaseWorkerLeaseReady = `-- name: SafeReleaseWorkerLeaseReady :one
 SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
               WHERE singleton = true AND expires_at > now()) AS ready
@@ -58723,6 +61978,21 @@ func (q *Queries) SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg S
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setBuildRuntimeBaseRef = `-- name: SetBuildRuntimeBaseRef :exec
+UPDATE build_provenance SET runtime_base_ref=$2 WHERE build_id=$1
+`
+
+type SetBuildRuntimeBaseRefParams struct {
+	BuildID        pgtype.UUID
+	RuntimeBaseRef string
+}
+
+// Runtime-base generation identity (ADR-736).
+func (q *Queries) SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBuildRuntimeBaseRefParams) error {
+	_, err := db.Exec(ctx, setBuildRuntimeBaseRef, arg.BuildID, arg.RuntimeBaseRef)
+	return err
 }
 
 const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows
@@ -59280,6 +62550,44 @@ func (q *Queries) SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one
+SELECT id, public_key, created_at, revoked_at FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradeExternalFenceAuthority, id)
+	var i RuntimeUpgradeExternalFenceAuthority
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const shareRuntimeUpgradeGatewayRosterHead = `-- name: ShareRuntimeUpgradeGatewayRosterHead :one
+SELECT revision FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradeGatewayRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const shareRuntimeUpgradePublicEdgeRosterHead = `-- name: ShareRuntimeUpgradePublicEdgeRosterHead :one
+SELECT revision FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE
+`
+
+func (q *Queries) ShareRuntimeUpgradePublicEdgeRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, shareRuntimeUpgradePublicEdgeRosterHead)
+	var revision pgtype.UUID
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const skipPendingWorkflowStep = `-- name: SkipPendingWorkflowStep :exec
