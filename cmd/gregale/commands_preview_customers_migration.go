@@ -221,7 +221,7 @@ func cmdRouteMigrationCutoverReview(args []string, refreshContracts bool) int {
 	if len(positional) != 0 || missingContracts || len(snapshots) < 2 || len(snapshots) > previewCustomerMigrationProgressMaxSnapshots ||
 		graceErr != nil || stalenessErr != nil || *minWindows < 2 || *minWindows > previewCustomerMigrationProgressMaxSnapshots || *minWindows > len(snapshots) ||
 		!slices.Contains([]string{"text", "markdown", "csv"}, *format) || (jsonOutput && *format != "text") || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale "+command+" "+contractUsage+" --snapshot <TRACKER.json> --snapshot <TRACKER.json> [--grace-period 30d] [--min-windows 2] [--max-staleness 72h] [--format text|markdown|csv] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready] [--json]", docsTopic)
+		printUsage(osStderr, "usage: gregale "+command+" "+contractUsage+" --snapshot <TRACKER.json> --snapshot <TRACKER.json> [--grace-period 30d] [--min-windows 2] [--max-staleness 72h] [--format text|markdown|csv] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready] [--json]", docsTopic)
 		return 1
 	}
 	if *output != "" {

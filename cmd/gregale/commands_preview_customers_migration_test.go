@@ -480,3 +480,26 @@ func TestPreviewCustomersMigrationReviewLoadsAndWritesJoinedReport(t *testing.T)
 		t.Fatalf("--format csv should write the prioritized customer action queue: %s", output.String())
 	}
 }
+
+func TestMigrationCutoverUsageKeepsCommandSpecificDocumentation(t *testing.T) {
+	for _, tc := range []struct {
+		name, command, topic string
+		refresh              bool
+	}{
+		{"preview", "preview customers migration review", "preview", false},
+		{"routes", "routes migration readiness", "cli", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			oldErr, oldJSON := osStderr, jsonOutput
+			osStderr, jsonOutput = &stderr, false
+			defer func() { osStderr, jsonOutput = oldErr, oldJSON }()
+			if code := cmdRouteMigrationCutoverReview(nil, tc.refresh); code != 1 {
+				t.Fatalf("missing arguments returned %d", code)
+			}
+			if output := stderr.String(); !strings.Contains(output, "usage: gregale "+tc.command) || !strings.Contains(output, docsURLForTopic(tc.topic)) {
+				t.Fatalf("command-specific usage and docs missing: %s", output)
+			}
+		})
+	}
+}
