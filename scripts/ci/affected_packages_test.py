@@ -18,6 +18,8 @@ PKGS = {
     "cmd/e2e": {"path": f"{M}/cmd/e2e", "imports": {f"{M}/pkg/state"}},
     "migrations": {"path": f"{M}/migrations", "imports": set()},
     "pkg/db": {"path": f"{M}/pkg/db", "imports": {f"{M}/migrations"}},
+    "pkg/sched": {"path": f"{M}/pkg/sched", "imports": {f"{M}/pkg/api"}},
+    "tests/property": {"path": f"{M}/tests/property", "imports": {f"{M}/pkg/sched"}},
 }
 
 
@@ -34,7 +36,18 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(changed, ["pkg/state"])
         # pkg/api imports pkg/state directly; cmd/apid only transitively.
         self.assertEqual(vet, ["cmd/e2e", "pkg/api", "pkg/state"])
-        self.assertEqual(test, ["pkg/state"])
+        # tests/property depends on pkg/state transitively, so the §6.2
+        # invariants run too.
+        self.assertEqual(test, ["pkg/state", "tests/property"])
+
+    def test_invariants_run_when_a_transitive_dependency_changes(self):
+        # tests/property -> pkg/sched -> pkg/api -> pkg/state
+        _, _, _, test = ap.select(["pkg/state/store.go"], PKGS)
+        self.assertIn("tests/property", test)
+
+    def test_invariants_skip_unrelated_changes(self):
+        _, _, _, test = ap.select(["pkg/util/x.go"], PKGS)
+        self.assertEqual(test, ["pkg/util"])
 
     def test_testdata_and_embedded_files_map_to_enclosing_package(self):
         _, changed, _, _ = ap.select(["./pkg/api/testdata/fixture.json"], PKGS)
@@ -51,7 +64,7 @@ class SelectTest(unittest.TestCase):
         everything, _, vet, test = ap.select(["go.sum", "pkg/util/x.go"], PKGS)
         self.assertTrue(everything)
         self.assertEqual(vet, sorted(PKGS))
-        self.assertEqual(test, ["pkg/util"])
+        self.assertEqual(test, ["pkg/util", "tests/property"])
 
     def test_dotfile_paths_are_not_mangled(self):
         everything, _, _, _ = ap.select([".github/workflows/ci-light.yml"], PKGS)

@@ -21,14 +21,14 @@ push:
 
 | Tier | Workflow | Runs on | Contents |
 |---|---|---|---|
-| Light | `ci-light.yml` | every pull request push, every merge to `main` | golangci-lint and tests (no `-race`) for changed packages, `go vet` of changed packages plus their direct importers (`scripts/ci/affected_packages.py`), generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change; budget ~10 minutes |
+| Light | `ci-light.yml` | every pull request push, every merge to `main` | golangci-lint and `-race` tests for changed packages, the §6.2 invariant property tests when anything in their import tree changes, boot-contract, `go vet` of changed packages plus their direct importers (`scripts/ci/affected_packages.py`), generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change |
 | Mega | `ci.yml` | nightly on `main`, `workflow_dispatch`, and from `release.yml` | the complete suite: every unit shard, e2e, migration history, container/UDP contracts, flags, load, SDK acceptance, ops/infra gates |
 
 `release.yml` calls `ci.yml` (`full-ci`) and every build/publish job depends
 on it, so no release tag publishes unless the full suite passed on the tagged
-commit. What the light tier deliberately skips (importers' tests, `-race`,
-e2e, migration history) is caught by the nightly run or, at the latest, the
-release gate.
+commit. What the light tier deliberately skips (importers' tests, e2e,
+migration history, container/UDP contracts, flags, load, SDK acceptance) is
+caught by the nightly run or, at the latest, the release gate.
 
 ## Currently required
 
@@ -43,9 +43,10 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 |---|---|---|
 | `light: lint, vet, build` | golangci-lint on changed packages (same rules and per-package invocation as the mega `Go lint` shards), gofmt, vet, repo-wide build, PR-4a fix-has-test | `ci-light.yml:lint` |
 | `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
-| `light: tests (shard 1)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 2)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 3)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `boot-contract (production config)` | Daemons boot from production-rendered config with production capabilities (issue #1529 / ADR-075) | `ci-light.yml:boot-contract` (same name in `ci.yml`) |
 | `runtime-contract-gate` | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml` |
 
 A light test shard with no affected packages succeeds immediately, so a
@@ -59,8 +60,9 @@ acceptance jobs) no longer runs on pull requests. They gate releases through
 `release.yml` instead and report nightly on `main`; the previous required
 contexts (`lint + build`, `unit tests (…)`, `e2e (shard N — …)`,
 `migrations (IDs + apply)`, `load (1k rps hot-path)`, `sdk-node (…)`,
-`sdk-python (…)`, `boot-contract (production config)`,
-`checks (drift + contract gates)`) must be removed from the ruleset.
+`sdk-python (…)`, `checks (drift + contract gates)`) must be removed from
+the ruleset. `boot-contract (production config)` stays: the light tier
+reports it under the same name.
 
 `CodeQL` and the path-filtered acceptance workflows (`Data API acceptance`,
 `MCP contract`, `Customer platform starter`) run on pull requests but do not
@@ -75,7 +77,8 @@ The pull request that introduces `ci-light.yml` cannot report the old
 `ci.yml` contexts, so the switch is one coordinated ruleset edit:
 
 1. replace the old `ci.yml` contexts in ruleset `19061133` with the five
-   `light: …` contexts above (keep `runtime-contract-gate`);
+   `light: …` contexts above (keep `boot-contract (production config)` and
+   `runtime-contract-gate`);
 2. merge the pull request, whose own run reports exactly those contexts.
 
 ## Renaming a required job

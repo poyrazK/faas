@@ -41,6 +41,11 @@ GLOBAL_INPUTS = {
 # plus the mega history suite.
 EXCLUDED_TEST_PREFIXES = ("cmd/e2e", "migrations")
 
+# CLAUDE.md §6.2 invariants (property-based, never deleted). They are tested
+# whenever any package in their transitive import tree changes, not only when
+# they import a changed package directly, and on every global-input change.
+INVARIANT_PACKAGES = ("tests/property",)
+
 # Packages too slow under -race for one shard's budget. Instead of being
 # assigned whole, each one's tests are split by name across every shard
 # (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
@@ -110,8 +115,25 @@ def select(paths, pkgs):
         changed_paths = {pkgs[d]["path"] for d in changed}
         vet = set(changed) | {d for d, info in pkgs.items() if info["imports"] & changed_paths}
     test = set(changed)
+    for inv in INVARIANT_PACKAGES:
+        if inv in pkgs and (everything or (internal_deps(inv, pkgs) | {inv}) & changed):
+            test.add(inv)
     test = {d for d in test if not d.startswith(EXCLUDED_TEST_PREFIXES)}
     return everything, sorted(changed), sorted(vet), sorted(test)
+
+
+def internal_deps(root, pkgs):
+    """Module-internal package dirs reachable from root's imports (test imports
+    included; over-approximating only ever selects more)."""
+    by_path = {info["path"]: d for d, info in pkgs.items()}
+    seen, stack = set(), [root]
+    while stack:
+        for imp in pkgs[stack.pop()]["imports"]:
+            d = by_path.get(imp)
+            if d is not None and d not in seen:
+                seen.add(d)
+                stack.append(d)
+    return seen
 
 
 def shard(dirs, index, count):

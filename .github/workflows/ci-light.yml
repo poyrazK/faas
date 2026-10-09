@@ -7,9 +7,10 @@ name: ci-light
 # runner pool and pushing PR feedback past 90 minutes):
 #
 #   ci-light.yml (this file)  changed-package lint, vet of changed packages
-#                             and direct importers, tests of changed packages,
+#                             and direct importers, -race tests of changed
+#                             packages and the §6.2 invariants, boot-contract,
 #                             generated-code drift, policy gates and migration
-#                             ID/apply/replay checks. Five jobs, no gate job,
+#                             ID/apply/replay checks. Six jobs, no gate job,
 #                             so a run never ends waiting for a runner.
 #   ci.yml (mega)             the complete suite: every unit shard, e2e,
 #                             migration history, container/UDP contracts,
@@ -371,7 +372,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # Main pushes save one family per shard; pull requests only restore.
-      # The non-race `checks` family is the cold-start fallback.
+      # The race-built pg shard 1 family is the cold-start fallback.
       - name: restore Go build + test cache
         uses: actions/cache/restore@v4
         with:
@@ -382,8 +383,7 @@ jobs:
           restore-keys: |
             go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-test-${{ matrix.shard }}-${{ runner.os }}-
-            go-light-checks-${{ runner.os }}-
-            go-checks-${{ runner.os }}-
+            go-pg-1-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -410,14 +410,17 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
-      # No -race here: the race detector multiplies compile and run time, and
-      # the mega tier runs every package under -race nightly and before every
-      # release.
-      - name: tests (changed packages)
+      # -race on every tested package: races are the failures hardest to
+      # trace back later. Memory bounds match the mega pg shard 1, whose cold
+      # cmd/apid race build otherwise shuts the hosted runner down. Changed
+      # packages plus the §6.2 invariant tests (tests/property) when anything
+      # in their import tree changed.
+      - name: race tests (changed packages and invariants)
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 10GiB
-          GOMAXPROCS: 4
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
@@ -431,7 +434,7 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -count=1 -p 4 -timeout=12m $PKGS &
+            go test -race -count=1 -p 4 -timeout=12m $PKGS &
             pids+=("$!")
           fi
           # Packages too slow for one shard run a third of their tests here,
@@ -439,7 +442,7 @@ jobs:
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -count=1 -timeout=12m -run "$run" "$pkg" &
+            go test -race -count=1 -timeout=12m -run "$run" "$pkg" &
             pids+=("$!")
           done
           status=0
@@ -455,3 +458,71 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Daemons must boot from production-rendered config with production
+  # capabilities (issue #1529 S3). Same job and context name as the mega tier,
+  # so the existing required check keeps gating every pull request.
+  boot-contract:
+    name: boot-contract (production config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_SKIP_PG_TESTS: ""
+    steps:
+      - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-boot-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: boot-contract tests
+        # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even though the
+        # unprivileged runner user has no effective capabilities. Production
+        # faas-imaged.service removes it from CapabilityBoundingSet and refuses
+        # to boot when it is reachable. Reproduce that security boundary before
+        # dropping back to the runner uid for the test process.
+        run: |
+          BOOT_CONTRACT_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
