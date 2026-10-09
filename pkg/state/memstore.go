@@ -516,6 +516,11 @@ type MemStore struct {
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules                 map[string]EdgeRule
+	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-905)
+	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-907)
+	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-908)
+	edgeRuleEventSeq          int64
+	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-904 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation
@@ -22331,6 +22336,11 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		// memstore keeps the verbatim value so the in-memory
 		// mirror is byte-stable with the pgstore round-trip.
 		ValidateMode: in.ValidateMode,
+		Name:         strings.TrimSpace(in.Name),
+		Description:  in.Description,
+		ExpiresAt:    in.ExpiresAt,
+		Match:        in.Match,
+		Mode:         edgeRuleModeOrEnforce(in.Mode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22338,6 +22348,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
 	m.enqueueRoutePolicyChecksLocked(r.AppID)
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22453,6 +22464,11 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		// matches the pgstore's column-NULL fallback (00293's
 		// NOT NULL DEFAULT 'block' kicks in on the wire round-trip).
 		ValidateMode: in.ValidateMode,
+		Name:         strings.TrimSpace(in.Name),
+		Description:  in.Description,
+		ExpiresAt:    in.ExpiresAt,
+		Match:        in.Match,
+		Mode:         edgeRuleModeOrEnforce(in.Mode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22460,6 +22476,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
 	m.enqueueRoutePolicyChecksLocked(r.AppID)
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22475,10 +22492,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
 }
@@ -22494,10 +22508,7 @@ func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeR
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
 }
@@ -23023,6 +23034,24 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	if p.ValidateMode != nil {
 		r.ValidateMode = *p.ValidateMode
 	}
+	if p.Name != nil {
+		r.Name = strings.TrimSpace(*p.Name)
+	}
+	if p.Description != nil {
+		r.Description = *p.Description
+	}
+	if p.ExpiresAt != nil {
+		r.ExpiresAt = *p.ExpiresAt
+	}
+	switch {
+	case p.ClearMatch:
+		r.Match = nil
+	case p.Match != nil:
+		r.Match = p.Match
+	}
+	if p.Mode != nil && *p.Mode != "" {
+		r.Mode = *p.Mode
+	}
 	r.UpdatedAt = time.Now()
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
@@ -23030,6 +23059,7 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	if routeCheckRuleInputsChanged(before, stored) {
 		m.enqueueRoutePolicyChecksLocked(r.AppID)
 	}
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -23044,6 +23074,7 @@ func (m *MemStore) DeleteEdgeRule(_ context.Context, id string) error {
 	}
 	delete(m.edgeRules, id)
 	m.enqueueRoutePolicyChecksLocked(rule.AppID)
+	m.recordEdgeRuleSetVersionLocked(rule.AppID)
 	return nil
 }
 
@@ -23090,7 +23121,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if !r.Enabled {
+		if !r.Enabled || r.EdgeRuleExpired(time.Now()) {
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {
@@ -23099,12 +23130,23 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
+}
+
+// edgeRuleMatchOrderLess is the one edge-rule evaluation order: priority,
+// then oldest first, then id. Listings, deployment snapshots, and the
+// gateway read all use it, so the order a customer sees is the order the
+// gateway applies. Mirrors the pgstore ORDER BY.
+func edgeRuleMatchOrderLess(a, b EdgeRule) bool {
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID < b.ID
 }
 
 // matchHostPattern mirrors the pgstore LIKE: "*" → every host;

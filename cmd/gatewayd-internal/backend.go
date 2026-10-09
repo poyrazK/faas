@@ -1419,33 +1419,37 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// correct.
 		payload, parseErr := db.ParseEdgeRuleChangedPayload(n.Payload)
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "prepare" {
-			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence([]string, int64) }); ok {
-				converger.BeginEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence(string, []string, int64) }); ok {
+				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "abort" {
-			if converger, ok := inv.(interface{ EndEdgeRuleConvergence([]string, int64) }); ok {
-				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface{ EndEdgeRuleConvergence(string, []string, int64) }); ok {
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
-		inv.ResetEdgeRules()
-		// ADR-122 §Decision: drop the kind=cache store on
-		// the same notification. A new rule might apply to
-		// a path the store already populated under a
-		// deleted rule; a deleted rule might have populated
-		// entries that no rule now matches; a mutated rule
-		// might have changed max_age / stale_if_error. All
-		// three are covered by InvalidateAll.
-		inv.InvalidateResponseCacheAll()
+		// ADR-122 §Decision: the kind=cache store is dropped with the
+		// rule cache — a new rule might apply to a path the store already
+		// populated under a deleted rule, a deleted rule might have
+		// populated entries no rule now matches, a mutated rule might
+		// have changed max_age / stale_if_error. Both are scoped to the
+		// mutation's hosts and apps; an unparseable payload keeps the
+		// wholesale flush.
+		if parseErr != nil {
+			inv.ResetEdgeRules()
+			inv.InvalidateResponseCacheAll()
+		} else {
+			invalidateEdgeRuleScope(ctx, inv, payload.AppID, payload.MatchHosts)
+		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
-				EndEdgeRuleConvergence([]string, int64)
+				EndEdgeRuleConvergence(string, []string, int64)
 				SetEdgeRuleLoadedGeneration(int64)
 			}); ok {
 				converger.SetEdgeRuleLoadedGeneration(payload.Generation)
-				converger.EndEdgeRuleConvergence(payload.MatchHosts, payload.Generation)
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
 			}
 		}
 	case db.NotifyTenantSurfaceChanged:

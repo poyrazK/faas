@@ -180,7 +180,12 @@ func ParseRuntimeConfigChangedPayload(raw string) (RuntimeConfigChangedPayload, 
 // releases a prepared fence when persistence fails. Generation is allocated
 // from PostgreSQL and never decreases across apid restarts.
 type EdgeRuleChangedPayload struct {
-	AppID      string   `json:"app_id"`
+	AppID string `json:"app_id"`
+	// AccountID owns AppID. The gateway fences a hostname only for requests
+	// whose app that account owns: gateways ignore another account's rules
+	// on a host, so its mutation never needs to hold that host's traffic.
+	// Empty (a pre-scoping publisher) fences every app on the host.
+	AccountID  string   `json:"account_id,omitempty"`
 	RuleID     string   `json:"rule_id,omitempty"`
 	Operation  string   `json:"op"`
 	Phase      string   `json:"phase,omitempty"`

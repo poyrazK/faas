@@ -2573,17 +2573,31 @@ func (b *PGBackend) ResetEdgeRules() {
 	b.edgeRules.Reset()
 }
 
+// InvalidateEdgeRuleHosts drops only the cached rule sets a mutation's
+// match_host patterns can reach. Matchers without host-scoped invalidation
+// fall back to the wholesale Reset.
+func (b *PGBackend) InvalidateEdgeRuleHosts(patterns []string) {
+	if b.edgeRules == nil {
+		return
+	}
+	if matcher, ok := b.edgeRules.(interface{ InvalidateHosts([]string) }); ok {
+		matcher.InvalidateHosts(patterns)
+		return
+	}
+	b.edgeRules.Reset()
+}
+
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
-func (b *PGBackend) BeginEdgeRuleConvergence(hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ BeginConvergence([]string, int64) }); ok {
-		matcher.BeginConvergence(hosts, generation)
+func (b *PGBackend) BeginEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ BeginConvergence(string, []string, int64) }); ok {
+		matcher.BeginConvergence(accountID, hosts, generation)
 	}
 }
 
-func (b *PGBackend) EndEdgeRuleConvergence(hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ EndConvergence([]string, int64) }); ok {
-		matcher.EndConvergence(hosts, generation)
+func (b *PGBackend) EndEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ EndConvergence(string, []string, int64) }); ok {
+		matcher.EndConvergence(accountID, hosts, generation)
 	}
 }
 

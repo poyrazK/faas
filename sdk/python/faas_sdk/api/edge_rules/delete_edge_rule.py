@@ -7,12 +7,17 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
+    *,
+    if_match: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(if_match, Unset):
+        headers["If-Match"] = if_match
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
@@ -21,6 +26,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -38,6 +44,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 412:
+        response_412 = Problem.from_dict(response.json())
+
+        return response_412
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -63,11 +74,13 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    if_match: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete an edge rule.
 
     Args:
         id (str):
+        if_match (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -79,6 +92,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        if_match=if_match,
     )
 
     response = client.get_httpx_client().request(
@@ -92,11 +106,13 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    if_match: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete an edge rule.
 
     Args:
         id (str):
+        if_match (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,6 +125,7 @@ def sync(
     return sync_detailed(
         id=id,
         client=client,
+        if_match=if_match,
     ).parsed
 
 
@@ -116,11 +133,13 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    if_match: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete an edge rule.
 
     Args:
         id (str):
+        if_match (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,6 +151,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        if_match=if_match,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -143,11 +163,13 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    if_match: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete an edge rule.
 
     Args:
         id (str):
+        if_match (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,5 +183,6 @@ async def asyncio(
         await asyncio_detailed(
             id=id,
             client=client,
+            if_match=if_match,
         )
     ).parsed

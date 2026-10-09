@@ -1687,6 +1687,25 @@ $$;
 
 
 --
+-- Name: edge_rule_set_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rule_set_snapshot(target uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.id), '[]'::jsonb)
+    FROM (
+        SELECT id, account_id, app_id, match_host, match_path, match_methods,
+               match_headers, priority, enabled, kind, action, validate_mode,
+               cors_preset_id, manifest_key, name, description, expires_at,
+               created_at, match_expr, mode
+        FROM edge_rules
+        WHERE app_id = target
+    ) r;
+$$;
+
+
+--
 -- Name: edge_rules_record_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1708,6 +1727,41 @@ BEGIN
         VALUES (OLD.app_id, OLD.id, 'deleted', ARRAY[OLD.match_host]);
         RETURN OLD;
     END IF;
+END;
+$$;
+
+
+--
+-- Name: edge_rules_record_set_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rules_record_set_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    target   uuid := COALESCE(NEW.app_id, OLD.app_id);
+    snapshot jsonb;
+    digest   text;
+    latest   record;
+BEGIN
+    -- Serialize version numbering per app across concurrent commits.
+    PERFORM pg_advisory_xact_lock(hashtext('edge_rule_set_versions'), hashtext(target::text));
+    snapshot := edge_rule_set_snapshot(target);
+    digest := encode(sha256(convert_to(snapshot::text, 'UTF8')), 'hex');
+    SELECT version, rules_sha256 INTO latest
+    FROM edge_rule_set_versions
+    WHERE app_id = target
+    ORDER BY version DESC
+    LIMIT 1;
+    IF FOUND AND latest.rules_sha256 = digest THEN
+        RETURN NULL;
+    END IF;
+    INSERT INTO edge_rule_set_versions (app_id, version, rules, rules_sha256, rule_count)
+    VALUES (target, COALESCE(latest.version, 0) + 1, snapshot, digest, jsonb_array_length(snapshot));
+    DELETE FROM edge_rule_set_versions
+    WHERE app_id = target
+      AND version <= COALESCE(latest.version, 0) + 1 - 100;
+    RETURN NULL;
 END;
 $$;
 
@@ -15433,6 +15487,114 @@ CREATE SEQUENCE public.edge_rule_generation_seq
 
 
 --
+-- Name: edge_rule_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_events (
+    id bigint NOT NULL,
+    rule_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    request_id text DEFAULT ''::text NOT NULL,
+    method text DEFAULT ''::text NOT NULL,
+    host text DEFAULT ''::text NOT NULL,
+    path text DEFAULT ''::text NOT NULL,
+    client_ip inet,
+    country text DEFAULT ''::text NOT NULL,
+    user_agent text DEFAULT ''::text NOT NULL,
+    CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
+    CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
+    CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text]))),
+    CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
+    CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
+    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256))
+);
+
+
+--
+-- Name: edge_rule_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_rule_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_rule_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: edge_rule_hit_counts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_hit_counts (
+    rule_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    hits bigint NOT NULL,
+    CONSTRAINT edge_rule_hit_counts_hits_check CHECK ((hits >= 0)),
+    CONSTRAINT edge_rule_hit_counts_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text])))
+);
+
+
+--
+-- Name: edge_rule_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_lists (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    items text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_rule_lists_description_check CHECK ((length(description) <= 500)),
+    CONSTRAINT edge_rule_lists_kind_check CHECK ((kind = ANY (ARRAY['ip'::text, 'country'::text, 'host'::text, 'string'::text]))),
+    CONSTRAINT edge_rule_lists_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text))
+);
+
+
+--
+-- Name: edge_rule_set_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_set_versions (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    version integer NOT NULL,
+    rules jsonb NOT NULL,
+    rules_sha256 text NOT NULL,
+    rule_count integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_rule_set_versions_rule_count_check CHECK ((rule_count >= 0)),
+    CONSTRAINT edge_rule_set_versions_rules_check CHECK ((jsonb_typeof(rules) = 'array'::text)),
+    CONSTRAINT edge_rule_set_versions_rules_sha256_check CHECK ((rules_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT edge_rule_set_versions_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: edge_rule_set_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_rule_set_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_rule_set_versions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: edge_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15453,8 +15615,17 @@ CREATE TABLE public.edge_rules (
     cors_preset_id uuid,
     match_headers jsonb DEFAULT '{}'::jsonb NOT NULL,
     manifest_key text,
+    name text,
+    description text,
+    expires_at timestamp with time zone,
+    match_expr jsonb,
+    mode text DEFAULT 'enforce'::text NOT NULL,
+    CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
     CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
+    CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
+    CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
+    CONSTRAINT edge_rules_name_chk CHECK (((name IS NULL) OR ((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 100)))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
 );
@@ -26645,6 +26816,54 @@ ALTER TABLE ONLY public.edge_rule_change_log
 
 
 --
+-- Name: edge_rule_events edge_rule_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_events
+    ADD CONSTRAINT edge_rule_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_rule_hit_counts edge_rule_hit_counts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_hit_counts
+    ADD CONSTRAINT edge_rule_hit_counts_pkey PRIMARY KEY (rule_id, bucket_start, outcome);
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_account_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_account_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_rule_set_versions edge_rule_set_versions_app_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_set_versions
+    ADD CONSTRAINT edge_rule_set_versions_app_version_key UNIQUE (app_id, version);
+
+
+--
+-- Name: edge_rule_set_versions edge_rule_set_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_set_versions
+    ADD CONSTRAINT edge_rule_set_versions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: edge_rules edge_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32837,6 +33056,34 @@ CREATE INDEX edge_rule_change_log_created_idx ON public.edge_rule_change_log USI
 
 
 --
+-- Name: edge_rule_events_app_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_app_time_idx ON public.edge_rule_events USING btree (app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: edge_rule_events_occurred_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_occurred_idx ON public.edge_rule_events USING btree (occurred_at);
+
+
+--
+-- Name: edge_rule_events_rule_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_rule_time_idx ON public.edge_rule_events USING btree (rule_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: edge_rule_hit_counts_app_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts USING btree (app_id, bucket_start);
+
+
+--
 -- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -38325,6 +38572,13 @@ CREATE TRIGGER edge_rules_record_change_trg AFTER INSERT OR DELETE OR UPDATE ON 
 
 
 --
+-- Name: edge_rules edge_rules_record_set_version_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER edge_rules_record_set_version_trg AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.edge_rules_record_set_version();
+
+
+--
 -- Name: edge_rules edge_rules_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42789,6 +43043,14 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 ALTER TABLE ONLY public.domain_doctor_observations
     ADD CONSTRAINT domain_doctor_observations_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE SET NULL;
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
