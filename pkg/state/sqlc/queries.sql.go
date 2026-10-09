@@ -5076,13 +5076,19 @@ func (q *Queries) CloneCheckpointCaptureRetirementHasAdoption(ctx context.Contex
 
 const cloneCheckpointCaptureRetirementHasBorrowers = `-- name: CloneCheckpointCaptureRetirementHasBorrowers :one
 SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=$1::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=$1::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=$1::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=$1::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=$1::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_object_manifests m WHERE m.operation_id=r.operation_id AND m.source_bucket_id=r.source_bucket_id AND m.target_bucket_id=r.target_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id))
 `
 
+// PostgreSQL dependency retirement is not connected yet. Every object intent
+// must belong to an original manifest/target; its terminal proof is read in Go.
 func (q *Queries) CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error) {
 	row := db.QueryRow(ctx, cloneCheckpointCaptureRetirementHasBorrowers, operationID)
 	var column_1 pgtype.Bool

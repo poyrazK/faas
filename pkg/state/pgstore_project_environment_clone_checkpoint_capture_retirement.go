@@ -14,9 +14,9 @@ import (
 
 var _ ProjectEnvironmentCloneCheckpointCaptureRetirementStore = (*PgStore)(nil)
 
-// Adopted captures without native borrowers require original unused-reservation
-// completion evidence. Any native target or borrower intent remains closed until
-// its complete retirement provenance can be authenticated here.
+// Adopted object captures require original unused-reservation completion or the
+// authenticated native target/copy retirement proof. PostgreSQL borrowers remain
+// closed until their complete retirement provenance can be authenticated here.
 func checkpointCaptureRetirementPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneCheckpointCaptureRetirementPlan, error) {
 	var p ProjectEnvironmentCloneCheckpointCaptureRetirementPlan
 	if len(op.Resources) < 1 || op.Resources[0].Kind != "data_checkpoint" {
@@ -43,7 +43,7 @@ func checkpointCaptureRetirementPlanTx(ctx context.Context, tx pgx.Tx, op Projec
 		}
 		return p, nil
 	}
-	return p, checkpointUnusedAdoptedCaptureReadyTx(ctx, tx, op, p)
+	return p, checkpointAdoptedCaptureReadyTx(ctx, tx, op, p)
 }
 
 func checkpointCaptureRetirementFromSQL(r sqlc.ProjectEnvironmentCloneCheckpointCaptureRetirement) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {

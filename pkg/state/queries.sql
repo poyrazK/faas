@@ -15552,12 +15552,18 @@ SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE
  OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.environment_clone_operation_id=sqlc.arg(operation_id)::uuid);
 
 -- name: CloneCheckpointCaptureRetirementHasBorrowers :one
+-- PostgreSQL dependency retirement is not connected yet. Every object intent
+-- must belong to an original manifest/target; its terminal proof is read in Go.
 SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=sqlc.arg(operation_id)::uuid);
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_object_manifests m WHERE m.operation_id=r.operation_id AND m.source_bucket_id=r.source_bucket_id AND m.target_bucket_id=r.target_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id));
 
 -- name: CloneCheckpointCaptureRetirementCatalogueCounts :one
 SELECT (SELECT count(*) FROM project_environment_clone_postgres_snapshots r WHERE r.operation_id=sqlc.arg(operation_id)::uuid) AS snapshots,

@@ -8251,6 +8251,23 @@ Captures used by native restores, copies, readers or credential preparations rem
 blocked. Connecting their authenticated retirement proofs and whole-stage terminal
 reconciliation remains outstanding. Public full-stage admission remains gated.
 
+### Object dependency proofs before capture retirement
+
+Adopted capture retirement now authenticates each recorded object creation and
+optional copy against the frozen release, manifest and original placement. A
+native intent requires its saved terminal target retirement proof, including
+permanent closure of the original creation, copy and writers, target absence and
+no native grants. An unused reservation still requires its separate authenticated
+completion record. Orphan object intents fail closed, and publication withdrawal
+remains mandatory.
+
+The same dependency checks run during reservation, claim, terminal commit and
+completed replay. Proof changes after dispatch leave capture retirement requested
+and catalogue records owned; recovery observes the original request. Target proof
+replay continues after snapshot catalogue retirement. PostgreSQL restore, reader,
+copy-target and credential dependencies remain blocked pending their authenticated
+retirement linkage. Public full-stage admission remains gated.
+
 ### Checkpoint terminal compensation gate
 
 The generic operation transition now refuses `compensating` to `compensated`

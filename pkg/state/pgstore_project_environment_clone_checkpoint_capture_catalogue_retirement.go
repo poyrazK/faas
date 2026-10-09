@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func checkpointUnusedAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, p ProjectEnvironmentCloneCheckpointCaptureRetirementPlan) error {
+func checkpointAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, p ProjectEnvironmentCloneCheckpointCaptureRetirementPlan) error {
 	q := sqlc.New()
 	blocked, err := q.CloneCheckpointCaptureRetirementHasBorrowers(ctx, tx, mustPgUUID(op.ID))
 	if err != nil {
@@ -30,7 +30,7 @@ func checkpointUnusedAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op Pr
 			pg++
 		} else {
 			objects++
-			if err = checkpointCaptureUnusedObjectTargetTx(ctx, tx, op, source); err != nil {
+			if err = checkpointCaptureObjectTargetRetiredTx(ctx, tx, op, source); err != nil {
 				return err
 			}
 		}
@@ -63,6 +63,30 @@ func checkpointUnusedAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op Pr
 		}
 	}
 	if counts.Snapshots != pg || counts.Manifests != objects || counts.Retirements != wantRetirements || counts.TargetBuckets != objects {
+		return ErrConflict
+	}
+	return nil
+}
+
+// An original native creation intent requires its complete authenticated
+// retirement journal, even when no creation/copy reply was ever observed.
+func checkpointCaptureObjectTargetRetiredTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, source ProjectEnvironmentCloneCheckpointSource) error {
+	creation, err := readCheckpointObjectTargetTx(ctx, tx, op, source.ID)
+	if errors.Is(err, ErrNotFound) {
+		return checkpointCaptureUnusedObjectTargetTx(ctx, tx, op, source)
+	}
+	if err != nil {
+		return err
+	}
+	plan, bucket, err := checkpointObjectRetirementPlanTx(ctx, tx, op, creation)
+	if err != nil {
+		return checkpointPgCompensationDependencyError(err)
+	}
+	retirement, err := readCheckpointObjectRetirementTx(ctx, tx, op, plan, bucket)
+	if err != nil {
+		return checkpointPgCompensationDependencyError(err)
+	}
+	if retirement.State != "retired" || validateCheckpointObjectRetirementObservation(retirement, retirement.Observation) != nil {
 		return ErrConflict
 	}
 	return nil
