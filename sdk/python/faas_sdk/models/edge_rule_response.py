@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+    from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
@@ -96,6 +97,15 @@ class EdgeRuleResponse:
     """When the gateway stops applying the rule."""
     expired: bool | Unset = UNSET
     """True once expires_at has passed and the rule no longer applies."""
+    match: EdgeRuleMatchExpr | Unset = UNSET
+    """ADR-733 match condition, ANDed with the rule's fixed selectors. A node
+    is exactly one of all, any, not, or a field/op leaf. Fields: method,
+    path, host, client_ip, country, header:<name>, cookie:<name>,
+    query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+    exists, missing, regex (RE2), cidr (client_ip only). Depth at most 4,
+    at most 32 nodes, 64 values per leaf, values and regexes at most 256
+    bytes. An untrusted client IP or country is absent.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -190,6 +200,10 @@ class EdgeRuleResponse:
 
         expired = self.expired
 
+        match: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match, Unset):
+            match = self.match.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -219,6 +233,8 @@ class EdgeRuleResponse:
             field_dict["expires_at"] = expires_at
         if expired is not UNSET:
             field_dict["expired"] = expired
+        if match is not UNSET:
+            field_dict["match"] = match
 
         return field_dict
 
@@ -234,6 +250,7 @@ class EdgeRuleResponse:
         from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+        from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
@@ -445,6 +462,13 @@ class EdgeRuleResponse:
 
         expired = d.pop("expired", UNSET)
 
+        _match = d.pop("match", UNSET)
+        match: EdgeRuleMatchExpr | Unset
+        if isinstance(_match, Unset):
+            match = UNSET
+        else:
+            match = EdgeRuleMatchExpr.from_dict(_match)
+
         edge_rule_response = cls(
             id=id,
             account_id=account_id,
@@ -464,6 +488,7 @@ class EdgeRuleResponse:
             description=description,
             expires_at=expires_at,
             expired=expired,
+            match=match,
         )
 
         edge_rule_response.additional_properties = d

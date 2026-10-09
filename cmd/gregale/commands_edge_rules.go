@@ -193,6 +193,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
+	matchCondition := fs.String("match", "", "match condition (ADR-733 JSON, @file, or -)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -483,6 +484,11 @@ func cmdEdgeRulesCreate(args []string) int {
 		return printErr("Invalid expiry", expiryErr)
 	}
 	req.ExpiresAt = expiry
+	condition, conditionErr := parseEdgeRuleMatchFlag(*matchCondition)
+	if conditionErr != nil {
+		return printErr("Invalid --match", conditionErr)
+	}
+	req.Match = condition
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -548,6 +554,10 @@ func cmdEdgeRulesGet(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "Expires:     %s %s\n", state, out.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
 	}
+	if out.Match != nil {
+		condition, _ := json.Marshal(out.Match)
+		_, _ = fmt.Fprintf(osStdout, "Match:       %s\n", condition)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Action:      %s\n", string(out.Action))
 	_, _ = fmt.Fprintf(osStdout, "Created:     %s\n", out.CreatedAt.Format("2006-01-02 15:04:05 MST"))
 	_, _ = fmt.Fprintf(osStdout, "Updated:     %s\n", out.UpdatedAt.Format("2006-01-02 15:04:05 MST"))
@@ -559,7 +569,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -576,7 +586,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
+	matchCondition := fs.String("match", "", "match condition (ADR-733 JSON, @file, or -)")
 	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
+	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
@@ -738,6 +750,15 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 	req.ExpiresAt = expiry
 	req.ClearExpiresAt = *clearExpiry
+	condition, conditionErr := parseEdgeRuleMatchFlag(*matchCondition)
+	if conditionErr != nil {
+		return printErr("Invalid --match", conditionErr)
+	}
+	if condition != nil && *clearMatch {
+		return printErr("Invalid flags", fmt.Errorf("--clear-match cannot be combined with --match"))
+	}
+	req.Match = condition
+	req.ClearMatch = *clearMatch
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)

@@ -592,6 +592,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", fmt.Sprintf("method %q is not in %s", matchMethod, strings.Join(rule.MatchMethods, ", "))
 		case !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, input.Headers):
 			row.Status, row.Reason = "skipped", headerMismatch(rule.MatchHeaders, input.Headers)
+		case !traceConditionMatches(rule, input, input.Path, matchMethod, input.Headers):
+			row.Status, row.Reason = "skipped", "match condition is false for this request"
 		default:
 			matched, matchErr := true, error(nil)
 			if rule.MatchPath != "" && rule.MatchPath != "*" {
@@ -725,7 +727,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
-		rule, tied := firstPhaseRule(rules, phase, input.Host, requestPath, matchMethod, workingHeaders)
+		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, workingHeaders)
 		if tied {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
@@ -1200,11 +1202,14 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
-func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
+func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+			continue
+		}
+		if !traceConditionMatches(*rule, input, requestPath, method, headers) {
 			continue
 		}
 		matched, err := true, error(nil)
@@ -2443,6 +2448,25 @@ func RedactHeaderInputForDisplay(raw string) string {
 		lines[i] = line[:valueStart] + value + carriageReturn + newline
 	}
 	return strings.Join(lines, "")
+}
+
+// traceConditionMatches evaluates a rule's ADR-733 match condition with the
+// gateway's evaluator. The simulated client IP and country stand in for the
+// trusted values the gateway would see; the trace takes no query string, so
+// query fields are absent. A condition that does not compile never matches,
+// as on the gateway.
+func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, method string, headers http.Header) bool {
+	if rule.Match == nil {
+		return true
+	}
+	program, err := api.CompileEdgeRuleMatch(rule.Match)
+	if err != nil {
+		return false
+	}
+	return program.Matches(api.EdgeRuleMatchInput{
+		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
+		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country,
+	})
 }
 
 // HostMatches is the gateway's match_host comparison (case-insensitive,

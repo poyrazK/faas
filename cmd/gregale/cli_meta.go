@@ -2378,6 +2378,7 @@ var cliCommands = []cliCommand{
 				{Name: "circuit-max-open-seconds", Short: "kind=circuit_breaker: maximum open interval", Value: "SECONDS"},
 				{Name: "maintenance-retry-after-seconds", Short: "kind=maintenance: Retry-After hint", Value: "SECONDS"},
 				{Name: "maintenance-message", Short: "kind=maintenance: operator message", Value: "TEXT"},
+				{Name: "match", Short: "match condition ANDed with the selectors (ADR-733 JSON, @file, or -)", Value: "JSON|@FILE|-"},
 			}},
 			{Name: subGet, Short: "Show one edge rule", Positionals: []string{"<id>"}},
 			{Name: subUpdate, Short: "Update one edge rule", Positionals: []string{"<id>"}, Examples: []string{
@@ -2464,6 +2465,8 @@ var cliCommands = []cliCommand{
 				{Name: "validate-max-body-bytes", Short: "body cap in bytes (0 = plan default)", Value: "N"},
 				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
+				{Name: "match", Short: "replace the match condition (ADR-733 JSON, @file, or -)", Value: "JSON|@FILE|-"},
+				{Name: "clear-match", Short: "remove the match condition"},
 			}},
 			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}},
 			{Name: "history", Short: "List recorded versions of an app's edge-rule set (--version N shows its rules)", Flags: []cliFlag{

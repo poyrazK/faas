@@ -12,6 +12,7 @@ import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -77,5 +78,6 @@ export type EdgeRuleResponse = {
    * True once expires_at has passed and the rule no longer applies.
    */
   expired?: boolean;
+  match?: EdgeRuleMatchExpr;
 };
 

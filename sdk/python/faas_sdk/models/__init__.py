@@ -853,6 +853,8 @@ from .edge_rule_jwt_action_algorithms_item import EdgeRuleJWTActionAlgorithmsIte
 from .edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
 from .edge_rule_limit_action import EdgeRuleLimitAction
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+from .edge_rule_match_expr import EdgeRuleMatchExpr
+from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
@@ -3857,6 +3859,8 @@ __all__ = (
     "EdgeRuleJWTActionRequiredClaims",
     "EdgeRuleLimitAction",
     "EdgeRuleMaintenanceAction",
+    "EdgeRuleMatchExpr",
+    "EdgeRuleMatchExprOp",
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
