@@ -25,6 +25,12 @@ var (
 // fleet, independently of the developer machine architecture.
 func helloServerBinary() ([]byte, error) {
 	helloServerOnce.Do(func() {
+		// Hosts without a matching Go toolchain (the native test node) supply
+		// a prebuilt static binary instead of compiling the fixture.
+		if prebuilt := os.Getenv("FAAS_E2E_HELLO_SERVER_BINARY"); prebuilt != "" {
+			helloServerBytes, helloServerErr = os.ReadFile(prebuilt)
+			return
+		}
 		dir, err := os.MkdirTemp("", "faas-e2e-helloserver-*")
 		if err != nil {
 			helloServerErr = err
