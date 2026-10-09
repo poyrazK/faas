@@ -1,5 +1,15 @@
 name: ci
 
+# Mega tier: the complete suite. Pull requests and merges to main run the
+# light tier (ci-light.yml) instead; see its header for the split. This
+# workflow runs:
+#   - nightly on main (and that run is the only writer of its Go caches),
+#   - on workflow_dispatch for any branch,
+#   - from release.yml, which refuses to publish a tag until this passes on
+#     the tagged commit.
+#
+# Historical notes from the original one-PR CI bundle:
+#
 # One-PR CI bundle (Tier 1+2 from the CI improvement plan):
 #   - go-version pinned via go.mod
 #   - go mod + build cache (setup-go@v5)
@@ -14,28 +24,18 @@ name: ci
 # live as separate files alongside this one.
 
 on:
-  push:
-    branches: [main]
-  # Draft PRs run only `lint + build`; every other job is gated on
-  # `github.event.pull_request.draft != true` so iteration on a draft does not
-  # hold ~25 hosted runners per push. `ready_for_review` starts the full suite
-  # (and cancels the draft run through the concurrency group below), and
-  # workflow_dispatch still runs everything on demand for a draft branch.
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  # Required checks must also run on the queue's temporary merge ref,
-  # otherwise the queue waits forever for a status that never arrives.
-  merge_group:
+  schedule:
+    # 02:17 UTC nightly, off the hour so it does not queue with every other
+    # repository's midnight cron.
+    - cron: "17 2 * * *"
   workflow_dispatch:
+  workflow_call:
 
-# Cancel in-progress runs when a PR ref updates (push to the same branch)
-# or main receives a new commit. Saves CI minutes and removes the
-# "did my fix actually run?" confusion.
+# One full run per ref at a time. A literal group (not github.workflow) keeps
+# a release.yml caller and this called workflow from sharing one group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Never cancel a merge-queue run: the queue reads a cancelled check as a
-  # failure and evicts the pull request.
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  group: ci-full-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -145,11 +145,11 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.cache/golangci-lint
-          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-
-            go-lint-${{ runner.os }}-
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -169,14 +169,14 @@ jobs:
       - name: lint every assigned package
         run: python3 scripts/ci/lint_go_shard.py --shard ${{ matrix.shard }} --shards 4 -- golangci-lint
       - name: save lint shard cache
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.cache/golangci-lint
-          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   test:
     name: lint + build
@@ -210,10 +210,10 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.cache/golangci-lint
-          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-lint-${{ runner.os }}-
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
       # Restore the module cache before setup-go downloads the requested
       # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
       # a cache hit untar over the toolchain's existing files.
@@ -565,17 +565,6 @@ jobs:
         run: make proto-check
 
 # Race-enabled unit test suite + pgx-backed Store integration tests.
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            ~/.cache/golangci-lint
-          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
   # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
   # so the wall time is bounded by the slowest of the three (≈ 4:40).
   # Postgres service + DATABASE_URL mirror the previous combined job.
@@ -590,7 +579,6 @@ jobs:
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
     timeout-minutes: 45
@@ -657,10 +645,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pg-1-${{ runner.os }}-
+            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -699,20 +687,19 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # The complete state test inventory runs on four independent PostgreSQL
   # runners. Fuzz seeds and runnable examples belong to exactly one shard;
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -756,10 +743,10 @@ jobs:
             ~/go/pkg/mod
           # All shards compile the identical ./pkg/state race test binary, so
           # they share one cache entry (written by shard 1 only, below).
-          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-state-${{ runner.os }}-
+            go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: verify complete state inventory
         run: |
           mkdir -p coverage
@@ -786,19 +773,18 @@ jobs:
         # One writer per shared key: a second shard's save would only fail to
         # reserve it, and duplicate entries are what overflowed the 10 GB
         # repository cache budget and evicted the other families.
-        if: always() && github.event_name == 'push' && matrix.shard == 1
+        if: always() && github.ref == 'refs/heads/main' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
   # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -889,10 +875,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: Enable TLS for durable SQL credential acceptance
         if: matrix.id == 'b'
         env:
@@ -985,13 +971,13 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Require all five compatible profiles. A partial suite or parity-only profile
   # cannot replace the full exact-package 70% gate.
@@ -1019,7 +1005,7 @@ jobs:
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
-    if: always() && github.event.pull_request.draft != true
+    if: always()
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1041,7 +1027,6 @@ jobs:
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
@@ -1073,10 +1058,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pure-1-${{ runner.os }}-
+            go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: unit tests (pure Go shard 1)
         env:
           # Pull requests let Go's test cache skip packages whose transitive
@@ -1110,18 +1095,17 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
@@ -1152,10 +1136,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pure-2-${{ runner.os }}-
+            go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
@@ -1190,17 +1174,16 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   container-contract:
     name: portable container contracts (strict)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
     timeout-minutes: 35
@@ -1231,10 +1214,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-container-contract-${{ runner.os }}-
+            go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: require portable container contracts
         run: |
           set -o pipefail
@@ -1276,13 +1259,13 @@ jobs:
             udp-contract-*.log
           if-no-files-found: warn
       - name: save container contract builds
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1296,7 +1279,6 @@ jobs:
     # step, unchanged; the former job names are kept as section markers
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
     # retain time for the remaining SQLC, vulnerability and Ansible gates.
@@ -1359,10 +1341,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-checks-${{ runner.os }}-
+            go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-
       # Restore the module cache before setup-go downloads the requested
       # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
       # a cache hit untar over the toolchain's existing files and can hang the
@@ -1774,13 +1756,13 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
@@ -1798,7 +1780,6 @@ jobs:
   # Node SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1806,6 +1787,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          # setup-go's cache would save a ~0.9 GB entry per ref (every
+          # release tag included); mega runs are rare enough to download.
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -1882,6 +1866,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          # setup-go's cache would save a ~0.9 GB entry per ref (every
+          # release tag included); mega runs are rare enough to download.
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -1908,7 +1895,6 @@ jobs:
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1934,6 +1920,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          # setup-go's cache would save a ~0.9 GB entry per ref (every
+          # release tag included); mega runs are rare enough to download.
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -1969,7 +1958,6 @@ jobs:
   # verified customer targeting or refresh after inactivity.
   flags-acceptance:
     name: flags (customer release + request evidence)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1995,6 +1983,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          # setup-go's cache would save a ~0.9 GB entry per ref (every
+          # release tag included); mega runs are rare enough to download.
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -2013,7 +2004,6 @@ jobs:
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -2021,6 +2011,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          # setup-go's cache would save a ~0.9 GB entry per ref (every
+          # release tag included); mega runs are rare enough to download.
+          cache: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
@@ -2080,7 +2073,6 @@ jobs:
     # and otherwise queue forever — our org doesn't have them provisioned,
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -2103,10 +2095,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-load-${{ runner.os }}-
+            go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: download Go modules with retry
         env:
           GOPROXY: https://proxy.golang.org,direct
@@ -2130,13 +2122,13 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-load-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   migration-checks:
     # ADR-142 freezes the legacy 1..590 sequence and moves all new migrations
@@ -2175,7 +2167,6 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migration IDs, apply and replay
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -2230,10 +2221,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-migrations-${{ runner.os }}-
+            go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: verify-secrets.sh static check
         run: |
           set -euo pipefail
@@ -2311,7 +2302,7 @@ jobs:
           # coverage. Pull requests and merge-queue refs use the exact diff so
           # deployment/docs/UI-only changes do not replay the complete
           # history in hundreds of isolated database tests.
-          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "schedule" ]]; then
             needed=true
             echo "full migration suite required for ${EVENT_NAME}"
           elif [[ -z "$BASE_REF" ]]; then
@@ -2333,13 +2324,13 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Every default-build migration test, fuzz seed and runnable example runs
   # exactly once. Each shard owns a separate PostgreSQL service and still
@@ -2391,11 +2382,11 @@ jobs:
             ~/go/pkg/mod
           # All four shards compile the identical non-race ./migrations test
           # binary, so they share one cache entry (written by shard 1 only).
-          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-migrations-history-${{ runner.os }}-
-            go-migrations-${{ runner.os }}-
+            go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: verify complete migration inventory
         run: |
           mkdir -p migration-results
@@ -2428,19 +2419,19 @@ jobs:
           exit 1
       - name: save Go build + test cache
         # One writer per shared key; see unit-tests-state.
-        if: always() && github.event_name == 'push' && matrix.shard == 1
+        if: always() && github.ref == 'refs/heads/main' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Keep the exact branch-protection context. A failed/cancelled prerequisite
   # or shard must fail this gate; only the impact policy can skip the suite.
   migrations:
     name: migrations (IDs + apply)
-    if: always() && github.event.pull_request.draft != true
+    if: always()
     needs: [migration-checks, migrations-full]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -2471,7 +2462,6 @@ jobs:
     # dedicated job. Keep this separate from the name-sharded e2e jobs so a
     # new TestBootContract_* cannot compile successfully without ever running.
     name: boot-contract (production config)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2496,8 +2486,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false
       - name: boot-contract tests
         # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even though the
         # unprivileged runner user has no effective capabilities. Production
@@ -2517,7 +2506,6 @@ jobs:
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # The test command has a 15m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
@@ -2577,10 +2565,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-e2e-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2603,17 +2591,16 @@ jobs:
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
-        if: always() && github.event_name == 'push'
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2670,10 +2657,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-e2e-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2691,7 +2678,6 @@ jobs:
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2748,10 +2734,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-e2e-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2769,7 +2755,6 @@ jobs:
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2826,10 +2811,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-e2e-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
