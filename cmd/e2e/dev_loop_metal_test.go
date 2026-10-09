@@ -242,11 +242,17 @@ func TestDevLoopMetal(t *testing.T) {
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
-		// The restarted process serves the edit from the patched VM.
+		// The restarted process serves the edit from the patched VM. The app
+		// is briefly down while guest-init restarts it, so the gateway may
+		// answer 502 until it listens again.
 		deadline = time.Now().Add(30 * time.Second)
-		for devLoopBody(t, h, host) != "dev loop v2" {
+		for {
+			body, status := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, ""), host, 30*time.Second)
+			if status == http.StatusOK && strings.TrimSpace(string(body)) == "dev loop v2" {
+				break
+			}
 			if time.Now().After(deadline) {
-				t.Fatal("patched instance never served v2")
+				t.Fatalf("patched instance never served v2 (last status %d body %q)", status, body)
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
