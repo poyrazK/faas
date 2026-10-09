@@ -451,7 +451,7 @@ API endpoints:
 | `GET /v1/apps/{slug}/route-removal/check?deployment_id=UUID` | Explain current blockers and capture hashes |
 
 The server deployment must include migration
-`20261008090000000_route_removal_policy.sql` before enabling these endpoints.
+`20261009061628464_route_removal_policy.sql` before enabling these endpoints.
 
 ## Check a successor contract before customer cutover
 
