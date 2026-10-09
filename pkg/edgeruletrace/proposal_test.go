@@ -97,6 +97,36 @@ func TestApplyProposalRejectsInvalidDrafts(t *testing.T) {
 	}
 }
 
+// adr: 733 — the simulator evaluates match conditions with the gateway's
+// evaluator: a cookie-gated maintenance rule applies only to beta testers,
+// and a proposal can add such a rule and show who it affects.
+func TestSimulateEvaluatesMatchConditions(t *testing.T) {
+	var cond api.EdgeRuleMatchExpr
+	if err := json.Unmarshal([]byte(`{"field":"cookie:beta","op":"eq","value":"1"}`), &cond); err != nil {
+		t.Fatal(err)
+	}
+	priority := 10
+	proposal := edgeruletrace.Proposal{Add: []api.CreateEdgeRuleRequest{{
+		MatchHost: "example.com", MatchPath: "/old/*", Priority: &priority, Kind: "maintenance", Match: &cond,
+		Action: json.RawMessage(`{"maintenance":{"message":"beta only"}}`),
+	}}}
+	beta := http.Header{}
+	beta.Set("Cookie", "beta=1")
+	for name, tc := range map[string]struct {
+		headers http.Header
+		want    string
+	}{"beta tester": {beta, "maintenance"}, "everyone else": {http.Header{}, "redirect"}} {
+		input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/old/page", Method: http.MethodGet, AppMaintenanceLoaded: true, Headers: tc.headers}
+		cmp, err := edgeruletrace.SimulateProposal(input, proposalTestRules(), proposal, time.Now())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if cmp.Proposed.Simulation.Outcome != tc.want {
+			t.Fatalf("%s: proposed outcome = %q, want %q", name, cmp.Proposed.Simulation.Outcome, tc.want)
+		}
+	}
+}
+
 // adr: 091 — the simulator now shares the gateway's matchers: host patterns
 // compare case-insensitively and protective kinds match normalized and
 // case-folded path variants, exactly as pkg/gateway does.

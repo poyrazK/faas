@@ -825,3 +825,39 @@ func TestPgStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
 		t.Fatalf("over-quota restore err = %v, want *EdgeRuleQuotaError", err)
 	}
 }
+
+// ADR-733: a match condition round-trips through edge_rules.match_expr, is
+// part of the rule-set snapshot, and comes back on rollback.
+func TestPgStore_EdgeRuleMatchExpr_RoundTripAndRollback(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "match-expr")
+
+	params := pgSampleEdgeRuleParams(acct, app, "match-expr.example.com")
+	params.Match = &api.EdgeRuleMatchExpr{Any: []api.EdgeRuleMatchExpr{
+		{Field: "cookie:beta", Op: "eq", Value: "1"},
+		{Field: "client_ip", Op: "cidr", Values: []string{"10.0.0.0/8"}},
+	}}
+	created, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, limits)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := s.GetEdgeRuleByID(ctx, created.ID)
+	if err != nil || got.Match == nil || len(got.Match.Any) != 2 || got.Match.Any[1].Values[0] != "10.0.0.0/8" {
+		t.Fatalf("stored condition = %+v, %v", got.Match, err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, created.ID, state.UpdateEdgeRuleParams{ClearMatch: true}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got, _ := s.GetEdgeRuleByID(ctx, created.ID); got.Match != nil {
+		t.Fatalf("condition not cleared: %+v", got.Match)
+	}
+	v1, err := s.GetEdgeRuleSetVersion(ctx, app, 1)
+	if err != nil || len(v1.Rules) != 1 || v1.Rules[0].Match == nil {
+		t.Fatalf("version 1 snapshot lost the condition: %+v, %v", v1.Rules, err)
+	}
+	restored, err := s.RestoreEdgeRuleSetVersion(ctx, app, 1, limits)
+	if err != nil || len(restored.Rules) != 1 || restored.Rules[0].Match == nil || len(restored.Rules[0].Match.Any) != 2 {
+		t.Fatalf("rollback did not restore the condition: %+v, %v", restored.Rules, err)
+	}
+}

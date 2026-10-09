@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+    from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -82,6 +83,17 @@ class UpdateEdgeRuleRequest:
     """When the gateway stops applying the rule."""
     clear_expires_at: bool | Unset = UNSET
     """Remove the expiry so the rule applies indefinitely."""
+    match: EdgeRuleMatchExpr | Unset = UNSET
+    """ADR-733 match condition, ANDed with the rule's fixed selectors. A node
+    is exactly one of all, any, not, or a field/op leaf. Fields: method,
+    path, host, client_ip, country, header:<name>, cookie:<name>,
+    query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+    exists, missing, regex (RE2), cidr (client_ip only). Depth at most 4,
+    at most 32 nodes, 64 values per leaf, values and regexes at most 256
+    bytes. An untrusted client IP or country is absent.
+    """
+    clear_match: bool | Unset = UNSET
+    """Remove the match condition."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -170,6 +182,12 @@ class UpdateEdgeRuleRequest:
 
         clear_expires_at = self.clear_expires_at
 
+        match: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match, Unset):
+            match = self.match.to_dict()
+
+        clear_match = self.clear_match
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -197,6 +215,10 @@ class UpdateEdgeRuleRequest:
             field_dict["expires_at"] = expires_at
         if clear_expires_at is not UNSET:
             field_dict["clear_expires_at"] = clear_expires_at
+        if match is not UNSET:
+            field_dict["match"] = match
+        if clear_match is not UNSET:
+            field_dict["clear_match"] = clear_match
 
         return field_dict
 
@@ -212,6 +234,7 @@ class UpdateEdgeRuleRequest:
         from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+        from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -419,6 +442,15 @@ class UpdateEdgeRuleRequest:
 
         clear_expires_at = d.pop("clear_expires_at", UNSET)
 
+        _match = d.pop("match", UNSET)
+        match: EdgeRuleMatchExpr | Unset
+        if isinstance(_match, Unset):
+            match = UNSET
+        else:
+            match = EdgeRuleMatchExpr.from_dict(_match)
+
+        clear_match = d.pop("clear_match", UNSET)
+
         update_edge_rule_request = cls(
             match_host=match_host,
             match_path=match_path,
@@ -432,6 +464,8 @@ class UpdateEdgeRuleRequest:
             description=description,
             expires_at=expires_at,
             clear_expires_at=clear_expires_at,
+            match=match,
+            clear_match=clear_match,
         )
 
         update_edge_rule_request.additional_properties = d

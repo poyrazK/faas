@@ -411,6 +411,7 @@ export type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 export type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 export type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 export type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+export type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 export type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 export type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 export type { EdgeRuleResponse } from './EdgeRuleResponse.js';

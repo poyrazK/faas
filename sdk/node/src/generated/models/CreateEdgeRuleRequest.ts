@@ -12,6 +12,7 @@ import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -55,5 +56,6 @@ export type CreateEdgeRuleRequest = {
    * When the gateway stops applying the rule.
    */
   expires_at?: string;
+  match?: EdgeRuleMatchExpr;
 };
 
