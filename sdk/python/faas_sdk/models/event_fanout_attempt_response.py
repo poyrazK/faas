@@ -19,6 +19,14 @@ from ..models.event_fanout_attempt_response_failure_code import (
     EventFanoutAttemptResponseFailureCode,
     check_event_fanout_attempt_response_failure_code,
 )
+from ..models.event_fanout_attempt_response_filter_reason import (
+    EventFanoutAttemptResponseFilterReason,
+    check_event_fanout_attempt_response_filter_reason,
+)
+from ..models.event_fanout_attempt_response_retry_stop_reason import (
+    EventFanoutAttemptResponseRetryStopReason,
+    check_event_fanout_attempt_response_retry_stop_reason,
+)
 from ..models.event_fanout_attempt_response_state import (
     EventFanoutAttemptResponseState,
     check_event_fanout_attempt_response_state,
@@ -38,6 +46,10 @@ class EventFanoutAttemptResponse:
     attempt_number: int
     retryable: bool
     occurred_at: datetime.datetime
+    filter_reason: EventFanoutAttemptResponseFilterReason | Unset = UNSET
+    """Why routing was filtered without consuming a routing attempt."""
+    retry_stop_reason: EventFanoutAttemptResponseRetryStopReason | Unset = UNSET
+    """Why automatic routing retries stopped; failure_code retains the underlying cause."""
     failure_code: EventFanoutAttemptResponseFailureCode | Unset = UNSET
     last_error: str | Unset = UNSET
     capacity_scope: EventFanoutAttemptResponseCapacityScope | Unset = UNSET
@@ -59,6 +71,14 @@ class EventFanoutAttemptResponse:
         retryable = self.retryable
 
         occurred_at = self.occurred_at.isoformat()
+
+        filter_reason: str | Unset = UNSET
+        if not isinstance(self.filter_reason, Unset):
+            filter_reason = self.filter_reason
+
+        retry_stop_reason: str | Unset = UNSET
+        if not isinstance(self.retry_stop_reason, Unset):
+            retry_stop_reason = self.retry_stop_reason
 
         failure_code: str | Unset = UNSET
         if not isinstance(self.failure_code, Unset):
@@ -86,6 +106,10 @@ class EventFanoutAttemptResponse:
                 "occurred_at": occurred_at,
             }
         )
+        if filter_reason is not UNSET:
+            field_dict["filter_reason"] = filter_reason
+        if retry_stop_reason is not UNSET:
+            field_dict["retry_stop_reason"] = retry_stop_reason
         if failure_code is not UNSET:
             field_dict["failure_code"] = failure_code
         if last_error is not UNSET:
@@ -114,6 +138,20 @@ class EventFanoutAttemptResponse:
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
+        _filter_reason = d.pop("filter_reason", UNSET)
+        filter_reason: EventFanoutAttemptResponseFilterReason | Unset
+        if isinstance(_filter_reason, Unset):
+            filter_reason = UNSET
+        else:
+            filter_reason = check_event_fanout_attempt_response_filter_reason(_filter_reason)
+
+        _retry_stop_reason = d.pop("retry_stop_reason", UNSET)
+        retry_stop_reason: EventFanoutAttemptResponseRetryStopReason | Unset
+        if isinstance(_retry_stop_reason, Unset):
+            retry_stop_reason = UNSET
+        else:
+            retry_stop_reason = check_event_fanout_attempt_response_retry_stop_reason(_retry_stop_reason)
+
         _failure_code = d.pop("failure_code", UNSET)
         failure_code: EventFanoutAttemptResponseFailureCode | Unset
         if isinstance(_failure_code, Unset):
@@ -141,6 +179,8 @@ class EventFanoutAttemptResponse:
             attempt_number=attempt_number,
             retryable=retryable,
             occurred_at=occurred_at,
+            filter_reason=filter_reason,
+            retry_stop_reason=retry_stop_reason,
             failure_code=failure_code,
             last_error=last_error,
             capacity_scope=capacity_scope,

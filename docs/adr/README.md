@@ -641,7 +641,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
 - [ADR-818: version customer workflow contracts and require transition evidence](818-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
-- [ADR-792: business workflow observations and transactional evidence](792-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
+- [ADR-819: business workflow observations and transactional evidence](819-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 
@@ -668,3 +668,24 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
 - [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
 - [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
+- [ADR-792: Workflow and backfill event backlog discovery](792-event-backlog-workflow-backfill-discovery.md)
+- [ADR-793: Workflow event replay preview](793-workflow-event-replay-preview.md)
+- [ADR-794: Durable workflow event backfill](794-durable-workflow-event-backfill.md)
+- [ADR-795: Opt-in keyed event delivery ordering](795-keyed-event-delivery-ordering.md)
+- [ADR-796: Event ordering backlog diagnostics](796-event-ordering-backlog-diagnostics.md)
+- [ADR-797: Durable bulk event recovery](797-durable-bulk-event-recovery.md)
+- [ADR-798: Subscription pause and paced drain](798-subscription-pause-and-paced-drain.md)
+- [ADR-799: Consumer routing health and alerts](799-event-consumer-health-and-alerts.md)
+- [ADR-800: Consumer routing retry policies](800-consumer-routing-retry-policies.md)
+- [ADR-803: Application subscription schema version selection](803-event-subscription-schema-versions.md)
+- [ADR-804: Read-only event schema rollout preview](804-event-schema-rollout-preview.md)
+- [ADR-805: Consumer execution health and alerts](805-event-consumer-execution-health.md)
+- [ADR-806: Paced event execution recovery](806-paced-event-execution-recovery.md)
+- [ADR-807: Recovery execution outcomes](807-recovery-execution-outcomes.md)
+- [ADR-808: Recovery job controls](808-recovery-job-controls.md)
+- [ADR-809: Recovery job discovery](809-recovery-job-discovery.md)
+- [ADR-810: Recovery control audit history](810-recovery-control-audit-history.md)
+- [ADR-811: Recovery health and alerts](811-recovery-health-and-alerts.md)
+- [ADR-812: Durable recovery lifecycle notifications](812-recovery-lifecycle-notifications.md)
+- [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
+- [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)

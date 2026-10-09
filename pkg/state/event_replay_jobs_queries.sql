@@ -1,17 +1,38 @@
 -- name: EventReplayBackfillCreate :one
 INSERT INTO event_replay_jobs
-    (account_id, app_id, subscription_id, subscription_revision, recipient,
+    (account_id, app_id, subscription_id, subscription_revision, recipient, consumer_kind, workflow_name,
      from_at, until_at, cutoff_at, earliest_retained_at, cursor_at)
 VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(subscription_id)::uuid,
         sqlc.arg(subscription_revision)::text, sqlc.arg(recipient)::jsonb,
+        sqlc.arg(consumer_kind)::text, sqlc.arg(workflow_name)::text,
         sqlc.arg(from_at)::timestamptz, sqlc.arg(until_at)::timestamptz,
         sqlc.arg(cutoff_at)::timestamptz, sqlc.arg(earliest_retained_at)::timestamptz,
         sqlc.arg(cursor_at)::timestamptz)
 RETURNING id;
 
+-- name: EventReplayBackfillWorkflowTarget :many
+SELECT a.id AS app_id, a.account_id, a.slug AS app_slug, d.id AS deployment_id,
+       definition.value AS workflow, ac.plan
+FROM apps a
+JOIN accounts ac ON ac.id=a.account_id
+JOIN LATERAL (
+    SELECT dep.id, dep.workflows FROM deployments dep
+    WHERE dep.app_id=a.id AND dep.status='live' AND dep.scope='default'
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC
+    LIMIT 1
+) d ON true
+CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id,d.workflows)) definition(value)
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+  AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND definition.value->>'name'=sqlc.arg(workflow_name)::text
+  AND definition.value->'trigger'->>'type'='event'
+  AND coalesce(definition.value->'trigger'->>'enabled','true')='true'
+LIMIT 2;
+
 -- name: EventReplayBackfillGet :one
 SELECT j.id, j.account_id, j.app_id, a.slug AS app_slug, j.subscription_id,
-       j.subscription_revision, j.from_at, j.until_at, j.cutoff_at,
+       j.subscription_revision, j.consumer_kind, j.workflow_name, j.from_at, j.until_at, j.cutoff_at,
        j.earliest_retained_at, j.duplicate_policy, j.state, j.scan_complete,
        j.scanned_count, j.matched_count, j.filtered_count,
        j.created_at, j.updated_at, j.completed_at,
@@ -37,7 +58,8 @@ SELECT EXISTS (SELECT 1 FROM event_replay_jobs
 -- name: EventReplayBackfillItems :many
 SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type,
        i.schema_version, i.state, i.attempts, i.failure_code, i.last_error,
-       i.retryable, i.updated_at, j.subscription_id,
+       i.retryable, i.updated_at, j.subscription_id, j.consumer_kind, j.workflow_name,
+       coalesce(wr.id::text,'')::text AS workflow_run_id, coalesce(wr.status,'')::text AS workflow_run_status,
        (o.id IS NOT NULL)::boolean AS receipt_available,
        (o.id IS NOT NULL AND a.id IS NOT NULL AND (r.subscription_id IS NOT NULL OR EXISTS (
            SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) s(recipient)
@@ -49,6 +71,8 @@ LEFT JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_i
     AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
 LEFT JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text AND r.app_id=j.app_id
+LEFT JOIN workflow_event_receipts wer ON wer.outbox_id=o.id AND wer.recipient_id=j.subscription_id
+LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
 WHERE i.job_id=sqlc.arg(job_id)::uuid
   AND (sqlc.arg(state)::text = '' OR i.state=sqlc.arg(state)::text)
   AND (i.accepted_at,i.outbox_id) > (sqlc.arg(after_at)::timestamptz,sqlc.arg(after_outbox_id)::bigint)
@@ -89,7 +113,9 @@ SELECT o.id, o.created_at, o.payload, o.recipient_snapshot, o.state,
                            AND s.recipient->>'app_id'=sqlc.arg(app_id)::text)
             THEN 'captured' ELSE 'not_captured' END::text AS original_recipient,
        EXISTS (SELECT 1 FROM event_fanout_recipients r
-               WHERE r.outbox_id=o.id AND r.subscription_id=sqlc.arg(subscription_id)::text) AS recipient_exists
+               WHERE r.outbox_id=o.id AND r.subscription_id=sqlc.arg(subscription_id)::text) AS recipient_exists,
+       EXISTS (SELECT 1 FROM workflow_event_receipts wr
+               WHERE wr.outbox_id=o.id AND wr.recipient_id=sqlc.arg(subscription_id)::uuid) AS workflow_admission_exists
 FROM event_fanout_outbox o
 WHERE o.account_id=sqlc.arg(account_id)::uuid
   AND o.created_at >= sqlc.arg(from_at)::timestamptz
@@ -97,6 +123,62 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid
   AND (o.created_at,o.id) > (sqlc.arg(cursor_at)::timestamptz,sqlc.arg(cursor_outbox_id)::bigint)
 ORDER BY o.created_at,o.id
 LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventReplayBackfillInsertWorkflowFailure :execrows
+INSERT INTO event_replay_job_items(job_id,outbox_id,accepted_at,event_source,event_id,event_type,schema_version,
+                                   state,attempts,failure_code,last_error,retryable)
+VALUES (sqlc.arg(job_id)::uuid,sqlc.arg(outbox_id)::bigint,sqlc.arg(accepted_at)::timestamptz,
+        sqlc.arg(event_source)::text,sqlc.arg(event_id)::text,sqlc.arg(event_type)::text,sqlc.arg(schema_version)::text,
+        'failed',1,sqlc.arg(failure_code)::text,sqlc.arg(last_error)::text,sqlc.arg(retryable)::boolean)
+ON CONFLICT (job_id,outbox_id) DO NOTHING;
+
+-- name: EventReplayBackfillWorkflowRetryCandidates :many
+SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type, i.schema_version,
+       i.attempts, o.payload, o.recipient_snapshot, o.state,
+       CASE WHEN o.recipient_snapshot IS NULL THEN 'unknown'
+            WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) s(recipient)
+                         WHERE s.recipient->>'id'=j.subscription_id::text
+                           AND s.recipient->>'app_id'=j.app_id::text)
+            THEN 'captured' ELSE 'not_captured' END::text AS original_recipient,
+       EXISTS (SELECT 1 FROM event_fanout_recipients r
+               WHERE r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text) AS recipient_exists,
+       EXISTS (SELECT 1 FROM workflow_event_receipts wr
+               WHERE wr.outbox_id=o.id AND wr.recipient_id=j.subscription_id) AS workflow_admission_exists
+FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
+WHERE i.job_id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
+  AND j.consumer_kind='workflow' AND i.state='failed' AND i.retryable
+ORDER BY i.accepted_at,i.outbox_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventReplayBackfillWorkflowExpireRetry :execrows
+UPDATE event_replay_job_items i SET failure_code='target_unavailable',
+       last_error='source event is no longer retained',retryable=false,updated_at=clock_timestamp()
+FROM event_replay_jobs j
+WHERE i.job_id=j.id AND i.job_id=sqlc.arg(job_id)::uuid
+  AND j.account_id=sqlc.arg(account_id)::uuid AND j.consumer_kind='workflow'
+  AND i.state='failed' AND i.retryable
+  AND NOT EXISTS (SELECT 1 FROM event_fanout_outbox o
+                  WHERE o.id=i.outbox_id AND o.account_id=j.account_id
+                    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at);
+
+-- name: EventReplayBackfillTargetSnapshot :one
+SELECT recipient, app_id, account_id, consumer_kind, workflow_name FROM event_replay_jobs
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventReplayBackfillWorkflowFinishRetry :execrows
+UPDATE event_replay_job_items SET state=sqlc.arg(state)::text, attempts=attempts+1,
+       failure_code=sqlc.arg(failure_code)::text,last_error=sqlc.arg(last_error)::text,
+       retryable=sqlc.arg(retryable)::boolean,updated_at=clock_timestamp()
+WHERE job_id=sqlc.arg(job_id)::uuid AND outbox_id=sqlc.arg(outbox_id)::bigint
+  AND state='failed' AND retryable;
+
+-- name: EventReplayBackfillWorkflowRetryableCount :one
+SELECT count(*)::bigint FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+WHERE i.job_id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
+  AND j.consumer_kind='workflow' AND i.state='failed' AND i.retryable;
 
 -- name: EventReplayBackfillLockParent :one
 SELECT * FROM event_fanout_outbox WHERE id=sqlc.arg(id)::bigint FOR UPDATE;
@@ -129,12 +211,13 @@ ON CONFLICT (job_id,outbox_id) DO NOTHING;
 
 -- name: EventReplayBackfillInsertRecipient :execrows
 INSERT INTO event_fanout_recipients
-    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id,receipt_position)
+    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id,receipt_position,delivery_deadline_at)
 VALUES (sqlc.arg(outbox_id)::bigint,sqlc.arg(subscription_id)::text,sqlc.arg(app_id)::uuid,
         sqlc.arg(recipient)::jsonb,'pending',0,sqlc.arg(available_at)::timestamptz,sqlc.arg(job_id)::uuid,
         (SELECT greatest(jsonb_array_length(coalesce(o.recipient_snapshot,'[]'::jsonb)),
                          coalesce((SELECT max(r.receipt_position) FROM event_fanout_recipients r WHERE r.outbox_id=o.id),0))+1
-         FROM event_fanout_outbox o WHERE o.id=sqlc.arg(outbox_id)::bigint))
+         FROM event_fanout_outbox o WHERE o.id=sqlc.arg(outbox_id)::bigint),
+ (SELECT event_recipient_delivery_deadline(sqlc.arg(recipient)::jsonb,o.created_at,'{}'::jsonb) FROM event_fanout_outbox o WHERE o.id=sqlc.arg(outbox_id)::bigint))
 ON CONFLICT (outbox_id,subscription_id) DO NOTHING;
 
 -- name: EventReplayBackfillAdvance :exec
@@ -205,7 +288,8 @@ JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.subscription_id=
 JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
 JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 WHERE i.job_id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
-  AND i.state='failed' AND i.retryable AND r.state='failed'
+  AND i.state='failed' AND (i.retryable OR sqlc.arg(allow_expired)::boolean AND i.failure_code='delivery_expired') AND r.state='failed'
+ AND (sqlc.arg(allow_expired)::boolean OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
   AND (sqlc.arg(event_source)::text='' OR o.source=sqlc.arg(event_source)::text)
   AND (sqlc.arg(event_id)::text='' OR o.event_id=sqlc.arg(event_id)::text)
   AND (sqlc.arg(app_id)::text='' OR j.app_id::text=sqlc.arg(app_id)::text)
@@ -229,7 +313,9 @@ WHERE job_id=sqlc.arg(job_id)::uuid AND outbox_id=sqlc.arg(outbox_id)::bigint AN
 -- name: EventReplayBackfillCountRetryableFailed :one
 SELECT count(*)::bigint FROM event_replay_job_items i
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.backfill_job_id=i.job_id
-WHERE i.job_id=sqlc.arg(job_id)::uuid AND i.state='failed' AND i.retryable AND r.state='failed';
+JOIN event_fanout_outbox o ON o.id=r.outbox_id
+ WHERE i.job_id=sqlc.arg(job_id)::uuid AND i.state='failed' AND i.retryable AND r.state='failed'
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp());
 
 -- name: EventReplayBackfillSetRunning :exec
 UPDATE event_replay_jobs SET state='running',completed_at=NULL,updated_at=clock_timestamp()

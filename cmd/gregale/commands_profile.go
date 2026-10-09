@@ -147,7 +147,7 @@ func cmdProfile(args []string) int {
 		if len(args) != want {
 			return printErr("Invalid profile usage", errors.New("use: profile add <name> <api-url>, profile use <name>, or profile remove <name>"))
 		}
-		name := args[1]
+		name := args[1] // #nosec G602 -- len(args) must equal want, which is 2 or 3.
 		if err := validateProfileName(name); err != nil {
 			return printErr("Invalid profile name", err)
 		}
@@ -158,7 +158,7 @@ func cmdProfile(args []string) int {
 			if exists {
 				return printErr("Profile already exists", errors.New(name))
 			}
-			base, err := validateConfigAPIBase(args[2])
+			base, err := validateConfigAPIBase(args[2]) // #nosec G602 -- the add branch sets want to 3 and validates len(args) == want.
 			if err != nil {
 				return printErr("Invalid API URL", err)
 			}

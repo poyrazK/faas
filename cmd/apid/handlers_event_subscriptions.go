@@ -9,15 +9,16 @@ import (
 )
 
 func eventSubscriptionResponse(subscription state.EventSubscription) api.EventSubscriptionResponse {
-	return api.EventSubscriptionResponse{
-		ID:        subscription.ID,
-		AppID:     subscription.AppID,
-		Source:    subscription.Source,
-		Type:      subscription.Type,
-		Filter:    subscription.Filter,
-		Enabled:   subscription.Enabled,
-		CreatedAt: subscription.CreatedAt,
-		UpdatedAt: subscription.UpdatedAt,
+	return api.EventSubscriptionResponse{SchemaVersions: append([]string(nil), subscription.SchemaVersions...),
+		RoutingRetryPolicy: subscription.RoutingRetryPolicy,
+		ID:                 subscription.ID,
+		AppID:              subscription.AppID,
+		Source:             subscription.Source,
+		Type:               subscription.Type,
+		Filter:             subscription.Filter,
+		Enabled:            subscription.Enabled,
+		CreatedAt:          subscription.CreatedAt,
+		UpdatedAt:          subscription.UpdatedAt,
 	}
 }
 
@@ -65,6 +66,7 @@ func (s *server) listEventSubscriptions(w http.ResponseWriter, r *http.Request, 
 			response.WorkKey = binding.KeySelector
 			response.WorkFairnessKey = binding.FairnessSelector
 			response.WorkAction = binding.Action
+			response.Ordered = binding.Ordered
 		}
 		out.Subscriptions = append(out.Subscriptions, response)
 	}

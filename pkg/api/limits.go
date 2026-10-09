@@ -9191,3 +9191,86 @@ const (
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
 )
+
+// Bulk recovery bounds failed routing selection and durable job work (ADR-797).
+const (
+	EventRecoveryRecipientsMax       = 10000
+	EventRecoveryPreviewLimit        = 100
+	EventRecoveryCapacityWaitWarning = 15 * time.Minute
+	EventRecoveryStallGrace          = 5 * time.Minute
+	EventRecoveryExpiryWarning       = time.Hour
+	EventRecoveryHistoryPageMax      = 100
+	EventRecoveryReasonMaxBytes      = 512
+	EventRecoveryJobsPageMax         = 50
+	EventRecoveryCursorMaxBytes      = 4096
+	EventRecoveryItemsPageMax        = 100
+	EventRecoveryRateDefault         = 10
+	EventRecoveryRateMax             = 100
+	EventRecoveryActiveJobsMax       = 3
+	EventRecoveryJobLifetime         = 24 * time.Hour
+	EventRecoveryJobRetention        = 30 * 24 * time.Hour
+	EventRecoveryRequestTimeout      = 5 * time.Second
+)
+
+// Subscription delivery controls pace routing admission (ADR-798).
+const (
+	EventSubscriptionDrainRateDefault  = 10
+	EventSubscriptionDrainRateMax      = 100
+	EventSubscriptionControlTimeout    = 5 * time.Second
+	EventSubscriptionControlRetryDelay = 5 * time.Second
+)
+
+const EventConsumerHealthMaxWindow = 24 * time.Hour
+const EventConsumerHealthMinFailureSamples = 20
+
+const (
+	EventRoutingRetryDefaultAttempts        = 12
+	EventRoutingRetryDefaultInitialMS int64 = 5000
+	EventRoutingRetryDefaultMaxMS     int64 = 300000
+	EventRoutingRetryMaxAttempts            = 100
+	EventRoutingRetryMaxBackoffMS     int64 = 3600000
+	EventRoutingRetryMaxDurationMS    int64 = 7 * 24 * 60 * 60 * 1000
+)
+
+const (
+	EventCircuitDefaultFailurePct            = 50
+	EventCircuitDefaultSamples         int64 = 20
+	EventCircuitDefaultWindowSeconds   int64 = 300
+	EventCircuitDefaultCooldownSeconds int64 = 60
+	EventCircuitDefaultProbeSuccesses        = 3
+	EventCircuitDefaultRecoveryRate          = 10
+	EventCircuitDefaultRecoverySeconds int64 = 60
+	EventCircuitMaxSamples             int64 = 10000
+	EventCircuitMaxSeconds             int64 = 3600
+	EventCircuitMaxProbeSuccesses            = 20
+	EventCircuitRampInterval                 = 10 * time.Second
+	EventCircuitNeutralProbeDelay            = time.Second
+)
+const EventCircuitEvaluationInterval = time.Second
+
+// Maximum wall-clock age before application event routing admission.
+const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
+
+// Maximum explicit schema versions selected by one event subscription.
+const EventSubscriptionSchemaVersionsMax = 16
+
+// Event schema rollout previews are read-only and bound both input and observation.
+const (
+	EventSchemaRolloutIdentityMaxBytes   = 256
+	EventSchemaRolloutBodyMaxBytes       = 2 << 20
+	EventSchemaRolloutSchemaMaxBytes     = 64 << 10
+	EventSchemaRolloutSampleMaxBytes     = 64 << 10
+	EventSchemaRolloutSamplesMax         = 20
+	EventSchemaRolloutConsumersMax       = 1000
+	EventSchemaRolloutRetainedScanMax    = 1000
+	EventSchemaRolloutRetainedMax        = 100
+	EventSchemaRolloutRetainedBytesMax   = 4 << 20
+	EventSchemaRolloutDiagnosticMaxBytes = 256
+	EventSchemaRolloutTimeout            = 15 * time.Second
+)
+
+// Consumer execution health bounds retained delivery observations and lineage.
+const (
+	EventConsumerExecutionRootsMax       = 1000
+	EventConsumerExecutionInvocationsMax = 5000
+)
