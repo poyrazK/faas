@@ -39,6 +39,13 @@ func testCustomerOperationCommittedReceipt(t *testing.T, s operationLifecycleSto
 	if _, err := business.Exec(ctx, string(schema)); err != nil {
 		t.Fatal(err)
 	}
+	customerSchema, err := os.ReadFile("../../../pkg/operationinbox/customer_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := business.Exec(ctx, string(customerSchema)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := business.Exec(ctx, "CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0)"); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +101,7 @@ func testCustomerOperationCommittedReceipt(t *testing.T, s operationLifecycleSto
 	counts := func() {
 		t.Helper()
 		var total, receipts int
-		err := business.QueryRow(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &receipts)
+		err := business.QueryRow(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox)").Scan(&total, &receipts)
 		if err != nil || total != 1 || receipts != 1 {
 			t.Fatalf("business total=%d receipts=%d err=%v", total, receipts, err)
 		}
