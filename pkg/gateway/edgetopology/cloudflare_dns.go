@@ -54,6 +54,9 @@ type CloudflareDNSInventory struct {
 type CloudflareDNSProbe struct {
 	zone           CloudflareZoneRef
 	baseURL, token string
+	// collectionMaxBytes is api.RuntimeUpgradeDNSCollectionMaxBytes; tests
+	// lower it so the budget is reached in a few pages, not ~21.
+	collectionMaxBytes int64
 }
 
 // NewCloudflareDNSProbe uses only the official HTTPS API with normal TLS
@@ -63,7 +66,7 @@ func NewCloudflareDNSProbe(zone CloudflareZoneRef, token string) (*CloudflareDNS
 	if !dnsProviderID(zone.ID) || !dnsName(zone.Name, false) || !dnsAPIToken(token) {
 		return nil, fmt.Errorf("%w: canonical reviewed zone and private API token required", ErrDNSUnverified)
 	}
-	return &CloudflareDNSProbe{zone: zone, token: token, baseURL: "https://api.cloudflare.com/client/v4"}, nil
+	return &CloudflareDNSProbe{zone: zone, token: token, baseURL: "https://api.cloudflare.com/client/v4", collectionMaxBytes: int64(api.RuntimeUpgradeDNSCollectionMaxBytes)}, nil
 }
 
 // Collect brackets two complete unfiltered record scans with exact zone-detail
@@ -75,7 +78,7 @@ func (p *CloudflareDNSProbe) Collect(ctx context.Context) (CloudflareDNSInventor
 	defer cancel()
 	t := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{}).DialContext, DisableKeepAlives: true, TLSHandshakeTimeout: api.RuntimeUpgradeIngressProbeTimeout, MaxResponseHeaderBytes: int64(api.DefaultMaxHeaderBytes)}
 	defer t.CloseIdleConnections()
-	budget := int64(api.RuntimeUpgradeDNSCollectionMaxBytes)
+	budget := p.collectionMaxBytes
 	before, nameservers, err := p.readZone(ctx, t, &budget)
 	if err != nil {
 		return CloudflareDNSInventory{}, err
