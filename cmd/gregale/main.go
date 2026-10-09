@@ -773,7 +773,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
-	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		usage += " <" + command.subcommandChoice() + ">"
 	}
 	for _, positional := range command.Positionals {

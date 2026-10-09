@@ -14,11 +14,17 @@ import (
 	"syscall"
 )
 
+var errReadAppTargetRequired = errors.New("app target is required")
+
 type appPickerEntry struct {
 	slug, project, status string
 }
 
 func readAppTargetError(err error) int {
+	if errors.Is(err, errReadAppTargetRequired) {
+		PrintUsage(osStderr, err.Error(), "apps")
+		return 1
+	}
 	if errors.Is(err, context.Canceled) {
 		_, _ = fmt.Fprintln(osStderr, "App selection canceled.")
 		return 130
@@ -48,7 +54,7 @@ func resolveReadAppTarget(explicit string) (string, error) {
 		return linked.App, nil
 	}
 	if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
-		return "", fmt.Errorf("app target is required; pass an app slug or link with gregale link <project-slug> --app <slug>")
+		return "", fmt.Errorf("%w; pass an app slug or link with gregale link <project-slug> --app <slug>", errReadAppTargetRequired)
 	}
 	client, err := authedClient()
 	if err != nil {
