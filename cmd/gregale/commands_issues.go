@@ -25,6 +25,13 @@ func cmdIssues(args []string) int {
 		}
 		return 1
 	}
+	if args[0] == "get" {
+		for _, arg := range args[1:] {
+			if arg == "--interactive" || strings.HasPrefix(arg, "--interactive=") {
+				return cmdIssuesGetInteractive(args[1:])
+			}
+		}
+	}
 	action := args[0]
 	fs := newFlagSet("issues "+action, flag.ContinueOnError)
 	app := fs.String("app", "", "application slug")

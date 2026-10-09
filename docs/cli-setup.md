@@ -856,6 +856,25 @@ use `jobs cancel` or `jobs wait` to address that work first. The guided flow
 does not cancel tasks automatically. Explicit `jobs rm NAME` remains available
 for scripts.
 
+## Inspect issues interactively
+
+```sh
+gregale issues get --app my-api --interactive
+# Use the linked app, or choose one:
+gregale issues get --interactive
+```
+
+Choose an issue state (open, resolved, ignored, or all) and ordering (recent or
+verified customer impact over 24 hours). Browse cursor pages labeled with issue
+titles, state, last-seen time, and verified customer count; unavailable impact
+is shown as unknown. Selecting an issue reads fresh evidence, release history,
+activity, and impact using the existing JSON detail view.
+
+A profile-aware command is printed for the selected issue, plus commands for
+additional event, release, or activity pages when available. This flow only
+reads issues and never changes ownership or resolution state. For scripts,
+use `issues get ISSUE_ID --app APP` with explicit history cursors.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

@@ -6913,11 +6913,18 @@ List grouped issues
 
 Read evidence and release history
 
-`gregale issues get --app <SLUG> <issue-id>`
+`gregale issues get --app <SLUG> [--interactive] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--interactive` | browse issues by state and order, then inspect one |  |
+
+Examples:
+
+```sh
+gregale issues get --app my-api --interactive
+```
 
 ### issues assign
 
