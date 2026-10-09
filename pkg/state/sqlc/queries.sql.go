@@ -3037,6 +3037,52 @@ func (q *Queries) ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg Cl
 	return i, err
 }
 
+const claimDueWorkflowRun = `-- name: ClaimDueWorkflowRun :one
+UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
+WHERE id=$1::uuid AND
+ ((status IN ('pending','awaiting_event') AND scheduled_for<=now())
+ OR (status='running' AND coalesce(lease_until,updated_at+($2::bigint*interval '1 millisecond'))<=now()))
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id
+`
+
+type ClaimDueWorkflowRunParams struct {
+	ID      pgtype.UUID
+	StaleMs int64
+}
+
+// The scheduler's fair dispatcher handles both native and Operations runs.
+// The legacy-only claim above remains available to callers that must preserve
+// the old ownership boundary.
+func (q *Queries) ClaimDueWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueWorkflowRunParams) (WorkflowRun, error) {
+	row := db.QueryRow(ctx, claimDueWorkflowRun, arg.ID, arg.StaleMs)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.WorkflowName,
+		&i.Status,
+		&i.CurrentStep,
+		&i.Input,
+		&i.Output,
+		&i.DefinitionSnapshot,
+		&i.ScheduledFor,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeaseUntil,
+		&i.OperationID,
+		&i.ResumeCount,
+		&i.CancelledAt,
+		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
+	)
+	return i, err
+}
+
 const claimEnvironmentGitOpsJob = `-- name: ClaimEnvironmentGitOpsJob :one
 WITH candidate AS (
     SELECT j.source_id, s.generation FROM environment_gitops_jobs j
@@ -37458,7 +37504,7 @@ type LockWorkflowRunConcurrencyParams struct {
 	WorkflowName string
 }
 
-// Coordinate with the previous per-definition claimant during rolling upgrades.
+// Coordinate per-definition claims during rolling upgrades.
 func (q *Queries) LockWorkflowRunConcurrency(ctx context.Context, db DBTX, arg LockWorkflowRunConcurrencyParams) error {
 	_, err := db.Exec(ctx, lockWorkflowRunConcurrency, arg.AppID, arg.WorkflowName)
 	return err
@@ -38402,15 +38448,22 @@ FROM workflow_runs candidate
 LEFT JOIN workflow_dispatch_cursors app_cursor ON app_cursor.app_id=candidate.app_id AND app_cursor.scope_key='app'
 LEFT JOIN workflow_dispatch_cursors scope_cursor ON scope_cursor.app_id=candidate.app_id
  AND scope_cursor.scope_key=coalesce(candidate.platform_tenant_id::text,'unscoped')
-WHERE candidate.operation_id IS NULL AND
+WHERE
  ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
-AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
- AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$2::integer
-AND (candidate.platform_tenant_id IS NULL OR
+AND (
+ candidate.operation_id IS NOT NULL OR
  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
- AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
- AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$3::integer)
+  AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running'
+  AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$2::integer
+)
+AND (
+ candidate.operation_id IS NOT NULL OR candidate.platform_tenant_id IS NULL OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+  AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+  AND active.operation_id IS NULL AND active.status='running'
+  AND coalesce(active.lease_until,active.updated_at+($1::bigint*interval '1 millisecond'))>now())<$3::integer
+)
 AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
  AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
@@ -67367,21 +67420,27 @@ func (q *Queries) WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtyp
 }
 
 const workflowDispatchCapacityAvailable = `-- name: WorkflowDispatchCapacityAvailable :one
-SELECT EXISTS(SELECT 1 FROM workflow_runs candidate WHERE candidate.id=$1::uuid
- AND candidate.operation_id IS NULL AND
+SELECT EXISTS(SELECT 1 FROM workflow_runs candidate WHERE candidate.id=$1::uuid AND
  ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($2::bigint*interval '1 millisecond'))<=now()))
- AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
- AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$3::integer
-AND (candidate.platform_tenant_id IS NULL OR
- (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
- AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
- AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$4::integer)
-AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
- (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
- AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
- AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
- OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)))::boolean
+ AND (
+  candidate.operation_id IS NOT NULL OR
+  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+   AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running'
+   AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$3::integer
+ )
+ AND (
+  candidate.operation_id IS NOT NULL OR candidate.platform_tenant_id IS NULL OR
+  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+   AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+   AND active.operation_id IS NULL AND active.status='running'
+   AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())<$4::integer
+ )
+ AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
+  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+   AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
+   AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
+    OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+($2::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)))::boolean
 `
 
 type WorkflowDispatchCapacityAvailableParams struct {
@@ -67391,7 +67450,7 @@ type WorkflowDispatchCapacityAvailableParams struct {
 	TenantLimit int32
 }
 
-// Recheck after acquiring the legacy concurrency lock. Earlier workers can
+// Recheck after acquiring the workflow concurrency lock. Earlier workers can
 // consume the last definition slot while a new claimant waits for that lock.
 func (q *Queries) WorkflowDispatchCapacityAvailable(ctx context.Context, db DBTX, arg WorkflowDispatchCapacityAvailableParams) (bool, error) {
 	row := db.QueryRow(ctx, workflowDispatchCapacityAvailable,

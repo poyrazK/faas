@@ -342,9 +342,6 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 	var candidates []WorkflowRun
 	counts := m.workflowDispatchOccupancyLocked(now)
 	for _, run := range m.workflowRuns {
-		if _, operation := m.operationForWorkflowLocked(run.ID); operation {
-			continue
-		}
 		live := run.Status == WorkflowRunStatusRunning && m.workflowDispatchDeadlineLocked(run).After(now)
 		due := (run.Status == WorkflowRunStatusPending || run.Status == WorkflowRunStatusAwaitingEvent) && !run.ScheduledFor.After(now)
 		if due || (run.Status == WorkflowRunStatusRunning && !live) {
@@ -374,7 +371,8 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		return a.ID < b.ID
 	})
 	for _, chosen := range candidates {
-		if counts.capacityReason(chosen) != "" {
+		_, operation := m.operationForWorkflowLocked(chosen.ID)
+		if counts.capacityReasonFor(chosen, operation) != "" {
 			continue
 		}
 		priorStatus := chosen.Status
@@ -387,7 +385,7 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		}
 		m.workflowRunLeases[chosen.ID] = now.Add(5 * time.Minute)
 		if priorStatus == WorkflowRunStatusRunning {
-			if _, linked := m.operationForWorkflowLocked(chosen.ID); linked {
+			if operation {
 				m.interruptOperationWorkflowLocked(chosen.ID, now)
 			} else {
 				m.recoverWorkflowStepsLocked(chosen, now)

@@ -475,7 +475,7 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 	if !available {
 		return nil, ErrNotFound
 	}
-	row, err := q.ClaimDueLegacyWorkflowRun(ctx, tx, sqlc.ClaimDueLegacyWorkflowRunParams{ID: candidate.ID, StaleMs: limits.StaleMs})
+	row, err := q.ClaimDueWorkflowRun(ctx, tx, sqlc.ClaimDueWorkflowRunParams{ID: candidate.ID, StaleMs: limits.StaleMs})
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: claim fair workflow run: %w", err)
 	}
