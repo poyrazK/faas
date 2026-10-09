@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "anomaly-alerts",
+      "name": "Anomaly alerts",
+      "category": "observability",
+      "description": "Alert when an app's error rate, latency, cold starts, or traffic move far from their usual level for that time of day, without choosing a fixed threshold.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/744-anomaly-alerts",
+      "operator_flag": "FAAS_ANOMALY_ALERTS_ENABLED",
+      "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline"
+    },
+    {
       "id": "application-messaging",
       "name": "Application inbox and outbox",
       "category": "async",

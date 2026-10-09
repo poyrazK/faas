@@ -6,6 +6,7 @@ This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/
 
 | Capability | Category | Maturity | Plans | Description | Acceptance evidence |
 |---|---|---|---|---|---|
+| [Anomaly alerts](../docs/adr/744-anomaly-alerts) | observability | `internal` | — | Alert when an app's error rate, latency, cold starts, or traffic move far from their usual level for that time of day, without choosing a fixed threshold. | `pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline` |
 | [Application inbox and outbox](../docs/event-driven#application-inbox) | async | `preview` | `hobby`, `pro`, `scale` | Reliably send work to another Gregale app or deliver a signed custom event to a registered webhook without operating a separate broker or delivery subsystem. | `cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent` |
 | [Circuit breaking](../docs/adr/201-traffic-as-a-platform-primitive) | edge | `internal` | — | Stop routing to an instance that is failing in transport, and probe it back into service once it recovers. | `pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint` |
 | [Application companions](../docs/companions) | runtime | `preview` | `free`, `hobby`, `pro`, `scale` | Attach a bounded helper such as an OpenTelemetry collector, database proxy, or custom reverse proxy to an application instance. | `pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot` |
