@@ -347,6 +347,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		_, _ = f.Write([]byte{VsockResumeAckUserspaceReseed})
 		return
 	}
+	resumeGuestProfiles()
 	SetResumeTraceparent(req.Traceparent)
 	// The userspace reseed above runs first, so an application
 	// after_restore callback never sees the snapshot's random state.
@@ -375,13 +376,19 @@ func handleBeforeCheckpointConn(f *os.File, log *slog.Logger, lengthHeader []byt
 		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
 		return
 	}
+	profilingActive := pauseGuestProfiles()
 	cfg := beforeCheckpoint.Load()
+	if cfg == nil && profilingActive {
+		_, _ = f.Write([]byte{VsockResumeAckOK})
+		return
+	}
 	if cfg == nil {
 		log.Warn("before_checkpoint requested without guest configuration")
 		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
 		return
 	}
 	if err := callBeforeCheckpointHook(cfg.hook, cfg.port); err != nil {
+		resumeGuestProfiles()
 		log.Warn("application before_checkpoint hook failed", "err", err)
 		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
 		return

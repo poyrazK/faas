@@ -5154,6 +5154,7 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	}
 	m.nextProcessGeneration++
 	lease.processGeneration = m.nextProcessGeneration
+	lease.profileStartedAt = time.Now()
 	m.processGenerations[lease.Instance] = lease.processGeneration
 	delete(m.pendingProcessExits, lease.Instance)
 	return lease

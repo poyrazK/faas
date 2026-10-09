@@ -12,7 +12,12 @@ FROM node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac3044
 # Guest runtime user (uid 1000, spec §4.8). The official Alpine image
 # already reserves uid 1000 for `node`; reuse that identity under the
 # platform's canonical `app` name instead of attempting a duplicate uid.
-RUN apk upgrade --no-cache && \
+COPY --chmod=0644 guest/profiling/node/package*.json /opt/gregale/profiling/
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt chmod 0755 /opt/gregale /opt/gregale/profiling && \
+    apk add --no-cache libstdc++ && apk add --no-cache --virtual .profiling-build python3 make g++ && \
+    cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && apk del .profiling-build && \
+    rm -rf /root/.npm
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk upgrade --no-cache && \
     apk add --no-cache bash && \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
@@ -21,4 +26,5 @@ RUN apk upgrade --no-cache && \
     else adduser -D -u 1000 app; fi
 # The function runner shim (guest/runners/node22) is layered in for `type:
 # function` deploys at M7; plain Node apps bring their own entrypoint.
+COPY --chmod=0644 guest/profiling/node.cjs /opt/gregale/profiling/node.cjs
 WORKDIR /app

@@ -12603,7 +12603,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'app.health.changed'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -46735,3 +46735,110 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+CREATE TABLE public.profile_investigations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    investigation jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    assessment jsonb,
+    CONSTRAINT profile_investigations_assessment_check CHECK (((assessment IS NULL) OR ((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'status'::text) IS NOT NULL) AND ((assessment ->> 'status'::text) = ANY (ARRAY['regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text])) AND (octet_length((assessment)::text) <= 131072)))),
+    CONSTRAINT profile_investigations_investigation_check CHECK (((jsonb_typeof(investigation) = 'object'::text) AND (octet_length((investigation)::text) <= 131072))),
+    CONSTRAINT profile_investigations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+CREATE INDEX profile_investigations_app_updated_idx ON public.profile_investigations USING btree (app_id, updated_at DESC, id);
+
+CREATE TABLE public.profile_deployment_policies (
+    app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+    enabled boolean NOT NULL,
+    config jsonb NOT NULL CHECK (jsonb_typeof(config) = 'object' AND octet_length(config::text) <= 8192),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE public.profile_deployment_checks (
+    deployment_id uuid PRIMARY KEY REFERENCES public.deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
+    data jsonb NOT NULL CHECK (jsonb_typeof(data) = 'object' AND octet_length(data::text) <= 8192),
+    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'regressed', 'no_regression_detected', 'inconclusive', 'cancelled')),
+    reason text NOT NULL DEFAULT '',
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+    next_attempt_at timestamptz,
+    lease_token uuid,
+    lease_until timestamptz,
+    investigation_id uuid REFERENCES public.profile_investigations(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    completed_at timestamptz,
+    CHECK ((status = 'running') = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
+    CHECK ((status IN ('queued', 'running')) = (completed_at IS NULL AND next_attempt_at IS NOT NULL))
+);
+CREATE INDEX profile_deployment_checks_due_idx ON public.profile_deployment_checks (next_attempt_at, deployment_id) WHERE status IN ('queued', 'running');
+CREATE INDEX profile_deployment_checks_app_created_idx ON public.profile_deployment_checks (app_id, created_at DESC, deployment_id);
+CREATE INDEX profile_deployment_checks_completed_idx ON public.profile_deployment_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
+
+CREATE TABLE public.profile_canary_checks (
+    deployment_id uuid NOT NULL REFERENCES public.deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    canary_step integer NOT NULL CHECK (canary_step >= 0),
+    canary_step_started_at timestamp with time zone NOT NULL,
+    policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
+    data jsonb NOT NULL CHECK (jsonb_typeof(data) = 'object' AND octet_length(data::text) <= 98304),
+    status text DEFAULT 'queued'::text NOT NULL CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])),
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL CHECK (attempts BETWEEN 0 AND 5),
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT profile_canary_checks_pkey PRIMARY KEY (deployment_id, canary_step, canary_step_started_at, policy_revision),
+    CONSTRAINT profile_canary_checks_lease_chk CHECK ((status = 'running'::text) = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
+    CONSTRAINT profile_canary_checks_schedule_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text])) = (completed_at IS NULL AND next_attempt_at IS NOT NULL))
+);
+CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks (next_attempt_at, created_at, deployment_id) WHERE status = ANY (ARRAY['queued'::text, 'running'::text]);
+CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
+
+CREATE TABLE public.profile_route_alert_state (
+ context_key text PRIMARY KEY CHECK (length(context_key)=64),
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ deployment_id uuid NOT NULL REFERENCES public.deployments(id) ON DELETE CASCADE,
+ state jsonb NOT NULL,
+ updated_at timestamptz NOT NULL
+);
+CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_state(app_id);
+
+CREATE TABLE public.profile_periodic_monitors (
+ id uuid PRIMARY KEY,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+ policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
+ route text NOT NULL CHECK (length(route)>0),
+ data jsonb NOT NULL CHECK (jsonb_typeof(data)='object' AND octet_length(data::text)<=262144),
+ next_attempt_at timestamptz NOT NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6),
+ lease_token uuid,
+ lease_until timestamptz,
+ updated_at timestamptz NOT NULL,
+ UNIQUE(deployment_id,policy_revision,route),
+ CHECK ((lease_token IS NULL)=(lease_until IS NULL))
+);
+CREATE INDEX profile_periodic_monitors_due_idx ON public.profile_periodic_monitors(next_attempt_at,id);
+CREATE INDEX profile_periodic_monitors_app_idx ON public.profile_periodic_monitors(app_id,updated_at DESC,id);
+
+CREATE INDEX deployments_profile_completed_idx ON public.deployments (app_id, scope, rollout_completed_at DESC, id DESC)
+    WHERE status IN ('live', 'superseded') AND rollout_state = 'complete' AND deleted_at IS NULL;

@@ -1523,6 +1523,9 @@ func workerReplicasEqual(a, b *api.WorkerScaling) bool {
 
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
+	if desired.Profiling != nil && (manifest.Profiling == nil || *desired.Profiling != *manifest.Profiling) {
+		return true
+	}
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
 		return true
 	}
@@ -1567,7 +1570,7 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil && m.Profiling == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
@@ -3932,6 +3935,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// waited deployments commit only once they reach live. --no-triggers
 	// opts out of the entire fan-out.
 	var stagedManifestTriggerTxn *manifestCronTransaction
+	profileTxn, err := stageManifestProfiling(ctx, client, slug, sourceDir)
+	if err != nil {
+		return printErr("Manifest profiling policy failed", err)
+	}
+	defer func() {
+		if err := profileTxn.rollback(ctx); err != nil {
+			PrintWarn(osStderr, "Manifest profiling rollback incomplete: %v", err)
+		}
+	}()
 	defer func() {
 		if stagedManifestTriggerTxn == nil || len(stagedManifestTriggerTxn.steps) == 0 {
 			return
@@ -3945,6 +3957,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}()
 	commitManifestTriggers := func() {
 		stagedManifestTriggerTxn.commit()
+		profileTxn.committed = true
 	}
 	applyManifestScaling := func() error {
 		if err := applyManifestLifecycle(ctx, client, slug, sourceDir); err != nil {
