@@ -77,7 +77,7 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # stable across re-pulls, but the manifest-list digest is). Use the native
 # build platform for the toolchain and cross-compile the target artifact; this
 # avoids emulating the Go compiler for arm64 multi-arch builds.
-FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -95,7 +95,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # pinned release from source instead. We build on TARGETPLATFORM because runc
 # enables cgo for seccomp; buildx's QEMU path is bounded to this small binary
 # and keeps the cross-compiled BuildKit stages native and fast.
-FROM --platform=$TARGETPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build
+FROM --platform=$TARGETPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build
 WORKDIR /src/runc
 ARG RUNC_VERSION
 ARG RUNC_SOURCE_SHA256
@@ -128,7 +128,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # slow bare-metal builders can spend several minutes importing a remote layer.
 # Build both upstream binaries from the same source tree so the repository
 # patch and the dependency floors apply consistently to buildctl and buildkitd.
-FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build
 WORKDIR /src/buildkit
 ARG BUILDKIT_VERSION
 ARG BUILDKIT_REVISION
@@ -176,7 +176,7 @@ COPY images/builder-resolv.conf /etc/resolv.conf
 
 # Alpine supplies the small, currently supported userland for the builder
 # VM. The image reference is digest-pinned via images/Dockerfile.lock.
-FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+FROM public.ecr.aws/docker/library/alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 # Issue #197 B3.5: the `alpine:3.22` tag is mutable. The digest is
 # pinned via images/Dockerfile.lock; `make images-lock-update` resolves
 # the current registry digest and updates BOTH the lock and the FROM
