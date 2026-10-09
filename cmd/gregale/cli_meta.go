@@ -1484,7 +1484,8 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Value: "JSON", Short: "versioned exit-code and outcome retry rules JSON"},
 			}},
 			{Name: "info", Short: "Show one job", Positionals: []string{"<name>"}},
-			{Name: "update", Short: "Update one job", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "update", Short: "Update one job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs update --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a Job, edit prefilled settings, and confirm changes"},
 				{Name: "image", Value: "REF", Short: "new OCI image"},
 				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint"},
 				{Name: "ram", Value: "MB", Short: "new RAM (MB)"},

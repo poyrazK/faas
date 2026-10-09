@@ -624,6 +624,23 @@ fails or times out. The response confirms recorded cancellation, not that every
 running task has finished terminating. Use `jobs tasks NAME RUN_ID` to inspect.
 Explicit `jobs cancel NAME RUN_ID` remains available for scripts.
 
+## Edit Job settings interactively
+
+```sh
+gregale jobs update --interactive
+```
+
+Choose a Job and edit prefilled RAM, per-task timeout, maximum parallelism,
+retry maximum, and active/paused state. Review changed values and confirm before
+saving. Unchanged fields are omitted; keeping all values unchanged makes no
+update request. Account plan limits are enforced by the server.
+
+The CLI rereads configuration before saving and stops if it changed. Runtime
+schedule timestamps are ignored by this client-side check, which is not an
+atomic server lock. Pausing prevents future dispatches without canceling running
+tasks. For images, commands, environment variables, schedules, or scripts,
+use `jobs update NAME` with explicit flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

@@ -282,6 +282,9 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsUpdateInteractive()
+	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")

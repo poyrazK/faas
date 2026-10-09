@@ -3665,10 +3665,11 @@ Show one job
 
 Update one job
 
-`gregale jobs update [--image <REF>] [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--pause] [--resume] [--schedule <EXPR>] [--timezone <TZ>] [--unschedule] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
+`gregale jobs update [--interactive] [--image <REF>] [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--pause] [--resume] [--schedule <EXPR>] [--timezone <TZ>] [--unschedule] [--schedule-policy <JSON>] [--failure-rules <JSON>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a Job, edit prefilled settings, and confirm changes |  |
 | `--image <REF>` | new OCI image |  |
 | `--command <ARGV>` | new comma-separated entrypoint |  |
 | `--ram <MB>` | new RAM (MB) |  |
@@ -3682,6 +3683,12 @@ Update one job
 | `--unschedule` | remove recurring schedule |  |
 | `--schedule-policy <JSON>` | replace versioned recurring schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned exit-code and outcome retry rules JSON |  |
+
+Examples:
+
+```sh
+gregale jobs update --interactive
+```
 
 ### jobs rm
 
