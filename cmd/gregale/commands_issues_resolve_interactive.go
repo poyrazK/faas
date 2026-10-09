@@ -141,16 +141,20 @@ func cmdIssuesResolveInteractive(args []string) int {
 }
 
 func chooseOpenIssue(ctx context.Context, client *api.Client, prompt *startPrompt, slug, appID string) (api.Issue, bool, error) {
+	return chooseIssueInState(ctx, client, prompt, slug, appID, "open")
+}
+
+func chooseIssueInState(ctx context.Context, client *api.Client, prompt *startPrompt, slug, appID, state string) (api.Issue, bool, error) {
 	var issues []api.Issue
 	cursors := map[int]string{0: ""}
 	seen := map[string]bool{}
-	choice, err := chooseJobLogPage(ctx, prompt, "Choose an open issue.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListIssues(ctx, slug, "open", "", cursors[offset])
+	choice, err := chooseJobLogPage(ctx, prompt, "Choose a "+state+" issue.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListIssues(ctx, slug, state, "", cursors[offset])
 		issues = page.Items
 		labels := []string{}
 		for _, issue := range issues {
-			if issue.AppID != appID || !alertIDPattern.MatchString(issue.ID) || issue.State != "open" {
-				return nil, -1, errors.New("issue does not match selected app and open state")
+			if issue.AppID != appID || !alertIDPattern.MatchString(issue.ID) || issue.State != state {
+				return nil, -1, errors.New("issue does not match selected app and requested state")
 			}
 			labels = append(labels, oneLine(issue.Title)+" · "+issue.LastSeenAt.Format(time.RFC3339))
 		}

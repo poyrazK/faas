@@ -913,6 +913,25 @@ The returned ignored state and expiry are checked against the requested values.
 A profile-aware inspection command is printed after saving. For scripts, use
 `issues ignore ISSUE_ID --app APP --until RFC3339`.
 
+## Reopen an issue interactively
+
+```sh
+gregale issues reopen --app my-api --interactive
+# Use the linked app, or choose one:
+gregale issues reopen --interactive
+```
+
+Choose resolved or ignored issues, then pick an issue by title. Review its
+current state, fixing release and resolution time, or suppression expiry in UTC.
+Confirm to return it to open and clear the current resolution and suppression;
+historical activity remains available.
+
+The CLI rereads the issue after confirmation and stops if it changed. This
+client-side check is not an atomic server lock. The returned issue identity,
+open state, and cleared resolution and suppression are checked before reporting
+success. A profile-aware inspection command is printed afterward. For scripts,
+use `issues reopen ISSUE_ID --app APP`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

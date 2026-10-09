@@ -6959,11 +6959,18 @@ gregale issues resolve --app my-api --interactive
 
 Reopen an issue
 
-`gregale issues reopen --app <SLUG> <issue-id>`
+`gregale issues reopen --app <SLUG> [--interactive] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--interactive` | choose a resolved or ignored issue, review its state, and confirm reopening |  |
+
+Examples:
+
+```sh
+gregale issues reopen --app my-api --interactive
+```
 
 ### issues ignore
 
