@@ -39,6 +39,20 @@ older daemon/guest responses cannot acknowledge it. Existing releases need
 reassembly or redeployment to gain the gate. Native boot/restore and leak
 qualification remain pending ([ADR-683](adr/683-image-healthcheck-readiness.md)).
 
+Forks, crash snapshots and savings update (2026-10-09): production forks
+([ADR-732](adr/732-production-forks.md)), crash snapshots with encryption at
+rest ([ADR-733](adr/733-crash-snapshots.md)) and the savings report are in
+`preview` behind `FAAS_APP_FORKS` / `FAAS_CRASH_SNAPSHOTS`. On the internal
+test node (n2-highmem-2, nested KVM, Firecracker 1.7.0) one combined build
+passed `TestSavingsMetal`, `TestCrashSnapshotMetal`, `TestForkMetal`,
+`TestMetalQuarantineDataPlane` and the PgStore fork/capture tests, with
+`deploy/scripts/leakcheck.sh` reporting no new leaks across the run (the
+metal tests now idle-park their apps before the harness stops; earlier runs
+leaked the serving microVM). Nested KVM is functional evidence only: the
+native x86_64 acceptance run of the same set, with `-race`, is pending.
+Alerts for both features are in `faas_crash_snapshots`
+([runbook](runbooks/FaasCrashSnapshots.md)).
+
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures
 use scheduler-owned cold recovery and existing restart limits; missing proof
