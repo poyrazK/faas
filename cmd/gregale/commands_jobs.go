@@ -760,6 +760,9 @@ func cmdJobsAttempts(args []string) int {
 
 // cmdJobsReplayFailed creates a linked run containing unsuccessful inputs.
 func cmdJobsReplayFailed(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsReplayFailedInteractive()
+	}
 	if len(args) != 2 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed <name> <run-id>", "jobs")
 		return 1

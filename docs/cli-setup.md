@@ -714,6 +714,26 @@ The printed command requests a fresh link later using the active profile.
 This flow does not download bytes locally. For scripts, use
 `jobs artifact-url NAME RUN_ID TASK_INDEX ARTIFACT_NAME --json`.
 
+## Replay unsuccessful Job inputs interactively
+
+```sh
+gregale jobs replay-failed --interactive
+```
+
+Choose a Job and source run, then review its unsuccessful tasks, input IDs,
+errors, and execution policy. The source must be terminal with a complete task
+inventory, and the current Job image must be ready with the same resolved digest
+as the source snapshot. Failed, timeout, OOM, and cancelled tasks are reviewed.
+
+Confirm creation of one linked recovery run. The CLI rereads source tasks and
+configuration before submission; changes stop the flow. This client-side check
+is not an atomic lock. The server checks plan limits and selects replay tasks
+atomically when creating the run. Inputs execute again and can repeat effects.
+
+After acceptance, a profile-aware follow command is printed. Optionally follow
+the returned recovery run for up to 10 minutes. Stopping observation does not
+cancel it. For scripts, use `jobs replay-failed NAME RUN_ID` with explicit IDs.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

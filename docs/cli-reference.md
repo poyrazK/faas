@@ -3845,7 +3845,17 @@ gregale jobs retry --interactive
 
 Replay unsuccessful tasks in a linked run
 
-`gregale jobs replay-failed <name> <run-id>`
+`gregale jobs replay-failed [--interactive] [<name>] [<run-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a source run, review unsuccessful tasks, and confirm replay |  |
+
+Examples:
+
+```sh
+gregale jobs replay-failed --interactive
+```
 
 ### jobs artifact-url
 
