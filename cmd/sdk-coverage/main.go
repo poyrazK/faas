@@ -549,6 +549,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/previews":                                             "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                             "ListInstances",
 	"POST /v1/apps/{slug}/park":                                                 "Park",
+	"POST /v1/apps/{slug}/park/conditional":                                     "ParkIfDeployment",
 	"POST /v1/apps/{slug}/wake":                                                 "Wake",
 	"POST /v1/apps/{slug}/restart":                                              "RestartApp",
 	"DELETE /v1/apps/{slug}/cache":                                              "PurgeAppCache",
