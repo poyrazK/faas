@@ -740,3 +740,11 @@ To report the current state of a workflow instance, declare its accepted values 
 Customer clients read `client.milestones(operationID, {limit, cursor})` and `client.businessMilestones({appID, scope, subjectType: 'order', subjectID: orderID})`. Add `workflow` and `workflowInstanceID` together to select one workflow run. That response includes its retained `workflow_state_history`; continue it with `workflowStateCursor`, separate from the milestone `cursor`. Business references preserve the existing customer boundary, and each cursor is bound to all filters. Milestone payloads must contain only schema-declared public JSON facts. See [the Operations guide](../../docs/operations.md) for limits and recovery semantics.
 
 Business-reference responses also include current workflow states where the application has reported one. Each entry has a workflow name, instance ID, state, terminal and stale classifications, the app-reported occurrence time, revision, and publication update time. Set `staleOnly: true` on `businessMilestones` to filter its current-state entries to runs beyond their app-declared `state_stale_after` threshold; milestone facts and state history remain unchanged.
+
+## Batch event publication
+
+`EventsService.publishEventBatch({ requestBody: { events } })` accepts 1–100
+stable-id envelopes in at most 1 MiB. Inspect every `results` entry: HTTP 200
+can include rejected or unknown items. Retry with the original source/id/content;
+duplicates retain their original receipt and do not create more deliveries.
+See [batch publication](../../docs/event-driven.md#batch-event-publishing).

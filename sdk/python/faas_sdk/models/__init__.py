@@ -2250,6 +2250,10 @@ from .public_status_update_components_item import PublicStatusUpdateComponentsIt
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
 from .publish_automation_request import PublishAutomationRequest
+from .publish_event_batch_request import PublishEventBatchRequest
+from .publish_event_batch_response import PublishEventBatchResponse
+from .publish_event_batch_result import PublishEventBatchResult
+from .publish_event_batch_result_status import PublishEventBatchResultStatus
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
@@ -5200,6 +5204,10 @@ __all__ = (
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
     "PublishAutomationRequest",
+    "PublishEventBatchRequest",
+    "PublishEventBatchResponse",
+    "PublishEventBatchResult",
+    "PublishEventBatchResultStatus",
     "PublishEventRequest",
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",

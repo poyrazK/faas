@@ -73,6 +73,25 @@ type PublishEventResponse struct {
 	AccountID     string    `json:"account_id,omitempty"`
 }
 
+// PublishEventBatchRequest accepts independent envelopes in input order.
+type PublishEventBatchRequest struct {
+	Events []PublishEventRequest `json:"events"`
+}
+
+// PublishEventBatchResult uses a zero-based input index. Unknown acceptance
+// must be retried with the original identity, never a newly generated id.
+type PublishEventBatchResult struct {
+	Index     int                   `json:"index"`
+	Status    string                `json:"status"`
+	Retryable bool                  `json:"retryable"`
+	Receipt   *PublishEventResponse `json:"receipt,omitempty"`
+	Problem   *Problem              `json:"problem,omitempty"`
+}
+
+type PublishEventBatchResponse struct {
+	Results []PublishEventBatchResult `json:"results"`
+}
+
 // PlatformTenantPublishEventResponse confirms tenant-scoped event acceptance.
 // It omits account identity because the tenant API is authenticated by its
 // linked tenant token rather than an account token.

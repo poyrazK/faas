@@ -9396,3 +9396,10 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Event publication batches bound synchronous acceptance work (ADR-829).
+const (
+	EventPublishBatchMaxEvents          = 100
+	EventPublishBatchBodyMaxBytes int64 = 1 << 20
+	EventPublishBatchTimeout            = 30 * time.Second
+)

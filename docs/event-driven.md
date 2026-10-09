@@ -858,6 +858,61 @@ gregale events publish --id evt-123 --source billing.stripe --type invoice.paid 
   --data '{"amount":150}'
 ```
 
+### Batch event publishing
+
+Use `POST /v1/events:publish-batch` to publish 1–100 events in one request
+of at most 1 MiB. Send `{"events":[...envelopes...]}` using the same event
+attributes, account authentication, MFA and scopes as single-event publication.
+Every event must have a stable caller-chosen `id`.
+
+For JSONL imports, put one envelope on each line:
+
+```jsonl
+{"id":"order-101","source":"orders","type":"order.created","data":{"order_id":"101"}}
+{"id":"order-102","source":"orders","type":"order.created","data":{"order_id":"102"}}
+```
+
+```sh
+gregale events publish-batch --file orders.jsonl --json
+# Or: gregale events publish-batch --file - < orders.jsonl
+```
+
+The CLI sends one bounded batch, requires stable ids, and exits nonzero if any
+item is rejected or has an unknown outcome. It prints all results before exiting.
+Blank JSONL lines are ignored; result indexes refer to event positions, not file
+line numbers. It rejects malformed input locally before sending anything.
+
+A structurally valid batch returns HTTP 200 with `results` in input order. Each
+result has a zero-based `index`, `status` and `retryable`:
+
+| Status | Meaning | Next action |
+| --- | --- | --- |
+| `accepted` | New event durably accepted; includes `receipt`. | Inspect the receipt for asynchronous delivery. |
+| `duplicate` | Identical identity already accepted; includes the original `receipt`. | No additional fanout or storage charge. |
+| `rejected` | Item not accepted; includes `problem`. | Correct invalid content, or retry if `retryable` is true. |
+| `unknown` | Acceptance could not be confirmed; includes `problem`. | Retry with exactly the same identity and content. |
+
+Each item commits independently. Invalid attributes, identity conflicts, schema
+failures or storage capacity do not roll back accepted siblings. Capacity
+problems include the existing limit, observed and retry-after fields. Processing
+has a 30-second budget; remaining unattempted items are retryable rejections
+with code `event_publish_not_attempted`. Malformed outer JSON, invalid batch
+counts and oversized bodies reject the whole request before writes (400 or 413).
+Authentication and request rate limiting still apply to the whole request.
+
+Retry an unanswered request, the original file, or only retryable items using
+the original source/id/content. There is no request-wide Idempotency-Key replay;
+per-event identity supplies deduplication within the existing 30-day retention
+window. Do not generate new ids when retrying. A 200 response does not mean
+all events were accepted, and an acceptance receipt does not mean delivery or
+handler execution succeeded.
+
+Newly accepted items follow input acceptance order. Duplicates keep their
+original position, rejections have none, and concurrent requests may interleave.
+Execution ordering still requires opted-in keyed delivery; there is no global
+ordering guarantee. Delivery remains at least once. See
+[ADR-829](adr/829-batch-event-publication.md).
+
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` within the 30-day identity retention

@@ -334,3 +334,12 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+## Batch event publication
+
+Use `faas_sdk.api.events.publish_event_batch.sync_detailed` or
+`asyncio_detailed` with `PublishEventBatchRequest(events=[...])`. Batches contain
+1–100 stable-id envelopes in at most 1 MiB. Inspect each parsed result: HTTP 200
+can include rejected or unknown items. Retry with the original source/id/content;
+duplicates retain their original receipt and do not create more deliveries.
+See [batch publication](../../docs/event-driven.md#batch-event-publishing).

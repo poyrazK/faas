@@ -3481,6 +3481,53 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events:publish-batch:
+    post:
+      tags: [events]
+      operationId: publishEventBatch
+      summary: Publish up to 100 independent events in input order.
+      description: |
+        Accepts a nonempty batch of at most 100 events in a body of at most
+        1 MiB. Authentication, MFA and events:publish/deploy:write/admin scopes
+        match single-event publication. Invalid outer JSON, size or count
+        rejects the entire request before acceptance. Each item otherwise has
+        its own transaction, schema validation, identity and storage charge.
+        Results use zero-based input indexes in input order. accepted and
+        duplicate include a receipt with the original acceptance timestamp.
+        rejected includes a problem; unknown means acceptance could not be
+        confirmed, including an interrupted commit. Retry retryable items or
+        an unanswered request with exactly the original source/id/content.
+        Stable per-event identities provide deduplication; there is no batch
+        transaction or request-wide Idempotency-Key replay. Processing is
+        sequential with a 30-second budget; unattempted items are rejected
+        with retryable=true and code event_publish_not_attempted.
+        Newly accepted items preserve their input acceptance order. Duplicates
+        retain their original position; rejections create none. Concurrent
+        requests may interleave. Execution ordering remains opt-in per keyed
+        lane, and delivery remains at least once.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishEventBatchRequest' }
+      responses:
+        '200':
+          description: Per-event results, including partial or complete rejection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishEventBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: Batch request exceeds 1 MiB; no events accepted.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/platform-tenant-self/apps/{slug}/events:publish:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46831,6 +46878,42 @@ components:
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    PublishEventBatchRequest:
+      description: Bounded collection of independently accepted event envelopes.
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/PublishEventRequest' }
+
+    PublishEventBatchResult:
+      description: Durable acceptance or failure observation for one batch input position.
+      type: object
+      additionalProperties: false
+      required: [index, status, retryable]
+      properties:
+        index: { type: integer, minimum: 0, description: Zero-based input position. }
+        status: { type: string, enum: [accepted, duplicate, rejected, unknown] }
+        retryable: { type: boolean, description: Retry using exactly the original event identity and content. }
+        receipt: { $ref: '#/components/schemas/PublishEventResponse' }
+        problem: { $ref: '#/components/schemas/Problem' }
+
+    PublishEventBatchResponse:
+      description: Per-event outcomes in the original batch input order.
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/PublishEventBatchResult' }
 
     PlatformTenantPublishEventResponse:
       description: Durable acceptance receipt for a tenant-scoped published event.

@@ -42,6 +42,8 @@ import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSub
 import type { PlatformTenantPublishEventResponse } from '../models/PlatformTenantPublishEventResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
+import type { PublishEventBatchRequest } from '../models/PublishEventBatchRequest.js';
+import type { PublishEventBatchResponse } from '../models/PublishEventBatchResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
 import type { RegisterEventSchemaRequest } from '../models/RegisterEventSchemaRequest.js';
@@ -139,6 +141,54 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Publish up to 100 independent events in input order.
+   * Accepts a nonempty batch of at most 100 events in a body of at most
+   * 1 MiB. Authentication, MFA and events:publish/deploy:write/admin scopes
+   * match single-event publication. Invalid outer JSON, size or count
+   * rejects the entire request before acceptance. Each item otherwise has
+   * its own transaction, schema validation, identity and storage charge.
+   * Results use zero-based input indexes in input order. accepted and
+   * duplicate include a receipt with the original acceptance timestamp.
+   * rejected includes a problem; unknown means acceptance could not be
+   * confirmed, including an interrupted commit. Retry retryable items or
+   * an unanswered request with exactly the original source/id/content.
+   * Stable per-event identities provide deduplication; there is no batch
+   * transaction or request-wide Idempotency-Key replay. Processing is
+   * sequential with a 30-second budget; unattempted items are rejected
+   * with retryable=true and code event_publish_not_attempted.
+   * Newly accepted items preserve their input acceptance order. Duplicates
+   * retain their original position; rejections create none. Concurrent
+   * requests may interleave. Execution ordering remains opt-in per keyed
+   * lane, and delivery remains at least once.
+   *
+   * @returns PublishEventBatchResponse Per-event results, including partial or complete rejection.
+   * @throws ApiError
+   */
+  public static publishEventBatch({
+    requestBody,
+  }: {
+    requestBody: PublishEventBatchRequest,
+  }): CancelablePromise<PublishEventBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events:publish-batch',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        413: `Batch request exceeds 1 MiB; no events accepted.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

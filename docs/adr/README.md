@@ -697,3 +697,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-812: Durable recovery lifecycle notifications](812-recovery-lifecycle-notifications.md)
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
+
+- [ADR-829: Bounded batch event publication](829-batch-event-publication.md)
