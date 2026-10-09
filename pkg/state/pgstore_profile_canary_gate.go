@@ -54,7 +54,7 @@ func (s *PgStore) ReadProfileCanaryGate(ctx context.Context, accountID, appID, d
 	return pgProfileGateDecision(ctx, s.pool, accountID, d, time.Now().UTC())
 }
 
-func pgAbortProfileGatedCanary(ctx context.Context, tx pgx.Tx, accountID string, d Deployment, params CanaryAdvanceParams, now, leaseUntil time.Time) (Deployment, int64, error) {
+func pgAbortProfileGatedCanary(ctx context.Context, tx pgx.Tx, accountID string, d Deployment, params CanaryAdvanceParams, leaseUntil time.Time) (Deployment, int64, error) {
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -62,7 +62,7 @@ func pgAbortProfileGatedCanary(ctx context.Context, tx pgx.Tx, accountID string,
 	if err != nil {
 		return Deployment{}, 0, err
 	}
-	now = clock.Time
+	now := clock.Time
 	if !leaseUntil.After(now) {
 		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
 	}

@@ -64,6 +64,7 @@ func (s *server) savedProfilePage(w http.ResponseWriter, r *http.Request, acct s
 			view.CanSave = false
 		} else {
 			view.CSRF = token
+			// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 			http.SetCookie(w, &http.Cookie{Name: profileInvestigationCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 		}
 	} else {

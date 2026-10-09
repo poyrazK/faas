@@ -38,6 +38,7 @@ func NewPyroscope(base, token string) (*Pyroscope, error) {
 }
 
 func (b *Pyroscope) request(ctx context.Context, path, tenant, contentType string, body []byte) (*http.Response, error) {
+	// #nosec G704 -- endpoint is operator-configured, validated in NewPyroscope; private callers use fixed RPC paths and redirects are disabled.
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, b.base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create profile request: %w", err)
@@ -47,6 +48,7 @@ func (b *Pyroscope) request(ctx context.Context, path, tenant, contentType strin
 	if b.token != "" {
 		r.Header.Set("Authorization", "Bearer "+b.token)
 	}
+	// #nosec G704 -- request destination is the configured backend; tenant input is limited to headers and payload.
 	resp, err := b.client.Do(r)
 	if err != nil {
 		return nil, fmt.Errorf("profile backend unavailable")

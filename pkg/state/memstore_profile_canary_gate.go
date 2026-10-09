@@ -59,7 +59,7 @@ func profileGateRollbackAudit(params *CanaryAdvanceParams) error {
 	return err
 }
 
-func (m *MemStore) abortProfileGatedCanaryLocked(ctx context.Context, d Deployment, params CanaryAdvanceParams, now time.Time) (Deployment, int64, error) {
+func (m *MemStore) abortProfileGatedCanaryLocked(ctx context.Context, d Deployment, params CanaryAdvanceParams) (Deployment, int64, error) {
 	stableID := params.ProfileGateDecision.StableDeploymentID
 	stable, ok := m.deployments[stableID]
 	if !ok || stable.AppID != d.AppID || normalizedDeploymentScope(stable.Scope) != normalizedDeploymentScope(d.Scope) || stable.Status != DeployLive || stable.TrafficPercent <= 0 {
@@ -68,7 +68,7 @@ func (m *MemStore) abortProfileGatedCanaryLocked(ctx context.Context, d Deployme
 	if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{d.ID: 0, stableID: 100}); err != nil {
 		return Deployment{}, 0, err
 	}
-	now = time.Now().UTC()
+	now := time.Now().UTC()
 	if !m.safeReleaseWorkerLeaseUntil.After(now) {
 		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
 	}

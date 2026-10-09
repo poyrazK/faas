@@ -8021,7 +8021,7 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
 			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
 		}
-		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, now, safeReleaseLeaseExpiresAt)
+		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
 	}
 	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params); err != nil {
 		var blocked *RouteGateBlockedError

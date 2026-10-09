@@ -45,6 +45,7 @@ func (s *server) profileDeploymentChecksView(w http.ResponseWriter, r *http.Requ
 		return view
 	}
 	view.CanEdit, view.CSRF = true, token
+	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: profileDeploymentPolicyCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	return view
 }

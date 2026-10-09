@@ -95,6 +95,11 @@ ENTRYPOINT ["/app/server"]
 	if err := add("Dockerfile", []byte(dockerfile), 0644); err != nil {
 		return err
 	}
+	sourceRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sourceRoot.Close() }()
 	for _, name := range []string{"go.mod", "go.sum", "pkg", "tests/profiling/deployment/workload"} {
 		err := filepath.WalkDir(filepath.Join(root, name), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -117,7 +122,7 @@ ENTRYPOINT ["/app/server"]
 			if err != nil {
 				return err
 			}
-			body, err := os.ReadFile(path)
+			body, err := sourceRoot.ReadFile(relative)
 			if err != nil {
 				return err
 			}
@@ -234,7 +239,7 @@ func provision(ctx context.Context, c *api.Client, root, out, apiURL string) err
 
 func cleanup(ctx context.Context, c *api.Client, out string) error {
 	path := filepath.Join(out, "fixtures.json")
-	body, err := os.ReadFile(path)
+	body, err := sourceRoot.ReadFile(relative)
 	if os.IsNotExist(err) {
 		return save(filepath.Join(out, "cleanup.json"), map[string]string{"status": "no_fixtures"})
 	}

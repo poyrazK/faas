@@ -5027,7 +5027,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 		return Deployment{}, 0, err
 	}
 	if params.ProfileGateRollback {
-		return m.abortProfileGatedCanaryLocked(ctx, d, params, time.Now().UTC())
+		return m.abortProfileGatedCanaryLocked(ctx, d, params)
 	}
 	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
 		return Deployment{}, 0, err
