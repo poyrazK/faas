@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 )
 
-// adr: 732
+// adr: 818
 func TestObjectConditionalURLMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	base := `{"method":"PUT","key":"key","expires_in":60,"size_bytes":3}`
@@ -52,7 +52,7 @@ func TestObjectConditionalURLMigrationRoundTrip(t *testing.T) {
 	}
 }
 
-// adr: 732
+// adr: 818
 func TestObjectConditionalURLRollbackGuard(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
 	objectURLCapabilitySuite(t, st)

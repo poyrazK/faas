@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 732
+// adr: 818
 func TestGCSConditionalPutCompetingWriters(t *testing.T) {
 	for _, condition := range []ObjectWriteConditions{{IfNoneMatch: "*"}, {IfMatch: `"old"`}, {IfMatch: "*"}} {
 		t.Run(condition.IfMatch+condition.IfNoneMatch, func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestGCSConditionalPutCompetingWriters(t *testing.T) {
 	}
 }
 
-// adr: 732
+// adr: 818
 func TestGCSConditionalPutProbeFailuresNeverSign(t *testing.T) {
 	for _, tc := range []struct {
 		name, generation, etag string
@@ -152,7 +152,7 @@ func TestGCSConditionalPutProbeFailuresNeverSign(t *testing.T) {
 	}
 }
 
-// adr: 732
+// adr: 818
 func TestGCSConditionalPutPreservesReceiptAndEncryption(t *testing.T) {
 	p := testGCS(gcsDefaultEndpoint, &fakeGCSStore{})
 	p.encryption = EncryptionConfig{Algorithms: []string{"AES256"}}

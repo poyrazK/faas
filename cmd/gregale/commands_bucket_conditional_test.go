@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 732
+// adr: 818
 func TestBucketConditionalUploadDispatch(t *testing.T) {
 	for _, c := range []api.ObjectWriteConditions{{IfMatch: `"old"`}, {IfNoneMatch: "*"}} {
 		t.Run(c.IfMatch+c.IfNoneMatch, func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestBucketConditionalUploadDispatch(t *testing.T) {
 	}
 }
 
-// adr: 732
+// adr: 818
 func TestBucketConditionalUploadFlags(t *testing.T) {
 	base := []string{"upload", "demo", uuid.NewString(), "key", "input"}
 	for _, tc := range []struct {
