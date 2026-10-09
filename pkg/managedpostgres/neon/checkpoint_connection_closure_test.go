@@ -343,9 +343,9 @@ func TestCheckpointConnectionControllerNativePostcheckFailuresRetainOriginalClos
 					t.Fatal(err)
 				}
 			}
-			// Closure is durable, but pg_stat_activity can still include a
-			// transient autovacuum worker on the shared native test cluster.
-			// Validate every observation and wait only for those sessions to drain.
+			// Session drain is observed, not guaranteed by closing admission.
+			// Backend teardown and transient autovacuum sessions may outlive the
+			// first recovery read; every read must still retain the closed owner.
 			deadline := time.Now().Add(2 * time.Second)
 			for {
 				observed, err := f.p.checkpointConnectionClosure(t.Context(), f.definition, f.maintenance, f.request, false, f.connectPool(t))
@@ -356,7 +356,7 @@ func TestCheckpointConnectionControllerNativePostcheckFailuresRetainOriginalClos
 					break
 				}
 				if time.Now().After(deadline) {
-					t.Fatalf("recovered closure did not drain: %+v", observed)
+					t.Fatal("recovered closed owner did not observe session drain")
 				}
 				time.Sleep(10 * time.Millisecond)
 			}

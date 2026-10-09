@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -87,6 +88,11 @@ func (s *server) getOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct stat
 	if meta.Truncated {
 		w.Header().Set("X-OpenAPI-Doc-Truncated", "1")
 	}
+	w.Header().Set("X-OpenAPI-Doc-Deployment-ID", meta.DeploymentID)
+	w.Header().Set("X-OpenAPI-Doc-App-ID", meta.AppID)
+	w.Header().Set("X-OpenAPI-Doc-SHA256", fmt.Sprintf("%x", meta.DocSHA256))
+	w.Header().Set("X-OpenAPI-Doc-Captured-At", meta.CapturedAt.UTC().Format(time.RFC3339Nano))
+	w.Header().Set("X-OpenAPI-Doc-Updated-At", meta.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	w.Header().Set("X-OpenAPI-Doc-Source", meta.Source)
 	w.Header().Set("X-OpenAPI-Doc-Byte-Size", fmt.Sprintf("%d", meta.ByteSize))
 	w.WriteHeader(http.StatusOK)

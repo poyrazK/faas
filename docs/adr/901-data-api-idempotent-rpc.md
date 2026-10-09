@@ -1,4 +1,4 @@
-# ADR-830: User-scoped idempotency for the note creation RPC
+# ADR-901: User-scoped idempotency for the note creation RPC
 
 - **Status:** accepted
 - **Date:** 2026-10-08

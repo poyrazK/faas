@@ -9,6 +9,12 @@ import "time"
 // recently rather than the one created most recently. The caller holds
 // m.mu.
 func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
+	if d.Status == DeployLive && d.TrafficPercent == 100 && routeRemovalProductionScope(d.Scope) {
+		if p, ok := m.routeRemovalPolicies[d.AppID]; ok && p.BaselineDeploymentID != id {
+			p.BaselineDeploymentID = id
+			m.routeRemovalPolicies[d.AppID] = p
+		}
+	}
 	prev, existed := m.deployments[id]
 	if existed && prev.Status == DeploySnapshotting && d.Status == DeployFailed {
 		// Mirrors the deployment_failed_rollback_keeps_target trigger
@@ -18,6 +24,7 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 			d.Status = DeploySuperseded
 		}
 	}
+	m.recordAppliedLifecycleLocked(prev, d, existed)
 	m.deployments[id] = d
 	switch {
 	case deploymentServing(d):

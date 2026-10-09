@@ -5817,6 +5817,7 @@ haveApp:
 	// Declared-route matching is against the public OpenAPI contract, not the
 	// internal path a rewrite rule may later produce.
 	declaredPath, declaredMethod := r.URL.Path, r.Method
+	r = withLifecycleRequestRoute(r, declaredPath, declaredMethod)
 	requestSpan.SetAttributes(
 		attribute.String("app_id", app.ID),
 		attribute.String("app_plan", string(app.Plan)),
@@ -6418,6 +6419,7 @@ haveApp:
 					Query:          sortQuery(r.URL.RawQuery),
 					VaryHash:       computeVaryHash(r, rule.VaryOn),
 				}
+				cw.servedDeploymentID = servedDeploymentID
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
 				// The response was uncacheable or came from a warm
@@ -6970,6 +6972,7 @@ haveApp:
 	defer vmRelease()
 	target := pick.Target
 	servedDeploymentID = target.DeploymentID
+	r = h.applyDeploymentRouteLifecycle(w, r, app, target.DeploymentID, declaredPath, declaredMethod)
 	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
 		w.Header().Set(api.RevisionHeader, target.DeploymentID)
 	}
@@ -9065,6 +9068,11 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		for _, name := range []string{"Deprecation", "Sunset"} {
+			if platformOwnsLifecycleHeader(resp.Request.Context(), name) {
+				resp.Header.Del(name)
+			}
+		}
 		stripGuestManagedPlatformCookiesResponseHeader(resp)
 		stampDeploymentSmokeResponse(resp.Request.Context(), resp.Header)
 		return nil

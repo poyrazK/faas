@@ -5014,7 +5014,7 @@ gregale preview show pr-42-my-api
 
 Review deployment route changes, gateway rule drift, and available test/traffic evidence
 
-`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
+`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5031,6 +5031,11 @@ Review deployment route changes, gateway rule drift, and available test/traffic 
 | `--fail-on-policy-drift` | exit 1 for changed or incomplete route rule policy comparison |  |
 | `--fail-on-incomplete` | exit 1 when evidence is missing or needs review |  |
 | `--fail-on-requirements` | exit 1 for violated or unknown route requirements |  |
+| `--route-removal-mode <MODE>` | CLI removal gate: report (default) or enforce | one of `report` · `enforce` |
+| `--route-readiness <PATH>` | migration readiness JSON for the serving production deployment |  |
+| `--route-mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--route-owner-approval <PATH>` | owner attestation bound to this exact change and evidence |  |
+| `--route-evidence-max-age <DURATION>` | maximum route evidence age (default and maximum 72h) |  |
 
 Examples:
 
@@ -5895,6 +5900,69 @@ gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto
 
 Review deployed routes for carefully evidenced retirement candidates
 
+#### routes lifecycle declarations
+
+Review lifecycle declarations between captured deployments
+
+`gregale routes lifecycle declarations --from-deployment <UUID> --to-deployment <UUID> [--out <PATH>] [--fail-on-findings] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <UUID>` | serving baseline deployment | required |
+| `--to-deployment <UUID>` | candidate deployment | required |
+| `--out <PATH>` | save JSON to a new file |  |
+| `--fail-on-findings` | fail on lifecycle regressions or incomplete declarations |  |
+
+#### routes lifecycle prepare-approval
+
+Prepare a pinned successor approval request for review
+
+`gregale routes lifecycle prepare-approval --from-deployment <UUID> --to-deployment <UUID> --mappings <PATH> --out <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <UUID>` | serving baseline deployment | required |
+| `--to-deployment <UUID>` | candidate deployment | required |
+| `--mappings <PATH>` | explicit successor mappings and optional destination pins | required |
+| `--out <PATH>` | save request to a new file | required |
+
+#### routes lifecycle approve
+
+Submit a reviewed lifecycle successor approval
+
+`gregale routes lifecycle approve --request <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request <PATH>` | pinned request JSON | required |
+
+#### routes lifecycle receipt
+
+Read a persisted lifecycle approval receipt
+
+`gregale routes lifecycle receipt --id <UUID> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | approval receipt ID | required |
+
+#### routes lifecycle history
+
+Inspect applied and blocked production lifecycle reviews
+
+`gregale routes lifecycle history [--limit <N>] [--before <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | reviews per page (default 10; maximum 20) |  |
+| `--before <ID>` | retained review ID from next_cursor |  |
+
+Examples:
+
+```sh
+gregale routes lifecycle history api --json
+```
+
 #### routes lifecycle review
 
 Compare captured routes, observed usage, source and requirements
@@ -5915,9 +5983,185 @@ Examples:
 gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json
 ```
 
+### routes sunsets
+
+Review upcoming sunsets and remaining callers
+
+`gregale routes sunsets <diff> [--source <SOURCE>] --deployment <UUID> [--since <WINDOW>] [--within <DURATION>] [--mapping <PATH>] [--out <PATH>] [--fail-on-overdue] [--fail-on-incomplete] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | metadata source (default deployment) | one of `deployment` · `manual_import` |
+| `--deployment <UUID>` | baseline deployment ID | required |
+| `--since <WINDOW>` | retained telemetry window (default 14d) |  |
+| `--within <DURATION>` | upcoming sunset horizon (default 720h) |  |
+| `--mapping <PATH>` | explicit successor mapping JSON |  |
+| `--out <PATH>` | save report JSON to a new file |  |
+| `--fail-on-overdue` | fail on elapsed sunset dates |  |
+| `--fail-on-incomplete` | fail on missing metadata or incomplete evidence |  |
+
+#### routes sunsets diff
+
+Compare retained sunset evidence and caller regressions
+
+`gregale routes sunsets diff --before <PATH> --after <PATH> [--out <PATH>] [--max-staleness <DURATION>] [--fail-on-regression] [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | previous saved report | required |
+| `--after <PATH>` | new saved report | required |
+| `--out <PATH>` | save diff JSON to a new file |  |
+| `--max-staleness <DURATION>` | maximum report age (default 24h) |  |
+| `--fail-on-regression` | fail on observed regressions |  |
+| `--fail-on-incomplete` | fail on stale, changed or incomplete evidence |  |
+
 ### routes migration
 
-Check mapped route successors against immutable deployment contracts
+Suggest successors, review contracts and assess customer cutover readiness
+
+#### routes migration policy
+
+Read or set the app server policy for production route removal
+
+`gregale routes migration policy --app <APP> [--mode <MODE>] [--expected-revision <N>] [--grace-period <DURATION>] [--max-approval-age <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--mode <MODE>` | omit to read; set report or enforce to write | one of `report` · `enforce` |
+| `--expected-revision <N>` | current revision for a write; 0 creates the policy |  |
+| `--grace-period <DURATION>` | server-observed quiet period (default 720h, minimum 1h) |  |
+| `--max-approval-age <DURATION>` | approval TTL (default 1h, maximum 72h) |  |
+
+#### routes migration server-check
+
+Read authoritative removal blockers for an exact candidate
+
+`gregale routes migration server-check --app <APP> --candidate-deployment <ID> [--fail-on-blocked]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--fail-on-blocked` | exit 1 if the server check is blocked |  |
+
+#### routes migration authorize
+
+Store an authenticated admin approval after local and server checks
+
+`gregale routes migration authorize --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> --expected-revision <N> --readiness <PATH> --mapping <PATH> --acknowledge-observed-only <value> [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving baseline UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--expected-revision <N>` | current server policy revision | required |
+| `--readiness <PATH>` | reviewed migration readiness JSON | required |
+| `--mapping <PATH>` | reviewed same-app successor mapping | required |
+| `--acknowledge-observed-only <value>` | acknowledge the limits of observed telemetry | required |
+| `--out <PATH>` | save server approval receipt to a new file |  |
+
+#### routes migration gate
+
+Explain removed-route blockers; optionally fail a local CI check
+
+`gregale routes migration gate --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> [--candidate-app <APP>] [--readiness <PATH>] [--mapping <PATH>] [--owner-approval <PATH>] [--mode <MODE>] [--max-evidence-age <DURATION>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving deployment UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--candidate-app <APP>` | candidate app slug (defaults to --app; may be a preview) |  |
+| `--readiness <PATH>` | migration readiness JSON for the serving deployment |  |
+| `--mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--owner-approval <PATH>` | owner attestation JSON for this exact change |  |
+| `--mode <MODE>` | report (default) or enforce (exit 1 for blockers) | one of `report` · `enforce` |
+| `--max-evidence-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
+| `--out <PATH>` | save gate JSON to a new file |  |
+
+Examples:
+
+```sh
+gregale routes migration gate --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --owner-approval approval.json --mode enforce
+```
+
+#### routes migration approve
+
+Record a local owner attestation after all cutover checks pass
+
+`gregale routes migration approve --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> [--candidate-app <APP>] --readiness <PATH> --mapping <PATH> --approved-by <OWNER> [--mode <MODE>] [--max-evidence-age <DURATION>] --out <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving deployment UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--candidate-app <APP>` | candidate app slug (defaults to --app; may be a preview) |  |
+| `--readiness <PATH>` | migration readiness JSON for the serving deployment | required |
+| `--mapping <PATH>` | mapping reviewed with the route owner | required |
+| `--approved-by <OWNER>` | owner identity asserted in the local attestation | required |
+| `--mode <MODE>` | report or enforce; approvals always reject blockers | one of `report` · `enforce` |
+| `--max-evidence-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
+| `--out <PATH>` | save the owner attestation to a new file | required |
+
+Examples:
+
+```sh
+gregale routes migration approve --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --approved-by owner@example.com --out approval.json
+```
+
+#### routes migration readiness
+
+Refresh mapped contracts and join customer windows into an owner approval checkpoint
+
+`gregale routes migration readiness --mapping <PATH> --from-deployment <APP=ID>... [--to-deployment <APP=ID>]... --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mapping <PATH>` | version 1 explicit mapping reviewed with the route owner | required |
+| `--from-deployment <APP=ID>` | baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | successor deployment as APP=ID; repeat for each app |  |
+| `--snapshot <PATH>` | saved customer tracker JSON; at least two observation windows | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner approval (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text, Markdown, or prioritized CSV action queue (default text; --json emits JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | save the full readiness report to a new JSON file |  |
+| `--fail-on-breaking` | exit 1 when any successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit 1 when contract or telemetry evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner approval |  |
+
+Examples:
+
+```sh
+gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json
+```
+
+#### routes migration suggest
+
+Rank successor routes and write a draft mapping for owner review
+
+`gregale routes migration suggest --from-deployment <APP=ID>... --to-deployment <APP=ID>... [--sources <PATH>] [--since <WINDOW>] [--limit <N>] [--without-traffic] [--customer-details] [--out <PATH>] [--report-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <APP=ID>` | baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | successor deployment as APP=ID; repeat for each app | required |
+| `--sources <PATH>` | optional version 1 mapping selecting sources with empty successors |  |
+| `--since <WINDOW>` | observed usage window (default 14d) |  |
+| `--limit <N>` | candidate rows per source (1–10, default 3) |  |
+| `--without-traffic` | read captured contracts without usage |  |
+| `--customer-details` | include observed source consumer and tenant UUIDs in the report |  |
+| `--out <PATH>` | save a draft version 1 mapping to a new file for owner review |  |
+| `--report-out <PATH>` | save explanations and captured evidence to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale routes migration suggest --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --out route-successors.json --report-out suggestions.json
+```
 
 #### routes migration review
 
@@ -9374,7 +9618,7 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [<slug>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9385,6 +9629,11 @@ Promote a live deployment to 100% production traffic
 | `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
 | `--allow-unsupported` | waive unsupported queue/outbound probes; requires --require-bindings |  |
 | `--require-application-ack` | require current application acknowledgements; requires --require-bindings |  |
+| `--route-removal-mode <MODE>` | opt-in CLI gate: report or enforce; requires --app and --if-serving | one of `report` · `enforce` |
+| `--route-readiness <PATH>` | readiness JSON for the serving deployment |  |
+| `--route-mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--route-owner-approval <PATH>` | owner attestation bound to this exact change |  |
+| `--route-evidence-max-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
 
 ### traffic status
 
