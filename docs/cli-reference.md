@@ -3385,6 +3385,7 @@ Examples:
 
 ```sh
 gregale crons run --app my-api --interactive
+gregale crons run <cron-id>
 ```
 
 ### crons fire-now
@@ -3422,6 +3423,7 @@ Examples:
 
 ```sh
 gregale crons runs --app my-api --interactive
+gregale crons runs <id>
 ```
 
 ### crons occurrences
@@ -3762,6 +3764,7 @@ Examples:
 
 ```sh
 gregale jobs run --interactive
+gregale jobs run <job-name>
 ```
 
 ### jobs runs
@@ -3909,6 +3912,7 @@ Examples:
 
 ```sh
 gregale jobs artifact-url --interactive
+gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>
 ```
 
 ### jobs logs
@@ -7172,6 +7176,7 @@ Examples:
 
 ```sh
 gregale issues get --app my-api --interactive
+gregale issues get --app <SLUG> <issue-id>
 ```
 
 ### issues assign

@@ -110,7 +110,7 @@ func loadLogViews() (logViewsFile, error) {
 	if err != nil {
 		return views, err
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return views, nil
 	}
