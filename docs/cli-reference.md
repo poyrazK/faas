@@ -3724,7 +3724,17 @@ gregale jobs update --interactive
 
 Soft-delete one job
 
-`gregale jobs rm <name>`
+`gregale jobs rm [--interactive] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a Job, review configuration, and confirm removal |  |
+
+Examples:
+
+```sh
+gregale jobs rm --interactive
+```
 
 ### jobs run
 

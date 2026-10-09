@@ -434,6 +434,9 @@ func cmdJobsUpdate(args []string) int {
 // enforces the soft-delete guard via the soft_delete_job_if_no_live
 // _instances stored function (migrations/00576).
 func cmdJobsRm(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsRmInteractive()
+	}
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs rm <name>", "jobs")
 		return 1

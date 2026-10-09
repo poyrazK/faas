@@ -839,6 +839,23 @@ that task's logs and retained attempt history are printed with the active profil
 Continuing rereads the page. The flow only observes work; it never retries or
 cancels tasks. Explicit `jobs tasks NAME RUN_ID` remains available for scripts.
 
+## Remove a Job interactively
+
+```sh
+gregale jobs rm --interactive
+```
+
+Choose a Job, then review its image, command arguments, resources, state,
+and recurring schedule. Confirm before removal. The CLI rereads identity and
+configuration and stops if they changed; schedule activity timestamps alone
+are ignored. This client-side check is not an atomic lock.
+
+Removal soft-deletes the Job and stops future dispatches. The server blocks
+removal while queued or running tasks remain and returns its explanation;
+use `jobs cancel` or `jobs wait` to address that work first. The guided flow
+does not cancel tasks automatically. Explicit `jobs rm NAME` remains available
+for scripts.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

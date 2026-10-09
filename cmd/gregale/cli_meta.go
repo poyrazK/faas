@@ -1506,7 +1506,7 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Value: "JSON", Short: "replace versioned recurring schedule policy JSON"},
 				{Name: "failure-rules", Value: "JSON", Short: "replace versioned exit-code and outcome retry rules JSON"},
 			}},
-			{Name: "rm", Short: "Soft-delete one job", Positionals: []string{"<name>"}},
+			{Name: "rm", Short: "Soft-delete one job", Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a Job, review configuration, and confirm removal"}}, Examples: []string{"gregale jobs rm --interactive"}},
 			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"[<job-name>]"}, Examples: []string{"gregale jobs run --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job, review settings, and confirm one run"},
 				{Name: "tasks", Value: "N", Short: "number of tasks to fan out (or use --input)"},
