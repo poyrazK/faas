@@ -61423,7 +61423,7 @@ components:
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header_masked: { type: string, enum: ["", "***"] }
         enabled: { type: boolean }
@@ -61506,7 +61506,7 @@ components:
       description: Create a provider-neutral runtime log destination.
       required: [kind, target_url]
       properties:
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; sealed at rest and never returned." }
         enabled: { type: boolean, default: true }
@@ -61515,7 +61515,7 @@ components:
       type: object
       description: Partially update a runtime log destination; omitted fields remain unchanged.
       properties:
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; an empty value clears credentials." }
         enabled: { type: boolean }

@@ -81,6 +81,13 @@ type appLogDrainProvenance struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	Environment         string
+}
+
+// appLogDrainAppLookupStore resolves the app slug a datadog drain reports as
+// its Datadog service tag (ADR-742).
+type appLogDrainAppLookupStore interface {
+	AppByID(context.Context, string) (state.App, error)
 }
 
 type appLogDrainManager struct {
@@ -203,6 +210,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		Kind:         logdrain.Kind(spec.Kind),
 		TargetURL:    spec.TargetURL,
 		AuthHeader:   authHeader,
+		Service:      m.drainServiceName(parent, spec),
 		DurableQueue: durableQueue,
 		HTTPClient:   m.httpClient,
 		OnDropped: func(logdrain.Record) {
@@ -368,7 +376,8 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						NodeID: provenance.NodeID, Region: provenance.Region,
 						CommitSHA: provenance.CommitSHA, DeploymentTag: provenance.DeploymentTag,
 						DeploymentCreatedAt: provenance.DeploymentCreatedAt, ImageDigest: provenance.ImageDigest,
-						Sequence: uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
+						Environment: provenance.Environment,
+						Sequence:    uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than
 						// consuming later frames. A later stream can retry this record
@@ -429,6 +438,7 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 				resolved.CommitSHA = deployment.CommitSHA
 				resolved.DeploymentTag = deployment.Tag
 				resolved.ImageDigest = deployment.ImageDigest
+				resolved.Environment = deployment.Scope
 				if !deployment.CreatedAt.IsZero() {
 					resolved.DeploymentCreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
 				}
@@ -444,6 +454,20 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 	}
 	cache[frame.InstanceID] = resolved
 	return resolved
+}
+
+// drainServiceName is the app slug for datadog drains; other kinds do not
+// use it. A failed lookup falls back to the app ID so logs still arrive.
+func (m *appLogDrainManager) drainServiceName(ctx context.Context, spec state.AppLogDrain) string {
+	if spec.Kind != state.AppLogDrainKindDatadog {
+		return ""
+	}
+	if lookup, ok := m.store.(appLogDrainAppLookupStore); ok {
+		if app, err := lookup.AppByID(ctx, spec.AppID); err == nil && app.Slug != "" {
+			return app.Slug
+		}
+	}
+	return spec.AppID
 }
 
 func (m *appLogDrainManager) stopAll() {

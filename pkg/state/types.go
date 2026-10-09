@@ -8774,6 +8774,7 @@ type AppLogDrainKind string
 const (
 	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
 	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+	AppLogDrainKindDatadog  AppLogDrainKind = "datadog" // ADR-742
 )
 
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed

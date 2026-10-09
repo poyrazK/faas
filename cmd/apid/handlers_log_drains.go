@@ -33,6 +33,45 @@ func validateAppLogDrainKind(kind string) *api.Problem {
 	return nil
 }
 
+// validateDatadogAppLogDrain enforces ADR-742 on a drain's effective state: a
+// datadog drain may only target a supported Datadog logs intake and must
+// authenticate with a non-empty DD-API-KEY header. header is nil when the
+// request leaves the stored header unchanged; requireHeader is set on create
+// and when an update switches an existing drain to the datadog kind.
+func validateDatadogAppLogDrain(kind, target string, header *string, requireHeader bool) *api.Problem {
+	if kind != api.AppLogDrainKindDatadog {
+		return nil
+	}
+	if !api.IsDatadogLogsIntakeURL(target) {
+		return api.ErrAppLogDrainInvalid(fmt.Sprintf("a datadog drain must target a Datadog logs intake for one of the sites %s", strings.Join(api.DatadogSiteNames(), ", ")))
+	}
+	if header == nil {
+		if requireHeader {
+			return api.ErrAppLogDrainInvalid("a datadog drain requires auth_header \"" + api.DatadogAPIKeyHeader + ": <api key>\"")
+		}
+		return nil
+	}
+	name, value, ok := strings.Cut(*header, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(name), api.DatadogAPIKeyHeader) || strings.TrimSpace(value) == "" {
+		return api.ErrAppLogDrainInvalid("a datadog drain requires auth_header \"" + api.DatadogAPIKeyHeader + ": <api key>\"")
+	}
+	return nil
+}
+
+// validateUpdatedDatadogAppLogDrain applies validateDatadogAppLogDrain to the
+// drain as it will be after the patch.
+func validateUpdatedDatadogAppLogDrain(existing state.AppLogDrain, params state.UpdateAppLogDrainParams, header *string) *api.Problem {
+	kind, target := string(existing.Kind), existing.TargetURL
+	if params.Kind != nil {
+		kind = string(*params.Kind)
+	}
+	if params.TargetURL != nil {
+		target = *params.TargetURL
+	}
+	switching := string(existing.Kind) != api.AppLogDrainKindDatadog
+	return validateDatadogAppLogDrain(kind, target, header, switching)
+}
+
 func validateAppLogDrainURL(rawURL string) *api.Problem {
 	if rawURL == "" {
 		return api.ErrAppLogDrainInvalid("target_url is required")
@@ -140,6 +179,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if prob := validateAppLogDrainAuthHeader(req.AuthHeader); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateDatadogAppLogDrain(req.Kind, req.TargetURL, &req.AuthHeader, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -287,6 +330,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			return
 		}
 		params.AuthHeaderSealed = &sealed
+	}
+	if prob := validateUpdatedDatadogAppLogDrain(existing, params, req.AuthHeader); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	params.Enabled = req.Enabled
 	row, err := s.store.UpdateAppLogDrain(r.Context(), id, params)

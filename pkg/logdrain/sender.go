@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Kind is the wire encoding used by a drain.
@@ -28,6 +30,9 @@ type Kind string
 const (
 	KindHTTPJSON Kind = "http_json"
 	KindOTLP     Kind = "otlp"
+	// KindDatadog posts Datadog-shaped entries to a Datadog HTTP logs intake
+	// (ADR-742); see datadog.go.
+	KindDatadog Kind = "datadog"
 )
 
 const (
@@ -58,6 +63,9 @@ type Record struct {
 	Stream              string    `json:"stream"`
 	Line                string    `json:"line"`
 	WrittenAt           time.Time `json:"written_at"`
+	// Environment is the deployment's environment scope. It feeds the
+	// Datadog env tag and is excluded from the established http_json shape.
+	Environment string `json:"-"`
 }
 
 // Config controls a Sender. AuthHeader is a single "Name: value" pair; its
@@ -66,6 +74,8 @@ type Config struct {
 	Kind       Kind
 	TargetURL  string
 	AuthHeader string
+	// Service is the Datadog service tag (the app slug) for KindDatadog.
+	Service string
 	// DurableQueue, when set, makes Enqueue synchronous with a local fsync.
 	// The sender then acknowledges records only after a successful 2xx
 	// response, so a restart resumes at the first unacknowledged record.
@@ -120,8 +130,11 @@ type queuedRecord struct {
 // New validates configuration and creates a sender. Run must be called by
 // the owner to consume the queue.
 func New(cfg Config) (*Sender, error) {
-	if cfg.Kind != KindHTTPJSON && cfg.Kind != KindOTLP {
+	if cfg.Kind != KindHTTPJSON && cfg.Kind != KindOTLP && cfg.Kind != KindDatadog {
 		return nil, fmt.Errorf("log drain: unsupported kind %q", cfg.Kind)
+	}
+	if cfg.Kind == KindDatadog && !api.IsDatadogLogsIntakeURL(cfg.TargetURL) {
+		return nil, errors.New("log drain: a datadog drain must target a supported Datadog logs intake")
 	}
 	u, err := url.Parse(cfg.TargetURL)
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" || u.User != nil {
@@ -490,7 +503,7 @@ func (s *Sender) dropQueued() {
 }
 
 func (s *Sender) post(ctx context.Context, record Record) (int, error) {
-	body, contentType, err := encode(s.cfg.Kind, record)
+	body, contentType, err := encode(s.cfg.Kind, s.cfg.Service, record)
 	if err != nil {
 		return 0, err
 	}
@@ -514,13 +527,16 @@ func (s *Sender) post(ctx context.Context, record Record) (int, error) {
 	return resp.StatusCode, nil
 }
 
-func encode(kind Kind, record Record) ([]byte, string, error) {
+func encode(kind Kind, service string, record Record) ([]byte, string, error) {
 	switch kind {
 	case KindHTTPJSON:
 		body, err := json.Marshal(record)
 		return body, "application/json", err
 	case KindOTLP:
 		body, err := json.Marshal(makeOTLPPayload(record))
+		return body, "application/json", err
+	case KindDatadog:
+		body, err := json.Marshal([]datadogLog{makeDatadogLog(service, record)})
 		return body, "application/json", err
 	default:
 		return nil, "", fmt.Errorf("log drain: unsupported kind %q", kind)

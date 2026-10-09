@@ -1,8 +1,9 @@
 from typing import Literal
 
-AppLogDrainResponseKind = Literal["http_json", "otlp"]
+AppLogDrainResponseKind = Literal["datadog", "http_json", "otlp"]
 
 APP_LOG_DRAIN_RESPONSE_KIND_VALUES: set[AppLogDrainResponseKind] = {
+    "datadog",
     "http_json",
     "otlp",
 }

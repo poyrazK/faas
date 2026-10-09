@@ -40,7 +40,11 @@ func SanitizeAppLogDrainHealthError(summary string) string {
 	}
 }
 
-var AllowedAppLogDrainKinds = []string{"http_json", "otlp"}
+var AllowedAppLogDrainKinds = []string{"http_json", "otlp", AppLogDrainKindDatadog}
+
+// AppLogDrainKindDatadog posts Datadog-shaped log entries to a Datadog HTTP
+// logs intake (ADR-742). Its target must be one of DatadogLogsIntakeURLs.
+const AppLogDrainKindDatadog = "datadog"
 
 type CreateAppLogDrainRequest struct {
 	Kind       string `json:"kind"`

@@ -1,8 +1,9 @@
 from typing import Literal
 
-UpdateAppLogDrainRequestKind = Literal["http_json", "otlp"]
+UpdateAppLogDrainRequestKind = Literal["datadog", "http_json", "otlp"]
 
 UPDATE_APP_LOG_DRAIN_REQUEST_KIND_VALUES: set[UpdateAppLogDrainRequestKind] = {
+    "datadog",
     "http_json",
     "otlp",
 }
