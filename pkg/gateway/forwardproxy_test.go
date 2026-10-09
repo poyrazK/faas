@@ -430,6 +430,12 @@ func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdp
 func (f *fakeVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
 	panic("JobColdBoot: not stubbed")
 }
+func (f *fakeVmmdClient) JobColdBootHeld(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
+	panic("JobColdBootHeld: not stubbed")
+}
+func (f *fakeVmmdClient) ReleaseJobStart(context.Context, *vmmdpb.ReleaseJobStartRequest, ...grpc.CallOption) (*vmmdpb.ReleaseJobStartResponse, error) {
+	panic("ReleaseJobStart: not stubbed")
+}
 func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (*vmmdpb.ExecuteExecutionResponse, error) {
 	panic("ExecuteExecution: not stubbed")
 }
