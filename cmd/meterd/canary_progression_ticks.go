@@ -10,6 +10,8 @@ import (
 	"context"
 	"time"
 
+	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -110,4 +112,16 @@ func canaryPtrTime(t *time.Time) time.Time {
 		return time.Time{}
 	}
 	return *t
+}
+
+func (a *canaryStoreAdapter) ProfileCanaryGate(ctx context.Context, row canary.CanaryRow) (api.ProfileCanaryGateDecision, error) {
+	app, err := a.store.AppByID(ctx, row.AppID)
+	if err != nil {
+		return api.ProfileCanaryGateDecision{}, err
+	}
+	reader, ok := a.store.(state.ProfileCanaryGateReader)
+	if !ok {
+		return api.ProfileCanaryGateDecision{}, fmt.Errorf("profiling gate reader unavailable")
+	}
+	return reader.ReadProfileCanaryGate(ctx, app.AccountID, app.ID, row.ID)
 }

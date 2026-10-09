@@ -109,6 +109,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
+      go mod edit -go=1.26.9 && \
       go mod edit -require=github.com/opencontainers/cgroups@v${RUNC_CGROUPS_VERSION} && \
       go mod edit -require=github.com/cilium/ebpf@v${RUNC_EBPF_VERSION} && \
       go mod edit -require=golang.org/x/net@v0.60.0 && \
@@ -140,9 +141,9 @@ COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, but refresh vendoring after replacing vulnerable modules
-# with fixed releases. The networking update also raises transitive module
-# floors, so regenerate vendor metadata rather than editing individual entries.
+# reproducible build, with fixed module floors. Regenerate the vendor tree
+# from the selected graph so x/net, crypto and their transitive source match
+# the module metadata before compiling.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \

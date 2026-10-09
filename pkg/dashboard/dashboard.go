@@ -1393,9 +1393,10 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
-	App      AppListItem
-	Manifest ManifestView
-	AppCosts *AppCostsView
+	ProfilingAvailable bool
+	App                AppListItem
+	Manifest           ManifestView
+	AppCosts           *AppCostsView
 	// RefreshQuery preserves the selected app-detail filters when an SSE
 	// event refreshes the page content.
 	RefreshQuery     string
@@ -1638,8 +1639,15 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
-	App        AppListItem
-	Deployment DeploymentItem
+	ProfileCheck                *api.ProfileDeploymentCheck
+	CanaryProfileSignal         *api.CanaryProfileSignal
+	CanaryProfileTraffic        *ProfileTrafficView
+	CanaryProfileHistoryEnabled bool
+	CanaryProfileHistory        []ProfileCanaryHistoryEntry
+	CanaryProfileHistoryMoreURL string
+	CanaryProfileHistoryError   string
+	App                         AppListItem
+	Deployment                  DeploymentItem
 	// BuildPlan is the persisted zero-config profile selected for this
 	// deployment. Keeping it separate from DeploymentItem lets list rows
 	// stay compact while failed-deployment detail pages explain the
@@ -2303,6 +2311,7 @@ type DiscoveredRouteItem struct {
 // a CSRF-protected replay action and a bounded status projection for the
 // invocation it just queued.
 type DebugPageData struct {
+	ProfilingAvailable  bool
 	AppSlug             string
 	Plan                string
 	PlanAllowed         bool

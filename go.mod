@@ -27,6 +27,7 @@ require (
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/gofrs/flock v0.13.1
+	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.24.0
 	github.com/gorilla/websocket v1.5.3

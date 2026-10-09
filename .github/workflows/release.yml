@@ -562,6 +562,7 @@ jobs:
             images/Dockerfile.lock \
             guest/init \
             pkg/api \
+            pkg/profileproto \
             pkg/reqbudget \
             pkg/sourcecontext \
             pkg/statefuldenylist \
@@ -670,8 +671,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          # Runtime base images contain only their Dockerfile layers and the
-          # shared rootfs skeleton. Runtime control-plane code is shipped in
+          # Runtime base images contain their Dockerfile layers, the shared
+          # rootfs skeleton and the profiling bootstraps. Runtime control-plane
+          # code is shipped in
           # this signed daemon bundle, so a change under pkg/imaged,
           # pkg/builderd, or guest/runners must not force a release to wait for
           # eight byte-identical images to be republished. Select the newest
@@ -686,6 +688,7 @@ jobs:
             images/runner-go124.Dockerfile \
             images/runner-go124-alpine.Dockerfile \
             images/rootfs-skel \
+            guest/profiling \
             images/Dockerfile.lock \
             scripts/ci/install-grype.sh \
             scripts/ci/update-grype-db.sh \

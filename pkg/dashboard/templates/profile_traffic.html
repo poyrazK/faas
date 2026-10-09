@@ -1,0 +1,21 @@
+{{define "profile_traffic"}}
+<section aria-label="Traffic-aware CPU comparison">
+<h3>Traffic-aware CPU comparison</h3>
+<p>{{.Status}}</p>
+{{if .Interpretation}}<p>{{.Interpretation}}</p>{{end}}
+{{range .Warnings}}<p class="notice">{{.}}</p>{{end}}
+<table><thead><tr><th>Recorded metric</th><th>Stable</th><th>Canary</th></tr></thead><tbody>
+<tr><th>Observed requests</th><td>{{with .BaselineCount}}{{.}}{{else}}Unavailable{{end}}</td><td>{{with .CandidateCount}}{{.}}{{else}}Unavailable{{end}}</td></tr>
+<tr><th>Requests / second</th><td>{{with .BaselineRate}}{{printf "%.4f" .}}{{else}}Unavailable{{end}}</td><td>{{with .CandidateRate}}{{printf "%.4f" .}}{{else}}Unavailable{{end}}</td></tr>
+<tr><th>Sampled CPU seconds / second</th><td>{{with .BaselineCPU}}{{printf "%.6f" .}}{{else}}Unavailable{{end}}</td><td>{{with .CandidateCPU}}{{printf "%.6f" .}}{{else}}Unavailable{{end}}</td></tr>
+<tr><th>Sampled CPU seconds / request</th><td>{{with .BaselinePerRequest}}{{printf "%.8f" .}}{{else}}Unavailable{{end}}</td><td>{{with .CandidatePerRequest}}{{printf "%.8f" .}}{{else}}Unavailable{{end}}</td></tr>
+<tr><th>Profile coverage</th><td>{{.BaselineCoverage}}</td><td>{{.CandidateCoverage}}</td></tr>
+</tbody></table>
+<p class="muted">Request rates use the recorded deployment windows. CPU per request is an average across all observed requests, including background CPU; request mix and incomplete minute-bucket telemetry can affect it. These comparisons use the recorded thresholds and do not change the stage result.</p>
+{{if .Ranked}}<h4>Recorded findings ranked by CPU increase per request</h4>
+<p>Only retained threshold findings are ranked. Functions use self CPU; call paths use inclusive CPU and overlap. Do not add their values together.</p>
+<table><thead><tr><th>Finding</th><th>Stable CPU/request</th><th>Canary CPU/request</th><th>Increase</th><th>Threshold agreement</th></tr></thead><tbody>
+{{range .Ranked}}<tr><td>{{.Kind}}: {{if .URL}}<a href="{{.URL}}">{{.Path}}</a>{{else}}{{.Path}}{{end}}</td><td>{{printf "%.8f" .Baseline}}</td><td>{{printf "%.8f" .Candidate}}</td><td>{{printf "%+.8f" .Increase}}</td><td>{{.Agreement}}</td></tr>{{end}}
+</tbody></table>{{end}}
+</section>
+{{end}}

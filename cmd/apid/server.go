@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/preflight"
+	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
@@ -54,6 +55,8 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	profileBackend                  profiling.Backend
+	profileQuerySlots               chan struct{}
 	durableEntities                 *durableentity.Manager
 	durableEntityOwner              string
 	durableEntityApps               map[string]bool
@@ -2070,6 +2073,7 @@ func (s *server) handler() http.Handler {
 	// The endpoint is idempotent and compare-and-swap guarded; APID
 	// derives the next stage from persisted state and the store commits
 	// traffic, canary state, rollout completion, and audit atomically.
+	mux.HandleFunc("GET /v1/deployments/{id}/canary/profile-gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProfileCanaryGate))))
 	mux.HandleFunc("POST /v1/deployments/{id}/canary/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.advanceCanary)))))
 	// ADR-124 deployment queue controls. Four routes; cancel is
 	// Free-allowed. Reorder and clear-obsolete use ScopeDeployWrite
@@ -2769,6 +2773,20 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/dependencies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugDependencyLatencyHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/critical-paths", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugCriticalPathHistoryHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/running", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRunningHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/deployment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProfileDeploymentPolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/profiles/deployment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.saveProfileDeploymentPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/periodic-monitors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProfilePeriodicMonitors))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/deployment-checks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProfileDeploymentChecks))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/deployment-checks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProfileDeploymentCheck))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/canary-checks/{deployment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProfileCanaryChecks))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/investigations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProfileInvestigations))))
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/investigations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.saveProfileInvestigation))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/investigations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProfileInvestigation))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/profiles/investigations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.saveProfileInvestigation))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/profiles/investigations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteProfileInvestigation))))
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/investigations/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkProfileRegression))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppProfiles))))
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAppProfiles))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -3688,6 +3706,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileInvestigation))))
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations/{id}/check", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCheckProfileRegression))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.

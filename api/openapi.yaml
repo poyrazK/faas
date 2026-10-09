@@ -10921,6 +10921,341 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/profiles/deployment-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getProfileDeploymentPolicy
+      summary: Read the automatic CPU-check policy.
+      description: Returns an owned app's deployment-check configuration with app-read access. Before the first save the policy is disabled at revision zero. Metadata remains readable without profiling entitlement or backend access.
+      responses:
+        '200':
+          description: Automatic check configuration and revision, including initial disabled defaults.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileDeploymentPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: saveProfileDeploymentPolicy
+      summary: Configure CPU checks for future successful rollouts.
+      description: Requires deploy-write access and the current policy revision; use zero for the initial save. Enabling requires a profiling plan and configured backend. Saving advances the revision and cancels pending checks; new completions use the new policy. The worker compares the previous successful deployment in the same environment and uses the selected runtime on both sides. Equal windows end at candidate creation for the baseline and start after rollout completion plus warm-up for the candidate. Retries preserve these windows, allow up to five attempts for late or insufficient data and remain inconclusive when data is absent. Deployment activation is independent of this background check.
+      requestBody:
+        required: true
+        description: Complete automatic profiling policy with revision protection.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveProfileDeploymentPolicyRequest' }
+      responses:
+        '200':
+          description: Saved deployment CPU-check policy with a new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileDeploymentPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/profiles/periodic-monitors:
+    parameters:
+      - { $ref: '#/components/parameters/Slug' }
+    get:
+      tags: [apps]
+      operationId: listProfilePeriodicMonitors
+      summary: Inspect periodic route checks and their recent incident history.
+      description: App-read access and completed MFA are required. Returns up to 50 newest monitors with up to ten terminal observations each, including pinned baselines, confirmation transitions and comparison links. Samples remain in backend retention. Checks are advisory and never change rollout decisions.
+      responses:
+        '200':
+          description: Bounded periodic monitor history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListProfilePeriodicMonitorsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/deployment-checks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileDeploymentChecks
+      summary: List recent automatic CPU-check receipts.
+      description: Returns up to fifty receipts for the owned app with app-read access, newest first. Receipts keep the snapshotted policy, exact windows, attempt state and authenticated comparison link. Metadata is retained for thirty days; saved investigations retain their existing lifetime and fifty-record quota. This read does not query CPU samples.
+      responses:
+        '200':
+          description: Recent deployment profiling receipts with authenticated drill-down links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListProfileDeploymentChecksResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/deployment-checks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Deployment UUID for an automatic profiling receipt., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileDeploymentCheck
+      summary: Read the CPU-check receipt for a deployment.
+      description: Reads an owned app's receipt by deployment UUID with app-read access. Missing or foreign receipts return not found. A saved-investigation link restores the differential flamegraph; if the investigation quota was full or the saved record was deleted, the link keeps the original comparison selections instead. Missing baseline comparisons have no link.
+      responses:
+        '200':
+          description: Single deployment CPU-check receipt and comparison selection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileDeploymentCheck' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/canary-checks/{deployment}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: deployment, in: path, required: true, description: Canary deployment UUID., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: listProfileCanaryChecks
+      summary: List retained CPU assessments for a deployment's canary stages.
+      description: Requires app-read access and completed MFA. Returns bounded, newest-first stage assessments retained for 30 days, including exact fixed profile windows, policy revision, threshold evidence and retry state. Use next_cursor as before to read older stages. The read never queries profile samples.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of canary stage assessments to return.
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: before
+          in: query
+          description: Opaque cursor from the prior page's next_cursor.
+          schema: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Newest-first canary stage history page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCanaryHistoryPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/investigations:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileInvestigations
+      summary: List saved profiling investigations.
+      description: Lists up to 50 investigations for an owned app, ordered by last update and UUID. Requires existing app-read access. Metadata remains readable after profile expiry, plan downgrades or backend outages; this operation does not query CPU samples.
+      responses:
+        '200':
+          description: Bounded saved-investigation list with per-window eligibility.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListProfileInvestigationsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileInvestigation
+      summary: Save profiling comparison selections and notes.
+      description: Creates comparison metadata for retained deployments belonging to the owned app. Requires profiling entitlement and deploy-write access. Use expected_revision 0. Stores notes and selections without querying or retaining profile samples; sharing requires authenticated app access.
+      requestBody:
+        required: true
+        description: New investigation with expected_revision 0 and complete comparison selections.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveProfileInvestigationRequest' }
+      responses:
+        '201':
+          description: Created metadata and authenticated dashboard link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileInvestigationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+
+  /v1/apps/{slug}/profiles/investigations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Saved investigation UUID belonging to this app., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileInvestigation
+      summary: Read a saved investigation and window retention status.
+      description: Reads saved metadata by its app-owned UUID with baseline and candidate eligibility under the current plan. Requires app-read access. Returned links require authentication and app ownership. A retained status establishes query eligibility, not sample presence.
+      responses:
+        '200':
+          description: Saved selections and notes with current retention eligibility.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileInvestigationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: updateProfileInvestigation
+      summary: Update a saved profiling investigation using its current revision.
+      description: Replaces metadata using the current revision and deploy-write access. Unchanged expired selections permit commentary edits; changed selections recheck profiling entitlement, retention and deployment ownership. Concurrent edits return 409. Saving does not extend profile retention.
+      requestBody:
+        required: true
+        description: Complete metadata replacement with the currently observed saved revision.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveProfileInvestigationRequest' }
+      responses:
+        '200':
+          description: Updated metadata with a new saved revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileInvestigationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [apps]
+      operationId: deleteProfileInvestigation
+      summary: Delete a saved profiling investigation.
+      description: Deletes metadata for an owned app using the current revision and deploy-write access. A stale revision returns 409, preserving concurrent edits. Deletion frees one saved-investigation slot and leaves backend profile retention unchanged.
+      parameters:
+        - { name: expected_revision, in: query, required: true, description: Current saved revision to prevent deleting concurrent edits., schema: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 } }
+      responses:
+        '204':
+          description: Investigation deleted.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+
+  /v1/apps/{slug}/profiles/investigations/{id}/check:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: App-owned investigation UUID to assess., schema: { type: string, format: uuid } }
+    post:
+      tags: [apps]
+      operationId: checkProfileRegression
+      summary: Check a saved comparison for CPU regressions.
+      description: Checks the exact saved windows with deploy-write access. Both relative and absolute CPU-rate thresholds must be met for a total, comparable function or complete call path. Missing samples, insufficient capture coverage, recorded failures or unavailable history produce a stored inconclusive assessment. This heuristic does not establish deployment causality or statistical confidence. Returns a new revision; concurrent edits or checks return 409. Later edits make the preserved assessment stale when its investigation_revision differs from the saved revision. Existing profiling query limits and retention apply; raw profiles are never stored.
+      requestBody:
+        required: true
+        description: Current saved revision and optional complete threshold configuration; omit options for defaults.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckProfileRegressionRequest' }
+      responses:
+        '200':
+          description: Saved regression assessment with incremented revision and authenticated comparison link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileInvestigationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppProfiles
+      summary: Query sampled application CPU by deployment.
+      description: Internal opt-in profiling. Returns function CPU totals and call paths; missing samples are explicitly empty. Times must fall within the plan retention window.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment belonging to the selected app., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime name attached by the compute broker., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Inclusive capture start., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Capture end after start., schema: { type: string, format: date-time } }
+        - { name: route, in: query, required: false, description: 'Static METHOD /pattern or [unattributed]; omitted selects all CPU.', schema: { type: string, maxLength: 256 } }
+      responses:
+        '200':
+          description: Sampled CPU profile and source symbols.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/compare:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: compareAppProfiles
+      summary: Compare deployment CPU profiles normalized by capture duration.
+      description: Reads authorized deployment windows from the private profiling backend. Each function delta uses self CPU seconds divided by selected window seconds. Traffic and allocation changes also affect the result.
+      requestBody:
+        required: true
+        description: Baseline and candidate capture selections.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileCompareRequest' }
+      responses:
+        '200':
+          description: CPU rate deltas or an explicit unavailable comparison reason.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCompareResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -16386,6 +16721,25 @@ paths:
           description: Strict promotion cannot share a transaction fence across its binding catalogs and traffic backend.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
+  /v1/deployments/{id}/canary/profile-gate:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentProfileCanaryGate
+      summary: Read the current stage's profiling gate and retained evidence.
+      description: Read-only owned-deployment decision. Source links are derived from deployment commits; this request never queries the profiling backend.
+      responses:
+        '200':
+          description: Current profiling gate decision, frozen windows and route code evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCanaryGateDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/deployments/{id}/canary/advance:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -16404,7 +16758,13 @@ paths:
         Enforced route gates require complete, current, satisfied evidence for
         this candidate under policy, intent and capture locks. Missing or stale
         evidence durably requests a fresh check without increasing traffic.
-        A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
+        A blocked route gate returns 409 `route_gate_blocked` with reason codes in detail.
+        An opt-in profiling gate returns 409 `profile_gate_blocked` while evidence
+        is collecting, regressed or timed out with hold configured. Customer
+        overrides require a current profile policy revision and bounded reason;
+        other rollout gates still apply. Worker-only opt-in profiling rollback
+        atomically aborts the candidate and restores the exact stable predecessor
+        after lease, stage, policy, evidence and binding checks.
       requestBody:
         required: true
         content:
@@ -35769,7 +36129,7 @@ components:
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
     RouteHealthReport:
       type: object
-      description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
+      description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only comparison for an active canary; it never affects canary advancement or rollback and is not persisted.
       required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
       properties:
         client_error_status: { type: string, enum: [healthy, regressed, unknown], description: Live advisory summary of selected status-code comparisons. Independent of the status used for rollout decisions. Omitted when no codes are selected. }
@@ -35792,6 +36152,117 @@ components:
         minimum_requests: { type: integer, format: int64, minimum: 20, maximum: 20 }
         minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100, description: Present when any route has a latency check selected. Applies to each deployment per route per window. }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthFinding' } }
+        profile_signal: { $ref: '#/components/schemas/CanaryProfileSignal' }
+    CanaryProfileSignal:
+      type: object
+      description: Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker using the app's enabled automatic profile policy and equal fixed windows. The stage and policy revision identify the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days.
+      required: [mode, status, reason, canary_step, canary_step_started_at, created_at, attempts, policy_revision, metric, window_seconds, options, evidence, uncomparable_entries]
+      properties:
+        gate: { $ref: '#/components/schemas/ProfileCanaryGateState' }
+        attribution: { $ref: '#/components/schemas/ProfileAttributionComparison', readOnly: true }
+        route_checks:
+          type: array
+          maxItems: 10
+          readOnly: true
+          items: { $ref: '#/components/schemas/ProfileRouteRegression' }
+        request_mix: { $ref: '#/components/schemas/ProfileRequestMixSnapshot', readOnly: true }
+        mode: { type: string, enum: [report_only, gate] }
+        status: { type: string, enum: [queued, running, regressed, no_regression_detected, inconclusive, cancelled] }
+        reason: { type: string }
+        canary_step: { type: integer, minimum: 0 }
+        canary_step_started_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time, description: "Last completed assessment attempt, absent until the worker has queried both profile windows." }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time, description: Scheduled first check or retry time while the result is pending. }
+        completed_at: { type: string, format: date-time }
+        policy_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        metric: { type: string, enum: [cpu_per_second, cpu_per_request] }
+        window_seconds: { type: integer, format: int64, minimum: 60, maximum: 1800 }
+        options: { $ref: '#/components/schemas/ProfileRegressionOptions' }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        baseline_requests: { type: integer, format: int64, minimum: 0 }
+        candidate_requests: { type: integer, format: int64, minimum: 0 }
+        baseline_coverage: { $ref: '#/components/schemas/ProfileCoverage' }
+        candidate_coverage: { $ref: '#/components/schemas/ProfileCoverage' }
+        baseline_source: { $ref: '#/components/schemas/ProfileSource', readOnly: true, description: Request-time source revision for the stable deployment. Commit URLs are derived from recorded deployment provenance and are not retained with the assessment. }
+        candidate_source: { $ref: '#/components/schemas/ProfileSource', readOnly: true, description: Request-time source revision for the canary deployment. Commit URLs are derived from recorded deployment provenance and are not retained with the assessment. }
+        comparison_url: { type: string, maxLength: 2048, readOnly: true, description: Dashboard link to load the exact stable and canary profile windows for a completed assessment. }
+        total: { $ref: '#/components/schemas/ProfileRegressionMetric' }
+        evidence:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ProfileRegressionEvidence' }
+        uncomparable_entries: { type: integer, minimum: 0 }
+    ProfileCanaryGatePolicy:
+      description: Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances.
+      type: object
+      required: [confirmations, timeout_seconds, on_timeout, auto_rollback]
+      properties:
+        confirmations: { type: integer, minimum: 1, maximum: 5, default: 2 }
+        timeout_seconds: { type: integer, minimum: 60, maximum: 86400, default: 1800, description: Must cover warmup plus all confirmation windows and ingestion grace. }
+        on_timeout: { type: string, enum: [hold, continue], default: hold, description: Continuing is an explicit acceptance of inconclusive profile evidence. Confirmed regressions remain held. }
+        auto_rollback: { type: boolean, default: false, description: Worker-only opt-in recovery for request-mode canaries to the exact current stable predecessor. Service recovery uses the checked handoff flow. }
+    ProfileGateRouteStreak:
+      description: Consecutive qualified observations for one configured route in the current canary stage.
+      type: object
+      required: [route, status, count]
+      properties:
+        route: { type: string, maxLength: 256 }
+        status: { type: string, enum: [regressed, no_regression_detected, insufficient_data] }
+        count: { type: integer, minimum: 0, maximum: 5 }
+    ProfileCanaryGateState:
+      description: Retained stage evidence and bounded route streaks used to qualify the profiling gate.
+      type: object
+      required: [policy, status, reason, deadline, windows, streaks]
+      properties:
+        policy: { $ref: '#/components/schemas/ProfileCanaryGatePolicy' }
+        status: { type: string, enum: [collecting, passed, regressed, timed_out, inconclusive] }
+        reason: { type: string }
+        deadline: { type: string, format: date-time }
+        windows: { type: integer, minimum: 0 }
+        last_window_end: { type: string, format: date-time }
+        streaks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ProfileGateRouteStreak' }
+        next_candidate: { $ref: '#/components/schemas/ProfileQuery', description: Separate next capture selection. Retained code evidence always refers to the signal's baseline and candidate queries. }
+    ProfileGateOverride:
+      description: Audited customer exception bound to the current profiling policy revision.
+      type: object
+      required: [expected_policy_revision, reason]
+      properties:
+        expected_policy_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reason: { type: string, minLength: 1, maxLength: 1024, description: Nonblank customer reason recorded atomically with the traffic change. Workers cannot override. }
+    ProfileCanaryGateDecision:
+      description: Current profiling gate decision for an owned canary stage and its exact stable predecessor.
+      type: object
+      required: [status, reason, policy_revision, canary_step, auto_rollback]
+      properties:
+        status: { type: string, enum: [disabled, collecting, passed, regressed, timed_out, overridden, rolled_back] }
+        reason: { type: string }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        canary_step: { type: integer, minimum: 0 }
+        canary_step_started_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        on_timeout: { type: string, enum: [hold, continue] }
+        auto_rollback: { type: boolean }
+        stable_deployment_id: { type: string, format: uuid }
+        signal: { $ref: '#/components/schemas/CanaryProfileSignal' }
+
+    ProfileCanaryHistoryPage:
+      type: object
+      description: Bounded newest-first canary profile assessments for one deployment. Each entry pins one stage and automatic-profile policy revision. next_cursor is opaque and may expire when its retained entry is pruned.
+      required: [app_id, deployment_id, entries]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        entries:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/CanaryProfileSignal' }
+        next_cursor: { type: string, maxLength: 512 }
     RouteHealthDecision:
       type: object
       description: Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact saved evidence with the advance response and traffic audit.
@@ -42146,6 +42617,8 @@ components:
       type: object
       required: [slug]
       properties:
+        profiling:
+          $ref: '#/components/schemas/ProfilingConfig'
         slug:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
@@ -42667,6 +43140,8 @@ components:
       description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
+        profiling:
+          $ref: '#/components/schemas/ProfilingConfig'
         visibility:
           type: [string, "null"]
           enum: [public, internal, null]
@@ -43359,6 +43834,8 @@ components:
       type: object
       required: [entrypoint]
       properties:
+        profiling:
+          $ref: '#/components/schemas/ProfilingConfig'
         entrypoint:
           type: array
           items: { type: string }
@@ -44487,6 +44964,8 @@ components:
       type: object
       required: [expected_step]
       properties:
+        profile_gate_rollback: { type: boolean, default: false, description: 'Reserved for the lease-bound internal worker. Public requests reject true. Rollback intent cannot fall back to promotion when gate context changes.' }
+        profile_gate_override: { $ref: '#/components/schemas/ProfileGateOverride' }
         expected_step:
           type: integer
           minimum: 0
@@ -44498,6 +44977,7 @@ components:
       type: object
       required: [deployment, audit_id]
       properties:
+        profile_gate: { $ref: '#/components/schemas/ProfileCanaryGateDecision' }
         route_health:
           $ref: '#/components/schemas/RouteHealthDecision'
         route_gate:
@@ -60566,7 +61046,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -61055,7 +61535,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -61137,7 +61617,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -61312,6 +61792,527 @@ components:
         rows: { type: integer, format: int64, minimum: 0 }
         requests: { type: integer, format: int64, minimum: 0 }
         rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    ProfileRouteAlertPayload:
+      type: object
+      description: Advisory app webhook evidence. Application frames are aggregate hotspots and do not establish route-level code causality. Paths are relative to Gregale; raw profile samples are excluded.
+      required: [version, app_id, deployment_id, baseline_deployment_id, policy_revision, incident_id, status, source, checked_at, baseline, candidate, route_check, evidence_path]
+      properties:
+        comparison_url: { type: string, description: "Dashboard link with the exact route, baseline and candidate windows and selected route call path." }
+        version: { type: integer, enum: [1] }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        baseline_deployment_id: { type: string, format: uuid }
+        policy_revision: { type: integer, format: int64 }
+        incident_id: { type: string, format: uuid }
+        status: { type: string, enum: [regressed, recovered] }
+        source: { type: string, enum: [deployment, canary, periodic] }
+        checked_at: { type: string, format: date-time }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        route_check: { $ref: '#/components/schemas/ProfileRouteRegression' }
+        application_frames:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ProfileCallPathFrame' }
+        evidence_path: { type: string }
+        investigation_path: { type: string }
+
+    PeriodicProfilePolicy:
+      type: object
+      description: Opt-in monitoring of live completed deployments and explicit routes. Interval must be a whole number of minutes and at least window_seconds. Each route pins its first evidence-qualified window on this deployment and policy revision. Both regression and recovery need this many consecutive supported, distinct-window results; missing evidence interrupts confirmation. Expired baselines start a new context without recovering the old incident.
+      required: [interval_seconds, confirmations]
+      properties:
+        interval_seconds: { type: integer, minimum: 60, maximum: 86400, multipleOf: 60 }
+        confirmations: { type: integer, minimum: 1, maximum: 5 }
+    ProfilePeriodicObservation:
+      description: One retained route CPU/request comparison from a periodic monitor.
+      type: object
+      required: [id, status, reason, checked_at, baseline, candidate]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [baseline_pinned, baseline_expired, regressed, no_regression_detected, inconclusive] }
+        reason: { type: string, maxLength: 256 }
+        checked_at: { type: string, format: date-time }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        route_check: { $ref: '#/components/schemas/ProfileRouteRegression' }
+        incident_id: { type: string, format: uuid }
+        transition: { type: string, enum: [profile.route_regressed, profile.route_recovered] }
+        investigation_id: { type: string, format: uuid }
+        comparison_url: { type: string }
+    ProfilePeriodicMonitor:
+      description: Bounded periodic route evidence and consecutive observations for one deployment and policy revision.
+      type: object
+      required: [active, id, app_id, deployment_id, scope, route, policy_revision, config, candidate, attempts, next_attempt_at, history]
+      properties:
+        active: { type: boolean, description: "Whether this monitor still matches the running deployment, current policy and eligible account." }
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        scope: { type: string }
+        route: { type: string }
+        policy_revision: { type: integer, format: int64 }
+        config: { $ref: '#/components/schemas/ProfileDeploymentPolicyConfig' }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        attempts: { type: integer, minimum: 0, maximum: 6 }
+        next_attempt_at: { type: string, format: date-time }
+        history:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ProfilePeriodicObservation' }
+    ListProfilePeriodicMonitorsResponse:
+      description: Current periodic profiling monitors for the authenticated application.
+      type: object
+      required: [monitors]
+      properties:
+        monitors:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/ProfilePeriodicMonitor' }
+    ProfileDeploymentPolicyConfig:
+      type: object
+      description: Opt-in background comparison policy. Collection must already be enabled on applications. Runtime filters apply to both deployments; capture coverage is not instrumentation completeness.
+      required: [enabled, runtime, window_seconds, warmup_seconds, options]
+      properties:
+        canary_gate: { anyOf: [{ $ref: '#/components/schemas/ProfileCanaryGatePolicy' }, { type: 'null' }], description: 'Omitted or null keeps canary checks advisory. Requires enabled checks and explicit routes.' }
+        periodic: { anyOf: [{ $ref: '#/components/schemas/PeriodicProfilePolicy' }, { type: 'null' }], description: "Omitted or null disables periodic monitoring. Enabled automatic checks and explicit advisory routes are required." }
+        enabled: { type: boolean, default: false }
+        notify_route_regressions: { type: boolean, default: false, description: "Advisory app webhook notifications on evidence-qualified route regression and recovery transitions. Requires enabled checks and explicit options.routes. Applies to deployment and canary checks; does not affect rollout decisions." }
+        runtime: { type: string, minLength: 1, maxLength: 64 }
+        window_seconds: { type: integer, minimum: 60, maximum: 1800, default: 300 }
+        warmup_seconds: { type: integer, minimum: 0, maximum: 3600, default: 120 }
+        options: { $ref: '#/components/schemas/ProfileRegressionOptions' }
+    ProfileDeploymentPolicy:
+      type: object
+      description: App-owned CPU-check configuration. Revision zero represents an unsaved disabled policy; updated_at appears after saving.
+      required: [app_id, revision, config]
+      properties:
+        app_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        config: { $ref: '#/components/schemas/ProfileDeploymentPolicyConfig' }
+        updated_at: { type: string, format: date-time }
+    SaveProfileDeploymentPolicyRequest:
+      type: object
+      description: Full replacement of the CPU rollout-check settings. Changing or disabling settings cancels queued and leased work for earlier policy revisions.
+      required: [expected_revision, config]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        config: { $ref: '#/components/schemas/ProfileDeploymentPolicyConfig' }
+    ProfileDeploymentCheck:
+      type: object
+      description: Durable automatic CPU-check receipt. Only bounded metadata is retained; raw samples remain under backend retention. Retry and lease recovery keep the original deployment pair and windows. Missing predecessors yield an inconclusive receipt without an investigation. If the saved-investigation quota is full, the result remains recorded with its original comparison link and an explicit explanation.
+      required: [deployment_id, app_id, scope, policy_revision, config, candidate, status, reason, attempts, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        policy_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        config: { $ref: '#/components/schemas/ProfileDeploymentPolicyConfig' }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        status: { type: string, enum: [queued, running, regressed, no_regression_detected, inconclusive, cancelled] }
+        reason: { type: string }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        investigation_id: { type: string, format: uuid }
+        comparison_url: { type: string, description: Relative authenticated dashboard link to saved metadata or the original exact comparison windows. }
+        created_at: { type: string, format: date-time }
+    ListProfileDeploymentChecksResponse:
+      type: object
+      description: Bounded automatic CPU-check history sorted by creation time and deployment UUID.
+      required: [checks]
+      properties:
+        checks:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/ProfileDeploymentCheck' }
+
+    ProfileRegressionOptions:
+      type: object
+      description: Threshold policy for sampled CPU per wall-clock second or per weighted observed request. Both relative and selected-metric absolute increase thresholds must be met. CPU-per-request mode also requires retained request telemetry and its configured minimum request count in both deployment windows; absent or sparse counts are inconclusive. Request telemetry rows use minute-bucket timestamps, so counts near window boundaries can be approximate and may be incomplete. Capture requirements apply separately to each profile window.
+      required: [relative_increase_percent, absolute_increase_cpu_per_second, minimum_profiles, minimum_coverage_ratio]
+      properties:
+        routes:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Optional advisory route CPU/request checks using the relative and CPU/request thresholds and minimum requests, regardless of the aggregate metric. Never gates rollout.
+          items: { type: string, minLength: 1, maxLength: 256 }
+        metric: { type: string, enum: [cpu_per_second, cpu_per_request], default: cpu_per_second }
+        relative_increase_percent: { type: number, format: double, minimum: 0, maximum: 10000, default: 20 }
+        absolute_increase_cpu_per_second: { type: number, format: double, exclusiveMinimum: 0, maximum: 1000000, default: 0.01, description: Absolute increase threshold for cpu_per_second mode. }
+        absolute_increase_cpu_seconds_per_request: { type: number, format: double, exclusiveMinimum: 0, maximum: 3600, default: 0.0001, description: Required when metric is cpu_per_request.}
+        minimum_profiles: { type: integer, format: int64, minimum: 1, maximum: 5000, default: 3 }
+        minimum_coverage_ratio: { type: number, format: double, minimum: 0.1, maximum: 1, default: 0.8 }
+        minimum_requests: { type: integer, format: int64, minimum: 1, maximum: 100000000, default: 20, description: Required when metric is cpu_per_request; applied to each deployment window.}
+    CheckProfileRegressionRequest:
+      type: object
+      description: Revision-protected on-demand assessment request. Omitted options use CPU/s, 20 percent, 0.01 CPU/s, three profiles and 0.8 capture ratio. CPU/request mode requires both request-specific options.
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        options: { $ref: '#/components/schemas/ProfileRegressionOptions' }
+    ProfileRegressionMetric:
+      type: object
+      description: Observed sampled CPU/s comparison, optionally with CPU seconds per weighted observed request. exceeds_threshold and relative_increase_percent use the metric selected by options. The relative percentage is absent when that metric's baseline is zero.
+      required: [baseline_cpu_per_second, candidate_cpu_per_second, delta_cpu_per_second, exceeds_threshold]
+      properties:
+        baseline_cpu_per_second: { type: number, format: double, minimum: 0 }
+        candidate_cpu_per_second: { type: number, format: double, minimum: 0 }
+        delta_cpu_per_second: { type: number, format: double }
+        relative_increase_percent: { type: number, format: double }
+        cpu_per_request:
+          type: object
+          description: Present when retained request telemetry has observations for both deployment windows. Counts are weighted collapsed rows with minute-bucket timestamps; boundary counts can be approximate and telemetry can be incomplete.
+          required: [baseline_cpu_seconds_per_request, candidate_cpu_seconds_per_request, delta_cpu_seconds_per_request, exceeds_threshold]
+          properties:
+            baseline_cpu_seconds_per_request: { type: number, format: double, minimum: 0 }
+            candidate_cpu_seconds_per_request: { type: number, format: double, minimum: 0 }
+            delta_cpu_seconds_per_request: { type: number, format: double }
+            relative_increase_percent: { type: number, format: double }
+            exceeds_threshold: { type: boolean }
+        exceeds_threshold: { type: boolean }
+    ProfileRegressionEvidence:
+      type: object
+      description: Comparable function self CPU or complete caller-path inclusive CPU meeting both thresholds. Inclusive path entries overlap and must not be summed. Frame names and source paths are observed profile symbols; use an authorized profile comparison to inspect source when available.
+      required: [kind, frames, metric]
+      properties:
+        kind: { type: string, enum: [function, call_path] }
+        frames:
+          type: array
+          minItems: 1
+          maxItems: 257
+          items: { $ref: '#/components/schemas/ProfileCallPathFrame' }
+        metric: { $ref: '#/components/schemas/ProfileRegressionMetric' }
+    ProfileRequestMixGroup:
+      description: Bounded request-count aggregate for one route or response-status group.
+      type: object
+      required: [label, method, requests]
+      properties:
+        label: { type: string, maxLength: 1024 }
+        method: { type: string, maxLength: 16 }
+        requests: { type: integer, format: int64, minimum: 0 }
+    ProfileRequestMixWindow:
+      description: Frozen request-count summary for one profile query window.
+      type: object
+      required: [query, total, routes, statuses, truncated]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        total: { type: integer, format: int64, minimum: 0 }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/ProfileRequestMixGroup' } }
+        statuses: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/ProfileRequestMixGroup' } }
+        truncated: { type: boolean }
+    ProfileRequestMixSnapshot:
+      type: object
+      description: Frozen observed telemetry summary, at most 16 KiB JSON. Completeness describes route/status aggregation, not telemetry delivery. Readable with the assessment after raw request telemetry expires.
+      required: [captured_at, status, complete, reason, warnings]
+      properties:
+        captured_at: { type: string, format: date-time }
+        status: { type: string, enum: [captured, partial, unavailable] }
+        complete: { type: boolean }
+        reason: { type: string, maxLength: 1024 }
+        baseline: { $ref: '#/components/schemas/ProfileRequestMixWindow' }
+        candidate: { $ref: '#/components/schemas/ProfileRequestMixWindow' }
+        warnings: { type: array, maxItems: 8, items: { type: string, maxLength: 1024 } }
+        route_difference: { type: number, minimum: 0, maximum: 100, description: Frozen total variation distance in percentage points; omitted for truncated or unavailable route distributions. }
+        status_difference: { type: number, minimum: 0, maximum: 100 }
+
+    ProfileRegressionAssessment:
+      type: object
+      description: Latest bounded historical CPU assessment, at most 64 KiB JSON, including at most 32 KiB evidence. Original samples are not retained. A different current saved revision marks this assessment stale. Profile expiry leaves this historical summary readable, without extending backend retention.
+      required: [investigation_revision, checked_at, status, reason, options, baseline, candidate, evidence, uncomparable_entries]
+      properties:
+        attribution: { $ref: '#/components/schemas/ProfileAttributionComparison', readOnly: true }
+        route_checks:
+          type: array
+          maxItems: 10
+          readOnly: true
+          items: { $ref: '#/components/schemas/ProfileRouteRegression' }
+        request_mix: { $ref: '#/components/schemas/ProfileRequestMixSnapshot', readOnly: true }
+        investigation_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        checked_at: { type: string, format: date-time }
+        status: { type: string, enum: [regressed, no_regression_detected, inconclusive] }
+        reason: { type: string }
+        options: { $ref: '#/components/schemas/ProfileRegressionOptions' }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        baseline_requests: { type: integer, format: int64, minimum: 0, description: Weighted observed request telemetry count for the baseline window.}
+        candidate_requests: { type: integer, format: int64, minimum: 0, description: Weighted observed request telemetry count for the candidate window.}
+        baseline_coverage: { $ref: '#/components/schemas/ProfileCoverage' }
+        candidate_coverage: { $ref: '#/components/schemas/ProfileCoverage' }
+        total: { $ref: '#/components/schemas/ProfileRegressionMetric' }
+        evidence:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ProfileRegressionEvidence' }
+        uncomparable_entries: { type: integer, minimum: 0 }
+
+    ProfileCallPathFrame:
+      type: object
+      description: One sampled frame in a complete saved caller path. Automatic canary evidence retains only safe repository-relative paths and line numbers; source URLs are derived at read time from each deployment's recorded commit.
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 4096 }
+        file: { type: string, maxLength: 4096 }
+        line: { type: integer, format: int64, minimum: 0 }
+        baseline_path: { type: string, maxLength: 4096, readOnly: true, description: Safe repository-relative baseline path retained for automatic canary evidence. }
+        baseline_line: { type: integer, format: int64, minimum: 0, readOnly: true }
+        candidate_path: { type: string, maxLength: 4096, readOnly: true, description: Safe repository-relative candidate path retained for automatic canary evidence. }
+        candidate_line: { type: integer, format: int64, minimum: 0, readOnly: true }
+        baseline_source: { $ref: '#/components/schemas/ProfileSourceLocation', readOnly: true, description: Request-time source link for the stable deployment; omitted when source is unavailable. }
+        candidate_source: { $ref: '#/components/schemas/ProfileSourceLocation', readOnly: true, description: Request-time source link for the canary deployment; omitted when source is unavailable. }
+    ProfileCallPath:
+      type: object
+      description: Root-to-frame selection. Named comparison frames ignore sampled line changes; candidate and anonymous frames match their sampled line. Total name and file text is limited to 16384 UTF-8 bytes.
+      required: [view, frames]
+      properties:
+        view: { type: string, enum: [candidate, comparison] }
+        frames:
+          type: array
+          minItems: 1
+          maxItems: 257
+          items: { $ref: '#/components/schemas/ProfileCallPathFrame' }
+    ProfileInvestigationInput:
+      type: object
+      description: Saved comparison metadata. Title allows 160 UTF-8 bytes and findings and notes 8192 bytes each. Selections share a runtime. Changed windows must belong to retained deployments; unchanged expired windows permit commentary edits.
+      required: [title, findings, notes, baseline, candidate]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 160 }
+        findings: { type: string, maxLength: 8192 }
+        notes: { type: string, maxLength: 8192 }
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+        selected_path: { $ref: '#/components/schemas/ProfileCallPath' }
+    SaveProfileInvestigationRequest:
+      type: object
+      description: Complete replacement. Supply expected_revision 0 for creation or the current revision for updates. Concurrent changes return conflict. Body limited to 65536 bytes.
+      required: [expected_revision, investigation]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        investigation: { $ref: '#/components/schemas/ProfileInvestigationInput' }
+    ProfileInvestigation:
+      type: object
+      description: Persistent app-owned selections and notes; no profile samples are stored. Up to 50 investigations per app.
+      required: [id, app_id, revision, investigation, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        investigation: { $ref: '#/components/schemas/ProfileInvestigationInput' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        assessment: { $ref: '#/components/schemas/ProfileRegressionAssessment' }
+    ProfileInvestigationWindowStatus:
+      type: object
+      description: Query eligibility under the current plan and installation. Retained does not guarantee that samples exist; expiry never implies zero CPU usage.
+      required: [status, detail]
+      properties:
+        status: { type: string, enum: [retained, expired, deployment_unavailable, plan_unavailable, backend_unavailable] }
+        detail: { type: string }
+    ProfileInvestigationResponse:
+      type: object
+      description: Saved metadata and authenticated dashboard link, with explicit per-window eligibility.
+      required: [saved, url, baseline_status, candidate_status]
+      properties:
+        saved: { $ref: '#/components/schemas/ProfileInvestigation' }
+        url: { type: string, description: Relative dashboard link that requires an authenticated account with access to this app. }
+        baseline_status: { $ref: '#/components/schemas/ProfileInvestigationWindowStatus' }
+        candidate_status: { $ref: '#/components/schemas/ProfileInvestigationWindowStatus' }
+    ListProfileInvestigationsResponse:
+      type: object
+      description: Saved investigations ordered by most recent update, then UUID.
+      required: [investigations]
+      properties:
+        investigations:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/ProfileInvestigationResponse' }
+
+    ProfilingConfig:
+      description: Opt-in sampled CPU profiling baked into each deployment (ADR-819).
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+    ProfileQuery:
+      description: Authorized deployment CPU capture window.
+      type: object
+      required: [deployment_id, runtime, start, end]
+      properties:
+        route: { type: string, maxLength: 256, description: 'Optional static METHOD /pattern or [unattributed]; empty selects all sampled CPU.' }
+        deployment_id: { type: string, format: uuid }
+        runtime: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+    ProfileFunction:
+      description: Sampled self and inclusive CPU seconds for one source function.
+      type: object
+      required: [name, self_cpu_seconds, total_cpu_seconds]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self_cpu_seconds: { type: number, format: double }
+        total_cpu_seconds: { type: number, format: double }
+    ProfileStack:
+      description: One frame in a bounded CPU call-path tree.
+      type: object
+      required: [name, cpu_seconds]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        cpu_seconds: { type: number, format: double }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/ProfileStack' }
+    ProfileRouteCPU:
+      description: Sampled CPU attributed to one validated static application route.
+      type: object
+      required: [route, cpu_seconds]
+      properties:
+        label_coverage: { $ref: '#/components/schemas/ProfileRouteLabelCoverage', readOnly: true }
+        route: { type: string, maxLength: 256 }
+        cpu_seconds: { type: number, minimum: 0 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        cpu_seconds_per_request: { type: number, minimum: 0 }
+    ProfileRouteWeight:
+      description: Request share used to adjust aggregate CPU comparisons for route mix.
+      type: object
+      required: [route, weight]
+      properties:
+        route: { type: string, maxLength: 256 }
+        weight: { type: number, minimum: 0, maximum: 1 }
+    ProfileRouteAdjustment:
+      type: object
+      description: Common request mix uses the mean of stable/canary route shares. Requires matching route sets, no unattributed CPU, sufficient collection coverage and at least 20 requests per route on each side. This does not alter canary outcomes.
+      required: [available, reason, weights]
+      properties:
+        available: { type: boolean }
+        reason: { type: string }
+        baseline_cpu_seconds_per_request: { type: number }
+        candidate_cpu_seconds_per_request: { type: number }
+        delta_cpu_seconds_per_request: { type: number }
+        weights: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileRouteWeight' } }
+
+    ProfileResponse:
+      description: CPU profile with an explicit absence-of-samples flag.
+      type: object
+      required: [query, cpu_seconds, stack_count, functions, flamegraph, empty]
+      properties:
+        attribution: { $ref: '#/components/schemas/ProfileAttributionQuality', readOnly: true }
+        routes: { type: array, maxItems: 51, items: { $ref: '#/components/schemas/ProfileRouteCPU' } }
+        route_requests_complete: { type: boolean, description: All observed request-route labels have CPU attribution and a complete bounded request summary. This does not establish telemetry delivery or instrumentation completeness. }
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        cpu_seconds: { type: number, format: double }
+        stack_count: { type: integer, format: int64, description: "Number of nonzero aggregated stack records, not raw sampling ticks." }
+        functions:
+          type: array
+          items: { $ref: '#/components/schemas/ProfileFunction' }
+        flamegraph: { $ref: '#/components/schemas/ProfileStack' }
+        empty: { type: boolean }
+        coverage: { $ref: '#/components/schemas/ProfileCoverage' }
+        source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileSource:
+      description: Deployment-recorded GitHub provenance. Links use a full immutable commit SHA; uploaded or generated source is not verified against that commit. Unavailable provenance is explicit.
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        repository: { type: string }
+        commit_sha: { type: string }
+        commit_url: { type: string, format: uri }
+        reason: { type: string }
+    ProfileSourceLocation:
+      description: Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub.
+      type: object
+      required: [url, path, line]
+      properties:
+        url: { type: string, format: uri }
+        path: { type: string }
+        line: { type: integer, format: int64, minimum: 1 }
+    ProfileCoverage:
+      description: Recorded collection evidence. Overlapping intervals count once; gaps can include idle time or loss. Failure counts are a lower bound; losses before ingestion are unknown. Unavailable coverage must not be interpreted as zero collection.
+      type: object
+      required: [available, received_profiles, contributing_collectors, window_seconds, covered_seconds, gap_seconds, recorded_failed_uploads, failures_complete]
+      properties:
+        attribution_reasons:
+          type: array
+          maxItems: 6
+          description: Optional host-generated whole-capture CPU diagnostics. Legacy captures have no counters; public attribution quality reconciles counters against merged CPU before declaring completeness.
+          items: { $ref: '#/components/schemas/ProfileAttributionReason' }
+        available: { type: boolean }
+        received_profiles: { type: integer, format: int64, minimum: 0 }
+        contributing_collectors: { type: integer, minimum: 0 }
+        last_received_at: { type: string, format: date-time, description: Latest recorded receipt among profiles in the selected capture window. }
+        window_seconds: { type: number, format: double, minimum: 0 }
+        covered_seconds: { type: number, format: double, minimum: 0 }
+        gap_seconds: { type: number, format: double, minimum: 0 }
+        recorded_failed_uploads: { type: integer, format: int64, minimum: 0, description: Rate limited recorded failures; a lower bound on failed attempts rather than exact lost profiles. }
+        failures_complete: { type: boolean, description: False because failures before ingestion and omitted failure records are unknown. }
+    ProfileCompareRequest:
+      description: Baseline and candidate deployment CPU selections.
+      type: object
+      required: [baseline, candidate]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileQuery' }
+        candidate: { $ref: '#/components/schemas/ProfileQuery' }
+    ProfileFunctionDelta:
+      description: Function self CPU rates normalized by each selected capture window. Numeric rates are meaningful only when the corresponding observed flag is true; delta_cpu_per_second is meaningful only when delta_known is true. Unobserved functions are not measured zero.
+      type: object
+      required: [name, baseline_cpu_per_second, candidate_cpu_per_second, delta_cpu_per_second, baseline_observed, candidate_observed, delta_known]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        baseline_source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        candidate_source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline_cpu_per_second: { type: number, format: double }
+        candidate_cpu_per_second: { type: number, format: double }
+        delta_cpu_per_second: { type: number, format: double }
+        baseline_observed: { type: boolean }
+        candidate_observed: { type: boolean }
+        delta_known: { type: boolean }
+    ProfileStackDelta:
+      description: Inclusive CPU rates for one complete caller path. Rates are normalized by each selected window; omitted rates mean the path was not observed, not measured zero. Delta is omitted unless both sides were observed. Width is the sum of observed rates for an additive union layout. Named frames match by symbol and file within their parent path; unknown and anonymous frames also retain their line identity.
+      type: object
+      required: [name, width_cpu_per_second]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        baseline_line: { type: integer, format: int64 }
+        candidate_line: { type: integer, format: int64 }
+        baseline_source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        candidate_source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline_cpu_per_second: { type: number, format: double, minimum: 0 }
+        candidate_cpu_per_second: { type: number, format: double, minimum: 0 }
+        delta_cpu_per_second: { type: number, format: double }
+        width_cpu_per_second: { type: number, format: double, minimum: 0 }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/ProfileStackDelta' }
+    ProfileCompareResponse:
+      description: Deployment CPU rate differences with a compatibility decision.
+      type: object
+      required: [baseline, candidate, functions, comparable]
+      properties:
+        attribution: { $ref: '#/components/schemas/ProfileAttributionComparison', readOnly: true }
+        route_adjustment: { $ref: '#/components/schemas/ProfileRouteAdjustment' }
+        baseline: { $ref: '#/components/schemas/ProfileResponse' }
+        candidate: { $ref: '#/components/schemas/ProfileResponse' }
+        functions:
+          type: array
+          items: { $ref: '#/components/schemas/ProfileFunctionDelta' }
+        comparable: { type: boolean }
+        reason: { type: string }
+        flamegraph: { $ref: '#/components/schemas/ProfileStackDelta' }
+        flamegraph_reason: { type: string, description: Explains unavailable differential data while preserving a valid function comparison. }
 
     DebugCoverageResponse:
       type: object
@@ -62450,6 +63451,102 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/IssueIngestToken' } }
 
+    ProfileRouteRegression:
+      type: object
+      description: Retained advisory route-associated sampled CPU/request observation. Missing attribution, sparse requests or inadequate capture coverage produces insufficient_data. No rollout decision is changed.
+      required: [route, status, reason]
+      properties:
+        code_reason: { type: string, maxLength: 1024, description: Availability and limitations of route-filtered code attribution. }
+        code_evidence:
+          type: array
+          maxItems: 10
+          description: Bounded route-filtered function self CPU and inclusive call-path increases ranked by CPU/request delta. Source URLs are derived at read time.
+          items: { $ref: '#/components/schemas/ProfileRegressionEvidence' }
+        label_coverage: { $ref: '#/components/schemas/ProfileRouteLabelComparison', readOnly: true }
+        route: { type: string, minLength: 1, maxLength: 256 }
+        status: { type: string, enum: [regressed, no_regression_detected, insufficient_data] }
+        reason: { type: string, maxLength: 1024 }
+        baseline_requests: { type: integer, format: int64, minimum: 0 }
+        candidate_requests: { type: integer, format: int64, minimum: 0 }
+        metric: { $ref: '#/components/schemas/ProfileRegressionCPUPerRequestMetric' }
+        comparison_url: { type: string, readOnly: true, description: Request-time dashboard link to the route differential flamegraph for the frozen comparison windows. }
+
+    ProfileRegressionCPUPerRequestMetric:
+      description: Qualified route CPU/request measurements and regression threshold results.
+      type: object
+      required: [baseline_cpu_seconds_per_request, candidate_cpu_seconds_per_request, delta_cpu_seconds_per_request, exceeds_threshold]
+      properties:
+        baseline_cpu_seconds_per_request: { type: number, format: double, minimum: 0 }
+        candidate_cpu_seconds_per_request: { type: number, format: double, minimum: 0 }
+        delta_cpu_seconds_per_request: { type: number, format: double }
+        relative_increase_percent: { type: number, format: double }
+        exceeds_threshold: { type: boolean }
+
+    ProfileAttributionQuality:
+      type: object
+      description: Labeled and unattributed shares of all sampled CPU in the deployment window, even when a route filter is selected. Not VM CPU or request instrumentation completeness. Percentages are absent when no CPU was sampled.
+      required: [available, total_cpu_seconds, attributed_cpu_seconds, unattributed_cpu_seconds, diagnostics_complete, reasons]
+      properties:
+        available: { type: boolean }
+        total_cpu_seconds: { type: number, format: double, minimum: 0 }
+        attributed_cpu_seconds: { type: number, format: double, minimum: 0 }
+        unattributed_cpu_seconds: { type: number, format: double, minimum: 0 }
+        attributed_percent: { type: number, format: double, minimum: 0, maximum: 100 }
+        unattributed_percent: { type: number, format: double, minimum: 0, maximum: 100 }
+        diagnostics_complete: { type: boolean, description: Host discard counters reconciled against the whole merged CPU capture. False for missing or inconsistent counters. }
+        reasons:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ProfileAttributionReason' }
+    ProfileAttributionReason:
+      description: Bounded evidence explaining why profile attribution is incomplete or inconsistent.
+      type: object
+      required: [reason, cpu_seconds]
+      properties:
+        reason: { type: string, enum: [attributed, unlabeled, invalid_label, route_not_admitted, encoding_limit, unknown] }
+        cpu_seconds: { type: number, format: double, minimum: 0 }
+    ProfileAttributionComparison:
+      type: object
+      description: Captured route attribution quality comparison. An absolute labeled-share change of at least 20 percentage points suppresses advisory route regression conclusions without changing aggregate results or rollout behavior. Background work and traffic changes can also change labeled CPU share.
+      required: [available, substantial_change, maximum_change_percentage_points, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileAttributionQuality' }
+        candidate: { $ref: '#/components/schemas/ProfileAttributionQuality' }
+        available: { type: boolean }
+        delta_percentage_points: { type: number, format: double, minimum: -100, maximum: 100 }
+        substantial_change: { type: boolean }
+        maximum_change_percentage_points: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 20 }
+        warnings:
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 1024 }
+
+    ProfileRouteLabelCoverage:
+      type: object
+      description: Application-reported labeled request entries in retained whole captures divided by weighted observed requests in the deployment window. Boundary captures are excluded without extrapolation. This is not proof of full request instrumentation. Counts above observed traffic cannot be reconciled.
+      required: [available, reason, captured_profiles, boundary_profiles]
+      properties:
+        available: { type: boolean }
+        reason: { type: string, maxLength: 1024 }
+        labeled_requests: { type: integer, format: int64, minimum: 0 }
+        observed_requests: { type: integer, format: int64, minimum: 0 }
+        percent: { type: number, format: double, minimum: 0, maximum: 100 }
+        captured_profiles: { type: integer, format: int64, minimum: 0 }
+        boundary_profiles: { type: integer, format: int64, minimum: 0 }
+    ProfileRouteLabelComparison:
+      type: object
+      description: Advisory route CPU/request requires reconciled labeling shares of at least 80 percent in both windows and a change below 20 percentage points in either direction. Missing reports or failed reconciliation produces insufficient data.
+      required: [available, consistent, reason, minimum_percent, maximum_change_percentage_points]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileRouteLabelCoverage' }
+        candidate: { $ref: '#/components/schemas/ProfileRouteLabelCoverage' }
+        available: { type: boolean }
+        consistent: { type: boolean }
+        reason: { type: string, maxLength: 1024 }
+        delta_percentage_points: { type: number, format: double, minimum: -100, maximum: 100 }
+        minimum_percent: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 80 }
+        maximum_change_percentage_points: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 20 }
+
   responses:
     OperationConflict:
       description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.
@@ -62949,7 +64046,8 @@ components:
       description: |
         429 application/problem+json response. Authentication throttling uses
         `auth_rate_limited`; plan and usage limits use their specific stable
-        codes such as `plan_limit_concurrency` and `quota_exhausted`.
+        codes such as `plan_limit_concurrency`, `quota_exhausted` and
+        `profile_investigation_limit`.
       headers:
         Retry-After:
           schema: { type: integer, example: 60 }
