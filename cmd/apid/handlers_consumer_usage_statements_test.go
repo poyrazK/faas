@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -303,5 +304,82 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	if adjustment.Revision != 2 || adjustment.BillableUnits != 2 || adjustment.AmountMillicents != 20 || len(adjustment.Buckets) != 2 ||
 		adjustment.Buckets[0].ChargedUnits != 0 || adjustment.Buckets[1].BillableUnits != 0 || adjustment.Buckets[1].ChargedUnits != 2 {
 		t.Fatalf("adjustment = %+v, want 2 added units and 2 newly charged units", adjustment)
+	}
+}
+
+// adr: 845 — graduated tiers price monthly statements by position and
+// re-rate late usage exactly.
+func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	if now.Add(10*time.Minute).Month() != now.Month() {
+		t.Skip("tier months must not roll over during the test")
+	}
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-tiers")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-tiers/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "tier-customer", Name: "Tier Customer",
+	}, nil)
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil || created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	step := func(n int64) *int64 { return &n }
+	cards := "/v1/apps/consumer-tiers/rate-cards"
+	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
+		Tiers: []api.APIConsumerRateCardTier{{UpTo: step(5), PriceMillicentsPerUnit: 10}, {PriceMillicentsPerUnit: 0}},
+	}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("free later step: %d %s, want 422", res.Code, res.Body)
+	}
+	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
+		Tiers: []api.APIConsumerRateCardTier{{UpTo: step(5), PriceMillicentsPerUnit: 0}, {UpTo: step(10), PriceMillicentsPerUnit: 100}, {PriceMillicentsPerUnit: 10}},
+	}, nil)
+	var card api.APIConsumerRateCardResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &card); err != nil || res.Code != http.StatusCreated || len(card.Tiers) != 3 {
+		t.Fatalf("tiered card: %d %s", res.Code, res.Body)
+	}
+	m0, m1 := now.Add(time.Minute), now.Add(2*time.Minute)
+	record := func(at time.Time, units int64) {
+		t.Helper()
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/v1/apps/consumer-tiers/consumers/" + consumer.ID + "/usage-statements"
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	week := monthStart.AddDate(0, 0, 7)
+	if res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &week}, nil); res.Code != http.StatusUnprocessableEntity && now.Before(week) {
+		t.Fatalf("weekly tiered statement: %d %s, want 422", res.Code, res.Body)
+	}
+	draft := func() api.APIConsumerUsageStatementResponse {
+		t.Helper()
+		res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &monthEnd}, nil)
+		var out api.APIConsumerUsageStatementResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil || res.Code != http.StatusCreated {
+			t.Fatalf("draft: %d %s", res.Code, res.Body)
+		}
+		return out
+	}
+
+	record(m0, 4)
+	record(m1, 8)
+	first := draft()
+	if first.AmountMillicents != 520 || len(first.Buckets) != 2 || !slices.Equal(first.Buckets[1].TierUnits, []int64{1, 5, 2}) {
+		t.Fatalf("first statement = %+v, want 1 free, 5 at 100 and 2 at 10 in the second minute", first)
+	}
+	if res := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+		t.Fatalf("finalize: %d %s", res.Code, res.Body)
+	}
+	record(m0, 4)
+	adjustment := draft()
+	if adjustment.Revision != 2 || adjustment.AmountMillicents != 40 || len(adjustment.Buckets) != 2 ||
+		adjustment.Buckets[1].AmountMillicents != -260 || !slices.Equal(adjustment.Buckets[1].TierUnits, []int64{-1, -3, 4}) {
+		t.Fatalf("adjustment = %+v, want a 40 net re-rating", adjustment)
+	}
+	if res := e.do(t, http.MethodPost, path+"/"+adjustment.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+		t.Fatalf("finalize adjustment: %d %s", res.Code, res.Body)
 	}
 }

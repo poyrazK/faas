@@ -55,6 +55,7 @@ export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
 export type { APIConsumerListResponse } from './models/APIConsumerListResponse.js';
 export type { APIConsumerRateCardListResponse } from './models/APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './models/APIConsumerRateCardResponse.js';
+export type { APIConsumerRateCardTier } from './models/APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './models/APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './models/APIConsumerUsageBucketResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './models/APIConsumerUsageQuoteBucketResponse.js';

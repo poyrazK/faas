@@ -15,26 +15,58 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		Tiers: apiRateCardTiers(card.Tiers), EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 	}
 }
 
+func apiRateCardTiers(tiers []state.APIConsumerRateCardTier) []api.APIConsumerRateCardTier {
+	if len(tiers) == 0 {
+		return nil
+	}
+	out := make([]api.APIConsumerRateCardTier, len(tiers))
+	for i, tier := range tiers {
+		out[i] = api.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit}
+	}
+	return out
+}
+
+func stateRateCardTiers(tiers []api.APIConsumerRateCardTier) []state.APIConsumerRateCardTier {
+	if len(tiers) == 0 {
+		return nil
+	}
+	out := make([]state.APIConsumerRateCardTier, len(tiers))
+	for i, tier := range tiers {
+		out[i] = state.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit}
+	}
+	return out
+}
+
 // rateCardAllowanceProblem rejects a card that would change which past
-// minutes were free (ADR-844). Allowances are consumed in minute order from
-// the start of each month, so once any card carries one, a backdated card
-// could re-split units that statements already billed.
+// minutes were free or in which ladder step (ADR-844, ADR-845). Usage is
+// consumed in minute order from the start of each month, so once any card
+// carries an allowance or tiers, a backdated card could re-split units that
+// statements already billed.
 func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiveFrom time.Time, existing []state.APIConsumerRateCard) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
+	}
 	if req.IncludedUnitsPerMonth < 0 {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid rate card", "included_units_per_month must be non-negative")
+		return invalid("included_units_per_month must be non-negative")
 	}
-	allowanceInUse := req.IncludedUnitsPerMonth > 0
+	if len(req.Tiers) > 0 {
+		if err := state.ValidateAPIConsumerRateCardTiers(stateRateCardTiers(req.Tiers)); err != nil {
+			return invalid(strings.TrimPrefix(err.Error(), "rate card tiers: ") + " (tiers)")
+		}
+		if req.IncludedUnitsPerMonth != 0 {
+			return invalid("tiers replace included_units_per_month; make the first step free instead")
+		}
+	}
+	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0
 	for _, card := range existing {
-		allowanceInUse = allowanceInUse || card.IncludedUnitsPerMonth > 0
+		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0
 	}
-	if allowanceInUse && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid rate card", "effective_from cannot be in the past once a rate card includes units")
+	if positional && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
+		return invalid("effective_from cannot be in the past once a rate card includes units or tiers")
 	}
 	return nil
 }
@@ -123,7 +155,10 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	card, err := store.CreateAPIConsumerRateCardWithAllowance(r.Context(), acct.ID, app.ID, req.Currency, req.PriceMillicentsPerUnit, req.IncludedUnitsPerMonth, effectiveFrom)
+	card, err := store.CreateAPIConsumerRateCardVersion(r.Context(), state.APIConsumerRateCardInput{
+		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
+		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers), EffectiveFrom: effectiveFrom,
+	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -137,6 +172,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		"app_id": app.ID, "rate_card_id": card.ID, "currency": card.Currency,
 		"price_millicents_per_unit": card.PriceMillicentsPerUnit,
 		"included_units_per_month":  card.IncludedUnitsPerMonth,
+		"tier_count":                len(card.Tiers),
 		"effective_from":            card.EffectiveFrom.UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, apiConsumerRateCardResponse(card))
@@ -204,6 +240,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit,
 			ChargedUnits:           bucket.ChargedUnits,
+			TierUnits:              bucket.TierUnits,
 			AmountMillicents:       bucket.AmountMillicents,
 		})
 	}

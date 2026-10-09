@@ -18,9 +18,62 @@ type APIConsumerRateCardStore interface {
 	CreateAPIConsumerRateCard(context.Context, string, string, string, int64, time.Time) (APIConsumerRateCard, error)
 	GetAPIConsumerRateCardByID(context.Context, string, string) (APIConsumerRateCard, error)
 	ListAPIConsumerRateCardsForApp(context.Context, string, string) ([]APIConsumerRateCard, error)
-	// CreateAPIConsumerRateCardWithAllowance also sets the card's monthly
-	// free allowance per consumer; CreateAPIConsumerRateCard includes none.
-	CreateAPIConsumerRateCardWithAllowance(ctx context.Context, accountID, appID, currency string, price, includedUnitsPerMonth int64, effectiveFrom time.Time) (APIConsumerRateCard, error)
+	// CreateAPIConsumerRateCardVersion creates a card with an optional
+	// monthly allowance (ADR-844) or graduated ladder (ADR-845);
+	// CreateAPIConsumerRateCard creates a single flat price.
+	CreateAPIConsumerRateCardVersion(context.Context, APIConsumerRateCardInput) (APIConsumerRateCard, error)
+}
+
+// APIConsumerRateCardInput is one immutable price version to create. With
+// Tiers set, the ladder prices usage, IncludedUnitsPerMonth must be zero, and
+// PriceMillicentsPerUnit records the last step's price.
+type APIConsumerRateCardInput struct {
+	AccountID              string
+	AppID                  string
+	Currency               string
+	PriceMillicentsPerUnit int64
+	IncludedUnitsPerMonth  int64
+	Tiers                  []APIConsumerRateCardTier
+	EffectiveFrom          time.Time
+}
+
+// normalizeAPIConsumerRateCardInput validates a version and derives the
+// stored flat price for a ladder.
+func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumerRateCardInput, error) {
+	in.Currency = normalizeAPIConsumerRateCardCurrency(in.Currency)
+	in.EffectiveFrom = in.EffectiveFrom.UTC()
+	if len(in.Tiers) > 0 {
+		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
+			return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
+		}
+		if in.IncludedUnitsPerMonth != 0 {
+			return in, fmt.Errorf("CreateAPIConsumerRateCard: tiers replace included_units_per_month")
+		}
+		in.PriceMillicentsPerUnit = in.Tiers[len(in.Tiers)-1].PriceMillicentsPerUnit
+	}
+	if in.IncludedUnitsPerMonth < 0 {
+		return in, ErrInvalidArgument
+	}
+	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", in.AccountID, in.AppID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {
+		return in, err
+	}
+	in.Tiers = cloneRateCardTiers(in.Tiers)
+	return in, nil
+}
+
+func cloneRateCardTiers(tiers []APIConsumerRateCardTier) []APIConsumerRateCardTier {
+	if len(tiers) == 0 {
+		return nil
+	}
+	out := make([]APIConsumerRateCardTier, len(tiers))
+	for i, tier := range tiers {
+		out[i].PriceMillicentsPerUnit = tier.PriceMillicentsPerUnit
+		if tier.UpTo != nil {
+			upTo := *tier.UpTo
+			out[i].UpTo = &upTo
+		}
+	}
+	return out
 }
 
 func validateAPIConsumerRateCardInput(op, accountID, appID, currency string, price int64, effectiveFrom time.Time) error {

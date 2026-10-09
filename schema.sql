@@ -11455,10 +11455,12 @@ CREATE TABLE public.api_consumer_rate_cards (
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
     CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = 'request'::text))
 );
 
@@ -11468,6 +11470,13 @@ CREATE TABLE public.api_consumer_rate_cards (
 --
 
 COMMENT ON COLUMN public.api_consumer_rate_cards.included_units_per_month IS 'Free request units per consumer per UTC calendar month, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.';
 
 
 --

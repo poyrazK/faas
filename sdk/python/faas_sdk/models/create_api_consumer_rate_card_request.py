@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+
 
 T = TypeVar("T", bound="CreateAPIConsumerRateCardRequest")
 
@@ -21,6 +25,11 @@ class CreateAPIConsumerRateCardRequest:
     included_units_per_month: int | Unset = 0
     """Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order.
     Once any card includes units, effective_from cannot be in the past."""
+    tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+    """Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's
+    units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds
+    increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods
+    priced by a tiered card must cover exactly one UTC calendar month."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -31,6 +40,13 @@ class CreateAPIConsumerRateCardRequest:
         currency = self.currency
 
         included_units_per_month = self.included_units_per_month
+
+        tiers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.tiers, Unset):
+            tiers = []
+            for tiers_item_data in self.tiers:
+                tiers_item = tiers_item_data.to_dict()
+                tiers.append(tiers_item)
 
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
@@ -51,6 +67,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["currency"] = currency
         if included_units_per_month is not UNSET:
             field_dict["included_units_per_month"] = included_units_per_month
+        if tiers is not UNSET:
+            field_dict["tiers"] = tiers
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -58,12 +76,23 @@ class CreateAPIConsumerRateCardRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+
         d = dict(src_dict)
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
         currency = d.pop("currency", UNSET)
 
         included_units_per_month = d.pop("included_units_per_month", UNSET)
+
+        _tiers = d.pop("tiers", UNSET)
+        tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+        if _tiers is not UNSET:
+            tiers = []
+            for tiers_item_data in _tiers:
+                tiers_item = APIConsumerRateCardTier.from_dict(tiers_item_data)
+
+                tiers.append(tiers_item)
 
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -86,6 +115,7 @@ class CreateAPIConsumerRateCardRequest:
             price_millicents_per_unit=price_millicents_per_unit,
             currency=currency,
             included_units_per_month=included_units_per_month,
+            tiers=tiers,
             effective_from=effective_from,
         )
 

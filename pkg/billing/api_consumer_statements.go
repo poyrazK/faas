@@ -14,7 +14,15 @@ import (
 // re-planned until usage is reconciled.
 var ErrAPIConsumerUsageRegressed = errors.New("API consumer usage is below a finalized statement")
 
-type statementCoverage struct{ units, charged int64 }
+// ErrAPIConsumerChargeDecreased reports that re-rating a tiered period would
+// lower its total below what finalized revisions billed (ADR-845). Gregale
+// never issues credits, so the period cannot take an adjustment.
+var ErrAPIConsumerChargeDecreased = errors.New("API consumer charges would fall below a finalized statement")
+
+type statementCoverage struct {
+	units, charged, amount int64
+	tierUnits              []int64
+}
 
 // MonthStart returns the start of t's UTC calendar month, where monthly
 // allowances begin counting.
@@ -23,26 +31,24 @@ func MonthStart(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
+// IsCalendarMonth reports whether [start, end) is exactly one UTC month.
+func IsCalendarMonth(start, end time.Time) bool {
+	return start.Equal(MonthStart(start)) && end.Equal(MonthStart(start).AddDate(0, 1, 0))
+}
+
 // APIConsumerStatementDelta returns the part of a period's current quote
 // that no finalized revision has billed yet. Drafts and superseded drafts
 // never reserve usage. Per minute, the delta holds the units added since
 // finalization and the extra units charged: late usage earlier in a month
 // can exhaust the monthly allowance (ADR-844) sooner, so a minute may charge
-// units it previously received free without adding any.
+// units it previously received free without adding any. A tiered minute
+// (ADR-845) is re-rated: its delta is the difference in each ladder step's
+// units and in amount, which can be negative when late usage pushed billed
+// units into a cheaper step. The revision as a whole never credits.
 func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.APIConsumerUsageStatement) (APIConsumerUsageQuote, error) {
-	covered := map[int64]statementCoverage{}
-	for _, statement := range revisions {
-		if statement.Status != state.APIConsumerUsageStatementFinalized {
-			continue
-		}
-		for _, bucket := range statement.Buckets {
-			minute := bucket.WindowStart.UTC().Unix()
-			prior := covered[minute]
-			if prior.units > maxInt64-bucket.BillableUnits || prior.charged > maxInt64-bucket.Charged() {
-				return APIConsumerUsageQuote{}, fmt.Errorf("billing: API consumer statement coverage overflow")
-			}
-			covered[minute] = statementCoverage{prior.units + bucket.BillableUnits, prior.charged + bucket.Charged()}
-		}
+	covered, err := finalizedCoverage(revisions)
+	if err != nil {
+		return APIConsumerUsageQuote{}, err
 	}
 	delta := APIConsumerUsageQuote{Currency: current.Currency, Buckets: make([]APIConsumerUsageChargeBucket, 0, len(current.Buckets))}
 	for _, bucket := range current.Buckets {
@@ -52,16 +58,11 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 		if bucket.BillableUnits < prior.units || bucket.ChargedUnits < prior.charged {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
-		bucket.BillableUnits -= prior.units
-		if bucket.RateCardID != "" {
-			bucket.ChargedUnits -= prior.charged
-			amount, err := multiplyMillicents(bucket.ChargedUnits, bucket.PriceMillicentsPerUnit)
-			if err != nil {
-				return APIConsumerUsageQuote{}, err
-			}
-			bucket.AmountMillicents = amount
+		bucket, changed, err := subtractCoverage(bucket, prior)
+		if err != nil {
+			return APIConsumerUsageQuote{}, err
 		}
-		if bucket.BillableUnits == 0 && bucket.ChargedUnits == 0 {
+		if !changed {
 			continue
 		}
 		if err := delta.add(bucket); err != nil {
@@ -73,6 +74,66 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
 	}
+	if delta.AmountMillicents < 0 {
+		return APIConsumerUsageQuote{}, ErrAPIConsumerChargeDecreased
+	}
 	delta.Priced = delta.UnpricedUnits == 0 && delta.Currency != ""
 	return delta, nil
+}
+
+func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[int64]statementCoverage, error) {
+	covered := map[int64]statementCoverage{}
+	for _, statement := range revisions {
+		if statement.Status != state.APIConsumerUsageStatementFinalized {
+			continue
+		}
+		for _, bucket := range statement.Buckets {
+			minute := bucket.WindowStart.UTC().Unix()
+			prior := covered[minute]
+			if prior.units > maxInt64-bucket.BillableUnits || prior.charged > maxInt64-bucket.Charged() {
+				return nil, fmt.Errorf("billing: API consumer statement coverage overflow")
+			}
+			next := statementCoverage{units: prior.units + bucket.BillableUnits, charged: prior.charged + bucket.Charged(),
+				amount: prior.amount + bucket.AmountMillicents, tierUnits: prior.tierUnits}
+			if bucket.TierUnits != nil {
+				next.tierUnits = addTierUnits(prior.tierUnits, bucket.TierUnits)
+			}
+			covered[minute] = next
+		}
+	}
+	return covered, nil
+}
+
+// subtractCoverage leaves only what finalized revisions have not billed.
+// Flat minutes price new charged units at the current price, as before;
+// tiered minutes take the exact difference in step units and amount.
+func subtractCoverage(bucket APIConsumerUsageChargeBucket, prior statementCoverage) (APIConsumerUsageChargeBucket, bool, error) {
+	bucket.BillableUnits -= prior.units
+	if bucket.RateCardID == "" {
+		return bucket, bucket.BillableUnits != 0, nil
+	}
+	bucket.ChargedUnits -= prior.charged
+	if bucket.TierUnits == nil {
+		amount, err := multiplyMillicents(bucket.ChargedUnits, bucket.PriceMillicentsPerUnit)
+		bucket.AmountMillicents = amount
+		return bucket, bucket.BillableUnits != 0 || bucket.ChargedUnits != 0, err
+	}
+	bucket.AmountMillicents -= prior.amount
+	moved := false
+	for i := range bucket.TierUnits {
+		if i < len(prior.tierUnits) {
+			bucket.TierUnits[i] -= prior.tierUnits[i]
+		}
+		moved = moved || bucket.TierUnits[i] != 0
+	}
+	return bucket, bucket.BillableUnits != 0 || bucket.ChargedUnits != 0 || bucket.AmountMillicents != 0 || moved, nil
+}
+
+func addTierUnits(total, more []int64) []int64 {
+	out := make([]int64, max(len(total), len(more)))
+	copy(out, total)
+	for i, units := range more {
+		out[i] += units
+	}
+	return out
 }

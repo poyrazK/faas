@@ -26,7 +26,8 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 		out.Buckets = append(out.Buckets, api.APIConsumerUsageStatementBucketResponse{
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
-			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(), AmountMillicents: bucket.AmountMillicents,
+			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(),
+			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents,
 		})
 	}
 	return out
@@ -89,9 +90,18 @@ func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.
 		return
 	}
 	input, unchanged, err := s.planAPIConsumerUsageStatement(r, acct.ID, app.ID, consumer.ID, periodStart, periodEnd, revisions)
-	if errors.Is(err, billing.ErrAPIConsumerUsageRegressed) {
+	switch {
+	case errors.Is(err, billing.ErrAPIConsumerUsageRegressed):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Usage coverage conflict", "current usage is below an earlier finalized statement"))
+		return
+	case errors.Is(err, billing.ErrAPIConsumerChargeDecreased):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Charge would decrease", "re-rating this period's tiers would lower charges below finalized statements; Gregale does not issue credits"))
+		return
+	case errors.Is(err, errTieredStatementPeriod):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid statement period", "a tiered rate card prices this period, so it must be exactly one UTC calendar month"))
 		return
 	}
 	if err != nil {
@@ -153,6 +163,9 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
+	if billing.TieredCardEffectiveIn(cards, start, end) && !billing.IsCalendarMonth(start, end) {
+		return state.APIConsumerUsageStatementInput{}, false, errTieredStatementPeriod
+	}
 	current, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, start)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
@@ -187,6 +200,7 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 		WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 		RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 		PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
+		TierUnits: bucket.TierUnits,
 	}
 	if bucket.RateCardID != "" {
 		charged := bucket.ChargedUnits
@@ -194,6 +208,11 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 	}
 	return out
 }
+
+// errTieredStatementPeriod rejects a non-month period priced by a tiered
+// card: re-rating across statements of one month would need credits
+// (ADR-845).
+var errTieredStatementPeriod = errors.New("tiered rate cards require calendar-month statement periods")
 
 func (s *server) persistAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account,
 	store state.APIConsumerUsageStatementStore, input state.APIConsumerUsageStatementInput) {

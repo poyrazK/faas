@@ -97,6 +97,9 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		"unknown scope":           {"key-create", "my-api", "c1", "--name", "k", "--scopes", "root"},
 		"missing price":           {"rate-card-create", "my-api", "--currency", "EUR"},
 		"negative allowance":      {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--included-units", "-1"},
+		"tiers and price":         {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--tier", "10:0", "--tier", "inf:5"},
+		"malformed tier":          {"rate-card-create", "my-api", "--currency", "EUR", "--tier", "10-0"},
+		"non-numeric tier bound":  {"rate-card-create", "my-api", "--currency", "EUR", "--tier", "ten:0", "--tier", "inf:5"},
 		"tenant allowance":        {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--included-units", "5"},
 		"bad currency":            {"rate-card-create", "my-api", "--currency", "EURO", "--price-millicents", "1"},
 		"missing invoice":         {"statement-handoff", "my-api", "c1", "s1"},
@@ -114,6 +117,24 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		if code == 0 {
 			t.Errorf("%s: accepted %v", name, args)
 		}
+	}
+}
+
+// adr: 845
+func TestCmdConsumersTieredRateCard(t *testing.T) {
+	var card api.CreateAPIConsumerRateCardRequest
+	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&card)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.APIConsumerRateCardResponse{ID: "rc1", Currency: card.Currency, Tiers: card.Tiers})
+	})
+	code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--tier", "10000:0", "--tier", "1000000:25", "--tier", "inf:10"})
+	if code != 0 || len(card.Tiers) != 3 || card.Tiers[0].UpTo == nil || *card.Tiers[0].UpTo != 10000 ||
+		card.Tiers[2].UpTo != nil || card.Tiers[2].PriceMillicentsPerUnit != 10 || card.PriceMillicentsPerUnit != 0 {
+		t.Fatalf("exit=%d body=%+v", code, card)
+	}
+	if !strings.Contains(stdout.String(), "to 1000000: EUR 0.00025; above: EUR 0.0001") {
+		t.Fatalf("ladder output = %q", stdout.String())
 	}
 }
 

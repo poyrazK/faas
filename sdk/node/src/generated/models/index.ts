@@ -4,6 +4,7 @@
 export type { APIConsumerListResponse } from './APIConsumerListResponse.js';
 export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
+export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';

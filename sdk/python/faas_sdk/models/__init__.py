@@ -95,6 +95,7 @@ from .api_consumer_list_response import APIConsumerListResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
 from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUnit
+from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
 from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
@@ -3113,6 +3114,7 @@ __all__ = (
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
     "APIConsumerRateCardResponseUnit",
+    "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
     "APIConsumerUsageBucketResponse",

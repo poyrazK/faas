@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -45,6 +46,7 @@ type consumerFlags struct {
 	priceMillicents, includedUnits     int64
 	periodStart, periodEnd, month      string
 	invoiceID                          string
+	tiers                              multiFlag
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -52,7 +54,7 @@ var consumerVerbFlags = map[string][]string{
 	"key-create":        {"name", "scopes", "expires"},
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
-	"rate-card-create":  {"currency", "price-millicents", "included-units", "effective-from"},
+	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
 }
@@ -81,6 +83,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
+	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf (rate-card-create)")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -144,12 +147,7 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 	case "key-create":
 		return buildConsumerKeyRequest(f)
 	case "rate-card-create":
-		req, err := buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
-		if f.includedUnits < 0 {
-			return nil, errors.New("--included-units must be non-negative")
-		}
-		req.IncludedUnitsPerMonth = f.includedUnits
-		return req, err
+		return buildAppRateCardRequest(f)
 	case "statement-draft":
 		start, end, err := statementPeriod(f.periodStart, f.periodEnd, f.month)
 		if err != nil {
@@ -185,6 +183,70 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 		req.ExpiresAt = &at
 	}
 	return req, nil
+}
+
+// buildAppRateCardRequest builds a flat, allowance, or graduated card. A
+// ladder replaces the flat price and allowance, so they cannot be combined.
+func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequest, error) {
+	if len(f.tiers) == 0 {
+		req, err := buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
+		if err == nil && f.includedUnits < 0 {
+			err = errors.New("--included-units must be non-negative")
+		}
+		req.IncludedUnitsPerMonth = f.includedUnits
+		return req, err
+	}
+	if f.priceMillicents != -1 || f.includedUnits != 0 {
+		return api.CreateAPIConsumerRateCardRequest{}, errors.New("use --tier steps or --price-millicents/--included-units, not both")
+	}
+	req, err := buildRateCardRequest(f.currency, 0, f.effectiveFrom)
+	if err != nil {
+		return req, err
+	}
+	req.Tiers, err = parseRateCardTiers(f.tiers)
+	return req, err
+}
+
+// parseRateCardTiers reads UP_TO:PRICE_MILLICENTS steps; the server checks
+// the ladder's shape so the rules live in one place.
+func parseRateCardTiers(steps []string) ([]api.APIConsumerRateCardTier, error) {
+	tiers := make([]api.APIConsumerRateCardTier, 0, len(steps))
+	for _, step := range steps {
+		bound, price, ok := strings.Cut(step, ":")
+		if !ok {
+			return nil, fmt.Errorf("--tier %q: use UP_TO:PRICE_MILLICENTS", step)
+		}
+		var tier api.APIConsumerRateCardTier
+		var err error
+		if tier.PriceMillicentsPerUnit, err = strconv.ParseInt(strings.TrimSpace(price), 10, 64); err != nil {
+			return nil, fmt.Errorf("--tier %q: price: %w", step, err)
+		}
+		if bound = strings.TrimSpace(bound); bound != "inf" {
+			upTo, err := strconv.ParseInt(bound, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("--tier %q: up_to must be a number or inf: %w", step, err)
+			}
+			tier.UpTo = &upTo
+		}
+		tiers = append(tiers, tier)
+	}
+	return tiers, nil
+}
+
+// formatRateCardPrice summarizes a card's pricing in one line.
+func formatRateCardPrice(c api.APIConsumerRateCardResponse) string {
+	if len(c.Tiers) == 0 {
+		return formatMillicents(c.Currency, c.PriceMillicentsPerUnit)
+	}
+	parts := make([]string, 0, len(c.Tiers))
+	for _, tier := range c.Tiers {
+		bound := "above"
+		if tier.UpTo != nil {
+			bound = "to " + strconv.FormatInt(*tier.UpTo, 10)
+		}
+		parts = append(parts, bound+": "+formatMillicents(c.Currency, tier.PriceMillicentsPerUnit))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // buildRateCardRequest is shared by app and platform-tenant rate cards,
@@ -356,11 +418,11 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 	case api.APIConsumerRateCardListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST\tINCLUDED PER MONTH")
 		for _, c := range v.RateCards {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatMillicents(c.Currency, c.PriceMillicentsPerUnit), c.IncludedUnitsPerMonth)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatRateCardPrice(c), c.IncludedUnitsPerMonth)
 		}
 	case api.APIConsumerRateCardResponse:
 		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\nIncluded per month\t%d requests per consumer\n",
-			v.ID, v.EffectiveFrom.Format(time.RFC3339), formatMillicents(v.Currency, v.PriceMillicentsPerUnit), v.IncludedUnitsPerMonth)
+			v.ID, v.EffectiveFrom.Format(time.RFC3339), formatRateCardPrice(v), v.IncludedUnitsPerMonth)
 	case api.APIConsumerUsageStatementListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tPERIOD START\tPERIOD END\tREVISION\tUNITS\tAMOUNT")
 		for _, s := range v.Statements {

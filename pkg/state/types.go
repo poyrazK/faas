@@ -838,8 +838,53 @@ type APIConsumerRateCard struct {
 	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
 	// calendar month while this card is effective (ADR-844).
 	IncludedUnitsPerMonth int64
-	EffectiveFrom         time.Time
-	CreatedAt             time.Time
+	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
+	Tiers         []APIConsumerRateCardTier
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder: units whose
+// position in the consumer's UTC month falls below UpTo (and at or above the
+// previous step's UpTo) cost PriceMillicentsPerUnit. A nil UpTo is unbounded
+// and only valid on the last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+}
+
+// MaxAPIConsumerRateCardTiers bounds a ladder; the column CHECK mirrors it.
+const MaxAPIConsumerRateCardTiers = 10
+
+// ValidateAPIConsumerRateCardTiers checks a graduated ladder: 2..10 steps,
+// strictly increasing positive bounds, an unbounded last step, non-negative
+// prices, and only the first step free so charged units never shrink as a
+// month's usage grows.
+func ValidateAPIConsumerRateCardTiers(tiers []APIConsumerRateCardTier) error {
+	if len(tiers) == 0 {
+		return nil
+	}
+	if len(tiers) < 2 || len(tiers) > MaxAPIConsumerRateCardTiers {
+		return fmt.Errorf("rate card tiers: need 2 to %d steps", MaxAPIConsumerRateCardTiers)
+	}
+	var previous int64
+	for i, tier := range tiers {
+		last := i == len(tiers)-1
+		if last != (tier.UpTo == nil) {
+			return fmt.Errorf("rate card tiers: only the last step is unbounded")
+		}
+		if !last && *tier.UpTo <= previous {
+			return fmt.Errorf("rate card tiers: up_to must increase strictly from a positive value")
+		}
+		if tier.PriceMillicentsPerUnit < 0 || (i > 0 && tier.PriceMillicentsPerUnit == 0) {
+			return fmt.Errorf("rate card tiers: prices must be non-negative and only the first step may be free")
+		}
+		if !last {
+			previous = *tier.UpTo
+		}
+	}
+	return nil
 }
 
 // PlatformTenantRateCard is an immutable, versioned customer-facing request
@@ -881,8 +926,13 @@ type APIConsumerUsageStatementBucket struct {
 	// every priced unit was charged; read it through Charged. An adjustment
 	// may charge more units than it adds when late usage used allowance
 	// that later minutes had consumed.
-	ChargedUnits     *int64 `json:"charged_units,omitempty"`
-	AmountMillicents int64  `json:"amount_millicents"`
+	ChargedUnits *int64 `json:"charged_units,omitempty"`
+	// TierUnits splits BillableUnits across a tiered card's ladder steps
+	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// price. In an adjustment, entries can be negative when late usage moved
+	// already-billed units into another step.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // Charged returns the units this bucket bills at its price.

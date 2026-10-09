@@ -59,6 +59,28 @@ requests in every UTC calendar month.
   the past.
 - **Currency.** All of an app's cards use one currency.
 
+### Volume tiers
+
+For volume discounts, give the card a graduated ladder instead of a single
+price. Each step lists the monthly position it runs up to and its price; the
+last step is `inf`:
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR \
+  --tier 10000:0 --tier 1000000:25 --tier inf:10
+```
+
+Each consumer's first 10,000 requests in a UTC calendar month are free.
+Requests from 10,000 to 1,000,000 cost EUR 0.00025, and every request after
+that costs EUR 0.0001.
+
+- **Graduated pricing.** Each request is priced by the step it falls in. The
+  month's total never re-prices earlier requests.
+- **Ladder rules.** Bounds must increase, only the last step is unbounded, and
+  only the first step may be free.
+- **Whole-month statements.** Statements for periods priced by a tiered card
+  must cover exactly one UTC calendar month, so use `--month`.
+
 `gregale consumers quote` estimates charges for a window at current prices
 without creating anything.
 
@@ -84,7 +106,10 @@ gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id
   adjustment revision that holds only what was not billed yet:
   - new requests;
   - requests that became chargeable because late usage earlier in the month
-    used up the free allowance sooner.
+    used up the free allowance sooner;
+  - with volume tiers, re-rated minutes. Late requests push later requests
+    into a cheaper step, so a line can be negative, but an adjustment's total
+    never is.
 
   Invoice the adjustment on its own; never re-invoice earlier revisions.
 - **Webhooks.** A `usage_statement.finalized` webhook can trigger your
@@ -99,20 +124,22 @@ To bill one customer across several apps, link their consumers to a
 [platform tenant](platform-tenants.md). You can then create cross-app
 statements and a customer-wide rate card with
 `gregale platform-tenants statement-draft` and `rate-card-create`. Tenant rate
-cards do not include free requests yet. A cross-app statement cannot fall back
-to an app rate card that includes requests, so bill those consumers with app
-statements.
+cards do not support free requests or tiers yet. A cross-app statement cannot
+fall back to an app rate card with free requests or tiers, so bill those
+consumers with app statements.
 
 ## Limits
 
 - The only unit is a request. Pricing by compute time, bytes, or route is not
   available.
-- There are no graduated volume tiers.
+- Tiers are graduated. Pricing every request in the month at the price of the
+  step the month ends in is not available.
 - Usage is recorded when a request finishes. If the gateway crashes before the
   record is written to disk, that request can be lost. Reconcile with your own
   records before closing a high-value invoice.
 - Gregale records the handoff to your billing system but never charges your
   customers.
 
-See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md)
-and [ADR-844](adr/844-api-consumer-monthly-allowances.md) for the billing rules.
+See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
+[ADR-844](adr/844-api-consumer-monthly-allowances.md), and
+[ADR-845](adr/845-api-consumer-graduated-tiers.md) for the billing rules.

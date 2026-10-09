@@ -42332,7 +42332,21 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1000 }
         included_units_per_month: { type: integer, format: int64, minimum: 0, default: 0, example: 10000, description: "Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order. Once any card includes units, effective_from cannot be in the past." }
+        tiers:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
+
+    APIConsumerRateCardTier:
+      description: "One step of a graduated per-request price ladder."
+      type: object
+      required: [up_to, price_millicents_per_unit]
+      properties:
+        up_to: { type: [integer, "null"], format: int64, minimum: 1, description: "Exclusive upper bound of this step's monthly position; null for the unbounded last step." }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerRateCardResponse:
       description: "Immutable, versioned app-level price for one API request unit."
@@ -42345,6 +42359,9 @@ components:
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -42368,6 +42385,10 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         charged_units: { type: integer, format: int64, minimum: 0, description: "Units billed at the price; the rest are covered by the rate card's monthly allowance." }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder."
+          items: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageQuoteResponse:
@@ -42407,7 +42428,11 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         charged_units: { type: integer, format: int64, minimum: 0, description: "Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge units it does not add when late usage exhausted the allowance sooner." }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be negative when late usage moved billed units into a cheaper step."
+          items: { type: integer, format: int64 }
+        amount_millicents: { type: integer, format: int64, description: "Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper step; a revision's total is never negative." }
 
     APIConsumerUsageStatementResponse:
       description: "Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later."
