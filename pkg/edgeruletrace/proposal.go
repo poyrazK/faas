@@ -131,6 +131,13 @@ func proposedRule(req api.CreateEdgeRuleRequest, appID string, createdAt time.Ti
 	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
 		return api.EdgeRuleResponse{}, fmt.Errorf("%s", prob.Detail)
 	}
+	if prob := api.ValidateEdgeRuleMode(req.Mode); prob != nil {
+		return api.EdgeRuleResponse{}, fmt.Errorf("%s", prob.Detail)
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = api.EdgeRuleModeEnforce
+	}
 	matchPath := req.MatchPath
 	if matchPath == "" {
 		matchPath = "/"
@@ -152,7 +159,7 @@ func proposedRule(req api.CreateEdgeRuleRequest, appID string, createdAt time.Ti
 		Priority: priority, Enabled: enabled, Kind: req.Kind,
 		ValidateMode: req.ValidateMode, Action: req.Action,
 		Name: strings.TrimSpace(req.Name), Description: req.Description,
-		ExpiresAt: req.ExpiresAt, Match: req.Match, CreatedAt: createdAt, UpdatedAt: createdAt,
+		ExpiresAt: req.ExpiresAt, Match: req.Match, Mode: mode, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}, nil
 }
 
@@ -174,6 +181,14 @@ func applyRuleUpdate(rule api.EdgeRuleResponse, req api.UpdateEdgeRuleRequest, n
 		rule.Match = nil
 	case req.Match != nil:
 		rule.Match = req.Match
+	}
+	if req.Mode != nil {
+		if prob := api.ValidateEdgeRuleMode(*req.Mode); prob != nil {
+			return rule, fmt.Errorf("%s", prob.Detail)
+		}
+		if *req.Mode != "" {
+			rule.Mode = *req.Mode
+		}
 	}
 	if req.MatchHost != nil {
 		rule.MatchHost = strings.ToLower(*req.MatchHost)

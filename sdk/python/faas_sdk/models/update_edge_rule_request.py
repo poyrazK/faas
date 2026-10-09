@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.update_edge_rule_request_mode import UpdateEdgeRuleRequestMode, check_update_edge_rule_request_mode
 from ..models.update_edge_rule_request_validate_mode import (
     UpdateEdgeRuleRequestValidateMode,
     check_update_edge_rule_request_validate_mode,
@@ -94,6 +95,8 @@ class UpdateEdgeRuleRequest:
     """
     clear_match: bool | Unset = UNSET
     """Remove the match condition."""
+    mode: UpdateEdgeRuleRequestMode | Unset = UNSET
+    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +191,10 @@ class UpdateEdgeRuleRequest:
 
         clear_match = self.clear_match
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -219,6 +226,8 @@ class UpdateEdgeRuleRequest:
             field_dict["match"] = match
         if clear_match is not UNSET:
             field_dict["clear_match"] = clear_match
+        if mode is not UNSET:
+            field_dict["mode"] = mode
 
         return field_dict
 
@@ -451,6 +460,13 @@ class UpdateEdgeRuleRequest:
 
         clear_match = d.pop("clear_match", UNSET)
 
+        _mode = d.pop("mode", UNSET)
+        mode: UpdateEdgeRuleRequestMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_update_edge_rule_request_mode(_mode)
+
         update_edge_rule_request = cls(
             match_host=match_host,
             match_path=match_path,
@@ -466,6 +482,7 @@ class UpdateEdgeRuleRequest:
             clear_expires_at=clear_expires_at,
             match=match,
             clear_match=clear_match,
+            mode=mode,
         )
 
         update_edge_rule_request.additional_properties = d

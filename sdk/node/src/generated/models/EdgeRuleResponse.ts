@@ -79,5 +79,9 @@ export type EdgeRuleResponse = {
    */
   expired?: boolean;
   match?: EdgeRuleMatchExpr;
+  /**
+   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   */
+  mode?: 'enforce' | 'log';
 };
 

@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.create_edge_rule_request_kind import CreateEdgeRuleRequestKind, check_create_edge_rule_request_kind
+from ..models.create_edge_rule_request_mode import CreateEdgeRuleRequestMode, check_create_edge_rule_request_mode
 from ..models.create_edge_rule_request_validate_mode import (
     CreateEdgeRuleRequestValidateMode,
     check_create_edge_rule_request_validate_mode,
@@ -91,6 +92,8 @@ class CreateEdgeRuleRequest:
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP or country is absent.
     """
+    mode: CreateEdgeRuleRequestMode | Unset = UNSET
+    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -181,6 +184,10 @@ class CreateEdgeRuleRequest:
         if not isinstance(self.match, Unset):
             match = self.match.to_dict()
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -210,6 +217,8 @@ class CreateEdgeRuleRequest:
             field_dict["expires_at"] = expires_at
         if match is not UNSET:
             field_dict["match"] = match
+        if mode is not UNSET:
+            field_dict["mode"] = mode
 
         return field_dict
 
@@ -437,6 +446,13 @@ class CreateEdgeRuleRequest:
         else:
             match = EdgeRuleMatchExpr.from_dict(_match)
 
+        _mode = d.pop("mode", UNSET)
+        mode: CreateEdgeRuleRequestMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_create_edge_rule_request_mode(_mode)
+
         create_edge_rule_request = cls(
             match_host=match_host,
             kind=kind,
@@ -451,6 +467,7 @@ class CreateEdgeRuleRequest:
             description=description,
             expires_at=expires_at,
             match=match,
+            mode=mode,
         )
 
         create_edge_rule_request.additional_properties = d

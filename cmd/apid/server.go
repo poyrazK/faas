@@ -2557,6 +2557,7 @@ func (s *server) handler() http.Handler {
 	// ADR-831 §2: rule-set versions and rollback.
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleStats))))
 	mux.HandleFunc("POST /v1/apps/{slug}/edge-rules/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackEdgeRules)))))
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Six routes

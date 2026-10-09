@@ -64,5 +64,9 @@ export type UpdateEdgeRuleRequest = {
    * Remove the match condition.
    */
   clear_match?: boolean;
+  /**
+   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   */
+  mode?: 'enforce' | 'log';
 };
 

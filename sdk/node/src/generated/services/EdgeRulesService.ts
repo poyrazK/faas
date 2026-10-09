@@ -6,6 +6,7 @@ import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
 import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
+import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
 import type { RollbackEdgeRulesRequest } from '../models/RollbackEdgeRulesRequest.js';
 import type { ThrottleSuggestionsResponse } from '../models/ThrottleSuggestionsResponse.js';
 import type { UpdateEdgeRuleRequest } from '../models/UpdateEdgeRuleRequest.js';
@@ -271,7 +272,8 @@ export class EdgeRulesService {
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -304,7 +306,8 @@ export class EdgeRulesService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -337,7 +340,49 @@ export class EdgeRulesService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Per-rule match counts for an app over a window.
+   * ADR-830. Gateways count each rule's matches (matched for enforced
+   * rules, logged for log-mode rules), at most once per rule per request,
+   * and flush them into hourly buckets once a minute; buckets are kept
+   * for 14 days. Rules with no matches in the window are omitted.
+   *
+   * @returns EdgeRuleStatsResponse Per-rule counts.
+   * @throws ApiError
+   */
+  public static getEdgeRuleStats({
+    slug,
+    window = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    window?: '1h' | '24h' | '7d',
+  }): CancelablePromise<EdgeRuleStatsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-rules/stats',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

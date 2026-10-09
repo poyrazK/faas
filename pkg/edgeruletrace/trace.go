@@ -607,6 +607,10 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 				row.Status, row.Reason = "skipped", fmt.Sprintf("invalid path glob %q: %v", rule.MatchPath, matchErr)
 			case !matched:
 				row.Status, row.Reason = "skipped", fmt.Sprintf("path %q does not match %q", input.Path, rule.MatchPath)
+			case rule.Mode == api.EdgeRuleModeLog:
+				// ADR-830: matched and counted, but never enforced and never
+				// a candidate that shadows enforced rules of its kind.
+				row.Status, row.Reason = "logged", matchedSelectors(rule)+"; log mode: counted, not enforced"
 			default:
 				if firstIndex, seen := firstByKind[rule.Kind]; seen {
 					first := &result.Rules[firstIndex]
@@ -1212,7 +1216,7 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
 			continue
 		}
-		if !traceConditionMatches(*rule, input, requestPath, method, headers) {
+		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
 			continue
 		}
 		matched, err := true, error(nil)
@@ -1235,6 +1239,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 	switch row.Status {
 	case "skipped":
 		return "not_applicable", "static selectors did not match", nil
+	case "logged":
+		return "logged", "log-mode rule: the gateway counts the match and does not act", nil
 	case "later_candidate":
 		return "not_evaluated", "a higher-priority matching candidate is considered first", nil
 	case "tied_candidate":

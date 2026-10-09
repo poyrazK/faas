@@ -426,6 +426,7 @@ export type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerActio
 export type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
 export type { EdgeRuleHeaderOp } from './EdgeRuleHeaderOp.js';
 export type { EdgeRuleHeadersAction } from './EdgeRuleHeadersAction.js';
+export type { EdgeRuleHitStatsResponse } from './EdgeRuleHitStatsResponse.js';
 export type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 export type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 export type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
@@ -438,6 +439,7 @@ export type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
 export type { EdgeRuleRewriteAction } from './EdgeRuleRewriteAction.js';
 export type { EdgeRuleRouteAction } from './EdgeRuleRouteAction.js';
 export type { EdgeRuleSetVersionResponse } from './EdgeRuleSetVersionResponse.js';
+export type { EdgeRuleStatsResponse } from './EdgeRuleStatsResponse.js';
 export type { EdgeRuleSuggestion } from './EdgeRuleSuggestion.js';
 export type { EdgeRuleThrottleAction } from './EdgeRuleThrottleAction.js';
 export type { EdgeRuleValidateAction } from './EdgeRuleValidateAction.js';

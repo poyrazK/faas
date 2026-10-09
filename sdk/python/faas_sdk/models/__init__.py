@@ -514,6 +514,7 @@ from .create_dev_bridge_response import CreateDevBridgeResponse
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
+from .create_edge_rule_request_mode import CreateEdgeRuleRequestMode
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
@@ -847,6 +848,7 @@ from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
 from .edge_rule_header_op_action import EdgeRuleHeaderOpAction
 from .edge_rule_headers_action import EdgeRuleHeadersAction
+from .edge_rule_hit_stats_response import EdgeRuleHitStatsResponse
 from .edge_rule_ip_action import EdgeRuleIPAction
 from .edge_rule_jwt_action import EdgeRuleJWTAction
 from .edge_rule_jwt_action_algorithms_item import EdgeRuleJWTActionAlgorithmsItem
@@ -862,11 +864,14 @@ from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
+from .edge_rule_response_mode import EdgeRuleResponseMode
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
 from .edge_rule_set_version_response import EdgeRuleSetVersionResponse
+from .edge_rule_stats_response import EdgeRuleStatsResponse
+from .edge_rule_stats_response_window import EdgeRuleStatsResponseWindow
 from .edge_rule_suggestion import EdgeRuleSuggestion
 from .edge_rule_suggestion_action import EdgeRuleSuggestionAction
 from .edge_rule_suggestion_kind import EdgeRuleSuggestionKind
@@ -1229,6 +1234,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
@@ -2851,6 +2857,7 @@ from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
+from .update_edge_rule_request_mode import UpdateEdgeRuleRequestMode
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
@@ -3536,6 +3543,7 @@ __all__ = (
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
+    "CreateEdgeRuleRequestMode",
     "CreateEdgeRuleRequestValidateMode",
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
@@ -3853,6 +3861,7 @@ __all__ = (
     "EdgeRuleHeaderOp",
     "EdgeRuleHeaderOpAction",
     "EdgeRuleHeadersAction",
+    "EdgeRuleHitStatsResponse",
     "EdgeRuleIPAction",
     "EdgeRuleJWTAction",
     "EdgeRuleJWTActionAlgorithmsItem",
@@ -3868,11 +3877,14 @@ __all__ = (
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseMatchHeaders",
+    "EdgeRuleResponseMode",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
     "EdgeRuleSetVersionResponse",
+    "EdgeRuleStatsResponse",
+    "EdgeRuleStatsResponseWindow",
     "EdgeRuleSuggestion",
     "EdgeRuleSuggestionAction",
     "EdgeRuleSuggestionKind",
@@ -4231,6 +4243,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetEdgeRuleStatsWindow",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
     "GetEventBacklogOrigin",
@@ -5793,6 +5806,7 @@ __all__ = (
     "UpdateDeploymentTrafficRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
+    "UpdateEdgeRuleRequestMode",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",

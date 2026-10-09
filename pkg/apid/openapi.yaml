@@ -23827,6 +23827,34 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/edge-rules/stats:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleStats
+      summary: Per-rule match counts for an app over a window.
+      description: |
+        ADR-830. Gateways count each rule's matches (matched for enforced
+        rules, logged for log-mode rules), at most once per rule per request,
+        and flush them into hourly buckets once a minute; buckets are kept
+        for 14 days. Rules with no matches in the window are omitted.
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
+      responses:
+        '200':
+          description: Per-rule counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleStatsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -53086,6 +53114,7 @@ components:
         expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -53153,6 +53182,7 @@ components:
         description: { type: string, maxLength: 1000, description: Operator-facing description. }
         expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -53202,6 +53232,7 @@ components:
         clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     EdgeRuleMatchExpr:
       description: |
@@ -53230,6 +53261,25 @@ components:
           type: array
           maxItems: 64
           items: { type: string, maxLength: 256 }
+
+    EdgeRuleStatsResponse:
+      description: Per-rule match counts over a window (ADR-830).
+      type: object
+      required: [window, since, rules]
+      properties:
+        window: { type: string, enum: ['1h', '24h', '7d'] }
+        since: { type: string, format: date-time }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleHitStatsResponse' }
+
+    EdgeRuleHitStatsResponse:
+      type: object
+      required: [rule_id, matched, logged]
+      properties:
+        rule_id: { type: string }
+        matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
+        logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
 
     EdgeRuleSetVersionResponse:
       description: One recorded state of an app's whole edge-rule set (ADR-831).

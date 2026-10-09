@@ -57,5 +57,9 @@ export type CreateEdgeRuleRequest = {
    */
   expires_at?: string;
   match?: EdgeRuleMatchExpr;
+  /**
+   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   */
+  mode?: 'enforce' | 'log';
 };
 

@@ -127,6 +127,29 @@ func TestSimulateEvaluatesMatchConditions(t *testing.T) {
 	}
 }
 
+// adr: 830 — a log-mode rule is reported as logged and leaves the outcome to
+// the enforced rules, exactly as the gateway counts it without acting.
+func TestSimulateLogModeRuleDoesNotChangeOutcome(t *testing.T) {
+	rules := append(proposalTestRules(), api.EdgeRuleResponse{
+		ID: "shadow-maint", AppID: "app", Enabled: true, Kind: "maintenance", Mode: api.EdgeRuleModeLog,
+		MatchHost: "*", MatchPath: "/old/*", Priority: 1,
+		Action: json.RawMessage(`{"maintenance":{"message":"trial"}}`),
+	})
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/old/page", Method: http.MethodGet, AppMaintenanceLoaded: true}
+	result, err := edgeruletrace.Simulate(input, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Simulation.Outcome != "redirect" {
+		t.Fatalf("outcome = %q, want redirect (log-mode maintenance must not apply)", result.Simulation.Outcome)
+	}
+	for _, row := range result.Rules {
+		if row.ID == "shadow-maint" && row.Status != "logged" {
+			t.Fatalf("log-mode row status = %q, want logged", row.Status)
+		}
+	}
+}
+
 // adr: 091 — the simulator now shares the gateway's matchers: host patterns
 // compare case-insensitively and protective kinds match normalized and
 // case-folded path variants, exactly as pkg/gateway does.

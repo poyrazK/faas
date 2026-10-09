@@ -90,9 +90,17 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		ExpiresAt:    r.ExpiresAt,
 		Expired:      r.EdgeRuleExpired(time.Now()),
 		Match:        r.Match,
+		Mode:         edgeRuleResponseMode(r.Mode),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+func edgeRuleResponseMode(mode string) string {
+	if mode == "" {
+		return api.EdgeRuleModeEnforce
+	}
+	return mode
 }
 
 func utcTimePtr(t *time.Time) *time.Time {
@@ -466,6 +474,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		Description:  req.Description,
 		ExpiresAt:    utcTimePtr(req.ExpiresAt),
 		Match:        req.Match,
+		Mode:         req.Mode,
 	}, limits)
 	if err != nil {
 		convergence.abort(r.Context())
@@ -542,6 +551,9 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 		return prob
 	}
 	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
+		return prob
+	}
+	if prob := api.ValidateEdgeRuleMode(req.Mode); prob != nil {
 		return prob
 	}
 	if req.Priority != nil {
@@ -894,6 +906,12 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.Mode != nil {
+		if prob := api.ValidateEdgeRuleMode(*req.Mode); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
@@ -1015,6 +1033,7 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		Description:  req.Description,
 		Match:        req.Match,
 		ClearMatch:   req.ClearMatch,
+		Mode:         req.Mode,
 	}
 	switch {
 	case req.ClearExpiresAt:

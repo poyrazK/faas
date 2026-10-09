@@ -9641,9 +9641,11 @@ type EdgeRuleResponse struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Expired   bool       `json:"expired,omitempty"`
 	// Match (ADR-832) is the optional condition ANDed with the selectors.
-	Match     *EdgeRuleMatchExpr `json:"match,omitempty"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
+	// Mode (ADR-830) is "enforce" or "log"; log-mode rules only count matches.
+	Mode      string    `json:"mode"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -9691,6 +9693,7 @@ type CreateEdgeRuleRequest struct {
 	Description  string             `json:"description,omitempty"`
 	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
 	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
+	Mode         string             `json:"mode,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -9720,6 +9723,36 @@ type UpdateEdgeRuleRequest struct {
 	// Match replaces the condition (ADR-832); ClearMatch removes it.
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
+	Mode       *string            `json:"mode,omitempty"`
+}
+
+// Edge-rule modes (ADR-830).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// ValidateEdgeRuleMode accepts "" (unchanged / default enforce), enforce and log.
+func ValidateEdgeRuleMode(mode string) *Problem {
+	switch mode {
+	case "", EdgeRuleModeEnforce, EdgeRuleModeLog:
+		return nil
+	}
+	return ErrValidation(fmt.Sprintf("mode %q must be enforce or log", mode))
+}
+
+// EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-830).
+type EdgeRuleHitStatsResponse struct {
+	RuleID  string `json:"rule_id"`
+	Matched int64  `json:"matched"`
+	Logged  int64  `json:"logged"`
+}
+
+// EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
+type EdgeRuleStatsResponse struct {
+	Window string                     `json:"window"`
+	Since  time.Time                  `json:"since"`
+	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
 // EdgeRuleSetVersionResponse (ADR-831) describes one recorded state of an

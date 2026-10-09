@@ -77,7 +77,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm|history|rollback> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm|history|rollback|stats> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -87,6 +87,8 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesHistory(args[1:])
 	case "rollback":
 		return cmdEdgeRulesRollback(args[1:])
+	case "stats":
+		return cmdEdgeRulesStats(args[1:])
 	case "trace":
 		return cmdEdgeRulesTrace(args[1:])
 	case subCreate:
@@ -159,6 +161,8 @@ func cmdEdgeRulesList(args []string) int {
 		}
 		if it.Expired {
 			enabled = "expired"
+		} else if it.Mode == api.EdgeRuleModeLog && it.Enabled {
+			enabled = "log"
 		}
 		label := ""
 		if it.Name != "" {
@@ -194,6 +198,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-832 JSON, @file, or -)")
+	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-830)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -489,6 +494,10 @@ func cmdEdgeRulesCreate(args []string) int {
 		return printErr("Invalid --match", conditionErr)
 	}
 	req.Match = condition
+	if prob := api.ValidateEdgeRuleMode(*ruleMode); prob != nil {
+		return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
+	}
+	req.Mode = *ruleMode
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -587,6 +596,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-832 JSON, @file, or -)")
+	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-830)")
 	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
 	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
@@ -759,6 +769,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 	req.Match = condition
 	req.ClearMatch = *clearMatch
+	if visited["mode"] {
+		if prob := api.ValidateEdgeRuleMode(*ruleMode); prob != nil {
+			return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
+		}
+		mode := *ruleMode
+		req.Mode = &mode
+	}
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)

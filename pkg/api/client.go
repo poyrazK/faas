@@ -3257,6 +3257,17 @@ func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rules/"+id, nil, nil)
 }
 
+// GetEdgeRuleStats returns per-rule match counts over window (1h, 24h or 7d;
+// empty means 24h) (ADR-830).
+func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	path := "/v1/apps/" + slug + "/edge-rules/stats"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
 // newest first, without rule bodies (ADR-831).
 func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {

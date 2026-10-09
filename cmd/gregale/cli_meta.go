@@ -2286,7 +2286,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback --app <slug>; edge-rules rm <id>)",
+		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats --app <slug>; edge-rules rm <id>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
@@ -2379,6 +2379,7 @@ var cliCommands = []cliCommand{
 				{Name: "maintenance-retry-after-seconds", Short: "kind=maintenance: Retry-After hint", Value: "SECONDS"},
 				{Name: "maintenance-message", Short: "kind=maintenance: operator message", Value: "TEXT"},
 				{Name: "match", Short: "match condition ANDed with the selectors (ADR-832 JSON, @file, or -)", Value: "JSON|@FILE|-"},
+				{Name: "mode", Short: "enforce (default) or log: a log-mode rule only counts matches", Value: "MODE", ClosedSet: []string{"enforce", "log"}},
 			}},
 			{Name: subGet, Short: "Show one edge rule", Positionals: []string{"<id>"}},
 			{Name: subUpdate, Short: "Update one edge rule", Positionals: []string{"<id>"}, Examples: []string{
@@ -2467,11 +2468,16 @@ var cliCommands = []cliCommand{
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 				{Name: "match", Short: "replace the match condition (ADR-832 JSON, @file, or -)", Value: "JSON|@FILE|-"},
 				{Name: "clear-match", Short: "remove the match condition"},
+				{Name: "mode", Short: "enforce or log (log-mode rules only count matches)", Value: "MODE", ClosedSet: []string{"enforce", "log"}},
 			}},
 			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}},
 			{Name: "history", Short: "List recorded versions of an app's edge-rule set (--version N shows its rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "version", Short: "show the rules recorded in this version", Value: "N"},
+			}},
+			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version (recorded as a new version)", Examples: []string{
 				"gregale edge-rules rollback --app my-api --to 12",

@@ -831,6 +831,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/edge-rules/versions":           "ListEdgeRuleSetVersions",
 	"GET /v1/apps/{slug}/edge-rules/versions/{version}": "GetEdgeRuleSetVersion",
 	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",
+	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender. Auto-derivation would produce
 	// "GetAppsSlugThrottle-suggestions" (literal hyphen) due to the

@@ -861,3 +861,51 @@ func TestPgStore_EdgeRuleMatchExpr_RoundTripAndRollback(t *testing.T) {
 		t.Fatalf("rollback did not restore the condition: %+v, %v", restored.Rules, err)
 	}
 }
+
+// ADR-830: mode round-trips and defaults to enforce; hit counts from two
+// flushes into the same hour add up, totals respect the window, and pruning
+// removes expired buckets.
+func TestPgStore_EdgeRuleModeAndHitCounts(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "log-mode")
+
+	enforced, err := s.CreateEdgeRuleIfUnderQuota(ctx, pgSampleEdgeRuleParams(acct, app, "log-mode.example.com"), limits)
+	if err != nil || enforced.Mode != state.EdgeRuleModeEnforce {
+		t.Fatalf("default mode = %q, %v", enforced.Mode, err)
+	}
+	params := pgSampleEdgeRuleParams(acct, app, "log-mode.example.com")
+	params.Mode = state.EdgeRuleModeLog
+	logged, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, limits)
+	if err != nil || logged.Mode != state.EdgeRuleModeLog {
+		t.Fatalf("log mode = %q, %v", logged.Mode, err)
+	}
+
+	now := time.Now().UTC()
+	old := now.Add(-48 * time.Hour)
+	for range 2 {
+		if err := s.RecordEdgeRuleHits(ctx, []state.EdgeRuleHit{
+			{RuleID: enforced.ID, AppID: app, Bucket: now, Outcome: state.EdgeRuleHitMatched, Hits: 3},
+			{RuleID: logged.ID, AppID: app, Bucket: now, Outcome: state.EdgeRuleHitLogged, Hits: 5},
+		}); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+	if err := s.RecordEdgeRuleHits(ctx, []state.EdgeRuleHit{{RuleID: enforced.ID, AppID: app, Bucket: old, Outcome: state.EdgeRuleHitMatched, Hits: 100}}); err != nil {
+		t.Fatalf("record old: %v", err)
+	}
+	stats, err := s.EdgeRuleHitStatsForApp(ctx, app, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]state.EdgeRuleHitStats{}
+	for _, st := range stats {
+		got[st.RuleID] = st
+	}
+	if got[enforced.ID].Matched != 6 || got[logged.ID].Logged != 10 {
+		t.Fatalf("24h stats = %+v, want matched 6 and logged 10", stats)
+	}
+	if n, err := s.PruneEdgeRuleHitCounts(ctx, now.Add(-24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("prune removed %d, %v; want 1 expired bucket", n, err)
+	}
+}
