@@ -49106,7 +49106,7 @@ func (q *Queries) QueueConsumerLockAccount(ctx context.Context, db DBTX, id pgty
 }
 
 const queueConsumerLockApp = `-- name: QueueConsumerLockApp :one
-select id, account_id, type, workload_class from apps
+select id, account_id, type, workload_class, coalesce(manifest->>'execution_mode','')::text as execution_mode from apps
 where id=$1 and account_id=$2 and status<>'deleted' for update
 `
 
@@ -49120,6 +49120,7 @@ type QueueConsumerLockAppRow struct {
 	AccountID     pgtype.UUID
 	Type          string
 	WorkloadClass string
+	ExecutionMode string
 }
 
 // Queue binding/consumer publication (ADR-393). Parent locks also serialize
@@ -49132,6 +49133,7 @@ func (q *Queries) QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueCo
 		&i.AccountID,
 		&i.Type,
 		&i.WorkloadClass,
+		&i.ExecutionMode,
 	)
 	return i, err
 }

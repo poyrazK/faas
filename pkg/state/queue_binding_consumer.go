@@ -66,6 +66,21 @@ func applyQueueBindingPatch(row QueueBinding, p UpdateQueueBindingParams) QueueB
 	return row
 }
 
+// QueueBindingAppClass is the app's workload class for queue binding checks.
+// An explicit worker or job execution mode is customer intent and outranks
+// the runtime-observed class, as it already does for queue_depth scaling
+// targets; otherwise an app switched to worker mode through PATCH could keep
+// its queue policy but never bind a queue.
+func QueueBindingAppClass(observed WorkloadClass, executionMode string) WorkloadClass {
+	switch executionMode {
+	case api.ExecutionModeWorker:
+		return WorkloadClassWorker
+	case api.ExecutionModeJob:
+		return WorkloadClassJob
+	}
+	return observed
+}
+
 func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass WorkloadClass) error {
 	if row.RetiredAt != nil || row.DeploymentScope != "" && !api.ValidProjectEnvironmentSlug(row.DeploymentScope) {
 		return ErrInvalidArgument

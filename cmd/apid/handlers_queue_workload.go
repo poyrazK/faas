@@ -101,9 +101,10 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
+	appClass := queueBindingAppClass(app)
 	class := req.WorkloadClass
 	if class == "" {
-		class = string(app.WorkloadClass)
+		class = string(appClass)
 	}
 	if req.WorkloadClass == "" && class != string(state.WorkloadClassWorker) && class != string(state.WorkloadClassJob) {
 		// The CLI sends no class, so naming workload_class told the caller
@@ -117,11 +118,11 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	if app.WorkloadClass != "" && string(app.WorkloadClass) != class {
-		api.WriteProblem(w, queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, app.WorkloadClass)))
+	if appClass != "" && string(appClass) != class {
+		api.WriteProblem(w, queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, appClass)))
 		return
 	}
-	if app.WorkloadClass != state.WorkloadClassWorker && app.WorkloadClass != state.WorkloadClassJob {
+	if appClass != state.WorkloadClassWorker && appClass != state.WorkloadClassJob {
 		api.WriteProblem(w, api.ErrScalingTargetIncompatibleWithWorkloadClass("queue_depth"))
 		return
 	}

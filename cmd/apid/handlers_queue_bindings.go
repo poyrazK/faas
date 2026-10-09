@@ -64,10 +64,16 @@ func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem 
 	} else if prob := validateQueueBindingClass(class); prob != nil {
 		return prob
 	}
-	if app.WorkloadClass != "" && string(app.WorkloadClass) != class {
-		return queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, app.WorkloadClass))
+	if appClass := queueBindingAppClass(app); appClass != "" && string(appClass) != class {
+		return queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, appClass))
 	}
 	return nil
+}
+
+// queueBindingAppClass matches the store's binding check (see
+// state.QueueBindingAppClass) so apid rejects exactly what the store would.
+func queueBindingAppClass(app state.App) state.WorkloadClass {
+	return state.QueueBindingAppClass(app.WorkloadClass, app.Manifest.ExecutionMode)
 }
 
 func validateQueueBindingConcurrency(value int) *api.Problem {
