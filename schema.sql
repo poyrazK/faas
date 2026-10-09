@@ -11549,13 +11549,22 @@ CREATE TABLE public.api_consumer_usage_statements (
     as_of timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
+    revision integer DEFAULT 1 NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
-    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = 'draft'::text) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
+    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
-    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text]))),
+    CONSTRAINT api_consumer_usage_statements_revision_chk CHECK ((revision > 0)),
+    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text, 'superseded'::text]))),
     CONSTRAINT api_consumer_usage_statements_totals_chk CHECK (((billable_units >= 0) AND (unpriced_units >= 0) AND (amount_millicents >= 0)))
 );
+
+
+--
+-- Name: COLUMN api_consumer_usage_statements.revision; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_usage_statements.revision IS 'Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.';
 
 
 --
@@ -24464,11 +24473,11 @@ ALTER TABLE ONLY public.api_consumer_usage_statement_handoffs
 
 
 --
--- Name: api_consumer_usage_statements api_consumer_usage_statements_period_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: api_consumer_usage_statements api_consumer_usage_statements_period_revision_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.api_consumer_usage_statements
-    ADD CONSTRAINT api_consumer_usage_statements_period_uniq UNIQUE (app_id, consumer_id, period_start, period_end);
+    ADD CONSTRAINT api_consumer_usage_statements_period_revision_uniq UNIQUE (app_id, consumer_id, period_start, period_end, revision);
 
 
 --
