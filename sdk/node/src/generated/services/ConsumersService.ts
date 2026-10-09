@@ -273,9 +273,9 @@ export class ConsumersService {
     });
   }
   /**
-   * Snapshot an API consumer usage quote.
-   * Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
-   * @returns APIConsumerUsageStatementResponse The existing statement for this consumer and period.
+   * Snapshot an API consumer usage quote or create a late-usage adjustment.
+   * Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+   * @returns APIConsumerUsageStatementResponse The latest existing revision; the period has no new usage or the draft is unchanged.
    * @throws ApiError
    */
   public static createApiConsumerUsageStatement({
@@ -317,6 +317,7 @@ export class ConsumersService {
         401: `code: unauthorized`,
         402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
