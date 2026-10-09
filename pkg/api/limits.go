@@ -9020,6 +9020,22 @@ const (
 	RouteHealthSeedLookback = 7 * 24 * time.Hour
 )
 
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
+// requests per route and deployment, only while a canary is in flight.
+// Probe requests are never written to request telemetry or usage.
+const (
+	RouteHealthProbeMaxRoutes         = 5
+	RouteHealthProbeRequestsPerMinute = 10
+	RouteHealthProbeRequestTimeout    = 10 * time.Second
+	RouteHealthProbeChallengeTTL      = 2 * time.Minute
+	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbeRetention         = 24 * time.Hour
+	// A probe window is unknown when at least this share of responses were
+	// 401/403: customer auth gates stay in force for probes.
+	RouteHealthProbeUnauthenticatedShare = 0.5
+)
+
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
 // (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.
