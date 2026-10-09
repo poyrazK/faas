@@ -57,6 +57,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		App:    dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain), IsPreview: app.PreviewOfSlug != ""},
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
+	data.Protection = s.appEdgeProtection(ctx, app, edgeProtectionDefaultRange)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()

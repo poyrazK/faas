@@ -69,6 +69,10 @@ printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable pre_auth_pressure \
   --app APP_ID --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
+To see the same counts on demand, run `gregale edge-rules summary --app APP
+--range 24h`, open the app's edge-rules dashboard page (Edge protection panel),
+or call `GET /v1/apps/{slug}/edge-protection?range=24h`.
+
 Because outside traffic drives these signals, these alerts can never run a
 deployment action such as rollback; the API and the database both reject one.
 

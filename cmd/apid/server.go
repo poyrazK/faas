@@ -1707,6 +1707,7 @@ func (s *server) handler() http.Handler {
 	// Security policy observations are available on every plan where the
 	// optional pre-auth guard can be configured, including Free.
 	mux.HandleFunc("GET /v1/apps/{slug}/pre-auth-observations", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppPreAuthObservations)))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-protection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppEdgeProtection)))
 	// Per-app dashboard JSON mirror — wire-friendly emission of the
 	// same shape the dashboard HTML page renders (cmd/apid/
 	// handlers_dashboard.go:2548 renderAppWakeTimeline). Auth chain

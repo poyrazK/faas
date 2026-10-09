@@ -973,6 +973,8 @@ type AppEdgeRulesData struct {
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+	// Protection summarizes what the edge rejected over the last hour.
+	Protection api.EdgeProtectionResponse
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only

@@ -418,6 +418,7 @@ export type { DomainDoctorCheck } from './DomainDoctorCheck.js';
 export type { DomainDoctorReport } from './DomainDoctorReport.js';
 export type { DurableEntityInvokeRequest } from './DurableEntityInvokeRequest.js';
 export type { DurableEntityInvokeResponse } from './DurableEntityInvokeResponse.js';
+export type { EdgeProtectionResponse } from './EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';

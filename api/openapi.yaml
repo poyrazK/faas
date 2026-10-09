@@ -9471,6 +9471,38 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/edge-protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppEdgeProtection
+      summary: Summarize what the edge rejected for an app.
+      description: |
+        Read-only security telemetry from the per-app gateway counters that
+        the edge security alert presets evaluate: pre-auth source-limit
+        decisions, kind=validate mismatches by mode, and requests answered by
+        the other edge gates (JWT, IP, geo, ingress, body limits, throttles)
+        by gate and status. On Prometheus failure, source starts with
+        `degraded:` and counts are zero.
+      parameters:
+        - name: range
+          in: query
+          description: Time window. Defaults to one hour.
+          schema:
+            type: string
+            enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]
+            default: 1h
+      responses:
+        '200':
+          description: Edge rejection counts for the range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeProtectionResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42592,6 +42624,41 @@ components:
             $ref: '#/components/schemas/PreAuthPolicyObservation'
         suggestion:
           $ref: '#/components/schemas/PreAuthEnforcementSuggestion'
+
+    EdgeProtectionResponse:
+      description: Edge rejection counts for one app over a range.
+      type: object
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections]
+      properties:
+        app_id: { type: string }
+        range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
+        source: { type: string, description: "prometheus or degraded: <reason>." }
+        as_of: { type: string, format: date-time }
+        pre_auth:
+          type: object
+          required: [blocked, would_block]
+          properties:
+            blocked: { type: integer, format: int64, minimum: 0, description: "Requests the pre-auth source limit rejected in enforce mode." }
+            would_block: { type: integer, format: int64, minimum: 0, description: "Requests observe mode would have rejected." }
+        validation_failures:
+          type: array
+          description: kind=validate mismatches by validate_mode (block, observe, warn); zero counts are omitted.
+          items:
+            type: object
+            required: [name, count]
+            properties:
+              name: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
+        rejections:
+          type: array
+          description: Requests answered by an edge gate, largest count first; zero counts are omitted.
+          items:
+            type: object
+            required: [gate, status, count]
+            properties:
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle] }
+              status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
+              count: { type: integer, format: int64, minimum: 0 }
 
     PreAuthEnforcementSuggestion:
       description: |

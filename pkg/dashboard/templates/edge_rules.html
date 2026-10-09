@@ -142,6 +142,30 @@
       {{end}}
     </section>
 
+    <section aria-labelledby="edge-protection-heading">
+      <h2 id="edge-protection-heading">Edge protection (last {{.Data.Protection.Range}})</h2>
+      {{with .Data.Protection}}
+        {{if ne .Source "prometheus"}}
+          <p class="muted" role="status">Edge protection counts are unavailable right now ({{.Source}}). This is not the same as zero.</p>
+        {{else}}
+          <p>Pre-auth source limit: <strong>{{.PreAuth.Blocked}}</strong> blocked, <strong>{{.PreAuth.WouldBlock}}</strong> would block (observe).</p>
+          <p>Validation failures:
+            {{if .ValidationFailures}}{{range $i, $v := .ValidationFailures}}{{if $i}}, {{end}}<strong>{{$v.Count}}</strong> {{$v.Name}}{{end}}{{else}}none{{end}}.</p>
+          {{if .Rejections}}
+            <table aria-label="Edge gate rejections">
+              <thead><tr><th scope="col">Gate</th><th scope="col">Status</th><th scope="col">Requests</th></tr></thead>
+              <tbody>
+                {{range .Rejections}}<tr><td><code>{{.Gate}}</code></td><td>{{.Status}}</td><td>{{.Count}}</td></tr>{{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p>No edge gate rejected a request in this window.</p>
+          {{end}}
+          <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, and <code>edge_rejection_pressure</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
+        {{end}}
+      {{end}}
+    </section>
+
     <h2>Rules</h2>
     {{if .Data.Rules}}
       <table aria-label="Edge rules">

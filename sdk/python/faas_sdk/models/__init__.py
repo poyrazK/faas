@@ -835,6 +835,13 @@ from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
 from .durable_entity_invoke_request import DurableEntityInvokeRequest
 from .durable_entity_invoke_response import DurableEntityInvokeResponse
+from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
+from .edge_protection_response_range import EdgeProtectionResponseRange
+from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
+from .edge_protection_response_rejections_item_gate import EdgeProtectionResponseRejectionsItemGate
+from .edge_protection_response_rejections_item_status import EdgeProtectionResponseRejectionsItemStatus
+from .edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -1212,6 +1219,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
@@ -3843,6 +3851,13 @@ __all__ = (
     "DryRunAppOpenAPIBodyPaths",
     "DurableEntityInvokeRequest",
     "DurableEntityInvokeResponse",
+    "EdgeProtectionResponse",
+    "EdgeProtectionResponsePreAuth",
+    "EdgeProtectionResponseRange",
+    "EdgeProtectionResponseRejectionsItem",
+    "EdgeProtectionResponseRejectionsItemGate",
+    "EdgeProtectionResponseRejectionsItemStatus",
+    "EdgeProtectionResponseValidationFailuresItem",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -4216,6 +4231,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
