@@ -1,5 +1,5 @@
 // Package guestprofiling enables CPU profiling in Go applications running on
-// Gregale. Call Start once during application startup (ADR-792).
+// Gregale. Call Start once during application startup (ADR-819).
 package guestprofiling
 
 import (

@@ -1,5 +1,5 @@
 // Command profiled parses profiles outside the privileged VM broker and
-// exports them to the operator's tenant-enabled Pyroscope backend (ADR-792).
+// exports them to the operator's tenant-enabled Pyroscope backend (ADR-819).
 package main
 
 import (

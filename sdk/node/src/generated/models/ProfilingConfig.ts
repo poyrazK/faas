@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Opt-in sampled CPU profiling baked into each deployment (ADR-792).
+ * Opt-in sampled CPU profiling baked into each deployment (ADR-819).
  */
 export type ProfilingConfig = {
   enabled: boolean;

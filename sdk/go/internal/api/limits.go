@@ -137,7 +137,7 @@ const (
 	BindingReleasePolicyReasonMaxBytes       = 256
 )
 
-// CPU profiling transport and admission bounds (ADR-792). These limits are
+// CPU profiling transport and admission bounds (ADR-819). These limits are
 // independent of request telemetry and never change billing dimensions.
 const (
 	ProfileDefaultWindowSeconds                         = 10

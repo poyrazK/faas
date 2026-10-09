@@ -142,7 +142,7 @@ class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-792)."""
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     visibility: (
         None
         | Unset

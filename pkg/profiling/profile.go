@@ -1,5 +1,5 @@
 // Package profiling implements bounded CPU profile ingestion and queries.
-// It runs outside vmmd's privileged boundary (ADR-792).
+// It runs outside vmmd's privileged boundary (ADR-819).
 package profiling
 
 import (

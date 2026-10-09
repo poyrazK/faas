@@ -77,7 +77,7 @@ forwarded to the public API or written to the evidence receipt.
 
 Requirements:
 
-- Use a native KVM deployment with the updated scheduler from ADR-797. Profiled
+- Use a native KVM deployment with the updated scheduler from ADR-824. Profiled
   apps now take fresh terminal captures on park, with additional capture/storage
   cost. Deploy the updated profiling guest-init image and rebuild the workload.
 - Baseline must be the app's live deployment for explicit wake, and have exactly

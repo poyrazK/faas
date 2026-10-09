@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -43,6 +44,9 @@ class CreateAlertRuleRequest:
     webhook_url: str
     webhook_secret: str
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
+    event_subscription_id: UUID | Unset = UNSET
+    """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
+    event consumer metrics; webhook action and windows up to 24h are required."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
@@ -51,8 +55,8 @@ class CreateAlertRuleRequest:
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
-    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and workflow metrics support
-    webhook only."""
+    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
+    metrics support webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +73,10 @@ class CreateAlertRuleRequest:
         webhook_url = self.webhook_url
 
         webhook_secret = self.webhook_secret
+
+        event_subscription_id: str | Unset = UNSET
+        if not isinstance(self.event_subscription_id, Unset):
+            event_subscription_id = str(self.event_subscription_id)
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
@@ -97,6 +105,8 @@ class CreateAlertRuleRequest:
                 "webhook_secret": webhook_secret,
             }
         )
+        if event_subscription_id is not UNSET:
+            field_dict["event_subscription_id"] = event_subscription_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if enabled is not UNSET:
@@ -127,6 +137,13 @@ class CreateAlertRuleRequest:
 
         webhook_secret = d.pop("webhook_secret")
 
+        _event_subscription_id = d.pop("event_subscription_id", UNSET)
+        event_subscription_id: UUID | Unset
+        if isinstance(_event_subscription_id, Unset):
+            event_subscription_id = UNSET
+        else:
+            event_subscription_id = UUID(_event_subscription_id)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         enabled = d.pop("enabled", UNSET)
@@ -155,6 +172,7 @@ class CreateAlertRuleRequest:
             window_spec=window_spec,
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            event_subscription_id=event_subscription_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,

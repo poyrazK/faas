@@ -306,6 +306,15 @@ func TestEventBackfillReceiptPositionMigration(t *testing.T) {
 	if n, err := f.store.PruneEventReplayBackfills(ctx, time.Now().Add(31*24*time.Hour), 100); err != nil || n != 1 {
 		t.Fatalf("job prune=%d %v", n, err)
 	}
+	// Unwind the newer projection before restoring the legacy schema under test.
+	projection, err := migrations.FS.ReadFile("20261008075254103_event_backlog_consumer_origins.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectionParts := strings.SplitN(string(projection), "-- +goose Down", 2)
+	if _, err := f.pool.Exec(ctx, projectionParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := migrations.FS.ReadFile("20261007231622122_event_backfill_receipt_positions.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -315,6 +324,10 @@ func TestEventBackfillReceiptPositionMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.pool.Exec(ctx, sections[0]); err != nil {
+		t.Fatal(err)
+	}
+	// Restore the current projection before querying through the current store.
+	if _, err := f.pool.Exec(ctx, projectionParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	r := readBackfillReceipt(t, f, "migration")

@@ -13,7 +13,7 @@ T = TypeVar("T", bound="ProfilingConfig")
 
 @_attrs_define
 class ProfilingConfig:
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-792)."""
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
 
     enabled: bool
     window_seconds: int | Unset = 10

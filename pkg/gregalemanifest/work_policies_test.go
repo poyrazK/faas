@@ -235,3 +235,23 @@ func TestEventTriggerCancelPendingRequiresPolicyKey(t *testing.T) {
 		t.Fatalf("valid cancellation trigger: %v", err)
 	}
 }
+
+func TestOrderedEventTriggerRequiresSerialPolicy(t *testing.T) {
+	unsafe := &Manifest{
+		WorkPolicies: []WorkPolicy{{Name: "event-order", MaxRunningPerKey: 1,
+			PendingUpdates: string(workpolicy.PendingKeepLatest)}},
+		EventTriggers: []EventTrigger{{Source: "orders", Type: "order.changed",
+			WorkPolicy: "event-order", WorkKey: "data.order_id", Ordered: true}},
+	}
+	if err := unsafe.ValidateForPlan(api.PlanPro); err == nil || !strings.Contains(err.Error(), "pending_updates=all") {
+		t.Fatalf("unsafe ordered policy = %v", err)
+	}
+	unsafe.WorkPolicies[0] = WorkPolicy{Name: "event-order", MaxRunningPerKey: 2, PendingUpdates: string(workpolicy.PendingAll)}
+	if err := unsafe.ValidateForPlan(api.PlanPro); err == nil || !strings.Contains(err.Error(), "max_running_per_key") {
+		t.Fatalf("parallel ordered policy = %v", err)
+	}
+	unsafe.WorkPolicies[0] = WorkPolicy{Name: "event-order", MaxRunningPerKey: 1, PendingUpdates: string(workpolicy.PendingAll)}
+	if err := unsafe.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("serial ordered policy: %v", err)
+	}
+}

@@ -64,7 +64,7 @@ class CreateAppRequest:
     slug: str
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-792)."""
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""

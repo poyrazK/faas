@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ProfilingConfig enables sampled CPU profiles (ADR-792). Settings are baked
+// ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked
 // into the deployment; changing them requires a redeploy.
 type ProfilingConfig struct {
 	Enabled       bool `json:"enabled" yaml:"enabled" toml:"enabled"`

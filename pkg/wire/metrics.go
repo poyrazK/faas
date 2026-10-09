@@ -5644,7 +5644,7 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 	values := [...]int{desired, ready, starting, draining, unavailable}
 	app = m.appLabel(app)
 	for i, state := range serviceReplicaMetricStates {
-		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i]))
+		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i])) // #nosec G602 -- values and serviceReplicaMetricStates are both five-element arrays.
 	}
 }
 

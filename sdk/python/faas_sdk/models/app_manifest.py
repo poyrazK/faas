@@ -77,7 +77,7 @@ class AppManifest:
 
     entrypoint: list[str]
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-792)."""
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against

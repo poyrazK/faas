@@ -7535,7 +7535,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	var reused *state.Snapshot
 	// A profiled process must acknowledge its current collection checkpoint
 	// before terminal capture. Reusing an older snapshot bypasses that handshake
-	// and loses the process state needed to qualify park/restore (ADR-797).
+	// and loses the process state needed to qualify park/restore (ADR-824).
 	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
 	if allowReuse && !profilingEnabled {
 		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)

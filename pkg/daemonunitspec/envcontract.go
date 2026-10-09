@@ -432,7 +432,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "comma-separated IPv4 overlay addresses for the other compute nodes in this region"},
 	{Name: "FAAS_PROFILED_ROLE", Owners: []string{"profiled", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_PROFILE_SOCKET", Owners: []string{"vmmd", "profiled"}, Source: EnvSourceUnit},
-	{Name: "FAAS_PROFILING_ENABLED", Owners: []string{"apid", "vmmd", "profiled", "guest", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-792)"},
+	{Name: "FAAS_PROFILING_ENABLED", Owners: []string{"apid", "vmmd", "profiled", "guest", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819)"},
 	{Name: "FAAS_PROFILING_ENDPOINT", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "loopback bridge stamped by guest-init for SDKs"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},

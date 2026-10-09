@@ -307,7 +307,7 @@ restore and stale-epoch evidence; without it the runner reports `incomplete`. It
 predeployed fixtures and does not alter rollout policy.
 
 Profile-enabled applications take a fresh terminal snapshot on park so their
-current collector completes its checkpoint handshake (ADR-797). This increases
+current collector completes its checkpoint handshake (ADR-824). This increases
 snapshot capture and storage work. Native acceptance stages a synthetic CPU-format
 probe to verify old-epoch rejection and separately measures real post-restore CPU
 and request counters.
@@ -696,7 +696,7 @@ observed routes cannot prove every request was instrumented.
 The backend stores host-validated route attribution as a reserved synthetic root
 frame so attribution survives merged pprof queries. Public views strip that frame.
 Guest-supplied reserved markers are removed before storage; arbitrary sample
-labels and tenant selectors are never forwarded. See ADR-793.
+labels and tenant selectors are never forwarded. See ADR-820.
 
 ## Advisory route regression checks
 
@@ -735,7 +735,7 @@ extra retries, block advancement or trigger rollback. No detected regression is
 not proof of complete instrumentation or absence of a performance problem;
 capture coverage describes collection, not labeled execution of every request.
 Background goroutines retaining request labels and minute-bucket telemetry
-boundaries can affect averages. See ADR-794.
+boundaries can affect averages. See ADR-821.
 
 ## Route attribution quality
 
@@ -779,7 +779,7 @@ include the new response models.
 Upgrade apid before profiled so the coverage reader understands the new versioned
 metadata format. New apid reads both old and new records. Live backend merge and
 browser verification are still required before treating this feature as validated
-in production. See ADR-795.
+in production. See ADR-822.
 
 ## Per-route request labeling consistency (Go)
 
@@ -836,7 +836,7 @@ Upgrade **apid before profiled**, then deploy updated guest-init images and rebu
 Go applications with the new helpers. Old guest-init ignores the new header, which
 leaves counters unavailable. Older API readers cannot parse the extended coverage
 record. This increment has build and syntax checks; live backend, runtime and
-browser acceptance remain pending. See ADR-796.
+browser acceptance remain pending. See ADR-823.
 
 ## Advisory route regression notifications
 

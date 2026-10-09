@@ -32,5 +32,13 @@ export type EventReplayBackfillItemResponse = {
    * Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable.
    */
   attempt_history_url?: string;
+  /**
+   * Retained workflow run admitted for this item
+   */
+  workflow_run_id?: string;
+  /**
+   * Current state of the retained workflow run
+   */
+  workflow_run_status?: string;
 };
 

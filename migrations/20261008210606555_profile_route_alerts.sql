@@ -15,7 +15,7 @@ ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_eve
  'routes.requirements.violated','routes.requirements.recovered','routes.requirements.changed',
  'routes.health.blocked','routes.health.resumed','routes.health.aborted',
  'routes.monitor.violated','routes.monitor.escalated','routes.monitor.recovered','workflow.finished',
- 'app.health.changed','profile.route_regressed','profile.route_recovered'
+ 'app.health.changed','event_recovery.completed','event_recovery.cancelled','event_recovery.expired','profile.route_regressed','profile.route_recovered'
 ));
 -- +goose Down
 -- Preserve committed webhook events during a binary rollback.

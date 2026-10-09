@@ -1,4 +1,4 @@
-"""Opt-in sampled CPU profiling for managed Python processes (ADR-792)."""
+"""Opt-in sampled CPU profiling for managed Python processes (ADR-819)."""
 import os
 
 

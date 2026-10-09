@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"math/big"
+	"slices"
 	"strings"
 )
 
@@ -20,21 +22,23 @@ import (
 // with the .paid suffix. A wildcard at both edges is treated as a contains
 // pattern. Interior wildcards are rejected to keep matching deterministic.
 type Subscription struct {
-	ID        string
-	AccountID string
-	Source    string
-	Type      string
-	Filter    json.RawMessage
+	SchemaVersions []string
+	ID             string
+	AccountID      string
+	Source         string
+	Type           string
+	Filter         json.RawMessage
 }
 
 // MatchReason explains the first routing rule an event does or does not satisfy.
 type MatchReason string
 
 const (
-	MatchReasonWouldDeliver    MatchReason = "would_deliver"
-	MatchReasonTenantMismatch  MatchReason = "tenant_mismatch"
-	MatchReasonPatternMismatch MatchReason = "pattern_mismatch"
-	MatchReasonFilterMismatch  MatchReason = "content_filter_mismatch"
+	MatchReasonWouldDeliver          MatchReason = "would_deliver"
+	MatchReasonTenantMismatch        MatchReason = "tenant_mismatch"
+	MatchReasonPatternMismatch       MatchReason = "pattern_mismatch"
+	MatchReasonFilterMismatch        MatchReason = "content_filter_mismatch"
+	MatchReasonSchemaVersionMismatch MatchReason = "schema_version_mismatch"
 )
 
 // ValidatePattern validates an event source or type pattern without needing
@@ -63,6 +67,9 @@ func (s Subscription) Match(e Envelope) (bool, error) {
 	typeMatch, err := matchPattern(s.Type, e.Type)
 	if err != nil || !typeMatch {
 		return false, err
+	}
+	if len(s.SchemaVersions) > 0 && !slices.Contains(s.SchemaVersions, e.SchemaVersion) {
+		return false, nil
 	}
 	if len(bytes.TrimSpace(s.Filter)) == 0 || bytes.Equal(bytes.TrimSpace(s.Filter), []byte("null")) {
 		return true, nil
@@ -116,6 +123,9 @@ func (s Subscription) ExplainMatch(e Envelope) (MatchReason, error) {
 	if !sourceMatch || !typeMatch {
 		return MatchReasonPatternMismatch, nil
 	}
+	if len(s.SchemaVersions) > 0 && !slices.Contains(s.SchemaVersions, e.SchemaVersion) {
+		return MatchReasonSchemaVersionMismatch, nil
+	}
 	return MatchReasonFilterMismatch, nil
 }
 
@@ -136,6 +146,9 @@ func sameAccountID(a, b string) bool {
 // caller can use this method for cheap source/type validation; Match validates
 // the filter when it is actually evaluated.
 func (s Subscription) Validate() error {
+	if _, err := api.NormalizeEventSchemaVersions(s.SchemaVersions); err != nil {
+		return err
+	}
 	if strings.TrimSpace(s.AccountID) == "" {
 		return errors.New("event: subscription account_id is required")
 	}
