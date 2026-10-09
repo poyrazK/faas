@@ -1353,15 +1353,22 @@ Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions
 
 Read or wait for automatic rollback status, deployment evidence and service handoffs
 
-`gregale alerts actions --app <slug> [--fire <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>]`
+`gregale alerts actions [--interactive] [--app <slug>] [--fire <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--interactive` | choose an action, inspect details, and optionally follow it |  |
+| `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--fire <UUID>` | one production alert delivery UUID |  |
 | `--wait` | wait for the selected fire to complete |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
+
+Examples:
+
+```sh
+gregale alerts actions --app my-api --interactive
+```
 
 ### alerts list
 

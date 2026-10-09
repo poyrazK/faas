@@ -483,6 +483,27 @@ lock. Routine evaluation state and timestamps do not block an edit.
 For scripts or other fields, use `alerts update ALERT_ID --app APP` with
 explicit flags.
 
+## Inspect automatic rollback actions interactively
+
+```sh
+gregale alerts actions --app my-api --interactive
+# Use the linked app, or pick one:
+gregale alerts actions --interactive
+```
+
+Pick an action from the returned history, ordered newest first and labeled with
+its status, rule ID, and fire time. The CLI fetches fresh details for that action
+and shows its deployment pair, evidence, blockers, and rollback or service
+handoff progress. It prints a reusable inspection command with the active profile.
+
+For a pending or blocked action, choose whether to follow it until completion.
+The wait defaults to 10 minutes with a 2-second polling interval; configure these
+with `--timeout` and `--poll-interval`. A resume command is printed before waiting.
+Interrupting or timing out stops observation; the rollback continues independently.
+The flow only reads status and never submits or retries rollback actions.
+
+For scripts, use `alerts actions --app APP --fire UUID [--wait] --json`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

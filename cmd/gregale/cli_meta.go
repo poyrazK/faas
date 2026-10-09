@@ -744,8 +744,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
 		Subcommands: []cliSub{
-			{Name: "actions", Short: "Read or wait for automatic rollback status, deployment evidence and service handoffs", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			{Name: "actions", Short: "Read or wait for automatic rollback status, deployment evidence and service handoffs", Examples: []string{"gregale alerts actions --app my-api --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose an action, inspect details, and optionally follow it", Bool: true},
+				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
 				{Name: "fire", Short: "one production alert delivery UUID", Value: "UUID"},
 				{Name: "wait", Short: "wait for the selected fire to complete"},
 				{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
