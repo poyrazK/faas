@@ -63,6 +63,7 @@ func TestForkMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "hello")
+	stopAppOnCleanup(t, h, pool, key, "hello", appID)
 	// Pro defaults to bearer public auth (ADR-079); the anonymous probes
 	// below exercise routing, not edge auth.
 	if body, code := doReq(t, h, key, http.MethodPatch, "/v1/apps/hello", map[string]any{
