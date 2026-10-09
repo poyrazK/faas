@@ -1694,7 +1694,7 @@ func splitArgsForFlags(args []string, boolFlags ...string) (flags, pos []string)
 	pos = make([]string, 0, len(args))
 	i := 0
 	for i < len(args) {
-		a := args[i]
+		a := args[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(args).
 		if a == "--" {
 			i++
 			for i < len(args) {

@@ -4240,7 +4240,7 @@ func cmdRollback(args []string) int {
 	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
-		a := rest[i]
+		a := rest[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(rest).
 		switch {
 		case a == "--to":
 			i++

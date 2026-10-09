@@ -2389,15 +2389,16 @@ const resumeHookMaxBodyBytes = 8 * 1024
 func readConnectAck(conn net.Conn) (string, error) {
 	const max = 64
 	buf := make([]byte, 0, max)
-	one := make([]byte, 1)
+	one := [1]byte{}
 	for len(buf) < max {
-		if _, err := conn.Read(one); err != nil {
+		if _, err := conn.Read(one[:]); err != nil {
 			return "", fmt.Errorf("read CONNECT reply: %w", err)
 		}
-		if one[0] == '\n' || one[0] == '\r' {
+		value := one[0]
+		if value == '\n' || value == '\r' {
 			break
 		}
-		buf = append(buf, one[0])
+		buf = append(buf, value)
 	}
 	if len(buf) == 0 {
 		return "", fmt.Errorf("empty CONNECT reply")
@@ -2562,18 +2563,19 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	sent := time.Now()
 
 	// Step 4: read the 1-byte ack from the guest.
-	ack := make([]byte, 1)
-	if _, err := io.ReadFull(conn, ack); err != nil {
+	ack := [1]byte{}
+	if _, err := io.ReadFull(conn, ack[:]); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
-	if ack[0] != 0 {
-		if ack[0] == resumeHookAckAfterRestore {
-			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
+	ackValue := ack[0]
+	if ackValue != 0 {
+		if ackValue == resumeHookAckAfterRestore {
+			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ackValue)
 		}
-		if ack[0] == resumeHookAckUserspaceReseed {
-			return fmt.Errorf("vmm: resume hook failed: a Node or Python process did not confirm its userspace RNG reseed (ack=%d)", ack[0])
+		if ackValue == resumeHookAckUserspaceReseed {
+			return fmt.Errorf("vmm: resume hook failed: a Node or Python process did not confirm its userspace RNG reseed (ack=%d)", ackValue)
 		}
-		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ackValue)
 	}
 	if err := readResumeCapabilities(conn); err != nil {
 		return err
@@ -2626,11 +2628,12 @@ func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error 
 	if _, err := io.ReadFull(conn, result[:]); err != nil {
 		return fmt.Errorf("vmm: before_checkpoint ACK: %w", err)
 	}
-	if result[0] == beforeCheckpointHookAckFailed {
+	resultValue := result[0]
+	if resultValue == beforeCheckpointHookAckFailed {
 		return fmt.Errorf("vmm: %w", ErrBeforeCheckpointFailed)
 	}
-	if result[0] != 0 {
-		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", result[0])
+	if resultValue != 0 {
+		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", resultValue)
 	}
 	return nil
 }
