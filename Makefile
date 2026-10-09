@@ -693,7 +693,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.9.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@$(GO) tool golangci-lint run
 
 .PHONY: runbook-sql-check
@@ -989,9 +989,8 @@ clean: ## Remove build artifacts
 # sqlc install path. CI drops the tarball at $$HOME/.local/sqlc/bin/sqlc
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
 # the local-dev convention so make sqlc-check works without a `go
-# install` round-trip — sqlc v1.31.1's go.mod requires go >= 1.26.0,
-# and the pinned binary keeps sqlc independent of the repository's
-# Go toolchain pin.
+# install` round-trip — which avoids compiling the cgo-heavy sqlc tree on
+# every cold CI runner even though the pinned Go 1.26.9 toolchain supports it.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this
@@ -1127,7 +1126,7 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
-	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
+	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
@@ -1415,7 +1414,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml

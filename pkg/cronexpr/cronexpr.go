@@ -60,6 +60,20 @@ func Parse(raw, timezone string) (cron.Schedule, error) {
 	return dstSchedule{spec: spec}, nil
 }
 
+// NominalOccurrence reports whether at is a wall-clock match of the cron
+// expression before Gregale's daylight-saving adjustments are applied.
+func NominalOccurrence(raw, timezone string, at time.Time) (bool, error) {
+	normalized, err := NormalizeTimezone(timezone)
+	if err != nil {
+		return false, errors.Join(ErrInvalidSchedule, err)
+	}
+	schedule, err := parser.Parse("CRON_TZ=" + normalized + " " + raw)
+	if err != nil {
+		return false, errors.Join(ErrInvalidSchedule, err)
+	}
+	return schedule.Next(at.UTC().Add(-time.Minute)).Equal(at.UTC()), nil
+}
+
 // fixedWallTime reports whether the expression names specific wall-clock
 // times: neither its minute nor its hour field uses '*' (or '?'). That is
 // Vixie cron's test for which jobs get daylight-saving adjustment; interval
@@ -70,6 +84,15 @@ func fixedWallTime(raw string) bool {
 		return false
 	}
 	return !strings.ContainsAny(fields[0], "*?") && !strings.ContainsAny(fields[1], "*?")
+}
+
+// DSTPolicy describes whether the expression follows Gregale's fixed
+// wall-time adjustment or cron interval behavior across timezone changes.
+func DSTPolicy(raw string) (string, string, string) {
+	if fixedWallTime(raw) {
+		return "fixed_wall_time", "shift_to_first_valid_minute", "run_once_at_first_occurrence"
+	}
+	return "interval", "follow_cron_interval", "repeat_as_clock_falls_back"
 }
 
 // dstSchedule gives fixed-time schedules the daylight-saving behaviour of

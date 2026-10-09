@@ -127,6 +127,7 @@ func automationHealthResponse(appSlug, name string, after, before time.Time, hea
 		AppSlug: appSlug, AutomationName: name, WindowStart: after, WindowEnd: before,
 		RunCount: health.RunCount, CompletedRunCount: health.CompletedRunCount,
 		ActiveRunCount: health.ActiveRunCount, QueuedRunCount: health.QueuedRunCount,
+		Queue:       health.Queue,
 		SuccessRate: successRate, StatusCounts: health.StatusCounts,
 		P50DurationMS: health.P50DurationMS, P95DurationMS: health.P95DurationMS,
 		FailedSteps: make([]api.AutomationHealthStepFailure, 0, len(health.FailedSteps)),

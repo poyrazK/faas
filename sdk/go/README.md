@@ -30,9 +30,10 @@ go get github.com/poyrazK/faas/sdk/go
 ```
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
-at the moment of extraction). The daemon's `go.mod` is `go 1.26.9`,
-but the SDK stays on 1.23 so a customer pinned to an older Go
-toolchain can still consume it.
+at the moment of extraction). The daemon's `go.mod` targets Go 1.26.0
+and selects Go 1.26.9 as its toolchain; the SDK
+stays on 1.23 so a customer pinned to an older Go toolchain can still
+consume it.
 
 The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)

@@ -3,10 +3,10 @@
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema v2 — required by golangci-lint >= v2.0. Action v9 pins v2.9.0
-# which is built with Go 1.26 and supports our go.mod's 'go 1.26.9'
-# directive (an older binary rejects a newer target language version —
-# see golangci/golangci-lint#5873).
+# Schema v2 — required by golangci-lint >= v2.0. CI pins v2.14.0, built
+# with Go 1.26 to support the repository's 'go 1.26.0' directive (v1.x was
+# built with Go 1.23 and rejected newer go directives — see
+# golangci/golangci-lint#5873).
 version: "2"
 
 # Disable default linters — explicit allow-list below.
@@ -126,11 +126,8 @@ linters:
     #     helper or carry a //nolint:forbidigo comment with a
     #     documented reason reviewed in the PR
     #
-    # NOTE on local noise: golangci-lint 2.12.x (Homebrew default)
-    # ships a default forbidigo rule banning fmt.Print*; the action
-    # pins v2.9.0 which does NOT include that default. Local `make
-    # lint` may report fmt.Print* findings that CI will not — these
-    # are pre-existing on main and unrelated to this PR.
+    # Keep the forbidigo policy explicit here so local and CI runs use
+    # the same repository-specific rules across linter releases.
     forbidigo:
       # Don't analyze godoc — stdlib only, no test fixtures in docs.
       exclude-godoc-examples: false
@@ -203,10 +200,8 @@ linters:
     # that DO matter here (hardcoded secrets, SQL injection, weak crypto, TLS
     # config, bind-all, etc.) stay active.
     #
-    # NOTE: only rule IDs present in the pinned golangci-lint gosec ruleset
-    # are valid here — the action runs `config verify` (strict JSON-schema). The
-    # experimental taint rules (G118/G703/G704/G705) did not exist at v2.4.0, so
-    # they never fire and must not be listed. Revisit this list when the pin bumps.
+    # Keep exclusions aligned with the gosec ruleset bundled in the pinned
+    # golangci-lint release. Review new taint rules before adding exclusions.
     gosec:
       excludes:
         - G101 # hardcoded credentials: spec §11 names (CodePlanLimitSecrets, SecretKeyPattern, secretsEnvPath) are stable identifiers, not secrets
@@ -217,7 +212,6 @@ linters:
         - G304 # file path from variable — blanket-disabled because every site opens paths derived from vetted slot/instance ids (vmmd/imaged/builderd) or pkg/-owned caches (wire/snapshot). Re-enabled per-path for cmd/faas/ in the exclusions.rules block below, since the CLI is the only surface that takes customer-supplied paths.
         - G306 # WriteFile perms >0600: rootfs image contents (0644 data, 0755 executables) MUST be group/other readable/executable inside the guest
         - G404 # weak RNG: only used for retry-backoff jitter (pkg/mail/retry.go); no security boundary; crypto/rand would only add latency without changing attack surface
-        - G602 # slice index out of range: the gosec in v2.9.0 flags constant indexes into buffers io.ReadFull has just filled (vsock hook acks, framed reads); every flagged site was a fixed-length read. Bounds are still enforced at run time by the Go runtime
 
   # Per-path exclusions for noisy linters on tests, plus the
   # generated-protobuf and metal-test files. The v2 schema puts
@@ -229,17 +223,6 @@ linters:
       - ".*\\.pb\\.go$"          # generated protobufs
       - ".*_grpc\\.pb\\.go$"     # generated gRPC stubs
     rules:
-      # x/net v0.60.0 (the GO-2026-6617 fix, Go 1.26.9) deprecated its HTTP/2
-      # client and server entry points in favour of net/http's Go 1.26 HTTP/2
-      # API. Moving the gateway h2c ingress, the vmmd stream bridge and the
-      # dev bridge onto net/http is a separate change that needs metal
-      # evidence; until then only notices that name http2 or point at net/http
-      # are silenced, in the packages that use x/net/http2. Every other SA1019
-      # still fires.
-      - path: "(cmd/(vmmd-stream-bridge|e2e|gatewayd-internal)|guest/runners/internal|pkg/(devbridge|gateway|vmmdgrpc))/"
-        linters:
-          - staticcheck
-        text: "SA1019: .*(http2\\.|is deprecated: Use \\[http\\.)"
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests

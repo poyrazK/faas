@@ -62,12 +62,11 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # so images/Dockerfile.lock has a literal "golang:1.26.9" alias to
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
-# BuildKit v0.32.x requires Go 1.26.3 or newer, and guest-init needs the
-# go.mod `go 1.26.9` directive (the official image sets GOTOOLCHAIN=local).
-# 1.26.9 also keeps the builder off GO-2026-6617 and the earlier stdlib
-# advisories; the repo's `tool` directive also rejects older
-# toolchains with `unknown directive: tool` (verified during PR #940
-# review).
+# BuildKit v0.32.x requires Go 1.26.3 or newer. 1.26.9 matches the
+# repository's toolchain directive and keeps guest-init, runc and the
+# BuildKit client off GO-2026-6617 and the earlier stdlib advisories.
+# The repo's `tool` directive also rejects older toolchains with
+# `unknown directive: tool` (verified during PR #940 review).
 
 # ---- stage 1: build guest-init for the target arch -----------------------
 # Image registry digest pinned via images/Dockerfile.lock; make

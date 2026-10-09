@@ -34,10 +34,17 @@ func adviseWillNeed(path string, ranges []fileRange) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	return adviseRanges(int(f.Fd()), ranges, unix.Fadvise)
+}
+
+// adviseRanges submits each range in bounded chunks. FADV_WILLNEED is
+// asynchronous and advisory, so callers must not assume every requested page
+// remains resident after this helper returns.
+func adviseRanges(fd int, ranges []fileRange, fadvise func(int, int64, int64, int) error) error {
 	for _, r := range ranges {
 		for off := r.Off; off < r.Off+r.Len; off += adviseChunk {
 			n := min(int64(adviseChunk), r.Off+r.Len-off)
-			if err := unix.Fadvise(int(f.Fd()), off, n, unix.FADV_WILLNEED); err != nil {
+			if err := fadvise(fd, off, n, unix.FADV_WILLNEED); err != nil {
 				return fmt.Errorf("fadvise %d+%d: %w", off, n, err)
 			}
 		}

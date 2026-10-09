@@ -164,6 +164,12 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 			return receipt, true, ErrWebhookAutomationUnavailable
 		}
 	}
+	for i := range recipients {
+		recipients[i].DeploymentID = dep.ID
+	}
+	if err := m.pinWorkflowEventRecipientsLocked(recipients); err != nil {
+		return receipt, true, err
+	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return receipt, true, err

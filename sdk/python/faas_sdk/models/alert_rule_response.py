@@ -49,7 +49,8 @@ class AlertRuleResponse:
     action: AlertRuleResponseAction = "webhook"
     """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
-    promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only."""
+    promote = short-circuit the canary ladder to 100%. Pre-auth target and workflow metrics support webhook only.
+   """
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""

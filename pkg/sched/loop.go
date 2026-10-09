@@ -15,11 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,7 +118,6 @@ type Loop struct {
 	// without Run (tests) still dispatches.
 	work                        *workPool
 	workOnce                    sync.Once
-	workflowDispatchCursor      atomic.Uint32
 	eventFanoutLastPrune        time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
@@ -3527,15 +3526,21 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 // executor seam. Unlike the legacy Invoke method it returns the downstream
 // HTTP status, which is required for durable retry classification.
 func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+	status, body, _, err := h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+	return status, body, err
 }
 
 func (h *httpGatewaySynth) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+	status, body, _, err := h.ExecuteWorkflowStepWithRetryAfter(ctx, appID, identity, path, method, headers, body, timeout, operationID, generation)
+	return status, body, err
+}
+
+func (h *httpGatewaySynth) ExecuteWorkflowStepWithRetryAfter(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, time.Time, error) {
 	if identity.RunID == "" || strings.TrimSpace(headers["X-Faas-Workflow-Run-Id"]) != identity.RunID {
-		return 0, nil, errors.New("sched: workflow run metadata does not match persisted identity")
+		return 0, nil, time.Time{}, errors.New("sched: workflow run metadata does not match persisted identity")
 	}
 	if operationID == "" && generation != 0 || operationID != "" && generation < 1 {
-		return 0, nil, errors.New("sched: invalid managed workflow operation context")
+		return 0, nil, time.Time{}, errors.New("sched: invalid managed workflow operation context")
 	}
 	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, identity)
 }
@@ -3544,18 +3549,28 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 	if operationID == "" || generation < 1 {
 		return 0, nil, errors.New("sched: invalid managed workflow operation context")
 	}
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
+	status, body, _, err := h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
+	return status, body, err
 }
 
-func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, error) {
+func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if identity.DeploymentID != "" {
+		// An older gateway understands exact revision selection and either
+		// executes that code or rejects it. It cannot silently select latest.
+		headers = maps.Clone(headers)
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.RevisionHeader] = identity.DeploymentID
+	}
 	headerBytes, err := json.Marshal(headers)
 	if err != nil {
-		return 0, nil, fmt.Errorf("sched: workflow headers: %w", err)
+		return 0, nil, time.Time{}, fmt.Errorf("sched: workflow headers: %w", err)
 	}
 	inv := state.Invocation{
 		ID:                         "workflow-" + middleware.NewRequestID(),
@@ -3572,9 +3587,9 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 	}
 	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, time.Time{}, err
 	}
-	return statusCode, out.Result, nil
+	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
 }
 
 func boolToProtocolVersion(enabled bool) int {
@@ -3713,6 +3728,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		Result      json.RawMessage `json:"result"`
 		StatusCode  int             `json:"status_code"`
 		OutcomeCode string          `json:"outcome_code"`
+		RetryAfter  string          `json:"retry_after"`
 	}
 	responseLimit := int64(gatewayInvocationResponseMaxBytes)
 	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" || state.InvocationHasOperation(inv) {
@@ -3730,6 +3746,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		inv.Result = append(json.RawMessage(nil), out.Result...)
 	}
 	inv.OutcomeCode = out.OutcomeCode
+	inv.ResponseRetryAfter = out.RetryAfter
 	if out.StatusCode == 0 {
 		out.StatusCode = http.StatusOK
 	}
@@ -3996,16 +4013,17 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
 		}
 	})
-	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
-	l.submitWork(workWorkflowDispatch, key, func() {
-		orch := l.workflowOrch
-		if orch == nil {
-			orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
-		}
-		if err := orch.DispatchTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
-		}
-	})
+	for slot := range api.WorkflowDispatchSlots {
+		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			orch := l.workflowOrch
+			if orch == nil {
+				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+			}
+			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
+				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
+			}
+		})
+	}
 }
 
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {

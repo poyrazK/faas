@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,6 +40,21 @@ func (r *WorkflowRetention) SweepOnce(ctx context.Context) error {
 		return err
 	}
 
+	historyDeleted := 0
+	if history, ok := r.store.(state.WorkflowScheduleHistoryStore); ok {
+		before := time.Now().UTC().Add(-api.WorkflowScheduleHistoryRetention)
+		for {
+			n, err := history.PruneWorkflowScheduleOccurrences(ctx, before, api.WorkflowScheduleHistoryPruneBatch)
+			if err != nil {
+				return err
+			}
+			historyDeleted += n
+			if n < api.WorkflowScheduleHistoryPruneBatch {
+				break
+			}
+		}
+	}
+
 	// 90-day age threshold for events of terminal runs only.
 	eventsDeleted, err := r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
 	if err != nil {
@@ -48,8 +64,8 @@ func (r *WorkflowRetention) SweepOnce(ctx context.Context) error {
 		return err
 	}
 
-	if (runsDeleted > 0 || eventsDeleted > 0) && r.log != nil {
-		r.log.Info("workflow retention: sweep complete", "runs_deleted", runsDeleted, "events_deleted", eventsDeleted)
+	if (runsDeleted > 0 || eventsDeleted > 0 || historyDeleted > 0) && r.log != nil {
+		r.log.Info("workflow retention: sweep complete", "runs_deleted", runsDeleted, "events_deleted", eventsDeleted, "schedule_occurrences_deleted", historyDeleted)
 	}
 
 	return nil

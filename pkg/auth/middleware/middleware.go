@@ -802,6 +802,9 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" {
 			return true
 		}
+		if method == http.MethodGet && len(parts) == 6 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" && parts[5] == "preview" {
+			return true
+		}
 		if method == http.MethodPut && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" {
 			return true
 		}
@@ -835,7 +838,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return method == http.MethodPost
 		}
 		if len(parts) == 4 && parts[2] != "" {
-			return (parts[3] == "callbacks" && method == http.MethodGet) ||
+			return ((parts[3] == "callbacks" || parts[3] == "diagnostics") && method == http.MethodGet) ||
 				(parts[3] == "events" && method == http.MethodPost)
 		}
 		if len(parts) == 5 && parts[2] != "" && parts[3] == "callbacks" && parts[4] != "" {

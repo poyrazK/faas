@@ -17,6 +17,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+func routeHealthFixtureWindows() []api.RouteHealthWindowEvidence {
+	// PostgreSQL reads its own wall clock after fixture setup. The 30-second
+	// ingestion lag can advance the closed-minute window set in between, so
+	// seed both adjacent sets and dedupe their overlapping window starts.
+	now := time.Now()
+	windows := routehealth.Windows(now)
+	seen := make(map[time.Time]struct{}, len(windows))
+	for _, window := range windows {
+		seen[window.Start] = struct{}{}
+	}
+	for _, window := range routehealth.Windows(now.Add(api.RouteHealthWindow)) {
+		if _, ok := seen[window.Start]; ok {
+			continue
+		}
+		windows = append(windows, window)
+		seen[window.Start] = struct{}{}
+	}
+	return windows
+}
+
 func TestPgCustomerHealthMaskedRegressionAndHistoricalAttribution(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
@@ -64,7 +84,7 @@ func TestPgCustomerHealthMaskedRegressionAndHistoricalAttribution(t *testing.T) 
 		t.Fatal(err)
 	}
 	q := &sqlc.Queries{}
-	windows := routehealth.Windows(time.Now())
+	windows := routeHealthFixtureWindows()
 	insert := func(dep, customer, tenantID, route, method string, count, status, latency int32, at time.Time) {
 		t.Helper()
 		p := sqlc.InsertRequestTelemetryParams{AccountID: mustPgUUID(t, a.ID), AppID: mustPgUUID(t, app.ID), DeploymentID: mustPgUUID(t, dep), Route: route, Method: method, Status: status, LatencyMs: latency, ReceivedAt: state.NewPgtypeTime(at), Count: count, UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__", GuestRuntime: "__unknown__", GuestOutcome: "missing", FlagEvidenceJson: "[]"}

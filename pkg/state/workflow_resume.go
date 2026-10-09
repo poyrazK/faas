@@ -83,30 +83,30 @@ func checkWorkflowGenerationTx(ctx context.Context, db sqlc.DBTX, id string) err
 func workflowResumePlan(run WorkflowRun, steps map[string]WorkflowStep, expected int, plan api.Plan) (api.WorkflowSpec, []string, error) {
 	var spec api.WorkflowSpec
 	if expected < 0 || run.ResumeCount != expected || (run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
-		return spec, nil, ErrWorkflowResumeConflict
+		return spec, nil, workflowResumeBlocked("run_not_failed", "", ErrWorkflowResumeConflict)
 	}
 	if run.ResumeCount >= api.WorkflowRunMaxResumes {
-		return spec, nil, ErrWorkflowResumeLimit
+		return spec, nil, workflowResumeBlocked("resume_limit_reached", "", ErrWorkflowResumeLimit)
 	}
 	if run.CancelledAt != nil || run.LastError != nil && *run.LastError == "cancelled by operator" {
-		return spec, nil, ErrWorkflowResumeUnsafe
+		return spec, nil, workflowResumeBlocked("cancelled", "", ErrWorkflowResumeUnsafe)
 	}
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
-		return spec, nil, ErrWorkflowResumeUnsafe
+		return spec, nil, workflowResumeBlocked("invalid_definition", "", ErrWorkflowResumeUnsafe)
 	}
 	if _, err := api.ValidateWorkflowDAG(spec, plan); err != nil {
-		return spec, nil, ErrWorkflowResumeUnsafe
+		return spec, nil, workflowResumeBlocked("invalid_definition", "", ErrWorkflowResumeUnsafe)
 	}
 	for _, action := range spec.Steps {
 		step, exists := steps[action.Name]
 		if !exists || step.ForEachParent != nil {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("incomplete_step_state", action.Name, ErrWorkflowResumeUnsafe)
 		}
 		if action.ForEach != nil && step.ForEachCount != nil {
 			for index := range *step.ForEachCount {
 				child, ok := steps[api.WorkflowForEachItemName(action.Name, index)]
 				if !ok || child.ForEachParent == nil || *child.ForEachParent != action.Name || child.ForEachIndex == nil || *child.ForEachIndex != index {
-					return spec, nil, ErrWorkflowResumeUnsafe
+					return spec, nil, workflowResumeBlocked("incomplete_step_state", action.Name, ErrWorkflowResumeUnsafe)
 				}
 			}
 		}
@@ -134,26 +134,27 @@ func workflowResumePlan(run WorkflowRun, steps map[string]WorkflowStep, expected
 		}
 	}
 	reset := map[string]bool{}
-	for name, step := range steps {
+	for _, name := range sortedWorkflowStepNames(steps) {
+		step := steps[name]
 		if step.Status == WorkflowStepStatusSkipped && step.SkipReason == nil {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("incomplete_step_state", name, ErrWorkflowResumeUnsafe)
 		}
 		if step.Status == WorkflowStepStatusRunning || step.Status == WorkflowStepStatusAwaitingEvent {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("active_step", name, ErrWorkflowResumeUnsafe)
 		}
 		if routed[name] && (step.Attempt > 0 || step.Status == WorkflowStepStatusSucceeded || step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead) {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("handler_executed", name, ErrWorkflowResumeUnsafe)
 		}
 		if step.Status != WorkflowStepStatusFailed && step.Status != WorkflowStepStatusDead {
 			continue
 		}
 		action := api.WorkflowRuntimeStep(run.DefinitionSnapshot, name)
 		if action == nil {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("incomplete_step_state", name, ErrWorkflowResumeUnsafe)
 		}
 		if action.ForEach != nil {
 			if step.ForEachCount == nil {
-				return spec, nil, ErrWorkflowResumeUnsafe
+				return spec, nil, workflowResumeBlocked("incomplete_step_state", name, ErrWorkflowResumeUnsafe)
 			}
 			found := false
 			for _, child := range steps {
@@ -162,22 +163,25 @@ func workflowResumePlan(run WorkflowRun, steps map[string]WorkflowStep, expected
 				}
 			}
 			if !found {
-				return spec, nil, ErrWorkflowResumeUnsafe
+				return spec, nil, workflowResumeBlocked("incomplete_step_state", name, ErrWorkflowResumeUnsafe)
 			}
-		} else if step.Attempt == 0 || action.WaitForCondition != nil || action.WaitForCallback || action.WaitForEvent != "" || action.WaitForDuration > 0 || action.Join != nil || (action.Run == "" && action.Path == "" && action.Outbound == nil) {
-			return spec, nil, ErrWorkflowResumeUnsafe
+		} else if action.WaitForCondition != nil || action.WaitForCallback || action.WaitForEvent != "" || action.WaitForDuration > 0 || action.Join != nil || (action.Run == "" && action.Path == "" && action.Outbound == nil) {
+			return spec, nil, workflowResumeBlocked("failed_control_step", name, ErrWorkflowResumeUnsafe)
+		} else if step.Attempt == 0 {
+			return spec, nil, workflowResumeBlocked("failure_before_dispatch", name, ErrWorkflowResumeUnsafe)
 		}
 		if action.Outbound != nil && step.Attempt > 0 && !action.Outbound.SafeToRepeat() {
-			return spec, nil, ErrWorkflowResumeUnsafe
+			return spec, nil, workflowResumeBlocked("unsafe_mutation", name, ErrWorkflowResumeUnsafe)
 		}
 		reset[name] = true
 	}
 	if len(reset) == 0 {
-		return spec, nil, ErrWorkflowResumeUnsafe
+		return spec, nil, workflowResumeBlocked("no_failed_actions", "", ErrWorkflowResumeUnsafe)
 	}
 	for changed := true; changed; {
 		changed = false
-		for name, step := range steps {
+		for _, name := range sortedWorkflowStepNames(steps) {
+			step := steps[name]
 			if reset[name] || step.Status != WorkflowStepStatusSkipped || step.SkipReason == nil {
 				continue
 			}
@@ -185,7 +189,7 @@ func workflowResumePlan(run WorkflowRun, steps map[string]WorkflowStep, expected
 			if step.ForEachParent == nil && (*step.SkipReason == WorkflowSkipDependencyFailed || *step.SkipReason == WorkflowSkipDependencySkipped) {
 				action := api.WorkflowRuntimeStep(run.DefinitionSnapshot, name)
 				if action == nil {
-					return spec, nil, ErrWorkflowResumeUnsafe
+					return spec, nil, workflowResumeBlocked("incomplete_step_state", name, ErrWorkflowResumeUnsafe)
 				}
 				for _, dep := range action.DependsOn {
 					affected = affected || reset[dep]
@@ -234,17 +238,8 @@ func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptio
 	if opts.PlatformTenantID != "" && run.PlatformTenantID != opts.PlatformTenantID {
 		return nil, nil, 0, ErrWorkflowRunNotFound
 	}
-	if !account.Active() || !account.Plan.WorkflowsAllowed() || app.Status == AppDeleted || app.MaintenanceMode || app.PlatformTenantRequired && run.PlatformTenantID == "" {
-		return nil, nil, 0, ErrWorkflowResumeUnavailable
-	}
-	live := false
-	for _, dep := range m.deployments {
-		if dep.AppID == app.ID && dep.Status == "live" && dep.Scope == "default" {
-			live = true
-		}
-	}
-	if !live {
-		return nil, nil, 0, ErrWorkflowResumeUnavailable
+	if err := workflowRecoveryTargetError(run, m.workflowRecoveryTargetLocked(run)); err != nil {
+		return nil, nil, 0, err
 	}
 	spec, names, err := workflowResumePlan(run, m.workflowSteps[run.ID], opts.ExpectedResumeCount, account.Plan)
 	if err != nil {
