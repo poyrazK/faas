@@ -3931,11 +3931,18 @@ gregale jobs registry set --interactive
 
 Remove a registry credential from the job
 
-`gregale jobs registry rm --registry <HOST> <job>`
+`gregale jobs registry rm [--interactive] [--registry <HOST>] [<job>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--registry <HOST>` | registry host | required |
+| `--interactive` | choose a credential, review metadata, and confirm removal |  |
+| `--registry <HOST>` | registry host (required unless interactive) |  |
+
+Examples:
+
+```sh
+gregale jobs registry rm --interactive
+```
 
 
 ## automations

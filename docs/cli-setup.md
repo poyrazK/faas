@@ -784,6 +784,22 @@ terminal reader, and terminal echo is restored before the write request.
 Token contents are not printed. For scripts, use the existing explicit command
 with `--password-stdin`.
 
+## Remove a Job registry credential interactively
+
+```sh
+gregale jobs registry rm --interactive
+```
+
+Pick a Job and credential, then review the host, username, creation/update times,
+and last-used time. Confirm removal after reviewing the effect on future private
+image pulls. No password or token is retrieved or shown.
+
+The CLI rereads Job identity and selected credential metadata before deletion.
+Changed credentials stop the flow, while an already removed credential skips
+the deletion. Last-use timestamp updates alone do not block removal. This is a
+client-side check, not an atomic server lock. Explicit
+`jobs registry rm JOB --registry HOST` remains available for scripts.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

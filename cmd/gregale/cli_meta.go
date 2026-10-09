@@ -1557,8 +1557,8 @@ var cliCommands = []cliCommand{
 					{Name: "password-stdin", Short: "read the password from stdin"},
 					{Name: "password", Short: "registry password (prefer --password-stdin)", Value: "PASSWORD"},
 				}},
-				{Name: "rm", Short: "Remove a registry credential from the job", Positionals: []string{"<job>"}, Flags: []cliFlag{
-					{Name: "registry", Short: "registry host", Value: "HOST", Req: true},
+				{Name: "rm", Short: "Remove a registry credential from the job", Positionals: []string{"[<job>]"}, Examples: []string{"gregale jobs registry rm --interactive"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a credential, review metadata, and confirm removal"},
+					{Name: "registry", Short: "registry host (required unless interactive)", Value: "HOST"},
 				}},
 			}},
 		},
