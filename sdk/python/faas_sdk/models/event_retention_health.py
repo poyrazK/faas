@@ -29,6 +29,9 @@ class EventRetentionHealth:
     """Settled receipts missing a settlement timestamp; expiry cannot be determined."""
     unsettled_receipts: int
     held_receipts: int
+    recovery_holds: int
+    """Settled receipts primarily held by opted-in active recovery jobs with pending items. Backfill holds take
+    precedence."""
     running_backfill_holds: int
     retryable_backfill_holds: int
     held_due_receipts: int
@@ -58,6 +61,8 @@ class EventRetentionHealth:
         unsettled_receipts = self.unsettled_receipts
 
         held_receipts = self.held_receipts
+
+        recovery_holds = self.recovery_holds
 
         running_backfill_holds = self.running_backfill_holds
 
@@ -101,6 +106,7 @@ class EventRetentionHealth:
                 "unknown_deadline_receipts": unknown_deadline_receipts,
                 "unsettled_receipts": unsettled_receipts,
                 "held_receipts": held_receipts,
+                "recovery_holds": recovery_holds,
                 "running_backfill_holds": running_backfill_holds,
                 "retryable_backfill_holds": retryable_backfill_holds,
                 "held_due_receipts": held_due_receipts,
@@ -140,6 +146,8 @@ class EventRetentionHealth:
         unsettled_receipts = d.pop("unsettled_receipts")
 
         held_receipts = d.pop("held_receipts")
+
+        recovery_holds = d.pop("recovery_holds")
 
         running_backfill_holds = d.pop("running_backfill_holds")
 
@@ -185,6 +193,7 @@ class EventRetentionHealth:
             unknown_deadline_receipts=unknown_deadline_receipts,
             unsettled_receipts=unsettled_receipts,
             held_receipts=held_receipts,
+            recovery_holds=recovery_holds,
             running_backfill_holds=running_backfill_holds,
             retryable_backfill_holds=retryable_backfill_holds,
             held_due_receipts=held_due_receipts,

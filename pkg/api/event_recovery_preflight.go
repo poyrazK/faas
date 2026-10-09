@@ -16,6 +16,7 @@ type EventRecoveryPreflightItem struct {
 	CapacityScope        string     `json:"capacity_scope,omitempty"`
 }
 type EventRecoveryPreflight struct {
+	ReceiptProtectionUntil              *time.Time                   `json:"receipt_protection_until,omitempty"`
 	ReceiptRetentionWarningCount        int64                        `json:"receipt_retention_warning_count,omitempty"`
 	ReceiptRetentionHeldCount           int64                        `json:"receipt_retention_held_count,omitempty"`
 	EarliestUnheldRetainUntil           *time.Time                   `json:"earliest_unheld_retain_until,omitempty"`

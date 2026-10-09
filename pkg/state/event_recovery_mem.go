@@ -464,3 +464,21 @@ func (m *MemStore) PruneEventRecoveries(ctx context.Context, now time.Time, limi
 func memEventRecoveryIdentity(progress PublishedEventRecipientProgress) ([]byte, error) {
 	return json.Marshal(PublishedEventRecipientProgress{State: progress.State, Attempts: progress.Attempts, UpdatedAt: progress.UpdatedAt, FailureCode: progress.FailureCode, Retryable: progress.Retryable})
 }
+
+// eventRecoveryReceiptHoldsLocked observes immutable opt-ins and pending items.
+// The expiry check releases holds even if a worker has not finalized the job.
+// An empty account selects all accounts for the global receipt pruner.
+func (m *MemStore) eventRecoveryReceiptHoldsLocked(account string, now time.Time) map[int64]struct{} {
+	holds := map[int64]struct{}{}
+	for _, job := range m.eventRecoveryJobs {
+		if account != "" && !sameMemUUID(job.AccountID, account) || !job.Job.Selection.ProtectReceipts || !eventRecoveryActive(job.Job.State) || !job.Job.ExpiresAt.After(now) {
+			continue
+		}
+		for _, item := range job.Items {
+			if item.State == "pending" {
+				holds[item.OutboxID] = struct{}{}
+			}
+		}
+	}
+	return holds
+}

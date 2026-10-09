@@ -45,11 +45,14 @@ class EventRecoveryPreflight:
     """Active job and optimistic earliest drain strictly precedes expiry; true is not a guarantee of completion."""
     assumes_immediate_resume: bool
     sample: list[EventRecoveryPreflightItem]
+    receipt_protection_until: datetime.datetime | Unset = UNSET
+    """This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted
+    after expiry or terminal state; does not protect execution history or extend delivery deadlines."""
     receipt_retention_warning_count: int | Unset = UNSET
     """Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and
     optimistic drain."""
     receipt_retention_held_count: int | Unset = UNSET
-    """Pending items currently pinned by a backfill."""
+    """Pending items with known nominal deadlines currently held by backfill or recovery."""
     earliest_unheld_retain_until: datetime.datetime | Unset = UNSET
     minimum_drain_crosses_receipt_retention: bool | Unset = UNSET
     """Rate-only optimistic drain reaches or exceeds the earliest currently unheld receipt boundary; false is not a
@@ -95,6 +98,10 @@ class EventRecoveryPreflight:
             sample_item = sample_item_data.to_dict()
             sample.append(sample_item)
 
+        receipt_protection_until: str | Unset = UNSET
+        if not isinstance(self.receipt_protection_until, Unset):
+            receipt_protection_until = self.receipt_protection_until.isoformat()
+
         receipt_retention_warning_count = self.receipt_retention_warning_count
 
         receipt_retention_held_count = self.receipt_retention_held_count
@@ -129,6 +136,8 @@ class EventRecoveryPreflight:
                 "sample": sample,
             }
         )
+        if receipt_protection_until is not UNSET:
+            field_dict["receipt_protection_until"] = receipt_protection_until
         if receipt_retention_warning_count is not UNSET:
             field_dict["receipt_retention_warning_count"] = receipt_retention_warning_count
         if receipt_retention_held_count is not UNSET:
@@ -188,6 +197,13 @@ class EventRecoveryPreflight:
 
             sample.append(sample_item)
 
+        _receipt_protection_until = d.pop("receipt_protection_until", UNSET)
+        receipt_protection_until: datetime.datetime | Unset
+        if isinstance(_receipt_protection_until, Unset):
+            receipt_protection_until = UNSET
+        else:
+            receipt_protection_until = datetime.datetime.fromisoformat(_receipt_protection_until)
+
         receipt_retention_warning_count = d.pop("receipt_retention_warning_count", UNSET)
 
         receipt_retention_held_count = d.pop("receipt_retention_held_count", UNSET)
@@ -220,6 +236,7 @@ class EventRecoveryPreflight:
             fits_before_expiry=fits_before_expiry,
             assumes_immediate_resume=assumes_immediate_resume,
             sample=sample,
+            receipt_protection_until=receipt_protection_until,
             receipt_retention_warning_count=receipt_retention_warning_count,
             receipt_retention_held_count=receipt_retention_held_count,
             earliest_unheld_retain_until=earliest_unheld_retain_until,

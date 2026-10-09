@@ -1887,7 +1887,7 @@ Inspect delivery pause, pacing, and oldest waiting event
 
 Preview a bounded selection of failed event consumers
 
-`gregale events recovery-preview [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--rate <N>] <app>`
+`gregale events recovery-preview [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1899,13 +1899,14 @@ Preview a bounded selection of failed event consumers
 | `--failure-code <CODE>` | filter by failure classification |  |
 | `--min-age <DURATION>` | minimum failure age in whole seconds |  |
 | `--include-non-retryable` | include failures classified as non-retryable |  |
+| `--protect-receipts` | hold pending receipts until admission or job expiry; preview creates no holds |  |
 | `--rate <N>` | maximum retries per second (1..100; default 10) |  |
 
 ### events recovery-create
 
 Create a durable bulk recovery job
 
-`gregale events recovery-create [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--rate <N>] [--reason <TEXT>] --yes <app>`
+`gregale events recovery-create [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] [--reason <TEXT>] --yes <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1917,6 +1918,7 @@ Create a durable bulk recovery job
 | `--failure-code <CODE>` | filter by failure classification |  |
 | `--min-age <DURATION>` | minimum failure age in whole seconds |  |
 | `--include-non-retryable` | include failures classified as non-retryable |  |
+| `--protect-receipts` | hold pending receipts until admission or job expiry; preview creates no holds |  |
 | `--rate <N>` | maximum retries per second (1..100; default 10) |  |
 | `--reason <TEXT>` | optional operator reason (at most 512 bytes) |  |
 | `--yes` | confirm creating a recovery job | required |

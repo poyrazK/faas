@@ -20,6 +20,10 @@ type EventRecoveryPreflightStore interface {
 
 func newRecoveryPreflight(job api.EventRecoveryJob, now, next, window time.Time, spent int) api.EventRecoveryPreflight {
 	out := api.EventRecoveryPreflight{JobID: job.ID, ObservedAt: now, State: job.State, Active: eventRecoveryActive(job.State) && job.ExpiresAt.After(now), RatePerSecond: job.RatePerSecond, RemainingLifetimeSeconds: max(0, job.ExpiresAt.Sub(now).Seconds()), ReasonCounts: map[string]int64{}, CapacityScopes: map[string]int64{}, Sample: []api.EventRecoveryPreflightItem{}}
+	if job.Selection.ProtectReceipts && out.Active {
+		until := job.ExpiresAt
+		out.ReceiptProtectionUntil = &until
+	}
 	out.AssumesImmediateResume = job.State == "paused" && out.Active
 	pending := job.PendingCount
 	finish := now
@@ -259,6 +263,7 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 	for _, work := range m.eventFanout {
 		receipts[work.ID] = work
 	}
+	holds := m.eventRecoveryReceiptHoldsLocked(account, now)
 	capacity := m.preflightCapacityLocked(job)
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
@@ -274,13 +279,14 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 			at := work.DeliveredAt.Add(PublishedEventIdentityRetention)
 			until = &at
 		}
-		addRecoveryReceiptRetention(&out, item.Position, until, false)
+		_, held := holds[item.OutboxID]
+		addRecoveryReceiptRetention(&out, item.Position, until, held)
 	}
 	return out, nil
 }
 
-// Retention is independent of the recovery job's expiry. Current backfill holds
-// are observations, not a promise that the pin lasts through admission.
+// Holds are current observations. Recovery protection is bounded by job expiry
+// and pending-item state; other jobs and backfills can release their holds.
 func addRecoveryReceiptRetention(out *api.EventRecoveryPreflight, position int64, until *time.Time, held bool) {
 	if until == nil {
 		return

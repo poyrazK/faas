@@ -908,7 +908,7 @@ WITH slots AS MATERIALIZED (
 )
 SELECT item.position,acct.plan,
  (o.delivered_at + $1::bigint * interval '1 second')::timestamptz AS receipt_retain_until,
- coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz)<>'',false)::boolean AS receipt_retention_held,
+ coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz,$3::timestamptz)<>'',false)::boolean AS receipt_retention_held,
  CASE WHEN app.status='deleted' THEN 'target_unavailable'
  WHEN j.selection->>'mode'='execution' THEN CASE
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer

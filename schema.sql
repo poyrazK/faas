@@ -3446,12 +3446,26 @@ $$;
 CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone) RETURNS text
     LANGUAGE sql STABLE
     AS $$
+ SELECT event_receipt_retention_hold(p_account,p_outbox,p_accepted,p_job_cutoff,CURRENT_TIMESTAMP);
+$$;
+
+
+--
+-- Name: event_receipt_retention_hold(uuid, bigint, timestamp with time zone, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone, p_now timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
  SELECT CASE
  WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='running'
   AND p_accepted>=j.from_at AND p_accepted<j.cutoff_at) THEN 'backfill_running'
  WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='completed_with_failures'
   AND j.completed_at>=p_job_cutoff AND EXISTS (SELECT 1 FROM event_replay_job_items i
    WHERE i.job_id=j.id AND i.outbox_id=p_outbox AND i.state='failed' AND i.retryable)) THEN 'backfill_retryable'
+ WHEN EXISTS (SELECT 1 FROM event_recovery_items i JOIN event_recovery_jobs j ON j.id=i.job_id
+  WHERE i.outbox_id=p_outbox AND i.state='pending' AND j.account_id=p_account
+   AND j.selection->'protect_receipts'='true'::jsonb AND j.state IN ('running','paused') AND j.expires_at>p_now) THEN 'recovery_pending'
  ELSE '' END;
 $$;
 
@@ -15719,7 +15733,8 @@ CREATE TABLE public.event_recovery_jobs (
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
     CONSTRAINT event_recovery_jobs_wait_reason_check CHECK ((wait_reason = ANY (ARRAY[''::text, 'capacity'::text, 'legacy_claim'::text]))),
-    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100)))
+    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
+    CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
 );
 
 
@@ -32224,6 +32239,13 @@ CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_out
 
 
 --
+-- Name: event_fanout_outbox_account_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_retention_idx ON public.event_fanout_outbox USING btree (account_id, delivered_at, id) WHERE (state = 'delivered'::text);
+
+
+--
 -- Name: event_fanout_outbox_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32298,6 +32320,13 @@ CREATE INDEX event_recovery_history_job_idx ON public.event_recovery_history USI
 --
 
 CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USING btree (job_id, "position") WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_receipt_hold_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
 
 
 --

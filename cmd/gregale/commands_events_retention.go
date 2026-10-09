@@ -42,6 +42,7 @@ func cmdEventsRetention(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Retained: %d receipts / %d bytes | unsettled: %d | unknown deadlines: %d\nEligible for pruning: %d | expiring within %s: %d | held: %d (overdue: %d)\nAccount storage: count %.1f%% | bytes %.1f%% | maximum %.1f%%\n", out.RetainedReceipts, out.RetainedBytes, out.UnsettledReceipts, out.UnknownDeadlineReceipts, out.EligibleForPruning, time.Duration(out.WindowSeconds)*time.Second, out.ExpiringReceipts, out.HeldReceipts, out.HeldDueReceipts, out.StorageCountUtilizationPct, out.StorageBytesUtilizationPct, out.StorageUtilizationPct)
+	_, _ = fmt.Fprintf(osStdout, "Holds: running backfill %d | retryable backfill %d | pending recovery %d\n", out.RunningBackfillHolds, out.RetryableBackfillHolds, out.RecoveryHolds)
 	for _, sample := range out.Sample {
 		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", sample.RetainUntil.Format(time.RFC3339), oneLine(sample.EventSource), oneLine(sample.EventID), sample.Status, sample.HoldReason)
 	}

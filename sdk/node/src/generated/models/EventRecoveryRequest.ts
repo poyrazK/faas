@@ -23,6 +23,10 @@ export type EventRecoveryRequest = {
    * Minimum age of the recorded terminal failure.
    */
   min_age_seconds?: number;
+  /**
+   * Hold selected retained receipts from pruning while their items are pending and the job is active and unexpired. Pausing does not extend the existing 24-hour lifetime. Preview acquires no holds. Held receipts still count toward account storage limits.
+   */
+  protect_receipts?: boolean;
   include_non_retryable?: boolean;
   /**
    * Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput depends on scheduler load.

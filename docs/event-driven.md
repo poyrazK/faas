@@ -882,14 +882,17 @@ rather than treating these as healthy zero. Hold counts describe settled receipt
 `eligible_for_pruning` counts
 unheld receipts strictly past that boundary. `expiring_receipts` counts unheld
 receipts from the observation instant through the lookahead, inclusive.
-`held_receipts` and `held_due_receipts` distinguish backfill pins from upcoming
+`held_receipts` and `held_due_receipts` distinguish backfill and recovery holds from upcoming
 expiry and overdue cleanup. Holds use the exact pruning predicate: running
 backfills pin their account acceptance ranges, and retained completed backfills
 with retryable failed items pin those receipts. Running holds take precedence
-when a receipt has both reasons; hold counts count receipts, not jobs.
+when a receipt has both reasons; backfill holds take precedence over recovery holds.
+`recovery_holds` counts settled receipts primarily held by opted-in pending recovery
+items. The three hold counts partition `held_receipts`, counting receipts, not jobs.
 
-Bulk recovery jobs do not pin receipts. A current backfill hold is an observation,
-not a guarantee it will last through a later recovery. Pruning eligibility does
+Bulk recovery jobs protect pending receipts only when created with
+`protect_receipts: true` (`--protect-receipts`). Current holds are observations;
+other jobs and backfills can release them before a later recovery. Pruning eligibility does
 not mean immediate deletion: batching and locks can delay cleanup. No read
 extends retention or triggers pruning or recovery.
 
@@ -2172,6 +2175,55 @@ observable. Handler success does not guarantee exactly-once business effects.
 The API and Go/Node/Python SDKs return these fields through the existing job and
 item endpoints. See [ADR-807](adr/807-recovery-execution-outcomes.md).
 
+
+### Protect receipts during bulk recovery
+
+Opt in when creating a routing or execution recovery job:
+
+```sh
+gregale events recovery-preview APP --protect-receipts
+gregale events recovery-create APP --protect-receipts --rate 2 --yes
+gregale events recovery-preflight JOB_ID
+gregale events retention --app APP
+```
+
+API and SDK requests set `protect_receipts: true` on the existing recovery
+creation endpoint. Go uses `EventRecoveryRequest.ProtectReceipts`, Node uses
+`EventRecoveryRequest.protect_receipts`, and Python uses
+`EventRecoveryRequest(protect_receipts=True)`. The immutable `selection` records
+the opt-in. Omitted or false preserves the existing unprotected behavior.
+Preview never holds receipts; creation selects and protects currently retained
+receipts atomically while serialized with pruning. A preview cannot reserve
+receipts or restore events already pruned before creation.
+
+Protection applies only to pending items while the job is running or paused and
+before its original 24-hour `expires_at`. A pending item releases its hold when
+its replay is admitted or it is skipped or cancelled. Job completion,
+cancellation or expiry releases all remaining holds. Expiry releases holds even
+before the worker finalizes the stored job state. Pause and rate changes never
+extend expiry; an existing job cannot enable protection afterward. Overlapping
+jobs retain their independent holds until each releases them.
+
+Held receipts continue counting toward account storage limits, so protection can
+increase storage pressure. Existing job limits bound retained work: three active
+jobs per account and 10,000 selected recipients per job. A hold preserves the
+receipt, payload and captured consumers, without extending delivery-age limits,
+execution history, invocation retention or deduplication guarantees. Execution
+recovery still requires its parent execution records; a held receipt alone does
+not guarantee replay eligibility or handler success.
+
+`retention` samples label primary recovery holds `recovery_pending`. Preflight's
+`receipt_retention_held_count` includes current backfill and recovery holds, and
+`receipt_protection_until` identifies this job's opt-in deadline while active.
+This deadline protects pending receipts only; preflight acquires no new holds.
+Storage utilization alerts remain account-wide.
+
+Apply the migration and upgrade every scheduler/pruning worker before enabling
+this option in API binaries. Pruning now acquires the account range lock before
+taking the deletion statement's snapshot; a hold committed before pruning is
+visible to that statement. Downgrade binaries and complete or cancel protected
+active jobs before rolling back the migration. See
+[ADR-831](adr/831-recovery-receipt-retention-holds.md).
 
 ### Pause, resume, or slow a recovery job
 

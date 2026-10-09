@@ -20,6 +20,10 @@ export type EventRetentionHealth = {
   unknown_deadline_receipts: number;
   unsettled_receipts: number;
   held_receipts: number;
+  /**
+   * Settled receipts primarily held by opted-in active recovery jobs with pending items. Backfill holds take precedence.
+   */
+  recovery_holds: number;
   running_backfill_holds: number;
   retryable_backfill_holds: number;
   held_due_receipts: number;

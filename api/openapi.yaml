@@ -3485,16 +3485,18 @@ paths:
     get:
       tags: [events]
       operationId: getEventRetentionHealth
-      summary: Inspect receipt pruning eligibility, backfill holds and account storage.
+      summary: Inspect receipt pruning eligibility, retention holds and account storage.
       description: |
         Read-only account snapshot under apps:read/admin scopes and MFA.
         Receipt retention is 30 days after routing settles; unsettled receipts
         have no pruning deadline. Reports current eligible, upcoming expiring
         and held receipts using the pruning worker's shared hold predicate.
         Running backfills pin their acceptance ranges; retained completed
-        backfills pin retryable failed items. Bulk recovery jobs do not pin
-        receipts. Eligible means the nominal deadline has passed without a
-        current backfill hold, not that pruning will occur immediately.
+        backfills pin retryable failed items. Opted-in active recovery jobs hold
+        pending items until admission or job expiry. Backfill reasons take
+        precedence over recovery_pending in primary hold counts. Eligible
+        means the nominal deadline has passed without a current hold, not
+        that pruning will occur immediately.
         Source/app filters affect receipt counts and samples only. Storage
         usage and utilization always cover the entire account; utilization
         is the maximum of count and byte percentages and can exceed 100 after
@@ -46945,12 +46947,12 @@ components:
         retain_until: { type: string, format: date-time }
         retained_bytes: { type: integer, format: int64, minimum: 0 }
         status: { type: string, enum: [held, eligible_for_pruning, expiring] }
-        hold_reason: { type: string, enum: ['', backfill_running, backfill_retryable] }
+        hold_reason: { type: string, enum: ['', backfill_running, backfill_retryable, recovery_pending] }
     EventRetentionHealth:
       description: Filtered receipt observations and unfiltered account-wide retained storage utilization.
       type: object
       additionalProperties: false
-      required: [observed_at, window_seconds, retained_receipts, retained_bytes, unsettled_receipts, unknown_deadline_receipts, held_receipts, running_backfill_holds, retryable_backfill_holds, held_due_receipts, eligible_for_pruning, expiring_receipts, storage, storage_count_utilization_pct, storage_bytes_utilization_pct, storage_utilization_pct, sample, sample_truncated]
+      required: [observed_at, window_seconds, retained_receipts, retained_bytes, unsettled_receipts, unknown_deadline_receipts, held_receipts, running_backfill_holds, retryable_backfill_holds, recovery_holds, held_due_receipts, eligible_for_pruning, expiring_receipts, storage, storage_count_utilization_pct, storage_bytes_utilization_pct, storage_utilization_pct, sample, sample_truncated]
       properties:
         observed_at: { type: string, format: date-time }
         window_seconds: { type: integer, format: int64, minimum: 1, maximum: 2592000 }
@@ -46961,6 +46963,7 @@ components:
         unknown_deadline_receipts: { type: integer, format: int64, minimum: 0, description: Settled receipts missing a settlement timestamp; expiry cannot be determined. }
         unsettled_receipts: { type: integer, format: int64, minimum: 0 }
         held_receipts: { type: integer, format: int64, minimum: 0 }
+        recovery_holds: { type: integer, format: int64, minimum: 0, description: Settled receipts primarily held by opted-in active recovery jobs with pending items. Backfill holds take precedence. }
         running_backfill_holds: { type: integer, format: int64, minimum: 0 }
         retryable_backfill_holds: { type: integer, format: int64, minimum: 0 }
         held_due_receipts: { type: integer, format: int64, minimum: 0 }
@@ -47252,6 +47255,7 @@ components:
         event_type: { type: string, maxLength: 256 }
         failure_code: { type: string, maxLength: 256 }
         min_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 31536000, default: 0, description: Minimum age of the recorded terminal failure. }
+        protect_receipts: { type: boolean, default: false, description: Hold selected retained receipts from pruning while their items are pending and the job is active and unexpired. Pausing does not extend the existing 24-hour lifetime. Preview acquires no holds. Held receipts still count toward account storage limits. }
         include_non_retryable: { type: boolean, default: false }
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput depends on scheduler load. }
 
@@ -47365,7 +47369,7 @@ components:
       required: [position, status, reason]
       properties:
         receipt_retain_until: { type: string, format: date-time, description: Nominal receipt retention boundary when routing has settled. }
-        receipt_retention_held: { type: boolean, description: Current backfill hold; not a promise of future protection. }
+        receipt_retention_held: { type: boolean, description: Current backfill or recovery hold; ends when its owning job or item releases it. }
         position: { type: integer, format: int64, minimum: 1 }
         status: { type: string, enum: [eligible, waiting, likely_skipped, unknown] }
         reason: { type: string, enum: [eligible, capacity, legacy_claim, changed, expired, target_unavailable, receipt_expired, unknown] }
@@ -47376,8 +47380,9 @@ components:
       additionalProperties: false
       required: [job_id, observed_at, state, active, pending_count, eligible_count, waiting_count, likely_skipped_count, unknown_count, reason_counts, capacity_scopes, rate_per_second, remaining_lifetime_seconds, minimum_drain_seconds, earliest_drain_at, fits_before_expiry, assumes_immediate_resume, sample]
       properties:
+        receipt_protection_until: { type: string, format: date-time, description: This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted after expiry or terminal state; does not protect execution history or extend delivery deadlines. }
         receipt_retention_warning_count: { type: integer, format: int64, minimum: 0, description: Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and optimistic drain. }
-        receipt_retention_held_count: { type: integer, format: int64, minimum: 0, description: Pending items currently pinned by a backfill. }
+        receipt_retention_held_count: { type: integer, format: int64, minimum: 0, description: Pending items with known nominal deadlines currently held by backfill or recovery. }
         earliest_unheld_retain_until: { type: string, format: date-time }
         minimum_drain_crosses_receipt_retention: { type: boolean, description: Rate-only optimistic drain reaches or exceeds the earliest currently unheld receipt boundary; false is not a retention guarantee. }
         job_id: { type: string, format: uuid }

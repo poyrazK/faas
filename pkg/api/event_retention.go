@@ -37,6 +37,7 @@ type EventRetentionHealth struct {
 	RetainedBytes              int64                     `json:"retained_bytes"`
 	UnsettledReceipts          int64                     `json:"unsettled_receipts"`
 	HeldReceipts               int64                     `json:"held_receipts"`
+	RecoveryHolds              int64                     `json:"recovery_holds"`
 	RunningBackfillHolds       int64                     `json:"running_backfill_holds"`
 	RetryableBackfillHolds     int64                     `json:"retryable_backfill_holds"`
 	HeldDueReceipts            int64                     `json:"held_due_receipts"`

@@ -16,7 +16,7 @@ WITH scoped AS MATERIALIZED (
  SELECT o.id,o.source,o.event_id,o.created_at,o.customer_storage_bytes,
   o.state='delivered' AS settled,
   CASE WHEN o.state='delivered' THEN o.delivered_at + $3::bigint * interval '1 second' END AS retain_until,
-  CASE WHEN o.state='delivered' THEN event_receipt_retention_hold(o.account_id,o.id,o.created_at,$4::timestamptz) ELSE '' END AS hold_reason
+  CASE WHEN o.state='delivered' THEN event_receipt_retention_hold(o.account_id,o.id,o.created_at,$4::timestamptz,$1::timestamptz) ELSE '' END AS hold_reason
  FROM event_fanout_outbox o WHERE o.account_id=$5::uuid
  AND ($6::text='' OR o.source=$6::text)
  AND ($7::text='' OR
@@ -32,6 +32,7 @@ SELECT count(*)::bigint AS retained_receipts,coalesce(sum(customer_storage_bytes
  count(*) FILTER (WHERE NOT settled)::bigint AS unsettled_receipts,
  count(*) FILTER (WHERE settled AND retain_until IS NULL)::bigint AS unknown_deadline_receipts,
  count(*) FILTER (WHERE hold_reason<>'')::bigint AS held_receipts,
+ count(*) FILTER (WHERE hold_reason='recovery_pending')::bigint AS recovery_holds,
  count(*) FILTER (WHERE hold_reason='backfill_running')::bigint AS running_backfill_holds,
  count(*) FILTER (WHERE hold_reason='backfill_retryable')::bigint AS retryable_backfill_holds,
  count(*) FILTER (WHERE hold_reason<>'' AND retain_until<$1::timestamptz)::bigint AS held_due_receipts,
@@ -58,6 +59,7 @@ type EventRetentionHealthRow struct {
 	UnsettledReceipts       int64
 	UnknownDeadlineReceipts int64
 	HeldReceipts            int64
+	RecoveryHolds           int64
 	RunningBackfillHolds    int64
 	RetryableBackfillHolds  int64
 	HeldDueReceipts         int64
@@ -84,6 +86,7 @@ func (q *Queries) EventRetentionHealth(ctx context.Context, db DBTX, arg EventRe
 		&i.UnsettledReceipts,
 		&i.UnknownDeadlineReceipts,
 		&i.HeldReceipts,
+		&i.RecoveryHolds,
 		&i.RunningBackfillHolds,
 		&i.RetryableBackfillHolds,
 		&i.HeldDueReceipts,

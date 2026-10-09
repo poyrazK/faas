@@ -17,7 +17,7 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	if preview {
 		name = "recovery-preview"
 	}
-	flags, positional := splitArgsForFlags(args, "yes", "include-non-retryable")
+	flags, positional := splitArgsForFlags(args, "yes", "include-non-retryable", "protect-receipts")
 	fs := newFlagSet("events "+name, flag.ContinueOnError)
 	mode := fs.String("mode", "routing", "routing or execution recovery")
 	outcome := fs.String("outcome", "", "execution outcome: failed or dead_letter")
@@ -27,15 +27,16 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	code := fs.String("failure-code", "", "filter by failure classification")
 	age := fs.Duration("min-age", 0, "minimum failure age in whole seconds, e.g. 10m")
 	include := fs.Bool("include-non-retryable", false, "include failures classified as non-retryable")
+	protect := fs.Bool("protect-receipts", false, "protect pending receipts from pruning until admission or job expiry")
 	rate := fs.Int("rate", api.EventRecoveryRateDefault, "maximum retries per second (1..100)")
 	reason := fs.String("reason", "", "optional operator reason")
 	yes := fs.Bool("yes", false, "confirm creating a recovery job")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	req := api.EventRecoveryRequest{Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
+	req := api.EventRecoveryRequest{ProtectReceipts: *protect, Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || *rate < 1 || req.Validate() != nil || !preview && !*yes {
-		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
+		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--protect-receipts] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -141,6 +142,9 @@ func cmdEventsRecoveryItems(args []string) int {
 func writeEventRecoveryJob(out api.EventRecoveryJob) {
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | selected %d | pending %d | queued %d | skipped %d | cancelled %d\n", oneLine(out.ID), oneLine(out.State), out.SelectedCount, out.PendingCount, out.QueuedCount, out.SkippedCount, out.CancelledCount)
 	_, _ = fmt.Fprintf(osStdout, "Admission rate: %d/s\n", out.RatePerSecond)
+	if out.Selection.ProtectReceipts {
+		_, _ = fmt.Fprintf(osStdout, "Receipt protection: pending items only, while active and before %s\n", out.ExpiresAt.Format(time.RFC3339))
+	}
 	if out.PausedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Paused at: %s\n", out.PausedAt.Format(time.RFC3339))
 	}
@@ -361,7 +365,10 @@ func cmdEventsRecoveryPreflight(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | active: %t\nPending: %d | eligible: %d | waiting: %d | likely skipped: %d | unknown: %d\n", oneLine(out.JobID), oneLine(out.State), out.Active, out.PendingCount, out.EligibleCount, out.WaitingCount, out.LikelySkippedCount, out.UnknownCount)
 	_, _ = fmt.Fprintf(osStdout, "Optimistic admission minimum: %.0fs at %d/s | remaining lifetime: %.0fs | fits before expiry: %t\n", out.MinimumDrainSeconds, out.RatePerSecond, out.RemainingLifetimeSeconds, out.FitsBeforeExpiry)
-	_, _ = fmt.Fprintf(osStdout, "Receipt retention warnings: %d | current backfill holds: %d\n", out.ReceiptRetentionWarningCount, out.ReceiptRetentionHeldCount)
+	_, _ = fmt.Fprintf(osStdout, "Receipt retention warnings: %d | current retention holds: %d\n", out.ReceiptRetentionWarningCount, out.ReceiptRetentionHeldCount)
+	if out.ReceiptProtectionUntil != nil {
+		_, _ = fmt.Fprintf(osStdout, "This job protects pending receipts until admission or %s\n", out.ReceiptProtectionUntil.Format(time.RFC3339))
+	}
 	if out.EarliestUnheldRetainUntil != nil {
 		_, _ = fmt.Fprintf(osStdout, "Earliest unheld receipt retention boundary: %s | optimistic drain crosses boundary: %t\n", out.EarliestUnheldRetainUntil.Format(time.RFC3339), out.MinimumDrainCrossesReceiptRetention)
 	}

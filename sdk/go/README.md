@@ -357,3 +357,11 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+## Recovery receipt protection
+
+Set `protect_receipts: true` when creating an event recovery job (Go:
+`EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
+items are pending and the job is active, until its original 24-hour expiry.
+Preview reserves nothing. Held receipts continue counting against account
+storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).

@@ -910,6 +910,7 @@ var cliCommands = []cliCommand{
 				{Name: "failure-code", Short: "filter by failure classification", Value: "CODE"},
 				{Name: "min-age", Short: "minimum failure age in whole seconds", Value: "DURATION"},
 				{Name: "include-non-retryable", Short: "include failures classified as non-retryable", Bool: true},
+				{Name: "protect-receipts", Short: "hold pending receipts until admission or job expiry; preview creates no holds", Bool: true},
 				{Name: "rate", Short: "maximum retries per second (1..100; default 10)", Value: "N"},
 			}},
 			{Name: "recovery-create", Short: "Create a durable bulk recovery job", Positionals: []string{"<app>"}, Flags: []cliFlag{
@@ -921,6 +922,7 @@ var cliCommands = []cliCommand{
 				{Name: "failure-code", Short: "filter by failure classification", Value: "CODE"},
 				{Name: "min-age", Short: "minimum failure age in whole seconds", Value: "DURATION"},
 				{Name: "include-non-retryable", Short: "include failures classified as non-retryable", Bool: true},
+				{Name: "protect-receipts", Short: "hold pending receipts until admission or job expiry; preview creates no holds", Bool: true},
 				{Name: "rate", Short: "maximum retries per second (1..100; default 10)", Value: "N"},
 				{Name: "reason", Short: "optional operator reason (at most 512 bytes)", Value: "TEXT"}, {Name: "yes", Short: "confirm creating a recovery job", Bool: true, Req: true}}},
 			{Name: "recovery-preflight", Short: "Assess frozen recovery eligibility and optimistic timing", Positionals: []string{"<job-id>"}},

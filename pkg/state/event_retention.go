@@ -83,7 +83,7 @@ func (s *PgStore) GetEventRetentionHealth(ctx context.Context, account, app stri
 	if err != nil {
 		return out, err
 	}
-	out = api.EventRetentionHealth{ObservedAt: now, WindowSeconds: int64(query.Window / time.Second), EventSource: query.Source, AppID: app, RetainedReceipts: r.RetainedReceipts, RetainedBytes: r.RetainedBytes, UnsettledReceipts: r.UnsettledReceipts, UnknownDeadlineReceipts: r.UnknownDeadlineReceipts, HeldReceipts: r.HeldReceipts, RunningBackfillHolds: r.RunningBackfillHolds, RetryableBackfillHolds: r.RetryableBackfillHolds, HeldDueReceipts: r.HeldDueReceipts, EligibleForPruning: r.EligibleForPruning, ExpiringReceipts: r.ExpiringReceipts, Storage: api.EventStorageUsageResponse{RetainedEvents: usage.RetainedEvents, RetainedBytes: usage.RetainedBytes, PendingEvents: usage.PendingEvents, OldestPendingAt: eventStorageTime(usage.OldestPendingAt), Limits: limits.EventStorage}}
+	out = api.EventRetentionHealth{ObservedAt: now, WindowSeconds: int64(query.Window / time.Second), EventSource: query.Source, AppID: app, RetainedReceipts: r.RetainedReceipts, RetainedBytes: r.RetainedBytes, UnsettledReceipts: r.UnsettledReceipts, UnknownDeadlineReceipts: r.UnknownDeadlineReceipts, HeldReceipts: r.HeldReceipts, RecoveryHolds: r.RecoveryHolds, RunningBackfillHolds: r.RunningBackfillHolds, RetryableBackfillHolds: r.RetryableBackfillHolds, HeldDueReceipts: r.HeldDueReceipts, EligibleForPruning: r.EligibleForPruning, ExpiringReceipts: r.ExpiringReceipts, Storage: api.EventStorageUsageResponse{RetainedEvents: usage.RetainedEvents, RetainedBytes: usage.RetainedBytes, PendingEvents: usage.PendingEvents, OldestPendingAt: eventStorageTime(usage.OldestPendingAt), Limits: limits.EventStorage}}
 	if err = json.Unmarshal(r.Sample, &out.Sample); err != nil {
 		return out, err
 	}
@@ -112,6 +112,7 @@ func (m *MemStore) GetEventRetentionHealth(ctx context.Context, account, app str
 		return out, ErrNotFound
 	}
 	out = api.EventRetentionHealth{ObservedAt: now, WindowSeconds: int64(query.Window / time.Second), EventSource: query.Source, AppID: app, Storage: usage, Sample: []api.EventRetentionSample{}}
+	holds := m.eventRecoveryReceiptHoldsLocked(account, now)
 	for _, work := range m.eventFanout {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -143,15 +144,22 @@ func (m *MemStore) GetEventRetentionHealth(ctx context.Context, account, app str
 			continue
 		}
 		until := work.DeliveredAt.Add(PublishedEventIdentityRetention)
-		status := "expiring"
-		if until.Before(now) {
+		status, holdReason := "expiring", ""
+		if _, held := holds[work.ID]; held {
+			status, holdReason = "held", "recovery_pending"
+			out.HeldReceipts++
+			out.RecoveryHolds++
+			if until.Before(now) {
+				out.HeldDueReceipts++
+			}
+		} else if until.Before(now) {
 			out.EligibleForPruning++
 			status = "eligible_for_pruning"
 		} else if !until.After(now.Add(query.Window)) {
 			out.ExpiringReceipts++
 		}
 		if !until.After(now.Add(query.Window)) {
-			appendRetentionSample(&out, api.EventRetentionSample{EventSource: identity.Source, EventID: identity.ID, AcceptedAt: work.CreatedAt, RetainUntil: until, RetainedBytes: work.StorageBytes, Status: status}, query.Limit)
+			appendRetentionSample(&out, api.EventRetentionSample{EventSource: identity.Source, EventID: identity.ID, AcceptedAt: work.CreatedAt, RetainUntil: until, RetainedBytes: work.StorageBytes, Status: status, HoldReason: holdReason}, query.Limit)
 		}
 	}
 	// Memory storage has no backfill job store and therefore no backfill pins.

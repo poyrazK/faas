@@ -350,4 +350,12 @@ The generated events service exposes `getEventRetentionHealth` (Node) or
 `faas_sdk.api.events.get_event_retention_health` (Python). Filter receipt
 observations by source/app and choose an expiry lookahead; storage utilization
 remains account-wide. Recovery preflight also returns current receipt expiry
-warnings and backfill holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
+warnings and current retention holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
+
+## Recovery receipt protection
+
+Set `protect_receipts: true` when creating an event recovery job (Go:
+`EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
+items are pending and the job is active, until its original 24-hour expiry.
+Preview reserves nothing. Held receipts continue counting against account
+storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).

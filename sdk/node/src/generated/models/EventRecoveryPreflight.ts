@@ -8,11 +8,15 @@ import type { EventRecoveryPreflightItem } from './EventRecoveryPreflightItem.js
  */
 export type EventRecoveryPreflight = {
   /**
+   * This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted after expiry or terminal state; does not protect execution history or extend delivery deadlines.
+   */
+  receipt_protection_until?: string;
+  /**
    * Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and optimistic drain.
    */
   receipt_retention_warning_count?: number;
   /**
-   * Pending items currently pinned by a backfill.
+   * Pending items with known nominal deadlines currently held by backfill or recovery.
    */
   receipt_retention_held_count?: number;
   earliest_unheld_retain_until?: string;

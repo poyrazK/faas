@@ -244,7 +244,7 @@ WITH slots AS MATERIALIZED (
 )
 SELECT item.position,acct.plan,
  (o.delivered_at + sqlc.arg(retention_seconds)::bigint * interval '1 second')::timestamptz AS receipt_retain_until,
- coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz)<>'',false)::boolean AS receipt_retention_held,
+ coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)<>'',false)::boolean AS receipt_retention_held,
  CASE WHEN app.status='deleted' THEN 'target_unavailable'
  WHEN j.selection->>'mode'='execution' THEN CASE
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer

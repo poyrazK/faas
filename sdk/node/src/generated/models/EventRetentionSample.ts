@@ -12,6 +12,6 @@ export type EventRetentionSample = {
   retain_until: string;
   retained_bytes: number;
   status: 'held' | 'eligible_for_pruning' | 'expiring';
-  hold_reason: '' | 'backfill_running' | 'backfill_retryable';
+  hold_reason: '' | 'backfill_running' | 'backfill_retryable' | 'recovery_pending';
 };
 

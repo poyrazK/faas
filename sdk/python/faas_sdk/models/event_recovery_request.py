@@ -33,6 +33,10 @@ class EventRecoveryRequest:
     failure_code: str | Unset = UNSET
     min_age_seconds: int | Unset = 0
     """Minimum age of the recorded terminal failure."""
+    protect_receipts: bool | Unset = False
+    """Hold selected retained receipts from pruning while their items are pending and the job is active and
+    unexpired. Pausing does not extend the existing 24-hour lifetime. Preview acquires no holds. Held receipts still
+    count toward account storage limits."""
     include_non_retryable: bool | Unset = False
     rate_per_second: int | Unset = 10
     """Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput
@@ -59,6 +63,8 @@ class EventRecoveryRequest:
 
         min_age_seconds = self.min_age_seconds
 
+        protect_receipts = self.protect_receipts
+
         include_non_retryable = self.include_non_retryable
 
         rate_per_second = self.rate_per_second
@@ -82,6 +88,8 @@ class EventRecoveryRequest:
             field_dict["failure_code"] = failure_code
         if min_age_seconds is not UNSET:
             field_dict["min_age_seconds"] = min_age_seconds
+        if protect_receipts is not UNSET:
+            field_dict["protect_receipts"] = protect_receipts
         if include_non_retryable is not UNSET:
             field_dict["include_non_retryable"] = include_non_retryable
         if rate_per_second is not UNSET:
@@ -118,6 +126,8 @@ class EventRecoveryRequest:
 
         min_age_seconds = d.pop("min_age_seconds", UNSET)
 
+        protect_receipts = d.pop("protect_receipts", UNSET)
+
         include_non_retryable = d.pop("include_non_retryable", UNSET)
 
         rate_per_second = d.pop("rate_per_second", UNSET)
@@ -131,6 +141,7 @@ class EventRecoveryRequest:
             event_type=event_type,
             failure_code=failure_code,
             min_age_seconds=min_age_seconds,
+            protect_receipts=protect_receipts,
             include_non_retryable=include_non_retryable,
             rate_per_second=rate_per_second,
         )

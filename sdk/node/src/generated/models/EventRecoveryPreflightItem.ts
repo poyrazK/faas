@@ -11,7 +11,7 @@ export type EventRecoveryPreflightItem = {
    */
   receipt_retain_until?: string;
   /**
-   * Current backfill hold; not a promise of future protection.
+   * Current backfill or recovery hold; ends when its owning job or item releases it.
    */
   receipt_retention_held?: boolean;
   position: number;

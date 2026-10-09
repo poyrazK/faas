@@ -33,7 +33,7 @@ class EventRecoveryPreflightItem:
     receipt_retain_until: datetime.datetime | Unset = UNSET
     """Nominal receipt retention boundary when routing has settled."""
     receipt_retention_held: bool | Unset = UNSET
-    """Current backfill hold; not a promise of future protection."""
+    """Current backfill or recovery hold; ends when its owning job or item releases it."""
     capacity_scope: EventRecoveryPreflightItemCapacityScope | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

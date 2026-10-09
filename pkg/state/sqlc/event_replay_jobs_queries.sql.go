@@ -833,26 +833,75 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 	return i, err
 }
 
-const eventReplayBackfillPruneEnvelopes = `-- name: EventReplayBackfillPruneEnvelopes :execrows
-WITH picked AS MATERIALIZED (
-    SELECT o.id,o.account_id FROM event_fanout_outbox o
-WHERE o.state='delivered' AND o.delivered_at < $1::timestamptz
-      AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz)=''
-    ORDER BY o.delivered_at,o.id LIMIT $3::integer FOR UPDATE OF o SKIP LOCKED
-), unlocked AS MATERIALIZED (
-    SELECT id FROM picked WHERE pg_try_advisory_xact_lock(hashtextextended(account_id::text,625))
+const eventReplayBackfillPruneAccounts = `-- name: EventReplayBackfillPruneAccounts :many
+WITH candidates AS MATERIALIZED (
+ SELECT o.account_id,o.delivered_at,o.id FROM event_fanout_outbox o
+ WHERE o.state='delivered' AND o.delivered_at<$1::timestamptz
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz,$3::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT $4::integer
 )
-DELETE FROM event_fanout_outbox WHERE id IN (SELECT id FROM unlocked)
+SELECT account_id FROM candidates GROUP BY account_id ORDER BY min(delivered_at),account_id
 `
 
-type EventReplayBackfillPruneEnvelopesParams struct {
+type EventReplayBackfillPruneAccountsParams struct {
 	BeforeAt    pgtype.Timestamptz
 	JobCutoffAt pgtype.Timestamptz
+	NowAt       pgtype.Timestamptz
 	PageLimit   int32
 }
 
+func (q *Queries) EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillPruneAccounts,
+		arg.BeforeAt,
+		arg.JobCutoffAt,
+		arg.NowAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventReplayBackfillPruneEnvelopes = `-- name: EventReplayBackfillPruneEnvelopes :execrows
+DELETE FROM event_fanout_outbox WHERE id IN (
+ SELECT o.id FROM event_fanout_outbox o
+ WHERE o.account_id=$1::uuid AND o.state='delivered' AND o.delivered_at<$2::timestamptz
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,$3::timestamptz,$4::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT $5::integer FOR UPDATE OF o SKIP LOCKED
+)
+`
+
+type EventReplayBackfillPruneEnvelopesParams struct {
+	AccountID   pgtype.UUID
+	BeforeAt    pgtype.Timestamptz
+	JobCutoffAt pgtype.Timestamptz
+	NowAt       pgtype.Timestamptz
+	PageLimit   int32
+}
+
+// Caller holds the account range lock acquired in a previous SQL statement.
+// This statement's READ COMMITTED snapshot sees every hold committed before it.
 func (q *Queries) EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error) {
-	result, err := db.Exec(ctx, eventReplayBackfillPruneEnvelopes, arg.BeforeAt, arg.JobCutoffAt, arg.PageLimit)
+	result, err := db.Exec(ctx, eventReplayBackfillPruneEnvelopes,
+		arg.AccountID,
+		arg.BeforeAt,
+		arg.JobCutoffAt,
+		arg.NowAt,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1035,6 +1084,17 @@ func (q *Queries) EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX
 		&i.WorkflowName,
 	)
 	return i, err
+}
+
+const eventReplayBackfillTryLockAccountRange = `-- name: EventReplayBackfillTryLockAccountRange :one
+SELECT pg_try_advisory_xact_lock(hashtextextended($1::uuid::text,625))::boolean AS acquired
+`
+
+func (q *Queries) EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillTryLockAccountRange, accountID)
+	var acquired bool
+	err := row.Scan(&acquired)
+	return acquired, err
 }
 
 const eventReplayBackfillWorkflowExpireRetry = `-- name: EventReplayBackfillWorkflowExpireRetry :execrows

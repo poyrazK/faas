@@ -327,13 +327,24 @@ DELETE FROM event_replay_jobs WHERE id IN (
     ORDER BY completed_at,id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE SKIP LOCKED
 );
 
--- name: EventReplayBackfillPruneEnvelopes :execrows
-WITH picked AS MATERIALIZED (
-    SELECT o.id,o.account_id FROM event_fanout_outbox o
-WHERE o.state='delivered' AND o.delivered_at < sqlc.arg(before_at)::timestamptz
-      AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz)=''
-    ORDER BY o.delivered_at,o.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF o SKIP LOCKED
-), unlocked AS MATERIALIZED (
-    SELECT id FROM picked WHERE pg_try_advisory_xact_lock(hashtextextended(account_id::text,625))
+-- name: EventReplayBackfillPruneAccounts :many
+WITH candidates AS MATERIALIZED (
+ SELECT o.account_id,o.delivered_at,o.id FROM event_fanout_outbox o
+ WHERE o.state='delivered' AND o.delivered_at<sqlc.arg(before_at)::timestamptz
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT sqlc.arg(page_limit)::integer
 )
-DELETE FROM event_fanout_outbox WHERE id IN (SELECT id FROM unlocked);
+SELECT account_id FROM candidates GROUP BY account_id ORDER BY min(delivered_at),account_id;
+
+-- name: EventReplayBackfillTryLockAccountRange :one
+SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(account_id)::uuid::text,625))::boolean AS acquired;
+
+-- name: EventReplayBackfillPruneEnvelopes :execrows
+-- Caller holds the account range lock acquired in a previous SQL statement.
+-- This statement's READ COMMITTED snapshot sees every hold committed before it.
+DELETE FROM event_fanout_outbox WHERE id IN (
+ SELECT o.id FROM event_fanout_outbox o
+ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.state='delivered' AND o.delivered_at<sqlc.arg(before_at)::timestamptz
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF o SKIP LOCKED
+);

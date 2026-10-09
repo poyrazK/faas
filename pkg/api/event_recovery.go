@@ -10,6 +10,7 @@ import (
 )
 
 type EventRecoveryRequest struct {
+	ProtectReceipts     bool   `json:"protect_receipts,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 	Mode                string `json:"mode,omitempty"`
 	Outcome             string `json:"outcome,omitempty"`

@@ -102,16 +102,18 @@ def sync_detailed(
     window: str | Unset = "24h",
     limit: int | Unset = 100,
 ) -> Response[EventRetentionHealth | Problem]:
-    """Inspect receipt pruning eligibility, backfill holds and account storage.
+    """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
     Receipt retention is 30 days after routing settles; unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
-    backfills pin retryable failed items. Bulk recovery jobs do not pin
-    receipts. Eligible means the nominal deadline has passed without a
-    current backfill hold, not that pruning will occur immediately.
+    backfills pin retryable failed items. Opted-in active recovery jobs hold
+    pending items until admission or job expiry. Backfill reasons take
+    precedence over recovery_pending in primary hold counts. Eligible
+    means the nominal deadline has passed without a current hold, not
+    that pruning will occur immediately.
     Source/app filters affect receipt counts and samples only. Storage
     usage and utilization always cover the entire account; utilization
     is the maximum of count and byte percentages and can exceed 100 after
@@ -154,16 +156,18 @@ def sync(
     window: str | Unset = "24h",
     limit: int | Unset = 100,
 ) -> EventRetentionHealth | Problem | None:
-    """Inspect receipt pruning eligibility, backfill holds and account storage.
+    """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
     Receipt retention is 30 days after routing settles; unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
-    backfills pin retryable failed items. Bulk recovery jobs do not pin
-    receipts. Eligible means the nominal deadline has passed without a
-    current backfill hold, not that pruning will occur immediately.
+    backfills pin retryable failed items. Opted-in active recovery jobs hold
+    pending items until admission or job expiry. Backfill reasons take
+    precedence over recovery_pending in primary hold counts. Eligible
+    means the nominal deadline has passed without a current hold, not
+    that pruning will occur immediately.
     Source/app filters affect receipt counts and samples only. Storage
     usage and utilization always cover the entire account; utilization
     is the maximum of count and byte percentages and can exceed 100 after
@@ -201,16 +205,18 @@ async def asyncio_detailed(
     window: str | Unset = "24h",
     limit: int | Unset = 100,
 ) -> Response[EventRetentionHealth | Problem]:
-    """Inspect receipt pruning eligibility, backfill holds and account storage.
+    """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
     Receipt retention is 30 days after routing settles; unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
-    backfills pin retryable failed items. Bulk recovery jobs do not pin
-    receipts. Eligible means the nominal deadline has passed without a
-    current backfill hold, not that pruning will occur immediately.
+    backfills pin retryable failed items. Opted-in active recovery jobs hold
+    pending items until admission or job expiry. Backfill reasons take
+    precedence over recovery_pending in primary hold counts. Eligible
+    means the nominal deadline has passed without a current hold, not
+    that pruning will occur immediately.
     Source/app filters affect receipt counts and samples only. Storage
     usage and utilization always cover the entire account; utilization
     is the maximum of count and byte percentages and can exceed 100 after
@@ -251,16 +257,18 @@ async def asyncio(
     window: str | Unset = "24h",
     limit: int | Unset = 100,
 ) -> EventRetentionHealth | Problem | None:
-    """Inspect receipt pruning eligibility, backfill holds and account storage.
+    """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
     Receipt retention is 30 days after routing settles; unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
-    backfills pin retryable failed items. Bulk recovery jobs do not pin
-    receipts. Eligible means the nominal deadline has passed without a
-    current backfill hold, not that pruning will occur immediately.
+    backfills pin retryable failed items. Opted-in active recovery jobs hold
+    pending items until admission or job expiry. Backfill reasons take
+    precedence over recovery_pending in primary hold counts. Eligible
+    means the nominal deadline has passed without a current hold, not
+    that pruning will occur immediately.
     Source/app filters affect receipt counts and samples only. Storage
     usage and utilization always cover the entire account; utilization
     is the maximum of count and byte percentages and can exceed 100 after

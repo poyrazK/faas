@@ -1,11 +1,12 @@
 from typing import Literal
 
-EventRetentionSampleHoldReason = Literal["", "backfill_retryable", "backfill_running"]
+EventRetentionSampleHoldReason = Literal["", "backfill_retryable", "backfill_running", "recovery_pending"]
 
 EVENT_RETENTION_SAMPLE_HOLD_REASON_VALUES: set[EventRetentionSampleHoldReason] = {
     "",
     "backfill_retryable",
     "backfill_running",
+    "recovery_pending",
 }
 
 

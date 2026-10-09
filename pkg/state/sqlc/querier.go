@@ -675,6 +675,9 @@ type Querier interface {
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
 	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error)
+	// Caller holds the account range lock acquired in a previous SQL statement.
+	// This statement's READ COMMITTED snapshot sees every hold committed before it.
 	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
 	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
 	// Read provenance before taking the job lock, preserving job -> parent order.
@@ -683,6 +686,7 @@ type Querier interface {
 	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
 	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error)
+	EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error)
 	EventReplayBackfillWorkflowFinishRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowFinishRetryParams) (int64, error)
 	EventReplayBackfillWorkflowRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryCandidatesParams) ([]EventReplayBackfillWorkflowRetryCandidatesRow, error)
