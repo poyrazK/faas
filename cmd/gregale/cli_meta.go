@@ -1531,7 +1531,8 @@ var cliCommands = []cliCommand{
 			{Name: "retry", Short: "Retry one failed task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}},
 			{Name: "replay-failed", Short: "Replay unsuccessful tasks in a linked run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"<name>", "<run-id>", "<task-index>", "<artifact-name>"}},
-			{Name: "logs", Short: "Tail logs for one task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}, Flags: []cliFlag{
+			{Name: "logs", Short: "Tail logs for one task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Examples: []string{"gregale jobs logs --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a Job, run, and task to inspect"},
 				{Name: "max-bytes", Short: "maximum log payload size (1..1048576)", Value: "N"},
 			}},
 			{Name: "registry", Short: "Manage private registry credentials for one job", Subcommands: []cliSub{

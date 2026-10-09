@@ -3775,11 +3775,18 @@ Verify a managed result and get a signed URL
 
 Tail logs for one task
 
-`gregale jobs logs [--max-bytes <N>] <name> <run-id> <task-index>`
+`gregale jobs logs [--interactive] [--max-bytes <N>] [<name>] [<run-id>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a Job, run, and task to inspect |  |
 | `--max-bytes <N>` | maximum log payload size (1..1048576) |  |
+
+Examples:
+
+```sh
+gregale jobs logs --interactive
+```
 
 ### jobs registry
 

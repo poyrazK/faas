@@ -528,6 +528,25 @@ or restart applications. A deployment that stops being live cannot pass.
 For scripts, use `bindings check APP --deployment ID` with explicit flags and
 `--json`. Blocked checks return a nonzero exit status.
 
+## Inspect Job task logs interactively
+
+```sh
+gregale jobs logs --interactive
+# Bound the returned log payload:
+gregale jobs logs --interactive --max-bytes 65536
+```
+
+Choose a Job by name, a run by status and creation time, and a task by index,
+status, attempt number, and error. Each picker offers more pages and cancellation.
+The CLI reads the selected task's log snapshot and prints the equivalent command,
+including the active profile and log byte limit. Empty output and truncation are
+reported using the same renderer as explicit log inspection.
+
+This flow does not retry tasks or start new runs. Task logs can change if the
+selected task is running or retried while you browse; the picker shows the
+attempt observed during selection. For scripts, use
+`jobs logs NAME RUN_ID TASK_INDEX --max-bytes N --json`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

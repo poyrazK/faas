@@ -827,6 +827,11 @@ func cmdJobsRetry(args []string) int {
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func cmdJobsLogs(args []string) int {
+	for _, arg := range args {
+		if arg == "--interactive" || arg == "-interactive" || strings.HasPrefix(arg, "--interactive=") || strings.HasPrefix(arg, "-interactive=") {
+			return cmdJobsLogsInteractiveArgs(args)
+		}
+	}
 	positionals, maxBytes, maxBytesSet, ok := parseJobsLogsArgs(args)
 	if !ok || len(positionals) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index> [--max-bytes N]", "jobs")
@@ -855,13 +860,17 @@ func cmdJobsLogs(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(logs))
 	}
+	return renderJobTaskLogs(logs)
+}
+
+func renderJobTaskLogs(logs api.JobTaskLogResponse) int {
 	if logs.LogContent == "" && !logs.Truncated {
-		_, _ = fmt.Fprintf(os.Stdout, "(task %s produced no output)\n", logs.TaskStatus)
+		_, _ = fmt.Fprintf(osStdout, "(task %s produced no output)\n", logs.TaskStatus)
 		return 0
 	}
-	_, _ = fmt.Fprint(os.Stdout, logs.LogContent)
+	_, _ = fmt.Fprint(osStdout, logs.LogContent)
 	if logs.Truncated {
-		_, _ = fmt.Fprintln(os.Stdout, "...[truncated]")
+		_, _ = fmt.Fprintln(osStdout, "...[truncated]")
 	}
 	return 0
 }
