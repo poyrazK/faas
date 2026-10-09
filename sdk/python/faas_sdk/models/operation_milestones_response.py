@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_milestone import OperationMilestone
+    from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
     from ..models.operation_workflow_state import OperationWorkflowState
     from ..models.operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 
@@ -29,6 +30,12 @@ class OperationMilestonesResponse:
     workflow_state_history: list[OperationWorkflowStateHistoryEntry] | Unset = UNSET
     """Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied,
     ordered by app-assigned revision."""
+    workflow_instance: OperationWorkflowInstanceSnapshot | Unset = UNSET
+    """Grouped view of the selected contract's declared steps and allowed transitions, current explicit state, and
+    transition-history page for one workflow instance. Allowed transitions are contract edges by target Operation;
+    the application still checks its business row and authorization before using one. Page-scoped facts follow the
+    milestone cursor; retention-wide step summaries cover all matching facts still retained under the normal
+    Operation retention rules."""
     next_cursor: str | Unset = UNSET
     """Opaque continuation bound to the same account"""
     next_workflow_state_cursor: str | Unset = UNSET
@@ -55,6 +62,10 @@ class OperationMilestonesResponse:
                 workflow_state_history_item = workflow_state_history_item_data.to_dict()
                 workflow_state_history.append(workflow_state_history_item)
 
+        workflow_instance: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workflow_instance, Unset):
+            workflow_instance = self.workflow_instance.to_dict()
+
         next_cursor = self.next_cursor
 
         next_workflow_state_cursor = self.next_workflow_state_cursor
@@ -70,6 +81,8 @@ class OperationMilestonesResponse:
             field_dict["workflow_states"] = workflow_states
         if workflow_state_history is not UNSET:
             field_dict["workflow_state_history"] = workflow_state_history
+        if workflow_instance is not UNSET:
+            field_dict["workflow_instance"] = workflow_instance
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
         if next_workflow_state_cursor is not UNSET:
@@ -80,6 +93,7 @@ class OperationMilestonesResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_milestone import OperationMilestone
+        from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
         from ..models.operation_workflow_state import OperationWorkflowState
         from ..models.operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 
@@ -111,6 +125,13 @@ class OperationMilestonesResponse:
 
                 workflow_state_history.append(workflow_state_history_item)
 
+        _workflow_instance = d.pop("workflow_instance", UNSET)
+        workflow_instance: OperationWorkflowInstanceSnapshot | Unset
+        if isinstance(_workflow_instance, Unset):
+            workflow_instance = UNSET
+        else:
+            workflow_instance = OperationWorkflowInstanceSnapshot.from_dict(_workflow_instance)
+
         next_cursor = d.pop("next_cursor", UNSET)
 
         next_workflow_state_cursor = d.pop("next_workflow_state_cursor", UNSET)
@@ -119,6 +140,7 @@ class OperationMilestonesResponse:
             milestones=milestones,
             workflow_states=workflow_states,
             workflow_state_history=workflow_state_history,
+            workflow_instance=workflow_instance,
             next_cursor=next_cursor,
             next_workflow_state_cursor=next_workflow_state_cursor,
         )

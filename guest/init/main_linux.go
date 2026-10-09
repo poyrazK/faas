@@ -300,7 +300,7 @@ func boot() error {
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
 		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
 	}
-	// ADR-680: without the reseed server, Node and Python processes restored
+	// ADR-687: without the reseed server, Node and Python processes restored
 	// from a snapshot replay the captured random state. Env stamping injects
 	// no preload when this fails, so a failure is loud but not fatal.
 	if err := startRestoreReseedServer(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
@@ -479,6 +479,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
@@ -515,16 +516,20 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// When sup is nil (unit tests that exercise runAppWithEnv directly
 	// without a supervisor), we fall back to the legacy bare stdout
 	// wiring — those tests don't read LogTail.
+	var output io.Writer = os.Stdout
 	if sup != nil {
-		mw := io.MultiWriter(os.Stdout, sup.LogBuffer())
-		cmd.Stdout, cmd.Stderr = mw, mw
-	} else {
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
 	credential, err := processCredential("", m.EffectiveUser())
 	if err != nil {
 		return fmt.Errorf("run app: %w", err)
 	}
+	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	if err != nil {
+		return fmt.Errorf("run app: workload output pipe: %w", err)
+	}
+	defer outputPipe.finish()
+	cmd.Stdout, cmd.Stderr = outputPipe.w, outputPipe.w
 	readyPath, guestReadyPath, err := prepareRuntimeSecretReadyFile(projection, "", m.SecretReloadReadiness)
 	if err != nil {
 		return err
@@ -573,6 +578,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
 		if processSecrets == nil {
 			return cmd.Env

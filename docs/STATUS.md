@@ -213,7 +213,7 @@ manifest CAS. Pending work survives replay, restart, takeover and cleanup and
 counts toward snapshot/storage caps. Its schema-5 upgrade is superseded by the
 schema-6 relay writer above. Guest protocol v1 continues to reject outgoing work.
 Native-host and live-bucket
-qualification remain pending ([ADR-829](adr/829-object-storage-entity-outbox-contract.md)).
+qualification remain pending ([ADR-903](adr/903-object-storage-entity-outbox-contract.md)).
 
 Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
 an advisory time-ordered alarm index with bounded repair scans, fenced retry

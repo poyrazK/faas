@@ -3,7 +3,7 @@
 - **Status:** implemented locally; automated and native/live-provider verification pending
 - **Date:** 2026-10-09
 - **Decision:** Introduce separately gated guest protocol v2 for bounded registered-app-webhook intents. Advertise central transition/batch limits, validate returned intents and current destination/scope admission before engine commit, retain v1 unchanged, and supply pure Go/Node SDK helpers and a reservation/confirmation example.
-- **Why:** ADR-829 atomically commits outgoing intents with entity state and ADR-843 supplies recoverable transport handoff. Applications still cannot describe outgoing work through guest protocol v1.
+- **Why:** ADR-903 atomically commits outgoing intents with entity state and ADR-843 supplies recoverable transport handoff. Applications still cannot describe outgoing work through guest protocol v1.
 - **Consequences:** Preview handlers can return state, result, alarm and outgoing intents together. Object storage remains authoritative for state/pending work; SQL transport acceptance/delivery metadata stays separate. Guest success, entity publication and receiver delivery are distinct outcomes. All preview gates stay disabled here.
 - **Rejected alternatives:** Accepting outbox in v1 silently changes older deployments. Sending from a handler can escape rejected state publication. Arbitrary URLs/credentials bypass registered destinations. Guest-selected versions bypass platform gating. Duplicated SDK quotas drift from central admission.
 

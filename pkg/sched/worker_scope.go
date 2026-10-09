@@ -27,6 +27,42 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 	return e.reconcileWorkerScopes(ctx, appID, scope, &desired, trigger)
 }
 
+// WakeWorkerApp handles an explicit wake (`gregale wake`) of a worker app.
+// EnsureWake refuses workers as at-capacity because requests never start
+// them, so the durable wake request retried forever and a parked worker (a
+// manual park, or ADR-079 liveness exhaustion) had no way back: restart needs
+// an active app and the singleton reconciler skips parked apps (H8-23). Like
+// a wake of a parked request app, it reactivates the app, then lets the
+// worker reconciler admit the deployment's worker under the API's wake id.
+// It reports handled=false for every non-worker app. A lookup error comes back
+// with handled=false: the caller falls through to the regular wake path, which
+// reads the app again and reports the failure.
+func (e *Engine) WakeWorkerApp(ctx context.Context, appID string) (bool, error) {
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return false, fmt.Errorf("sched: load app for worker wake: %w", err)
+	}
+	if !e.ownsApp(app) {
+		return false, nil
+	}
+	if instanceModeForApp(app) != string(state.InstanceModeWorker) && app.WorkloadClass != state.WorkloadClassWorker {
+		return false, nil
+	}
+	switch app.Status {
+	case state.AppActive:
+	case state.AppEvictedCold:
+		if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+			return true, fmt.Errorf("sched: wake worker app %s: reactivate: %w", appID, err)
+		}
+	default:
+		return true, nil
+	}
+	if err := e.ReconcileWorkerPools(ctx, appID, TriggerAppWake); err != nil {
+		return true, fmt.Errorf("sched: wake worker app %s: %w", appID, err)
+	}
+	return true, nil
+}
+
 type workerScopePlan struct {
 	scope     string
 	app       state.App

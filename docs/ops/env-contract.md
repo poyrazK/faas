@@ -563,6 +563,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | public-beta apid and schedd units both enable durable workflow run creation and dispatch |
 | `FAAS_WORKFLOW_OUTBOUND_ENABLED` | outboundd, schedd | `default` |  |  | `` | ADR-489 exact opt-in for managed workflow outbound execution; off unless set to 1 on schedd and outboundd (outboundd also accepts workflow_outbound_enabled in TOML) |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
+| `FAAS_WORKLOAD_IDENTITY_ENDPOINT` | shared | `guest` |  |  | `` | guest-init stamps the platform-owned loopback workload identity token endpoint into each workload environment |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `default` |  |  | `` | optional vmmd workload-identity signing-key path override; an empty path leaves issuance disabled |

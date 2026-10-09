@@ -6377,6 +6377,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.prepareOperationJobOwnerPurgeLocked("", id); err != nil {
+		return err
+	}
 	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
 	m.deleteAppWorkOwnershipLocked(id)
@@ -21374,6 +21377,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if b.AccountID == id && b.State != "deleted" {
 			return ErrConflict
 		}
+	}
+	if err := m.prepareOperationJobOwnerPurgeLocked(id, ""); err != nil {
+		return err
 	}
 	m.forgetOwnedOperationsLocked(id, "")
 	for bucketID, b := range m.objectBuckets {

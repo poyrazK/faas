@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0; }
+    footer { font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.85rem; }
+    .good { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .pending { background: #fef3c7; color: #92400e; }
+    .neutral { background: #f3f4f6; color: #374151; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .table-scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.65rem; vertical-align: top; }
+    caption { text-align: left; padding-bottom: 0.75rem; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; }
+    input, select, button { font: inherit; padding: 0.4rem; }
+    ol li { padding-bottom: 0.75rem; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Gregale</strong>
+    <nav aria-label="Dashboard"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/jobs">Jobs &amp; queues</a><a href="/dashboard/account">Account</a></nav>
+  </header>
+  <main>
+    <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
+    <h1>Workflow attention</h1>
+    <p>Investigate blocked, stale, overdue, or dependency-waiting workflows. Evaluated at <time>{{.Data.EvaluatedAt}}</time>.</p>
+    <form method="get" action="{{.Data.QueueURL}}">
+      <label>Environment<input name="scope" value="{{.Data.Scope}}" required></label>
+      <label>Customer<input name="tenant_id" value="{{.Data.TenantID}}"></label>
+      <label>Workflow<input name="workflow" value="{{.Data.Workflow}}"></label>
+      <label>Dependency status<select name="dependency_status"><option value="">All unresolved statuses</option><option value="waiting" {{if eq .Data.DependencyStatus "waiting"}}selected{{end}}>Waiting</option><option value="unknown" {{if eq .Data.DependencyStatus "unknown"}}selected{{end}}>Unknown</option><option value="outcome_mismatch" {{if eq .Data.DependencyStatus "outcome_mismatch"}}selected{{end}}>Outcome mismatch</option></select></label>
+      <label>Required outcome<input name="required_outcome_code" value="{{.Data.RequiredOutcomeCode}}"></label>
+      <label>Blocker code<input name="blocker_code" value="{{.Data.BlockerCode}}"></label>
+      <label>Group by<select name="group_by"><option value="workflow" {{if eq .Data.GroupBy "workflow"}}selected{{end}}>Workflow</option><option value="blocker_code" {{if eq .Data.GroupBy "blocker_code"}}selected{{end}}>Blocker code</option><option value="target_operation" {{if eq .Data.GroupBy "target_operation"}}selected{{end}}>Target Operation</option><option value="customer" {{if eq .Data.GroupBy "customer"}}selected{{end}}>Customer</option><option value="dependency_status" {{if eq .Data.GroupBy "dependency_status"}}selected{{end}}>Dependency status</option><option value="required_outcome_code" {{if eq .Data.GroupBy "required_outcome_code"}}selected{{end}}>Required outcome</option></select></label>
+      <label>Target Operation<input name="target_operation" value="{{.Data.TargetOperation}}"></label>
+      <label>Reason<select name="reason"><option value="">All attention reasons</option><option value="blocked" {{if eq .Data.Reason "blocked"}}selected{{end}}>Blocked</option><option value="stale" {{if eq .Data.Reason "stale"}}selected{{end}}>Stale</option><option value="overdue" {{if eq .Data.Reason "overdue"}}selected{{end}}>Overdue</option><option value="dependency" {{if eq .Data.Reason "dependency"}}selected{{end}}>Unresolved prerequisite</option></select></label>
+      <label>Page size<input name="limit" type="number" min="1" max="100" value="{{.Data.Limit}}" required></label>
+      <button type="submit">Filter</button>
+    </form>
+    <section class="card" aria-label="Attention summary">
+      <h2>Attention summary</h2>
+      <p>{{.Data.Summary.Totals.WorkflowCount}} workflows · {{.Data.Summary.Totals.DependencyWorkflowCount}} with unresolved prerequisites · {{.Data.Summary.Totals.DependencyCount}} unresolved links · {{.Data.Summary.Totals.BlockedWorkflowCount}} blocked · {{.Data.Summary.Totals.StaleWorkflowCount}} stale · {{.Data.Summary.Totals.OverdueWorkflowCount}} overdue · {{.Data.Summary.Totals.BlockerCount}} blockers · {{.Data.Summary.Totals.UnknownAgeBlockers}} with unknown age.</p>
+      <p>Oldest known blocker: {{if .Data.Summary.Totals.OldestBlockerAt}}<time>{{.Data.Summary.Totals.OldestBlockerAt}}</time> ({{.Data.Summary.Totals.OldestBlockerAgeSeconds}} seconds).{{else}}Unknown.{{end}}</p>
+      {{if .Data.Summary.Totals.EarliestOverdueDeadlineAt}}<p>Oldest missed deadline: <time>{{.Data.Summary.Totals.EarliestOverdueDeadlineAt}}</time> · {{.Data.Summary.Totals.LongestOverdueSeconds}} seconds overdue.</p>{{end}}
+      <div class="table-scroll"><table><thead><tr><th>Group</th><th>Workflows</th><th>Blocked</th><th>Stale</th><th>Overdue</th><th>Dependency workflows / links</th><th>Blockers</th><th>Oldest known age</th><th>Unknown age</th></tr></thead><tbody>
+      {{range .Data.SummaryGroups}}<tr><td><a href="{{.URL}}"><code>{{.Group.Value}}</code></a></td><td>{{.Group.Stats.WorkflowCount}}</td><td>{{.Group.Stats.BlockedWorkflowCount}}</td><td>{{.Group.Stats.StaleWorkflowCount}}</td><td>{{.Group.Stats.OverdueWorkflowCount}}</td><td>{{.Group.Stats.DependencyWorkflowCount}} / {{.Group.Stats.DependencyCount}}</td><td>{{.Group.Stats.BlockerCount}}</td><td>{{if .Group.Stats.OldestBlockerAgeSeconds}}{{.Group.Stats.OldestBlockerAgeSeconds}} seconds{{else}}Unknown{{end}}</td><td>{{.Group.Stats.UnknownAgeBlockers}}</td></tr>{{else}}<tr><td colspan="9">No groups for these filters.</td></tr>{{end}}
+      </tbody></table></div>
+      {{if .Data.SummaryNextURL}}<p><a href="{{.Data.SummaryNextURL}}">More groups →</a></p>{{end}}
+      <p class="muted">Totals cover all matching retained workflows. Groups can overlap. Blocker age starts at first observation, independently of the latest report.</p>
+    </section>
+    {{range .Data.Items}}<section class="card">
+      <h2><a href="{{.HistoryURL}}"><code>{{.Entry.State.Workflow}}</code> · <code>{{.Entry.State.InstanceID}}</code></a></h2>
+      <p>Customer <code>{{.Entry.PlatformTenantID}}</code> · <code>{{.Entry.Subject.Type}}:{{.Entry.Subject.ID}}</code> · state <code>{{.Entry.State.State}}</code>{{if .Entry.State.Terminal}} · terminal{{end}}</p>
+      <p>{{range .Entry.Reasons}}<span class="badge bad">{{.}}</span> {{end}} · reported revision {{.Entry.State.Revision}} · received <time>{{.UpdatedAt}}</time></p>
+      {{if .Entry.State.DeadlineAt}}<p>Business deadline: <time>{{.Entry.State.DeadlineAt}}</time>{{if .Entry.State.Overdue}} · <strong>{{.Entry.State.OverdueSeconds}} seconds overdue</strong>{{else}}{{if .Entry.State.Terminal}} · completed workflow{{else}} · not overdue at evaluation{{end}}{{end}}.</p>{{end}}
+      {{if .Entry.State.Stale}}<p>The reported snapshot has passed its declared stale threshold.</p>{{end}}
+      {{if .Entry.State.Blockers}}<ul>{{range .Entry.State.Blockers}}<li><code>{{.Operation}}</code> · <code>{{.Code}}</code>: {{.Description}} · first observed {{if .FirstObservedAt}}<time>{{.FirstObservedAt}}</time>{{else}}unknown{{end}}</li>{{end}}</ul>{{end}}
+      {{if .Dependencies}}<h3>Unresolved prerequisites</h3><ul>{{range .Dependencies}}<li><a href="{{.URL}}"><code>{{.Dependency.SubjectType}}:{{.Dependency.SubjectID}} · {{.Dependency.Workflow}} / {{.Dependency.InstanceID}}</code></a> · {{.Status}}{{if .Dependency.RequiredOutcomeCode}} · requires <code>{{.Dependency.RequiredOutcomeCode}}</code>{{end}}</li>{{end}}</ul>{{end}}
+      <p><a href="{{.HistoryURL}}">View workflow explanation and history →</a> · <a href="{{.OperationURL}}">View reporting Operation</a></p>
+    </section>{{else}}<p>No retained workflows need attention for these filters.</p>{{end}}
+    {{if .Data.NextURL}}<p><a href="{{.Data.NextURL}}">More workflows →</a></p>{{end}}
+    <p class="muted">The queue reflects application reports. Applications check their current business rows and authorization before acting. Reports can change while you browse; refresh the first page for the latest view.</p>
+  </main>
+  <footer>Gregale · customer operations</footer>
+</body>
+</html>

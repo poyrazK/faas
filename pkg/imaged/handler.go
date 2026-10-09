@@ -1589,7 +1589,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+	if err := h.deleteUnretainedJobArtifact(ctx, be, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1601,7 +1601,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
 				continue
 			}
-			if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 				return err
 			}
 		}
@@ -1632,7 +1632,7 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 		if !valid || foundJobID != jobID || key == keepKey {
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
 		}
 	}
@@ -1680,7 +1680,7 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
 		}
 	}
@@ -2279,6 +2279,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
+	manifest = imageEntrypointForCmdOverride(manifest, imageCfg, dep)
 	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
@@ -4971,4 +4972,22 @@ func (h *Handler) buildFullRootfsLayer(
 func (h *Handler) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Handler {
 	h.validatorArtifactCheck = check
 	return h
+}
+
+func (h *Handler) deleteUnretainedJobArtifact(ctx context.Context, be storage.StorageBackend, key string) error {
+	pins, ok := h.store.(state.OperationJobImageRetentionStore)
+	if !ok {
+		if _, native := h.store.(state.JobOperationStore); native {
+			return fmt.Errorf("job operation image retention unavailable")
+		}
+		return be.Delete(ctx, key)
+	}
+	retained, err := pins.OperationJobImageRetained(ctx, key)
+	if err != nil {
+		return err
+	}
+	if retained {
+		return nil
+	}
+	return be.Delete(ctx, key)
 }

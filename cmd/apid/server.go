@@ -1635,6 +1635,18 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDefinition))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountOperations))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/milestones", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountOperationMilestones))))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-actions/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewAccountWorkflowActions))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-actions/preview", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.previewPlatformTenantSelfWorkflowActions)))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.checkAccountWorkflowReadiness))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.checkPlatformTenantSelfWorkflowReadiness)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-attention", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountWorkflowAttention))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-outcomes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountWorkflowOutcomes))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-outcomes/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.summarizeAccountWorkflowOutcomes))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-attention/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.summarizeAccountWorkflowAttention))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-attention", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfWorkflowAttention)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-outcomes", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfWorkflowOutcomes)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-outcomes/summary", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.summarizePlatformTenantSelfWorkflowOutcomes)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-attention/summary", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.summarizePlatformTenantSelfWorkflowAttention)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operation-milestones", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountBusinessMilestones))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/milestones", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperationMilestones)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operation-milestones", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfBusinessMilestones)))
@@ -1644,6 +1656,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/runtime/operations/{id}/workflow-states/validate", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.validateOperationWorkflowStates)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountOperationEvents))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationExecutions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/recovery-inspection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectOperationRecovery))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recovery-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewOperationRecovery))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/delivery", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDelivery))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/delivery-attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDeliveryAttempts))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/delivery-retries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryOperationDeliveryWithReceipt))))
@@ -1651,14 +1665,31 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelOperation))))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.startPlatformTenantSelfOperation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/submissions/lookup", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.lookupPlatformTenantSelfOperationSubmission)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/identity", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.getPlatformTenantSelfOperationIdentity)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfOperations)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperation)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperationEvents)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.cancelPlatformTenantSelfOperation)))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover-receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.recoverOperationWithReceipt))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.recoverOperation))))
 	mux.Handle("POST /v1/runtime/operations/{id}/progress", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reportOperationProgress)))
+	mux.Handle("GET /v1/runtime/operations/{id}/control", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.getOperationExecutionControl)))
 	mux.Handle("POST /v1/runtime/operations/{id}/artifacts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.attachOperationArtifact)))
+	mux.Handle("POST /v1/runtime/operations/{id}/artifact-uploads", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.uploadOperationArtifact)))
+	mux.Handle("POST /v1/runtime/operations/{id}/artifact-upload-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reuseOperationUpload)))
+	mux.Handle("GET /v1/runtime/job-operations/{id}/control", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.getJobOperationControl)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/progress", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reportJobOperationProgress)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/result", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reportJobOperationResult)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/artifacts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.prepareJobOperationArtifact)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/artifact-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reuseJobOperationArtifact)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/artifact-uploads", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.uploadJobOperationArtifact)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/artifact-upload-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reuseJobOperationUpload)))
+	mux.Handle("GET /v1/runtime/workflow-operations/{id}/control", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.getWorkflowOperationExecutionControl)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/artifact-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reuseWorkflowOperationArtifact)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/artifacts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.prepareWorkflowOperationArtifact)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/artifact-uploads", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.uploadWorkflowOperationArtifact)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/artifact-upload-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reuseWorkflowOperationUpload)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.downloadPlatformTenantOperationArtifact)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/artifacts/{artifact}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.downloadOwnedOperationArtifact))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/invocations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.getPlatformTenantSelfInvocation)))
@@ -3454,13 +3485,18 @@ func (s *server) handler() http.Handler {
 	// /signup, /login/forgot, /v1/auth/google, and /v1/auth/github.
 	mux.Handle("POST /login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, s.fromTrustedOrigin(http.HandlerFunc(s.postLoginEmail))))
+	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postLoginEmail), auth.finishBrowserLogin))))
 	mux.Handle("POST /signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postSignup))))
+	// GET renders the form the sign-in page's "Forgot password?" link opens
+	// (it was 405, production hunt #8).
+	mux.Handle("GET "+forgotPasswordPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(auth.renderForgotPasswordForm)))
 	mux.Handle("POST /login/forgot", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postForgotPassword)))
+	}, browserAuthForm(http.HandlerFunc(s.postForgotPassword), auth.finishBrowserForgotPassword)))
 	mux.Handle("GET /auth/reset", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		// 410 on invalid/expired token; count every attempt so an
 		// attacker can't enumerate token shapes faster than the
@@ -4532,6 +4568,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 
 func replayIdempotent(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Idempotent-Replayed", "true")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)

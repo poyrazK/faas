@@ -310,7 +310,7 @@ remain pure. The separately gated v2/SDK follow-on is documented in the
 [reservation example](../durable-entity-reservations/README.md) and
 [ADR-844](../../docs/adr/844-durable-entity-guest-outbox-protocol.md).
 Relay qualification must precede guest enablement. See
-[ADR-829](../../docs/adr/829-object-storage-entity-outbox-contract.md) and
+[ADR-903](../../docs/adr/903-object-storage-entity-outbox-contract.md) and
 [ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md).
 
 ## Deploy the counter invocation preview

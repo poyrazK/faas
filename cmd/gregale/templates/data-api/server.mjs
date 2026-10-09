@@ -2,15 +2,19 @@ import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
+import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
+import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, limits } from './config.mjs'
 
-export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001) {
+export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
+  const servingFingerprint = config.fingerprint
   return http.createServer(async (req, res) => {
+    traceRequest(req, res, log)
     const origin = req.headers.origin
     if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id')
     }
     if (req.method === 'OPTIONS') {
       if (!origin || !config.origins.includes(origin)) return problem(res, 403, 'origin_not_allowed')
@@ -18,47 +22,58 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       return res.end()
     }
     if (req.url === '/healthz' && req.method === 'GET') return readiness(res, readyPort)
-    if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json') return problem(res, 404, 'not_found')
-    // V1 exposes only relation routes and OpenAPI. Decode before checking so
-    // percent-encoded separators cannot enter PostgREST's RPC routes.
+    if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     if (req.url.startsWith('/rest/v1/')) {
-      let relation
-      try { relation = decodeURIComponent(req.url.slice('/rest/v1/'.length).split('?')[0]) } catch { return problem(res, 400, 'invalid_path') }
-      if (relation.includes('/')) return problem(res, 404, 'not_found')
+      const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
+      let path
+      try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      if (path.includes('/')) {
+        const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
+        const schema = req.headers['content-profile'] ?? config.schemas[0]
+        if (raw !== path || !match || !config.functions?.some(f => f.schema === schema && f.name === match[1])) return problem(res, 404, 'not_found')
+        if (req.method !== 'POST') return problem(res, 405, 'method_not_allowed')
+      }
     }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
+    if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     if (!token) return problem(res, 401, 'token_required')
     let payload
     try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
     if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+    if (req.url === '/__gregale/schema') {
+      if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+      return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint })
+    }
     try {
       // Only the binding login may become the SQL role. External role claims
       // cannot select an administrator, owner or another application's role.
       const claims = { ...payload, role: config.role }
       const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
-      proxy(req, res, internal, upstreamPort)
+      proxy(req, res, internal, upstreamPort, config)
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
 }
 
 function problem(res, status, code) {
+  markRequest(res, code)
   if (res.headersSent) { res.destroy(); return }
   res.writeHead(status, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' })
-  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code }))
+  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code, request_id: requestID(res) }))
 }
 
-function readiness(res, port) {
+function readiness(res, port, contract = {}) {
   const request = http.get({ hostname: '127.0.0.1', port, path: '/ready', timeout: 2000 }, upstream => {
     upstream.resume()
-    res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ ready: upstream.statusCode === 200 }))
+    if (upstream.statusCode !== 200) markRequest(res, 'data_api_unavailable')
+    res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ ready: upstream.statusCode === 200, ...(upstream.statusCode === 200 ? contract : {}) }))
   })
   request.on('timeout', () => request.destroy())
   request.on('error', () => problem(res, 503, 'data_api_unavailable'))
 }
 
-function proxy(req, res, token, port) {
+function proxy(req, res, token, port, config) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -67,12 +82,13 @@ function proxy(req, res, token, port) {
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs }, response => {
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res)
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config)
+    if (response.statusCode >= 400) markRequest(res, 'upstream_error')
     const out = {}
     for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
     res.writeHead(response.statusCode, { ...out, 'Cache-Control': 'no-store' })
     response.pipe(res)
-    response.on('error', () => res.destroy())
+    response.on('error', () => { markRequest(res, 'data_api_unavailable'); res.destroy() })
   })
   let bytes = 0
   req.on('data', chunk => {
@@ -86,7 +102,7 @@ function proxy(req, res, token, port) {
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res) {
+function openAPISpec(response, res, config) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
@@ -104,15 +120,25 @@ function openAPISpec(response, res) {
       delete document.host
       delete document.schemes
       document.basePath = '/rest/v1'
-      for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) delete document.paths[path]
+      const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
+        if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
+        else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters') delete document.paths[path][method]
+      }
+      const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
+      if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-      res.end(JSON.stringify(document))
+      res.end(output)
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
 }
 
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
+  const snapshot = await inspect(config.connection, config.schemas)
+  config.snapshot = snapshot
+  config.functions = snapshot.functions
+  config.fingerprint = fingerprint(snapshot)
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
@@ -122,7 +148,7 @@ export async function main(env = process.env) {
   let stopping = false
   server.requestTimeout = limits.queryMs + 5000
   server.headersTimeout = 10000
-  child.on('error', () => { console.error('PostgREST could not start'); process.exitCode = 1; server.close() })
+  child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
   child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; server.close(); child.kill(signal) })
   process.on('SIGUSR1', () => child.kill('SIGUSR1'))
@@ -133,4 +159,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('Data API configuration is invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })

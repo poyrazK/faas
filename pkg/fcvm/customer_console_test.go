@@ -103,3 +103,21 @@ func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T
 		}
 	}
 }
+
+// hunt #8: job task logs began with Firecracker's start banner and
+// guest-init's boot stages; only the workload's output belongs there.
+func TestCustomerConsoleDropsStartBannerAndBootStages(t *testing.T) {
+	if !firecrackerControlLine([]byte("2026-10-08T21:58:54.575241699 [d0426906-03df-43bf-99bf-eb060fa6fd99:main] Successfully started microvm that was configured from one single json\n")) {
+		t.Error("Firecracker start banner reached the customer log")
+	}
+	for line, want := range map[string]bool{
+		"guest-init: stage boot\n":                                         true,
+		"guest-init: stage pivot\n":                                        true,
+		"guest-init: app crash-looped after 3 restart(s): exit status 1\n": false,
+		"job-ok\n": false,
+	} {
+		if got := guestInitStageLine([]byte(line)); got != want {
+			t.Errorf("guestInitStageLine(%q) = %v, want %v", line, got, want)
+		}
+	}
+}

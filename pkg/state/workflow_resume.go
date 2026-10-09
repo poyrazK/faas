@@ -229,6 +229,13 @@ func (m *MemStore) ListWorkflowResumes(_ context.Context, id string) ([]Workflow
 func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptions) (*WorkflowRun, *WorkflowResume, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.resumeWorkflowRunLocked(opts, false)
+}
+
+func (m *MemStore) resumeWorkflowRunLocked(opts WorkflowResumeOptions, operation bool) (*WorkflowRun, *WorkflowResume, int, error) {
+	if _, linked := m.operationForWorkflowLocked(opts.RunID); linked && !operation {
+		return nil, nil, 0, ErrWorkflowResumeUnsafe
+	}
 	run, ok := m.workflowRuns[opts.RunID]
 	app, appOK := m.apps[opts.AppID]
 	account := m.accounts[opts.AccountID]
@@ -238,7 +245,13 @@ func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptio
 	if opts.PlatformTenantID != "" && run.PlatformTenantID != opts.PlatformTenantID {
 		return nil, nil, 0, ErrWorkflowRunNotFound
 	}
-	if err := workflowRecoveryTargetError(run, m.workflowRecoveryTargetLocked(run)); err != nil {
+	target := m.workflowRecoveryTargetLocked(run)
+	if operation {
+		// Customer Operations retain their pinned deployment across releases;
+		// they do not require the app's current default deployment to be live.
+		target.liveDeployment = true
+	}
+	if err := workflowRecoveryTargetError(run, target); err != nil {
 		return nil, nil, 0, err
 	}
 	spec, names, err := workflowResumePlan(run, m.workflowSteps[run.ID], opts.ExpectedResumeCount, account.Plan)

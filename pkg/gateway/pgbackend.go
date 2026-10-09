@@ -1373,9 +1373,49 @@ func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstance
 	return PickResult{Target: t, OK: true, Picked: chosen}
 }
 
+// PinnedDeployment is the gateway-side projection of the deployment an alias
+// pins: only what the not-serving refusal renders.
+type PinnedDeployment struct {
+	ID       string
+	Revision int
+	Status   string
+	Live     bool
+}
+
+// PinnedDeploymentLookup reads one deployment's lifecycle state. The
+// production weights store (cmd/gatewayd-internal weightsStoreAdapter)
+// implements it; the picker itself never needs it.
+type PinnedDeploymentLookup interface {
+	PinnedDeployment(ctx context.Context, deploymentID string) (PinnedDeployment, error)
+}
+
+// The handler consults the production backend through this optional
+// interface; keep the wiring a compile error rather than a silent fallback.
+var _ pinnedDeploymentStatusReader = (*PGBackend)(nil)
+
+// PinnedDeploymentStatus reports whether an alias-pinned deployment still
+// serves, with a vN label and its status for the refusal message. ok is
+// false when the store cannot answer.
+func (b *PGBackend) PinnedDeploymentStatus(ctx context.Context, deploymentID string) (bool, string, string, bool) {
+	lookup, isLookup := b.store.(PinnedDeploymentLookup)
+	if !isLookup {
+		return false, "", "", false
+	}
+	dep, err := lookup.PinnedDeployment(ctx, deploymentID)
+	if err != nil {
+		return false, "", "", false
+	}
+	label := dep.ID
+	if dep.Revision > 0 {
+		label = fmt.Sprintf("v%d", dep.Revision)
+	}
+	return dep.Live, label, dep.Status, true
+}
+
 // PickForDeployment selects only from deploymentID's routable target set.
 // It is intentionally separate from the weighted customer picker: an
 // authenticated promotion smoke must never verify a stable sibling by chance.
+
 func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
 	if b == nil || appID == "" || deploymentID == "" {
 		return PickResult{}

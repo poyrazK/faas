@@ -130,8 +130,35 @@ func TestGetCapabilitiesGatesGitHubDeploysOnRuntimeReadiness(t *testing.T) {
 			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if got := capabilityByKey(t, response, "github-deploys").Enabled; got != tc.ready {
-				t.Fatalf("github-deploys enabled = %t, want %t", got, tc.ready)
+			for _, key := range []string{"github-deploys", "pr-previews"} {
+				if got := capabilityByKey(t, response, key).Enabled; got != tc.ready {
+					t.Fatalf("%s enabled = %t, want %t", key, got, tc.ready)
+				}
+			}
+		})
+	}
+}
+
+// production-us hunt #8: custom domains were advertised while ADR-520
+// on-demand TLS was off, so no customer hostname could get a certificate.
+func TestGetCapabilitiesGatesCustomDomainsOnOnDemandTLS(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{mode: "", want: false},
+		{mode: api.CustomDomainTLSModeOnDemand, want: true},
+	} {
+		t.Run("mode="+tc.mode, func(t *testing.T) {
+			t.Setenv("FAAS_CUSTOM_DOMAIN_TLS", tc.mode)
+			recorder := httptest.NewRecorder()
+			(&server{}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+			var response api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if got := capabilityByKey(t, response, "custom-domains").Enabled; got != tc.want {
+				t.Fatalf("custom-domains enabled = %t, want %t", got, tc.want)
 			}
 		})
 	}
