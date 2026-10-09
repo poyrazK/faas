@@ -5,7 +5,7 @@ import (
 	"net/url"
 )
 
-// GetServiceMap returns the account service map (ADR-732). An empty rng
+// GetServiceMap returns the account service map (ADR-740). An empty rng
 // selects the server default (ServiceMapDefaultRange).
 func (c *Client) GetServiceMap(ctx context.Context, rng string) (ServiceMapResponse, error) {
 	var out ServiceMapResponse
@@ -18,7 +18,7 @@ func (c *Client) GetServiceMap(ctx context.Context, rng string) (ServiceMapRespo
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
-// ServiceMapResponse is GET /v1/service-map (ADR-732): the account's
+// ServiceMapResponse is GET /v1/service-map (ADR-740): the account's
 // caller → target app edges observed by the internal service proxy over
 // Range. Source and AsOf follow the /v1/apps/metrics contract; a degraded
 // Source carries nil Nodes and Edges rather than a partial map.

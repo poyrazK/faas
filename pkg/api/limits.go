@@ -8968,7 +8968,7 @@ const (
 )
 
 // ServiceMapMaxEdges caps the caller → target edges returned by
-// GET /v1/service-map (ADR-732). Edges are ranked by call volume before the
+// GET /v1/service-map (ADR-740). Edges are ranked by call volume before the
 // cap, so the busiest dependencies always survive truncation.
 const ServiceMapMaxEdges = 500
 

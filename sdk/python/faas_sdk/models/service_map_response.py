@@ -17,7 +17,7 @@ T = TypeVar("T", bound="ServiceMapResponse")
 
 @_attrs_define
 class ServiceMapResponse:
-    """Account service map for `GET /v1/service-map` (ADR-732). `nodes` are
+    """Account service map for `GET /v1/service-map` (ADR-740). `nodes` are
     the apps on at least one returned edge, sorted by slug; `edges` are
     sorted by `calls` descending. Degraded responses carry null `nodes`
     and `edges`.

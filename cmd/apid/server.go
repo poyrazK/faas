@@ -1753,7 +1753,7 @@ func (s *server) handler() http.Handler {
 	// pgstore helper — there's no (accountID, slug) pair to load
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
-	// ADR-732 — account service map; same read-only chain as the rollup above.
+	// ADR-740 — account service map; same read-only chain as the rollup above.
 	mux.HandleFunc("GET /v1/service-map", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getServiceMap)))
 	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set
 	// windowed vocabulary (1h | 24h | 7d). Auth chain matches

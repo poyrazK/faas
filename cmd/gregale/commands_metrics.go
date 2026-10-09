@@ -199,7 +199,7 @@ func renderAppsMetrics(w io.Writer, m api.AppsMetricsResponse) {
 	}
 }
 
-// cmdMetricsServices implements `gregale metrics --services` (ADR-732).
+// cmdMetricsServices implements `gregale metrics --services` (ADR-740).
 func cmdMetricsServices(rng string) int {
 	client, err := authedClient()
 	if err != nil {

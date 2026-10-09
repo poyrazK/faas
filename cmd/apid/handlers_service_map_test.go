@@ -90,7 +90,7 @@ func TestGetServiceMap_Degraded_QueryFails(t *testing.T) {
 }
 
 // TestGetServiceMap_HappyPath_WithProm is the capability acceptance test
-// (pkg/productcap/catalog.json, ADR-732). It pins the closed-set selectors,
+// (pkg/productcap/catalog.json, ADR-740). It pins the closed-set selectors,
 // the second ownership boundary on returned labels, ranking, error rate, and
 // success-only latency percentiles.
 func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {

@@ -389,7 +389,7 @@
       "description": "See which apps call which, with call volume, error rate, and latency per edge, from unsampled platform data and without instrumenting any service.",
       "maturity": "internal",
       "plans": [],
-      "docs_url": "/docs/adr/732-customer-service-map",
+      "docs_url": "/docs/adr/740-customer-service-map",
       "operator_flag": "FAAS_SERVICE_MAP_ENABLED",
       "acceptance_test": "cmd/apid/handlers_service_map_test.go::TestGetServiceMap_HappyPath_WithProm"
     },

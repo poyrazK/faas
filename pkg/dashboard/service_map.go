@@ -2,7 +2,7 @@ package dashboard
 
 import "github.com/onebox-faas/faas/pkg/api"
 
-// ServiceMapData is the /dashboard/service-map page (ADR-732). Map is nil
+// ServiceMapData is the /dashboard/service-map page (ADR-740). Map is nil
 // when the preview is disabled, the plan lacks metrics, or the range is
 // invalid; the template explains which.
 type ServiceMapData struct {

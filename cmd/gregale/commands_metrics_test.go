@@ -231,7 +231,7 @@ func TestRun_DispatchMetrics(t *testing.T) {
 	}
 }
 
-// --- service map (ADR-732) ---------------------------------------------------
+// --- service map (ADR-740) ---------------------------------------------------
 
 func serviceMapServer(t *testing.T, payload api.ServiceMapResponse) (*string, *string) {
 	t.Helper()

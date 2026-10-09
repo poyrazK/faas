@@ -1,4 +1,4 @@
-# ADR-732 · Customer service map from unsampled service-proxy edges
+# ADR-740 · Customer service map from unsampled service-proxy edges
 
 - **Status:** proposed
 - **Date:** 2026-10-08

@@ -90,7 +90,7 @@ func TestServiceMapDashboard_InvalidRangeFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// adr: 732 — the dashboard route sits behind the session chain like its peers.
+// adr: 740 — the dashboard route sits behind the session chain like its peers.
 func TestServiceMapDashboard_RequiresSession(t *testing.T) {
 	e := serviceMapEnv(t, api.PlanHobby)
 	rec := httptest.NewRecorder()

@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// renderServiceMapDashboard serves GET /dashboard/service-map (ADR-732). It
+// renderServiceMapDashboard serves GET /dashboard/service-map (ADR-740). It
 // renders the same map as GET /v1/service-map; an invalid ?range= falls back
 // to the default instead of failing the page.
 func (s *server) renderServiceMapDashboard(w http.ResponseWriter, r *http.Request) {

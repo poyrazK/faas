@@ -5,7 +5,7 @@ and how fast. It is built from Gregale's own record of every call made through
 [internal service routing](networking.md#internal-services), so it needs no SDK,
 agent, or tracing setup in your code.
 
-The service map is an internal preview (ADR-732). It is available on Hobby,
+The service map is an internal preview (ADR-740). It is available on Hobby,
 Pro, and Scale once enabled for your deployment.
 
 ## Read the map

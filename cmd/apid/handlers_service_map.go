@@ -18,7 +18,7 @@ import (
 
 const serviceMapPromQLTimeout = 5 * time.Second
 
-// getServiceMap serves GET /v1/service-map?range= (ADR-732). It projects the
+// getServiceMap serves GET /v1/service-map?range= (ADR-740). It projects the
 // unsampled service-proxy edge series onto the account's apps. The map is a
 // dark preview: without FAAS_SERVICE_MAP_ENABLED=1 it answers 503.
 func (s *server) getServiceMap(w http.ResponseWriter, r *http.Request, acct state.Account) {
