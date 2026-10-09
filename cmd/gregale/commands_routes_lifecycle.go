@@ -56,6 +56,7 @@ type routeLifecycleInventory struct {
 	Reason                   string `json:"reason,omitempty"`
 	Source                   string `json:"source,omitempty"`
 	CaptureSource            string `json:"capture_source,omitempty"`
+	CaptureSHA256            string `json:"capture_sha256,omitempty"`
 	DocumentSHA256           string `json:"document_sha256,omitempty"`
 	CapturedAt               string `json:"captured_at,omitempty"`
 	ContractRoutes           int    `json:"contract_routes"`
@@ -158,10 +159,25 @@ type routeLifecycleSourceRef struct {
 }
 
 func cmdRoutesLifecycle(args []string) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "prepare-approval":
+			return cmdRoutesLifecyclePrepareApproval(args[1:])
+		case "approve":
+			return cmdRoutesLifecycleApprove(args[1:])
+		case "history":
+			return cmdRoutesLifecycleHistory(args[1:])
+		case "receipt":
+			return cmdRoutesLifecycleReceipt(args[1:])
+		}
+	}
+	if len(args) > 0 && args[0] == "declarations" {
+		return cmdRoutesLifecycleDeclarations(args[1:])
+	}
 	if len(args) > 0 && args[0] == "review" {
 		return cmdRoutesLifecycleReview(args[1:])
 	}
-	PrintUsage(osStderr, "usage: gregale routes lifecycle review <slug> --deployment ID [--since 14d] [--source-impact PATH] [--out PATH] [--fail-on-incomplete] [--json]", "cli")
+	PrintUsage(osStderr, "usage: gregale routes lifecycle <review|declarations|prepare-approval|approve|receipt|history> <slug> [options]; declarations requires --from-deployment UUID --to-deployment UUID", "cli")
 	return 1
 }
 
@@ -264,6 +280,7 @@ func readRouteLifecycleInventory(ctx context.Context, client *api.Client, slug, 
 	}
 	evidence = routeLifecycleInventory{
 		Status: "available", Source: "captured_deployment_openapi", CaptureSource: document.Source,
+		CaptureSHA256:  document.DocSHA256,
 		DocumentSHA256: fmt.Sprintf("%x", openapidiff.SumSHA256(body)), CapturedAt: document.CapturedAt,
 	}
 	if len(spec.Paths) == 0 {

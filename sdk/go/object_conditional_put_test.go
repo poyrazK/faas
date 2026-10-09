@@ -10,7 +10,7 @@ import (
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
-// adr: 818
+// adr: 843
 func TestConditionalObjectSignRequest(t *testing.T) {
 	for _, condition := range []map[string]string{{"if_match": `"old"`}, {"if_none_match": "*"}} {
 		t.Run(condition["if_match"]+condition["if_none_match"], func(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 818
+// adr: 843
 func (h *Handler) conditionalWriteContext(ctx context.Context, req requestContext) context.Context {
 	return objectstorage.WithConditionalWriteRequestRecorder(ctx, func(ctx context.Context) error {
 		if h.requestMetrics == nil || !h.enabled() {

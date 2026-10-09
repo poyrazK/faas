@@ -124,6 +124,9 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 			continue
 		}
 		for _, v := range vs {
+			if isCachedRouteLifecycleHeader(k, v) {
+				continue
+			}
 			w.Header().Add(k, v)
 		}
 	}
@@ -131,6 +134,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	w.Header().Add("Warning", `110 - "Response is Stale"`)
 	w.Header().Set("X-From-Cache", "stale")
 	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))
+	h.applyCachedRouteLifecycle(w, r, app, entry)
 	w.WriteHeader(entry.statusCode)
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode
@@ -195,8 +199,17 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil {
 		return
 	}
-	pick := h.backend.Pick(app.ID)
-	if versionKey, outcome := versionAffinityKeyFromRequest(r); outcome == versionAffinityKeyValid {
+	var pick PickResult
+	if key.DeploymentID != "" {
+		picker, ok := h.backend.(deploymentTargetPicker)
+		if !ok {
+			return
+		}
+		pick = picker.PickForDeployment(app.ID, key.DeploymentID)
+	} else {
+		pick = h.backend.Pick(app.ID)
+	}
+	if versionKey, outcome := versionAffinityKeyFromRequest(r); key.DeploymentID == "" && outcome == versionAffinityKeyValid {
 		if picker, ok := h.backend.(versionAffinityPicker); ok {
 			pick = picker.PickForVersionKey(app.ID, versionKey, "")
 		}
@@ -214,9 +227,13 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		return
 	}
 	target := pick.Target
+	if key.DeploymentID != "" && target.DeploymentID != key.DeploymentID {
+		return
+	}
 	base := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
 	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes)
+	cw.servedDeploymentID = target.DeploymentID
 	capped := h.setupBufferedCapWriter(cw, app, app.Plan.MaxResponseBodyBytes())
 	request := r.Clone(ctx)
 	request.Body = http.NoBody
@@ -323,6 +340,9 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		for _, v := range vs {
+			if isCachedRouteLifecycleHeader(k, v) {
+				continue
+			}
 			w.Header().Add(k, v)
 		}
 	}
@@ -334,6 +354,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// public API contract.
 	w.Header().Set("X-From-Cache", "stale")
 	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))
+	h.applyCachedRouteLifecycle(w, r, app, entry)
 	w.WriteHeader(entry.statusCode)
 	_, _ = w.Write(entry.body)
 	rec.status = entry.statusCode

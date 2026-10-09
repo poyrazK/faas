@@ -698,4 +698,25 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
-- [ADR-829: GCS conditional PUT capabilities](829-gcs-conditional-put-capabilities.md)
+- [ADR-843: GCS conditional PUT capabilities](843-gcs-conditional-put-capabilities.md)
+- [ADR-838: Approved route removal exceptions in the contract gate](838-approved-route-removal-contract-exceptions.md)
+
+- [ADR-839: Telemetry coverage for route removal approvals](839-route-removal-telemetry-coverage.md)
+
+- [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
+- [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
+- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
+- [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
+- [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
+- [ADR-832: Lifecycle declaration reviews and canary gate](832-route-lifecycle-declaration-gate.md)
+
+- [ADR-833: Durable lifecycle successor compatibility approvals](833-lifecycle-successor-review-receipts.md)
+
+- [ADR-834: Lifecycle review at the production traffic boundary](834-production-lifecycle-transaction-guards.md)
+
+- [ADR-835: Verified lifecycle successors](835-verified-lifecycle-successors.md)
+
+- [ADR-836: Release graph lifecycle successor bindings](836-release-graph-lifecycle-successors.md)
+
+- [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)

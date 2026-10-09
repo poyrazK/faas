@@ -378,7 +378,7 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional single PUTs support create-only `If-None-Match: *` and replacement `If-Match` through signed native generation fences (ADR-829). GCS conditional multipart completion returns 501 explicitly. GCS tracked copies
+GCS conditional single PUTs support create-only `If-None-Match: *` and replacement `If-Match` through signed native generation fences (ADR-843). GCS conditional multipart completion returns 501 explicitly. GCS tracked copies
 support source conditions using a captured generation and metageneration.
 S3 copies support `x-amz-copy-source-if-match` and
 `x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
@@ -2281,4 +2281,4 @@ ETags and ETag lists are unsupported. Missing destinations return 404; an
 ETag mismatch returns 412. Failed observations issue no native PUT, and
 uncertain dispatched writes retain their receipt for recovery. Conditional
 GCS multipart completion requires a separate durable staging/publication
-implementation and still returns 501. See [ADR-829](adr/829-gcs-conditional-put-capabilities.md).
+implementation and still returns 501. See [ADR-843](adr/843-gcs-conditional-put-capabilities.md).
