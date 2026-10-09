@@ -2294,7 +2294,7 @@ type TriggerMetricsResponse struct {
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Mirrors the canonical Job DTOs in pkg/api/dto.go. Field tags + ordering
 // + omitempty are part of the wire contract — the spec_compliance_test
-// gate (TestSpecCompliance in cmd/apid) pins the OpenAPI schema's
+// gate (TestSpecCompliance in scripts/ci/speccompliance) pins the OpenAPI schema's
 // `required` arrays, so any drift between this file and pkg/api/dto.go
 // breaks the gatewayd-public edge case.
 

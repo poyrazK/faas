@@ -13,7 +13,9 @@ affect `golang.org/x/net` before v0.60.0.
 ## Decision
 
 Pin the platform, CI, native build workflows, image toolchain installers, and
-generated Go starter modules to Go 1.26.9. Keep installer checksums aligned
+generated Go starter modules to Go 1.26.9. Root and provider modules retain
+the Go 1.26 language target and select Go 1.26.9 with a toolchain directive.
+Keep installer checksums aligned
 with the published archives. Upgrade `golang.org/x/net` to v0.60.0 and
 `golang.org/x/crypto` to v0.57.0 (required by the networking update), and align the module and CI linter pins at
 golangci-lint v2.14.0, which supports Go 1.26 and fixes analysis-cache handling. Update the builder image's

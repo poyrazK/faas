@@ -3586,6 +3586,48 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Tenant-configurable schedule workflow from the live deployment.
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      tags: [workflows]
+      operationId: getPlatformTenantSelfWorkflowSchedulePreview
+      summary: Preview fire times and catch-up for this tenant's schedule.
+      description: Read-only simulation using this tenant's effective schedule and durable cursor. Fire times follow Gregale daylight-saving rules. No run is admitted or cursor changed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: at
+          in: query
+          description: Hypothetical evaluator time in RFC3339; defaults to now and is bounded to five years in either direction.
+          schema: { type: string, format: date-time }
+        - name: since
+          in: query
+          description: Simulated prior evaluation time, useful for reviewing missed-fire catch-up. Defaults to the durable tenant cursor.
+          schema: { type: string, format: date-time }
+        - name: count
+          in: query
+          description: Upcoming occurrences to return.
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        '200':
+          description: Read-only schedule simulation.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowSchedulePreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18074,6 +18116,82 @@ paths:
             schema:
               $ref: '#/components/schemas/SetAutomationEnabledRequest'
 
+  /v1/apps/{slug}/workflows/schedules/occurrences:
+    get:
+      tags: [workflows]
+      summary: Inspect scheduled workflow admission history
+      description: Started and skipped due minutes retained for 30 days. Requires app read access. History includes all linked tenants; optionally filter by tenant. No missed-minute catch-up is inferred.
+      operationId: listWorkflowScheduleOccurrences
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: platform_tenant_id
+          in: query
+          description: Only occurrences for this platform tenant within the app.
+          schema: { type: string, format: uuid }
+        - name: cursor
+          in: query
+          description: next_cursor from the previous page. An expired cursor returns an empty page.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum occurrences returned per page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Newest nominal minutes first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowScheduleOccurrencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/workflows/schedules/occurrences:replay-preview:
+    post:
+      tags: [workflows]
+      summary: Preview selected skipped schedule occurrence replays
+      description: Read-only advisory check of up to 20 retained skipped occurrences against the current live deployment, workflow definition, tenant schedule settings, overlap state, and app quota. Replay rechecks every condition.
+      operationId: previewWorkflowScheduleReplays
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowScheduleReplayRequest' }
+      responses:
+        '200':
+          description: Preview outcomes in chronological order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowScheduleReplayResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/workflows/schedules/occurrences:replay:
+    post:
+      tags: [workflows]
+      summary: Replay selected skipped schedule occurrences
+      description: Starts at most 20 selected skipped occurrences in chronological order, using the same live deployment and matching workflow definition, and the ordinary app quota and overlap checks. Each occurrence can create at most one replay run; blocked items are returned with their outcome.
+      operationId: replayWorkflowScheduleOccurrences
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowScheduleReplayRequest' }
+      responses:
+        '200':
+          description: Replay outcomes in chronological order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowScheduleReplayResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServerError' }
   /v1/apps/{slug}/workflows/schedules:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18102,6 +18220,49 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/schedules/{name}/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Schedule workflow name from the effective live deployment.
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      tags: [workflows]
+      operationId: getWorkflowSchedulePreview
+      summary: Preview a deployed workflow schedule.
+      description: Read-only simulation of upcoming local fire times and the next catch-up decision using the durable cursor. Fire times follow Gregale daylight-saving rules. No run is admitted or cursor changed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: at
+          in: query
+          description: RFC3339 time for evaluating future fire times and catch-up; defaults to the current time and is limited to five years from now.
+          schema: { type: string, format: date-time }
+        - name: since
+          in: query
+          description: Simulated prior evaluation time, useful for reviewing missed-fire catch-up. Defaults to the durable cursor.
+          schema: { type: string, format: date-time }
+        - name: count
+          in: query
+          description: Maximum number of future local fire times to include.
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        '200':
+          description: Preview evaluated for this app's active deployment.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowSchedulePreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AutomationConflict', description: Tenant-required apps must use the tenant-self preview. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -18498,6 +18659,37 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/platform-tenant-self/workflows/runs/{id}/diagnostics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier restricted to the authenticated tenant.
+    get:
+      tags: [workflows]
+      operationId: getPlatformTenantSelfWorkflowRunDiagnostics
+      summary: Inspect this tenant's workflow run and preview its safe continuation.
+      description: |
+        Requires a tenant-bound token with platform_tenant:invocations:read.
+        Foreign, unbound and missing runs return the same 404.
+        Returns a consistent read-only snapshot with queue reason, step states,
+        code identity and the existing resume planner. No actions, admission
+        reservations or audit mutations occur. Capacity and resume generation
+        are checked again by POST resume. Inputs, outputs, error text, tenant
+        identities and credentials are omitted. Responses use Cache-Control: no-store.
+      responses:
+        '200':
+          description: Diagnostics and continuation blockers for the authenticated tenant's run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunDiagnosticsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/platform-tenant-self/workflows/runs/{id}/resume:
     parameters:
       - name: id
@@ -18595,6 +18787,69 @@ paths:
               schema: { $ref: '#/components/schemas/ListWorkflowRunsResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/runs:cancel-preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [workflows]
+      operationId: previewUnstartedWorkflowRunCancellations
+      summary: Preview cancellation eligibility for selected queued workflow runs.
+      description: |
+        Classifies up to 20 selected runs without changing them. A run is
+        eligible only while it is pending and has never started. This is an
+        advisory snapshot; the cancellation action rechecks eligibility while
+        holding the same run lock used by dispatch claims. Runs outside the app
+        are reported as not_found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowQueuedRunCancelRequest' }
+      responses:
+        '200':
+          description: One preview classification per selected run, in request order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowQueuedRunCancelResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/runs:cancel-queued:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [workflows]
+      operationId: cancelUnstartedWorkflowRuns
+      summary: Cancel selected queued workflow runs that have never started.
+      description: |
+        Atomically rechecks and cancels the selected runs that remain pending
+        and have no started_at timestamp. A run claimed after preview is
+        reported as already_started or not_queued and is left alone. Started
+        runs and retries are never cancelled by this bulk action. Eligible
+        runs transition to failed with cancelled_at set. The bounded batch is
+        committed as one transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowQueuedRunCancelRequest' }
+      responses:
+        '200':
+          description: One final outcome per selected run, in request order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowQueuedRunCancelResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
@@ -18894,6 +19149,36 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/diagnostics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Durable workflow-run identifier.
+    get:
+      tags: [workflows]
+      operationId: getWorkflowRunDiagnostics
+      summary: Inspect a workflow run and preview its safe continuation.
+      description: |
+        Requires the normal account read scope and MFA.
+        Returns a consistent read-only snapshot with queue reason, step states,
+        code identity and the existing resume planner. No actions, admission
+        reservations or audit mutations occur. Capacity and resume generation
+        are checked again by POST resume. Inputs, outputs, error text, tenant
+        identities and credentials are omitted. Responses use Cache-Control: no-store.
+      responses:
+        '200':
+          description: Current diagnostics and an advisory resume preview, including blockers for ineligible runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunDiagnosticsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -43689,7 +43974,7 @@ components:
     # Workflow declarations are validated and persisted at the deployment
     # boundary; runs snapshot the selected definition from the live deploy.
     WorkflowTriggerSpec:
-      description: "Manual start, a five-field recurring schedule, or an internal event start. Event triggers use source/event_type patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes and default to skipping overlapping runs. Scheduling is active only on the live default deployment and requires the workflow runtime. New deployments arm schedules before their next eligible minute. An app owner may mark a schedule tenant_configurable to let each linked customer manage only its own cadence, timezone, overlap behavior, and enabled state."
+      description: "Manual start, a five-field recurring schedule, or an internal event start. Event triggers use source/event_type patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes by default; catch_up latest recovers at most one unconsumed fire inside a bounded window. Overlapping runs are skipped by default. Scheduling is active only on the live default deployment and requires the workflow runtime. New deployments and changed triggers arm before firing. An app owner may mark a schedule tenant_configurable to let each linked customer manage only its own cadence, timezone, overlap behavior, and enabled state; catch-up remains owner-controlled."
       type: object
       additionalProperties: false
       required: [type]
@@ -43709,6 +43994,13 @@ components:
           type: string
           enum: [skip, allow]
           description: Skip a minute while any run of this workflow is active, or allow overlap subject to the app run quota. Defaults to skip.
+        catch_up:
+          type: string
+          enum: [skip, latest]
+          description: Schedule-only recovery policy; defaults to skip. Latest coalesces missed fires into at most one run inside the recovery window; a current-minute fire takes precedence. Quota and overlap skips consume the interval.
+        catch_up_window:
+          type: string
+          description: Schedule-only duration used with catch_up latest, between 1m and 24h. Defaults to 1h; fires exactly at the age limit are included. Other policies reject this field.
         enabled:
           type: boolean
           description: Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs continue after disabling.
@@ -43724,7 +44016,7 @@ components:
         filter:
           type: object
           additionalProperties: true
-          description: Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input, and overlap options.
+          description: Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input, overlap, and catch-up options.
 
     AutomationResponse:
       type: object
@@ -43804,6 +44096,33 @@ components:
         failed_run_count: { type: integer, format: int64, minimum: 1 }
         last_failed_at: { type: string, format: date-time }
       description: Number of terminal runs that failed at this logical step; loop items are grouped by parent.
+    AutomationQueueHealth:
+      type: object
+      additionalProperties: false
+      required: [observed_at, waiting_run_count, due_run_count, stale_run_count, oldest_due_age_seconds, app_running_count, app_dispatch_limit, tenant_dispatch_limit, app_at_capacity, reason_counts]
+      properties:
+        observed_at: { type: string, format: date-time }
+        waiting_run_count: { type: integer, format: int64, minimum: 0, description: "Current pending and parked runs plus expired running leases for this automation; reason counts sum to this value." }
+        due_run_count: { type: integer, format: int64, minimum: 0, description: "Due waiting runs including capacity blockers and lease recovery." }
+        stale_run_count: { type: integer, format: int64, minimum: 0, description: "Running automation runs whose dispatch lease has expired." }
+        oldest_due_age_seconds: { type: number, format: double, minimum: 0, description: "Age since the oldest due run became eligible, bounded by creation time; zero if none is due." }
+        app_running_count: { type: integer, format: int64, minimum: 0, description: "Live automation dispatch claims across all workflows and tenants in this app; excludes expired leases and native operation custody." }
+        app_dispatch_limit: { type: integer, minimum: 1 }
+        tenant_dispatch_limit: { type: integer, minimum: 1, description: "Live claim limit per tenant within this app." }
+        app_at_capacity: { type: boolean }
+        reason_counts:
+          type: object
+          additionalProperties: false
+          required: [ready, scheduled, retry_backoff, parked_wait, app_capacity, tenant_capacity, workflow_capacity]
+          properties:
+            ready: { type: integer, format: int64, minimum: 0, description: "Due and passes observed run admission checks; does not guarantee immediate handler execution." }
+            scheduled: { type: integer, format: int64, minimum: 0, description: "Future scheduling deadline that is not a pending step retry." }
+            retry_backoff: { type: integer, format: int64, minimum: 0, description: "A pending step retry deadline equals the future persisted run wake." }
+            parked_wait: { type: integer, format: int64, minimum: 0, description: "Intentional future wait or timeout; inspect steps for timer, condition, event or callback details." }
+            app_capacity: { type: integer, format: int64, minimum: 0 }
+            tenant_capacity: { type: integer, format: int64, minimum: 0 }
+            workflow_capacity: { type: integer, format: int64, minimum: 0, description: "The captured workflow definition run budget is full." }
+      description: Current app-owned queue diagnostics independent of the historical health window. Each waiting run has one primary reason; future wakes take precedence followed by app, tenant and workflow capacity. No payloads or tenant identities, global worker occupancy or completion estimates are returned.
     AutomationHealthResponse:
       type: object
       additionalProperties: false
@@ -43825,6 +44144,7 @@ components:
           format: int64
           minimum: 0
           description: Current pending runs that have not started; independent of the requested health window.
+        queue: { $ref: '#/components/schemas/AutomationQueueHealth' }
         success_rate:
           type: number
           format: double
@@ -44122,6 +44442,8 @@ components:
         schedule: { type: string }
         timezone: { type: string }
         overlap: { type: string, enum: [skip, allow] }
+        catch_up: { type: string, enum: [skip, latest], description: Effective missed-fire policy; defaults to skip. }
+        catch_up_window: { type: string, description: Effective recovery duration, present only for latest. }
         enabled: { type: boolean }
         next_fire_at: { type: string, format: date-time }
         last_evaluated_at: { type: string, format: date-time }
@@ -44129,6 +44451,104 @@ components:
         last_status: { type: string, enum: [armed, started, skipped_overlap, skipped_quota] }
         last_run_id: { type: string, format: uuid }
 
+    WorkflowScheduleOccurrenceResponse:
+      description: Immutable admission outcome for one due schedule minute, retained independently from the workflow run.
+      type: object
+      required: [id, app_id, workflow_name, deployment_id, scheduled_for, evaluated_at, status]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        deployment_id: { type: string, format: uuid }
+        scheduled_for: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        status: { type: string, enum: [started, skipped_overlap, skipped_quota] }
+        run_id: { type: string, format: uuid, description: Present for started outcomes; retained after run expiry. }
+        replay_run_id: { type: string, format: uuid, description: Present after a skipped occurrence has been replayed. }
+        replayed_at: { type: string, format: date-time }
+    ListWorkflowScheduleOccurrencesResponse:
+      description: Page of due workflow schedule outcomes ordered by nominal minute, with a cursor for the next page.
+      type: object
+      required: [occurrences]
+      properties:
+        occurrences:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowScheduleOccurrenceResponse' }
+        next_cursor: { type: string, format: uuid }
+    WorkflowScheduleReplayRequest:
+      description: Selection of skipped schedule occurrence IDs to preview or replay.
+      type: object
+      required: [occurrence_ids]
+      additionalProperties: false
+      properties:
+        occurrence_ids:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    WorkflowScheduleReplayOutcome:
+      description: Eligibility or result for replaying one schedule occurrence.
+      type: object
+      required: [occurrence_id, outcome]
+      properties:
+        occurrence_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        scheduled_for: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [eligible, replayed, already_replayed, occurrence_not_found, not_skipped, history_not_replayable, deployment_changed, definition_changed, schedule_disabled, overlap_active, quota_full, tenant_unavailable, target_unavailable, plan_unavailable]
+        replay_run_id: { type: string, format: uuid }
+    WorkflowScheduleReplayResponse:
+      description: Per-occurrence results for a controlled schedule replay request.
+      type: object
+      required: [outcomes]
+      properties:
+        outcomes:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowScheduleReplayOutcome' }
+    WorkflowQueuedRunCancelRequest:
+      description: Selection of workflow runs for a preview or unstarted cancellation.
+      type: object
+      additionalProperties: false
+      required: [run_ids]
+      properties:
+        run_ids:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        workflow_name:
+          type: string
+          maxLength: 128
+          description: Optional exact workflow-name guard for the selection.
+    WorkflowQueuedRunCancelOutcome:
+      description: Eligibility or result for cancelling one queued workflow run.
+      type: object
+      required: [run_id, outcome]
+      properties:
+        run_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        outcome:
+          type: string
+          enum: [eligible, cancelled, already_cancelled, not_found, workflow_mismatch, not_queued, already_started]
+          description: Preview classification or the final result after the atomic cancellation recheck.
+        status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead] }
+        started_at: { type: string, format: date-time }
+        scheduled_for: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        cancelled_at: { type: string, format: date-time }
+    WorkflowQueuedRunCancelResponse:
+      description: Per-run results for a queued cancellation request.
+      type: object
+      required: [outcomes]
+      properties:
+        outcomes:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowQueuedRunCancelOutcome' }
     ListWorkflowSchedulesResponse:
       description: Deployed workflow schedules with runtime availability and any admission blocker.
       type: object
@@ -44142,6 +44562,61 @@ components:
           type: array
           items: { $ref: '#/components/schemas/WorkflowScheduleResponse' }
 
+    WorkflowScheduleFirePreview:
+      type: object
+      description: One canonical fire time with its offset-bearing local representation.
+      required: [scheduled_for, local_time]
+      properties:
+        scheduled_for: { type: string, format: date-time, description: UTC instant used by the scheduler. }
+        local_time: { type: string, format: date-time, description: Local wall time including the UTC offset. }
+        dst_adjustment: { type: string, enum: [shifted_forward], description: Present when a spring gap moves the configured wall time to the first valid minute. }
+
+    WorkflowScheduleDSTBehavior:
+      type: object
+      description: Gregale's timezone-transition behavior for fixed wall-time and interval cron expressions.
+      required: [mode, spring_gap, fall_fold]
+      properties:
+        mode: { type: string, enum: [fixed_wall_time, interval] }
+        spring_gap: { type: string, enum: [shift_to_first_valid_minute, follow_cron_interval] }
+        fall_fold: { type: string, enum: [run_once_at_first_occurrence, repeat_as_clock_falls_back] }
+
+    WorkflowScheduleCatchUpPreview:
+      type: object
+      description: Simulated next evaluator decision. It does not reserve quota or promise worker availability.
+      required: [policy, outcome, eligible_occurrences, coalesced_occurrences, missed_occurrences_not_recovered, missed_outside_window]
+      properties:
+        policy: { type: string, enum: [skip, latest] }
+        window: { type: string, description: Effective maximum age for latest catch-up. }
+        outcome:
+          type: string
+          enum: [disabled, first_evaluation_arms, no_new_evaluation, run_current_fire, coalesce_latest, skip_missed, outside_catch_up_window, no_due_occurrence]
+        since: { type: string, format: date-time, description: Durable or simulated prior evaluator time. }
+        eligible_occurrences: { type: integer, minimum: 0, description: 'Candidate occurrences within the latest policy window, or the single current occurrence for skip.' }
+        coalesced_occurrences: { type: integer, minimum: 0, description: Older eligible fires represented by the selected latest occurrence. }
+        missed_occurrences_not_recovered: { type: boolean, description: True when the skip policy drops earlier fires before the current occurrence. }
+        missed_outside_window: { type: boolean, description: True when at least one unconsumed fire is older than the latest policy window. }
+        selected: { $ref: '#/components/schemas/WorkflowScheduleFirePreview' }
+
+    WorkflowSchedulePreviewResponse:
+      type: object
+      description: Read-only schedule simulation using the deployed trigger and durable cursor. Upcoming times do not guarantee capacity or execution.
+      required: [workflow_name, deployment_id, schedule, timezone, overlap, enabled, observed_at, evaluation_at, dst_behavior, upcoming, catch_up]
+      properties:
+        workflow_name: { type: string }
+        deployment_id: { type: string, format: uuid }
+        schedule: { type: string }
+        timezone: { type: string, description: Effective IANA timezone. }
+        overlap: { type: string, enum: [skip, allow], description: Configured overlap policy. Active runs may still block admission when overlap is skip. }
+        enabled: { type: boolean }
+        observed_at: { type: string, format: date-time }
+        evaluation_at: { type: string, format: date-time, description: Actual or hypothetical evaluator time. }
+        dst_behavior: { $ref: '#/components/schemas/WorkflowScheduleDSTBehavior' }
+        upcoming:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/WorkflowScheduleFirePreview' }
+        catch_up: { $ref: '#/components/schemas/WorkflowScheduleCatchUpPreview' }
+
     TenantWorkflowScheduleResponse:
       description: A tenant's effective cadence for an opted-in published schedule workflow.
       type: object
@@ -44151,8 +44626,10 @@ components:
         workflow_name: { type: string }
         deployment_id: { type: string, format: uuid }
         schedule: { type: string, description: Five-field cron expression. }
-        timezone: { type: string, description: Effective IANA timezone. }
+        timezone: { type: string, description: Effective IANA timezone inherited from the published workflow. }
         overlap: { type: string, enum: [skip, allow] }
+        catch_up: { type: string, enum: [skip, latest], description: Inherited owner-controlled recovery policy. }
+        catch_up_window: { type: string, description: Inherited recovery duration, present only for latest. }
         enabled: { type: boolean }
         tenant_configurable: { type: boolean, const: true }
         customized: { type: boolean, description: Whether this tenant has saved an override. }
@@ -45367,6 +45844,73 @@ components:
           maxItems: 16
           items: { $ref: '#/components/schemas/WorkflowResumeResponse' }
 
+    WorkflowRunDiagnosticsResponse:
+      type: object
+      description: Read-only durable state and recovery preview. No execution or capacity reservation. Steps are bounded by existing workflow and iteration limits.
+      required: [run_id, workflow_name, status, observed_at, legacy_unpinned, state_reason, due_age_seconds, stale_lease, steps, resume]
+      properties:
+        run_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead] }
+        observed_at: { type: string, format: date-time }
+        deployment_id: { type: string, format: uuid, description: Original code pin retained across continuation. Omitted for legacy unpinned runs. }
+        legacy_unpinned: { type: boolean }
+        state_reason:
+          type: string
+          enum: [ready, scheduled, retry_backoff, parked_wait, app_capacity, tenant_capacity, workflow_capacity, running, succeeded, failed, dead, cancelled]
+          description: Durable state or dispatch admission reason at observation. Ready does not imply immediate execution or runtime availability. Inspect step kinds for parked wait details.
+        next_wake_at: { type: string, format: date-time, description: Next intentional wake or scheduling deadline when it is in the future. }
+        due_age_seconds: { type: number, minimum: 0, description: Age since eligibility including capacity-blocked work and expired leases; zero for future waits and live claims. }
+        stale_lease: { type: boolean }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowDiagnosticStep' }
+        resume: { $ref: '#/components/schemas/WorkflowResumePreview' }
+
+    WorkflowDiagnosticStep:
+      type: object
+      description: Persisted step status and action kind without customer values.
+      required: [step_name, status, kind, attempt, retry_base]
+      properties:
+        step_name: { type: string }
+        status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead, skipped] }
+        kind: { type: string, enum: [action, for_each, join, timer, event, callback, condition, unknown] }
+        attempt: { type: integer, minimum: 0 }
+        retry_base: { type: integer, minimum: 0 }
+        next_retry_at: { type: string, format: date-time }
+        next_check_at: { type: string, format: date-time }
+
+    WorkflowResumePreview:
+      type: object
+      description: A continuation plan based on the current run generation and recovery admission checks.
+      required: [eligible, expected_resume_count, reopened_steps, preserved_steps, blockers]
+      properties:
+        eligible: { type: boolean, description: Advisory eligibility at observation. Actual resume rechecks state and quotas. }
+        expected_resume_count: { type: integer, minimum: 0, maximum: 16, description: Observed generation for a subsequent resume request; stale generations are rejected. }
+        reopened_steps:
+          type: array
+          description: Structurally eligible steps that would reopen even if a temporary admission blocker prevents continuation. Empty when recovery planning is unsafe.
+          items: { type: string }
+        preserved_steps:
+          type: array
+          description: Persisted steps whose current state is retained including completed actions and untaken branches. Sorted by name as are reopened_steps and diagnostic steps.
+          items: { type: string }
+        blockers:
+          type: array
+          description: First deterministic planner blocker plus independent admission blockers. Empty only when eligible. Codes omit private values.
+          items: { $ref: '#/components/schemas/WorkflowDiagnosticBlocker' }
+
+    WorkflowDiagnosticBlocker:
+      type: object
+      description: A stable recovery reason with a fixed explanation and optional affected step.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
+        message: { type: string, description: Fixed explanation without private values. }
+        step_name: { type: string, description: Affected step when the planner blocker is step-specific. }
+
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."
       type: object
@@ -45380,6 +45924,7 @@ components:
         cancelled_at: { type: string, format: date-time }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid, description: Immutable deployment used by this run's app handlers. Absent for legacy unpinned runs. }
         platform_tenant_id: { type: [string, 'null'], format: uuid, description: Platform tenant authorized for this workflow run, when present. }
         workflow_name: { type: string }
         status:
@@ -49609,6 +50154,11 @@ components:
             - slo_burn_rate
             - pre_auth_target_threshold
             - pre_auth_target_signal_gap_pct
+            - workflow_failures
+            - workflow_schedule_quota_skips
+            - workflow_pending_age_seconds
+            - workflow_waiting_age_seconds
+            - workflow_due_age_seconds
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -49633,7 +50183,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only.'
+          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and workflow metrics support webhook only.'
           default: webhook
           example: webhook
         state:
@@ -49681,7 +50231,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target metrics support webhook only.'
+          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and workflow metrics support webhook only.'
           default: webhook
           example: webhook
 
@@ -49712,7 +50262,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target metrics support webhook only.'
+          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and workflow metrics support webhook only.'
 
     RotateAlertRuleSecretResponse:
       description: 'rotate-secret response — returns the rotated_at timestamp + the masked constant.'

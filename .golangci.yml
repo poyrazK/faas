@@ -450,7 +450,7 @@ linters:
       # staticcheck's dataflow analyzer doesn't know t.Fatalf
       # terminates. Blanket-excluding the directory rather than
       # chasing individual files is the load-bearing choice here —
-      # the v2.4.0 linter ships enough false-positives in this
+      # the pinned linter ships enough false-positives in this
       # surface that path-by-path maintenance falls behind within
       # a week. If a real nil-deref is later introduced, the
       # unit tests under that file (not staticcheck) will catch

@@ -1126,7 +1126,7 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing-md docs-links-check ## CI gate: vacuum lint + AST parity + generated docs drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
-	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
+	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
@@ -1427,7 +1427,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml

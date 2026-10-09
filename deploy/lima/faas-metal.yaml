@@ -59,7 +59,7 @@ probes:
 
 provision:
   # System setup: build toolchain, mkfs.ext4, iproute2, busybox (metal-test
-  # rootfs fallback), kvm group, Go 1.26, and aarch64 Firecracker + kernel.
+  # rootfs fallback), kvm group, Go 1.26.9, and aarch64 Firecracker + kernel.
   # Also install + start postgres (the metal tests need a reachable socket
   # at /run/postgresql) and create the per-daemon faas-* users the jailer
   # chowns to.

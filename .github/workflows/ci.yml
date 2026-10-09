@@ -46,10 +46,10 @@ permissions:
 
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.26.9` directive resolve to the same Go runtime.
+  # and the go.mod toolchain directive resolve to the same Go runtime.
   # Go 1.26.9 fixes the reachable stdlib advisories reported by the
   # October 2026 supply-chain gate. Keep all runtime/build pins aligned
-  # with the go.mod `go` directive.
+  # with the go.mod toolchain directive.
   GO_VERSION: "1.26.9"
   # Bound cold CLI compilation just as the apid compiler guard below does.
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
@@ -1242,6 +1242,14 @@ jobs:
       # runner shutdown at ~10 minutes. Keep each invocation bounded while
       # still proving every test discovered by udp-contract-check.py.
       - name: require portable UDP contracts
+        # Match the bounded APID compile settings used by pg shard 1. This
+        # strict verifier also compiles cmd/apid with -race, and cold DWARF
+        # generation can exceed hosted-runner memory before tests begin.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           set -o pipefail
           python3 scripts/ci/udp-contract-check.py --packages pkg/ingressroute pkg/udpd pkg/udpwire cmd/vmmd-udp-bridge 2>&1 | tee udp-contract-ingress.log

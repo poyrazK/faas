@@ -119,6 +119,15 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 				t.Fatalf("start tenant schedule=%+v changed=%t err=%v", cursor, changed, err)
 			}
 		}
+		runs, _, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, run := range runs {
+			if run.DeploymentID == "" || run.PlatformTenantID == "" {
+				t.Fatalf("tenant schedule lost code/tenant identity: %+v", run)
+			}
+		}
 		activeCandidate := candidates[0]
 		if activeCandidate.PlatformTenantID == tenantIDs[0] {
 			activeCandidate = candidates[1]
