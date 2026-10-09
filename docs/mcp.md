@@ -1115,7 +1115,14 @@ verification tests.
 
 `gregale mcp tasks release recover --plan release.json --state release-state.json`
 reads the actual serving revision, candidate endpoint and worker health, observer
-freshness, and previous worker readiness. It makes no control-plane changes.
+freshness, and previous worker readiness. Its JSON includes a `checks` list with
+individual `passed`/`failed` status and a detail for serving generation, candidate
+workers, observer, endpoint and previous workers; the existing readiness booleans
+remain available to scripts. A failed `--resume` names the blocking checks and
+reasons directly. Previous worker readiness remains diagnostic during forward
+resume; candidate, observer, endpoint and serving-generation checks gate it. The
+command makes no control-plane changes.
+
 Add `--resume` to continue the original release through its namespace-locked gate
 when candidate health and the serving-generation checks pass.
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,6 +44,12 @@ func checkMCPNativePrevious(ctx context.Context, c *Client, p mcpNativeReleasePl
 	return nil
 }
 
+type mcpNativeRecoveryCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail"`
+}
+
 func recoverMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string, resume bool) int {
 	c, err := authedClient()
 	if err != nil {
@@ -54,16 +62,49 @@ func recoverMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, st
 		return printErr("MCP recovery", err)
 	}
 	changed := !s.ServingCaptured || (serving != s.ServingDeployment && serving != s.WebDeployment)
-	candidateReady := s.WorkerDeployment != "" && len(s.WorkerIDs) > 0 && mcpNativeCheckWorkers(ctx, c, p, &s) == nil
-	observerReady := mcpNativeObserverHealthy(ctx, c, p) == nil
-	endpointReady := !changed && serving != "" && s.WebDeployment != "" && mcpNativeVerifyEndpoint(ctx, c, p, &s) == nil
-	previousReady := checkMCPNativePrevious(ctx, c, p, &s) == nil
-	report := map[string]any{"stage": s.Stage, "servingDeployment": serving, "candidateDeployment": s.WebDeployment, "trafficChanged": changed, "candidateWorkersReady": candidateReady, "candidateEndpointReady": endpointReady, "observerReady": observerReady, "previousWorkersReady": previousReady}
+	check := func(name string, err error) mcpNativeRecoveryCheck {
+		if err != nil {
+			return mcpNativeRecoveryCheck{Name: name, Status: "failed", Detail: err.Error()}
+		}
+		return mcpNativeRecoveryCheck{Name: name, Status: "passed", Detail: "Readiness check passed"}
+	}
+	trafficErr := error(nil)
+	if changed {
+		trafficErr = fmt.Errorf("serving deployment %q differs from the captured baseline %q and candidate %q", serving, s.ServingDeployment, s.WebDeployment)
+	}
+	checks := []mcpNativeRecoveryCheck{check("serving_generation", trafficErr)}
+	candidateErr := error(nil)
+	if s.WorkerDeployment == "" || len(s.WorkerIDs) == 0 {
+		candidateErr = errors.New("candidate worker deployment or captured worker IDs are missing")
+	} else {
+		candidateErr = mcpNativeCheckWorkers(ctx, c, p, &s)
+	}
+	checks = append(checks, check("candidate_workers", candidateErr))
+	observerErr := mcpNativeObserverHealthy(ctx, c, p)
+	checks = append(checks, check("observer", observerErr))
+	endpointErr := error(nil)
+	if changed {
+		endpointErr = errors.New("candidate endpoint cannot be verified while the serving generation has changed")
+	} else if serving == "" || s.WebDeployment == "" {
+		endpointErr = errors.New("captured serving and candidate deployment IDs are required")
+	} else {
+		endpointErr = mcpNativeVerifyEndpoint(ctx, c, p, &s)
+	}
+	checks = append(checks, check("candidate_endpoint", endpointErr))
+	previousErr := checkMCPNativePrevious(ctx, c, p, &s)
+	checks = append(checks, check("previous_workers", previousErr))
+	report := map[string]any{"stage": s.Stage, "servingDeployment": serving, "candidateDeployment": s.WebDeployment, "trafficChanged": changed, "candidateWorkersReady": candidateErr == nil, "candidateEndpointReady": endpointErr == nil, "observerReady": observerErr == nil, "previousWorkersReady": previousErr == nil, "checks": checks}
 	if !resume {
 		return jsonOut(writeJSON(report))
 	}
-	if changed || !candidateReady || !observerReady || !endpointReady {
-		return printErr("MCP recovery", errors.New("candidate health or serving generation prevents resume; inspect recover output"))
+	failed := make([]string, 0, len(checks))
+	for _, item := range checks {
+		if item.Status != "passed" && item.Name != "previous_workers" {
+			failed = append(failed, item.Name+": "+item.Detail)
+		}
+	}
+	if len(failed) > 0 {
+		return printErr("MCP recovery", fmt.Errorf("resume blocked by failed readiness checks: %s", strings.Join(failed, "; ")))
 	}
 	return runMCPNativeRelease(p, s, state, plan)
 }

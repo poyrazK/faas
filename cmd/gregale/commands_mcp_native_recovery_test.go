@@ -250,9 +250,29 @@ func TestMCPNativeRecoveryInspectionDoesNotConfigureIngress(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_inspection")
-	_, _, restore := swapIO(t)
+	stdout, _, restore := swapIO(t)
 	defer restore()
-	if code := recoverMCPNativeRelease(mcpNativeReleasePlan{WebApp: "web", ObserverApp: "observer", TimeoutSeconds: 1}, mcpNativeReleaseState{ServingCaptured: true, WebDeployment: "candidate"}, "unused", "unused", false); code != 0 {
+	if code := recoverMCPNativeRelease(mcpNativeReleasePlan{WebApp: "web", ObserverApp: "observer", TimeoutSeconds: 1}, mcpNativeReleaseState{ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate"}, "unused", "unused", false); code != 0 {
 		t.Fatalf("inspection exit %d", code)
+	}
+	var report struct {
+		CandidateWorkersReady bool                     `json:"candidateWorkersReady"`
+		Checks                []mcpNativeRecoveryCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode recovery report: %v; output=%s", err, stdout.String())
+	}
+	if report.CandidateWorkersReady || len(report.Checks) != 5 {
+		t.Fatalf("recovery report lost readiness checks: %+v", report)
+	}
+	byName := make(map[string]mcpNativeRecoveryCheck, len(report.Checks))
+	for _, check := range report.Checks {
+		if check.Detail == "" {
+			t.Errorf("check %q omitted its explanation", check.Name)
+		}
+		byName[check.Name] = check
+	}
+	if byName["serving_generation"].Status != "failed" || byName["candidate_workers"].Status != "failed" || byName["observer"].Status != "failed" || byName["candidate_endpoint"].Status != "failed" || byName["previous_workers"].Status != "passed" {
+		t.Fatalf("unexpected recovery checks: %+v", byName)
 	}
 }
