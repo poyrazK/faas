@@ -452,6 +452,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/alert-rollbacks":                         "ListAlertRollbacks",
 	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                  "GetAlertRollback",
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                   "GetRollbackOperation",
+	"GET /v1/apps/{slug}/operational-summary":                     "GetAppOperationalSummary",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -610,6 +611,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
+	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
+	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
 	"GET /v1/deployments/{id}/stages":                                                 "GetDeploymentStages",                  // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
 	"GET /v1/deployments/{id}/audit":                                                  "ListDeploymentAudit",                  // issue #976 / ADR-122 SAFE-RELEASES-E.2 + production-leveling Stream A; per-deployment audit timeline drill-down
 	"POST /v1/deployments/{id}/canary/advance":                                        "AdvanceCanary",                        // issue #976 / ADR-122; APID-owned atomic canary CAS + traffic + audit
@@ -1219,6 +1222,8 @@ var methodRouteMap = map[string]string{
 	// would produce GetAppsSlugMetrics (Swagger-style); the SDK
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
+	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
 	"GET /v1/apps/{slug}/debug/dependencies":    "GetAppDebugDependencyLatency",

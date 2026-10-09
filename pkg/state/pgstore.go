@@ -7735,17 +7735,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			return Deployment{}, err
 		}
 	}
-	// Match activation and policy writes: app first, then deployment rows.
-	// This prevents an app-versus-deployment lock cycle with the DB guard.
-	var policyAppID string
-	if err := tx.QueryRow(ctx, `select app_id from deployments where id=$1`, id).Scan(&policyAppID); err != nil {
-		return Deployment{}, mapErr(err)
+	// Serialize with cutover/configuration before deployment locks.
+	if _, err := sqlc.New().LockDeploymentTrafficApp(ctx, tx, mustPgUUID(id)); err != nil {
+		return Deployment{}, fmt.Errorf("state: lock traffic app: %w", mapErr(err))
 	}
-	var lockedApp int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 for update`, policyAppID).Scan(&lockedApp); err != nil {
-		return Deployment{}, mapErr(err)
-	}
-
 	// (1) Lock the app's live rows. FOR UPDATE serialises concurrent
 	// UpdateDeploymentTraffic / CreateDeployment calls.
 	var appID string
@@ -8708,14 +8701,13 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // deployment failed so readers can never observe failed traffic or a split
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
-	var fallbackID string
-	err := tx.QueryRow(ctx, `
-		select id
-		  from deployments
-		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null
-		 order by traffic_percent desc, created_at desc, id desc
-		 limit 1
-		 for update`, appID, failedID).Scan(&fallbackID)
+	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
+		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID),
+	})
+	fallbackID := pgUUIDString(fallback)
+	if errors.Is(err, pgx.ErrNoRows) {
+		fallbackID = ""
+	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -10585,6 +10577,25 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if err != nil {
 		return Deployment{}, err
 	}
+	sourceID, err := operationUUID(failedID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	targetID, err := operationUUID(created.ID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := sqlc.New().CopyDeploymentRuntimeUpgradeTarget(ctx, tx, sqlc.CopyDeploymentRuntimeUpgradeTargetParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	if err := sqlc.New().CopyDeploymentRuntimeUpgradeBaseline(ctx, tx, sqlc.CopyDeploymentRuntimeUpgradeBaselineParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+
 	if err := sqlc.New().RetryDeploymentDependencyGate(ctx, tx, sqlc.RetryDeploymentDependencyGateParams{
 		DeploymentID: mustPgUUID(created.ID), SourceDeploymentID: mustPgUUID(failedID),
 	}); err != nil {
@@ -12098,12 +12109,18 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 // nullString so an empty input maps to NULL (e.g. cache-hit builds
 // have empty buildkit_version / railpack_version / base_digest).
 func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error {
-	return createBuildProvenance(ctx, s.pool, prov)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := createBuildProvenance(ctx, tx, prov); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-type buildProvenanceWriter interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}
+type buildProvenanceWriter = sqlc.DBTX
 
 func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, prov BuildProvenance) error {
 	_, err := writer.Exec(ctx,
@@ -12141,7 +12158,14 @@ func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, pr
 		nullString(prov.SBOMStorageKey),
 		nullString(prov.FrameworkVer),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	buildID, err := uuid.Parse(prov.BuildID)
+	if err != nil {
+		return ErrInvalidArgument
+	}
+	return sqlc.New().SetBuildRuntimeBaseRef(ctx, writer, sqlc.SetBuildRuntimeBaseRefParams{BuildID: NewPgtypeUUID(buildID), RuntimeBaseRef: prov.RuntimeBaseRef})
 }
 
 // BuildProvenanceByBuildID resolves the row by build_id. Returns
@@ -12157,7 +12181,12 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 		        started_at, finished_at, coalesce(sbom_storage_key,''),
 		        coalesce(framework_version,'')
 		   from build_provenance where build_id = $1`, buildID)
-	return scanBuildProvenance(row)
+	prov, err := scanBuildProvenance(row)
+	if err != nil {
+		return BuildProvenance{}, err
+	}
+	prov.RuntimeBaseRef, err = s.BuildRuntimeBaseRef(ctx, buildID)
+	return prov, err
 }
 
 // UpdateBuildProvenanceSBOM stamps the SBOM storage key onto an
@@ -25320,7 +25349,7 @@ func mapErr(err error) error {
 				return ErrBindingPromotionExpired
 			case "binding_release_policy_revision":
 				return ErrBindingReleasePolicyRevision
-			case "object_version_protection_fenced":
+			case "runtime_upgrade_traffic_fenced", "object_version_protection_fenced":
 				return ErrConflict
 			case "object_multipart_part_writer_conflict", "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
 				return ErrConflict

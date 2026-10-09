@@ -22,7 +22,6 @@ import (
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
@@ -933,24 +932,42 @@ func cmdApp(args []string) int {
 
 func cmdAppsRm(args []string) int {
 	fs := newFlagSet("apps-rm", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "preview deletion without changing resources")
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps [-q|--quiet] <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale apps [--dry-run|-q|--quiet|--yes] <slug>", "apps")
 		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *dryRun || !*quiet {
+		preview, err := previewAppDeletion(context.Background(), client, slug)
+		if err != nil {
+			return printErr("Could not preview app deletion", err)
+		}
+		if *dryRun {
+			return writeDestructivePreview(preview)
+		}
+		if jsonOutput {
+			return printErr("Confirmation required", errors.New("app deletion requires --yes or --quiet in JSON mode; inspect --dry-run first"))
+		}
+		renderDestructivePreview(osStderr, preview)
+	}
 	if !*quiet {
 		fmt.Fprintf(os.Stderr, "Delete %q and all its deployments?\n", slug)
 		if !requireTyped(slug) {
-			return 1
+			return 130
 		}
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
@@ -3724,6 +3741,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
 		}
 		if !*yes {
+			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+				return code
+			}
 			// JSON output is intentionally non-interactive: prompting would
 			// corrupt the machine-readable stdout stream. Emit the complete
 			// plan first, then fail closed so an operator or CI job must make
@@ -3971,10 +3991,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
 			if deployErr != nil {
-				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
-					return 130
-				}
-				code := printErr("Bad --tarball", deployErr)
+				code := printDeploySubmissionError("Source submission failed", deployErr, slug, "", "submission", dep.ID)
 				if execution.onError != nil {
 					execution.onError(deployErr)
 				}
@@ -4009,10 +4026,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			}
 			if uploadErr != nil {
-				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
-					return 130
-				}
-				code := printErr("Bad --tarball", uploadErr)
+				code := printDeploySubmissionError("Source submission failed", uploadErr, slug, deployKey, "submission", dep.ID)
 				if execution.onError != nil {
 					execution.onError(uploadErr)
 				}
@@ -4023,10 +4037,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {
-				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
-					return 130
-				}
-				code := printErr("Bad --tarball", deployErr)
+				code := printDeploySubmissionError("Source submission failed", deployErr, slug, deployKey, "submission", dep.ID)
 				if execution.onError != nil {
 					execution.onError(deployErr)
 				}
@@ -4126,7 +4137,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Canary:                 canarySpec,
 	})
 	if err != nil {
-		code := printErr("Deploy failed", err)
+		code := printDeploySubmissionError("Deploy submission failed", err, slug, deployKey, "submission", dep.ID)
 		if execution.onError != nil {
 			execution.onError(err)
 		}
@@ -5846,7 +5857,7 @@ func cmdConnect(args []string) int {
 			}))
 		}
 		fmt.Printf("Opening %s to connect GitHub…\n", target)
-		if err := browser.Open(target); err != nil {
+		if err := openBrowser(target); err != nil {
 			PrintFail(os.Stderr, "Could not open browser: %v", err)
 			fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 			return 0
@@ -5957,7 +5968,7 @@ func cmdOpen(args []string) int {
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
-	if err := browser.Open(target); err != nil {
+	if err := openBrowser(target); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
@@ -6036,7 +6047,7 @@ func cmdOpenDocs(args []string) int {
 		}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
-	if err := browser.Open(target); err != nil {
+	if err := openBrowser(target); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
@@ -6867,11 +6878,21 @@ type streamDeployOptions struct {
 	darkDeploy      bool
 }
 
-func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) int {
+func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) (exit int) {
 	waitTimeout := opts.waitTimeout
 	if waitTimeout <= 0 {
 		waitTimeout = defaultDeployWaitTimeout
 	}
+	recoveryStage := "deployment"
+	defer func() {
+		if exit == 3 || exit == 130 {
+			err := errors.New("deployment wait stopped before completion")
+			if exit == 130 {
+				err = context.Canceled
+			}
+			printDeploymentWaitRecovery(err, dep, appSlug, recoveryStage, waitTimeout, opts.waitForRollout, exit)
+		}
+	}()
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
 	finishWaiting := func() {
@@ -6884,11 +6905,15 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	defer finishWaiting()
 	warnWaitTimeout := func() {
 		finishWaiting()
-		warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+		if !jsonOutput {
+			warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+		}
 	}
 	warnWaitStopped := func(format string, args ...any) {
 		finishWaiting()
-		PrintWarn(os.Stderr, format, args...)
+		if !jsonOutput {
+			PrintWarn(os.Stderr, format, args...)
+		}
 	}
 	if !opts.quiet {
 		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
@@ -6900,11 +6925,14 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 			// before deciding whether safe deploy is actually complete.
 			d = deploymentWithReceipt(waitCtx, c, d)
 			if !deploymentRolloutComplete(d) {
+				recoveryStage = "rollout"
 				final, ok := waitForDeploymentRollout(waitCtx, c, d)
 				if !ok {
 					if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 						finishWaiting()
-						warnDeploymentRolloutTimeout(appSlug, dep.ID, waitTimeout)
+						if !jsonOutput {
+							warnDeploymentRolloutTimeout(appSlug, dep.ID, waitTimeout)
+						}
 						return 3
 					}
 					return 130

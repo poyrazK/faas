@@ -868,7 +868,7 @@ changes invalidate the approval. The production write checks its binding again.
 Unverified, environment, wildcard-only, tenant-surface and ambiguous
 weighted destinations are unavailable for approval. Potentially applicable routing,
 redirect and rewrite rules require further review, even when header conditional.
-See [ADR-736](adr/736-verified-lifecycle-successors.md) for scope and bindings.
+See [ADR-822](adr/822-verified-lifecycle-successors.md) for scope and bindings.
 
 Project successor approvals bind the active release graph generation and members,
 the selected deployment's frozen workload settings, and environment identity.
@@ -877,7 +877,7 @@ member. The active graph may retain its live member at zero weighted traffic;
 newer weighted deployments cannot replace that default graph destination.
 Missing graphs, members or frozen specs fail closed. Mutable desired settings do
 not replace captured settings. This review covers default ingress, excluding
-explicit retained-release request headers. See [ADR-737](adr/737-release-graph-lifecycle-successors.md).
+explicit retained-release request headers. See [ADR-823](adr/823-release-graph-lifecycle-successors.md).
 
 ### Production review history
 
@@ -904,4 +904,4 @@ status does not replace a fresh rollout check.
 not recorded. `truncated: true` identifies omitted metadata beyond the bounded
 summary limits. Successful traffic writes and application-level blocked reviews
 are retained. Direct SQL rejections and successful evaluations rolled back by
-another policy are not retained. See [ADR-738](adr/738-production-lifecycle-review-history.md).
+another policy are not retained. See [ADR-824](adr/824-production-lifecycle-review-history.md).

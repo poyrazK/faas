@@ -50,6 +50,9 @@ func cmdBillingCancel(args []string) int {
 		return 1
 	}
 
+	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		return code
+	}
 	if !*yes && !jsonOutput {
 		fmt.Fprintf(os.Stderr,
 			"This will schedule your subscription for cancellation at the end of the current period. "+

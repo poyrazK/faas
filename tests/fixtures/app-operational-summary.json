@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "app_id": "00000000-0000-4000-8000-000000000001",
+  "checked_at": "2026-10-07T12:00:00+00:00",
+  "monitoring": {
+    "available": true,
+    "status": "unknown",
+    "reason": "insufficient_requests",
+    "coverage": "observed_only",
+    "incidents_available": true,
+    "incident": {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "deployment_id": "00000000-0000-4000-8000-000000000003",
+      "opened_at": "2026-10-07T11:00:00+00:00"
+    }
+  },
+  "recovery": {
+    "rollbacks_available": true,
+    "restarts_available": false,
+    "rollbacks_truncated": true,
+    "restarts_truncated": false,
+    "rollbacks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000004",
+        "scope": "default",
+        "status": "blocked",
+        "code": "binding_verification_missing",
+        "target_deployment_id": "00000000-0000-4000-8000-000000000005",
+        "current_deployment_id": "00000000-0000-4000-8000-000000000003",
+        "updated_at": "2026-10-07T11:59:00+00:00"
+      }
+    ],
+    "restarts": []
+  },
+  "recommendations": [
+    {
+      "code": "production_health_unknown",
+      "severity": "warning",
+      "message": "Current production route health is not established.",
+      "next": "Run gregale routes monitor report demo."
+    }
+  ]
+}

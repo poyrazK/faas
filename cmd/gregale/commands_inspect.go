@@ -30,6 +30,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdInspect is the verb-level dispatcher for
@@ -46,10 +48,10 @@ import (
 // inspectUsage is the single source of truth for the verb's
 // usage line. The dispatcher prints it on bad-args paths, and the
 // test file pins this exact wording.
-const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--json]"
+const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch [--interval 5s] [--timeout DURATION]] [--json]"
 
 func cmdInspect(args []string) int {
-	flags, positional := splitArgsForFlags(args, "upstreams", "errors")
+	flags, positional := splitArgsForFlags(args, "upstreams", "errors", "watch")
 	fs := newFlagSet("inspect", flag.ContinueOnError)
 	upstreams := fs.Bool("upstreams", false, "list data upstreams captured for this app (ADR-098 §9.A)")
 	scope := fs.String("scope", "", "filter upstreams by scope (forwarded as ?scope=<scope>)")
@@ -59,8 +61,15 @@ func cmdInspect(args []string) int {
 	// Auth required; no scope filter (errors are per-deployment).
 	app := fs.String("app", "", appSlugFlagUsage)
 	errorsFlag := fs.Bool("errors", false, "show the latest failed deployment's persisted error explanation (Hint/Why/Fix/RelevantLogs)")
+	watch := fs.Bool("watch", false, "watch summary changes with read-only polling")
+	interval := fs.Duration("interval", api.InspectWatchIntervalDefault, "watch interval (1s..1h)")
+	timeout := fs.Duration("timeout", 0, "watch duration (0 watches until Ctrl-C)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	watchOptions := inspectWatchOptions{interval: *interval, timeout: *timeout}
+	if err := validateInspectWatchOptions(fs, *watch, *upstreams || *errorsFlag, watchOptions); err != nil {
+		return printErr("Invalid watch flags", err)
 	}
 	if len(positional) > 1 {
 		PrintUsage(os.Stderr, inspectUsage, "inspect")
@@ -93,6 +102,9 @@ func cmdInspect(args []string) int {
 	if !*upstreams && !*errorsFlag {
 		if *scope != "" {
 			return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
+		}
+		if *watch {
+			return cmdInspectWatch(slug, watchOptions)
 		}
 		return cmdInspectSummary(slug)
 	}

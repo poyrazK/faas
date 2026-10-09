@@ -2734,8 +2734,24 @@ func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, r
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
 // garbage input. For a wider, cross-source view use ListInvocations.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
+	return c.ListJobRunsPage(ctx, name, 0, 0)
+}
+
+// ListJobRunsPage requests one offset page; zero limit uses the server default.
+func (c *Client) ListJobRunsPage(ctx context.Context, name string, limit, offset int) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs"
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobScheduleOccurrences returns the durable decision history for each
@@ -7376,5 +7392,25 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// GetAppHealth reads the default-scope HTTP health evidence without waking the app.
+func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthResponse, error) {
+	var out AppHealthResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health", nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if before != "" {
+		query.Set("before", before)
+	}
+	var out AppHealthHistoryPage
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health/history?"+query.Encode(), nil, &out)
 	return out, err
 }

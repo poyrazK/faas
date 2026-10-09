@@ -73,6 +73,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
 | 790 | [meterd catches up closed minutes it did not roll](790-meterd-closed-minute-catch-up.md) | proposed | A sample tick re-rolls, from the billing ledger, closed minutes of the last 24 h never recorded compute-complete (≤15 per tick); idempotent through first-write-wins; H5-55 |
 | 791 | [The build wall-clock limit is 15 minutes](791-build-wall-clock-limit.md) | accepted | Records `BuildTimeoutSeconds = 900` (raised from the spec's 10 min in August without an ADR); end-to-end deploy time is not separately enforced; H5-71 |
+| 815 | [Guarded native runtime qualification collector](815-guarded-native-runtime-qualification-collector.md) | accepted | Collects and signs exact-runtime native evidence only after teardown, host rechecks, service restoration and retained import |
+| 816 | [Fresh cold-boot readiness receipts for runtime upgrade candidates](816-runtime-upgrade-candidate-acceptance.md) | accepted | Requires exact candidate identity, unrevoked qualification and a fresh cold-boot readiness receipt before activation |
+| 817 | [Trusted import of exact runtime native qualification evidence](817-trusted-runtime-qualification-import.md) | accepted | Verifies trusted signatures, native test/leak evidence, published artifact bindings and durable readback before recording receipts |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
 | 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
@@ -659,15 +662,15 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-729: Gregale route sunset report](729-route-sunset-report.md)
 - [ADR-730: Saved sunset report comparisons](730-route-sunset-regression-tracking.md)
 - [ADR-792: Deployment-specific route lifecycle metadata](792-deployment-route-lifecycle.md)
-- [ADR-732: Lifecycle guidance on cached responses](732-cached-route-lifecycle.md)
-- [ADR-733: Lifecycle declaration reviews and canary gate](733-route-lifecycle-declaration-gate.md)
+- [ADR-818: Lifecycle guidance on cached responses](818-cached-route-lifecycle.md)
+- [ADR-819: Lifecycle declaration reviews and canary gate](819-route-lifecycle-declaration-gate.md)
 
-- [ADR-734: Durable lifecycle successor compatibility approvals](734-lifecycle-successor-review-receipts.md)
+- [ADR-820: Durable lifecycle successor compatibility approvals](820-lifecycle-successor-review-receipts.md)
 
-- [ADR-735: Lifecycle review at the production traffic boundary](735-production-lifecycle-transaction-guards.md)
+- [ADR-821: Lifecycle review at the production traffic boundary](821-production-lifecycle-transaction-guards.md)
 
-- [ADR-736: Verified lifecycle successors](736-verified-lifecycle-successors.md)
+- [ADR-822: Verified lifecycle successors](822-verified-lifecycle-successors.md)
 
-- [ADR-737: Release graph lifecycle successor bindings](737-release-graph-lifecycle-successors.md)
+- [ADR-823: Release graph lifecycle successor bindings](823-release-graph-lifecycle-successors.md)
 
-- [ADR-738: Production lifecycle review history](738-production-lifecycle-review-history.md)
+- [ADR-824: Production lifecycle review history](824-production-lifecycle-review-history.md)

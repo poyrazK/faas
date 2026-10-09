@@ -67,7 +67,7 @@ func TestTierC_InvocationsList_HumanShowsCursor(t *testing.T) {
 	if code := cmdInvocationsList(nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out.String(), "--before i-1") {
+	if !strings.Contains(out.String(), "--cursor i-1") {
 		t.Fatalf("human output missing continuation hint: %q", out.String())
 	}
 }
