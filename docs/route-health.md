@@ -126,6 +126,25 @@ include candidate/stable p95 estimates, delta, ratio, budget and independent
 signal verdicts. The CI flag exits nonzero for regressed, unknown or disabled
 reports. Report mode does not block progression.
 
+### Default selectors for unconfigured apps
+
+An app that has never saved route health configuration (revision 0) receives
+default report-mode selectors when its first canary stage advances. Gregale
+ranks the stable deployment's observed routes from the last seven days, clamped
+to plan retention, by distinct tenants and then requests, the same order as
+`routes health suggest`, and saves up to 10 of them at revision 1. Seeding
+requires request telemetry and exactly one stable deployment serving traffic.
+It never selects enforce mode, latency checks or watched statuses, and it never
+blocks or delays the advance. The audit log records `route_health.seeded`.
+
+Seeding happens at most once. Any saved configuration, including an empty
+selector list, stops it:
+
+```sh
+echo '[]' > no-routes.json
+gregale routes health set my-api --routes no-routes.json --mode report --expected-revision 0
+```
+
 After assessing traffic volume and telemetry availability, opt in using the
 current revision:
 

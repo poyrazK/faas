@@ -9013,6 +9013,13 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
 
+// RouteHealthSeed bounds the report-mode selectors apid saves for an app that
+// never configured route health when its first canary advances (ADR-844).
+const (
+	RouteHealthSeedRoutes   = 10
+	RouteHealthSeedLookback = 7 * 24 * time.Hour
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
