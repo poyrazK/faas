@@ -137,26 +137,11 @@ func chooseJobTask(ctx context.Context, client *api.Client, prompt *startPrompt,
 }
 
 func chooseJobRun(ctx context.Context, client *api.Client, prompt *startPrompt) (api.JobResponse, api.JobRunResponse, bool, error) {
-	var jobs []api.JobResponse
-	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobs(ctx, 20, offset)
-		jobs = page.Jobs
-		labels := []string{}
-		for _, job := range jobs {
-			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
-				return nil, -1, errors.New("invalid Job identity")
-			}
-			labels = append(labels, oneLine(job.Name))
-		}
-		return labels, page.NextOffset, err
-	})
-	if err != nil {
-		return api.JobResponse{}, api.JobRunResponse{}, false, err
+	job, selected, err := chooseJob(ctx, client, prompt)
+	if err != nil || !selected {
+		return job, api.JobRunResponse{}, selected, err
 	}
-	if choice < 0 {
-		return api.JobResponse{}, api.JobRunResponse{}, false, nil
-	}
-	job := jobs[choice]
+	var choice int
 	var runs []api.JobRunResponse
 	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
 		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
@@ -178,4 +163,28 @@ func chooseJobRun(ctx context.Context, client *api.Client, prompt *startPrompt) 
 	}
 	run := runs[choice]
 	return job, run, true, nil
+}
+
+func chooseJob(ctx context.Context, client *api.Client, prompt *startPrompt) (api.JobResponse, bool, error) {
+	var jobs []api.JobResponse
+	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobs(ctx, 20, offset)
+		jobs = page.Jobs
+		labels := []string{}
+		for _, job := range jobs {
+			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
+				return nil, -1, errors.New("invalid Job identity")
+			}
+			labels = append(labels, oneLine(job.Name))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, false, nil
+	}
+	job := jobs[choice]
+	return job, true, nil
 }

@@ -3693,10 +3693,11 @@ Soft-delete one job
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] <job-name>`
+`gregale jobs run [--interactive] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a Job, review settings, and confirm one run |  |
 | `--tasks <N>` | number of tasks to fan out (or use --input) |  |
 | `--retries <N>` | override retry max for this run |  |
 | `--timeout <SECONDS>` | override task timeout for this run |  |
@@ -3709,6 +3710,12 @@ Dispatch a new run (fan-out N tasks)
 | `--latest-start-at <RFC3339>` | latest task start |  |
 | `--fail-fast` | cancel unstarted tasks after permanent failure |  |
 | `--failure-rules <JSON>` | override versioned exit-code and outcome retry rules for this run |  |
+
+Examples:
+
+```sh
+gregale jobs run --interactive
+```
 
 ### jobs runs
 

@@ -1500,7 +1500,8 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Value: "JSON", Short: "replace versioned exit-code and outcome retry rules JSON"},
 			}},
 			{Name: "rm", Short: "Soft-delete one job", Positionals: []string{"<name>"}},
-			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"<job-name>"}, Flags: []cliFlag{
+			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"[<job-name>]"}, Examples: []string{"gregale jobs run --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a Job, review settings, and confirm one run"},
 				{Name: "tasks", Value: "N", Short: "number of tasks to fan out (or use --input)"},
 				{Name: "retries", Value: "N", Short: "override retry max for this run"},
 				{Name: "timeout", Value: "SECONDS", Short: "override task timeout for this run"},

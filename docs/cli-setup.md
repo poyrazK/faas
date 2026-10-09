@@ -583,6 +583,28 @@ returns one final receipt containing the last observed run (when available),
 exit code, resume command, and any read/wait error. Retried runs can reopen;
 waiting stops at the first terminal status it observes.
 
+## Start a Job run interactively
+
+```sh
+gregale jobs run --interactive
+```
+
+Choose a Job through a paginated picker. The Job must be active with a ready
+image. Choose a task count (default 1) and parallelism (defaults to the Job's
+setting), then review its image, command, RAM per task, timeout, and retry policy.
+The flow inherits the Job environment and failure rules; environment values are
+not printed. The server enforces account plan limits.
+
+Confirm before starting one run. The CLI rereads the Job configuration before
+submission and stops if it changed; this client-side check is not an atomic lock.
+After acceptance, a command to follow the returned run is printed. Optionally
+follow it for up to 10 minutes using the same read-only poller as `jobs wait`.
+Declining to follow leaves the accepted run running. Timeout and interruption
+only stop observation.
+
+For input manifests, environment overrides, flexible execution, or scripts,
+use `jobs run NAME` with explicit flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

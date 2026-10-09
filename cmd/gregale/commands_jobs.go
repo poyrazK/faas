@@ -449,6 +449,9 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsRunInteractive()
+	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
