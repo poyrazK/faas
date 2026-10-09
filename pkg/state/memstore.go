@@ -138,6 +138,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventCircuitBreakers        map[string]*eventCircuitRecord
+	eventSubscriptionControls   map[string]*memEventSubscriptionControl
+	eventRecoveryJobs           map[string]*memEventRecoveryJob
 	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64

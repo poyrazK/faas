@@ -4263,13 +4263,13 @@ func cmdRollback(args []string) int {
 			switch a {
 			case "--expected-current":
 				checked = true
-				current = rest[i]
+				current = rest[i] // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
 			case "--reason":
-				reason = rest[i]
+				reason = rest[i] // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
 			case "--timeout":
-				timeout, err = time.ParseDuration(rest[i])
+				timeout, err = time.ParseDuration(rest[i]) // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
 			case "--poll-interval":
-				interval, err = time.ParseDuration(rest[i])
+				interval, err = time.ParseDuration(rest[i]) // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
 			}
 			if err != nil {
 				return printErr("Invalid duration", err)

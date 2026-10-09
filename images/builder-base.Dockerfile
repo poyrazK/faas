@@ -63,7 +63,8 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
 # BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.9 so the
-# builder includes the latest standard-library security fixes; the repo's `tool` directive also rejects older
+# builder includes the standard-library security fixes released after
+# 1.25.9; the repo's `tool` directive also rejects older
 # toolchains with `unknown directive: tool` (verified during PR #940
 # review).
 

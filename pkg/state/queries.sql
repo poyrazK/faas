@@ -1113,15 +1113,13 @@ from events where subject = $1 order by at desc limit $2;
 -- fan-out can enforce tenant isolation without joining apps.
 
 -- name: ListEventSubscriptionsForApp :many
-select id, account_id, app_id, source, type, filter, enabled,
-       created_at, updated_at
+select *
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc;
 
 -- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.*
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -1131,8 +1129,7 @@ order by s.created_at asc, s.id asc;
 -- Candidate lookup for schedd fan-out. The final JSON filter matcher remains
 -- in pkg/events; these predicates only prune source/type patterns and page
 -- through the tenant's enabled subscriptions without an unbounded scan.
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.*
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = sqlc.arg('account_id')::uuid
@@ -1173,7 +1170,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -6211,7 +6208,7 @@ SELECT jsonb_build_object(
         FROM app_work_policies p WHERE p.app_id=a.id),'[]'::jsonb),
     'event_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'subscription_id',b.subscription_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
-        'fairness_selector',b.fairness_key_selector,'action',b.action) ORDER BY b.subscription_id)
+        'fairness_selector',b.fairness_key_selector,'action',b.action,'ordered',b.ordered) ORDER BY b.subscription_id)
         FROM event_subscription_work_bindings b WHERE b.app_id=a.id),'[]'::jsonb),
     'trigger_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'trigger_id',b.trigger_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
@@ -14966,10 +14963,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
  VALUES(sqlc.arg(deployment_id),sqlc.arg(fire_id)) ON CONFLICT(deployment_id) DO NOTHING;
 
 -- name: InsertCustomerAlertRule :one
-INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,
+INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
  action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
- sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.arg(action),sqlc.arg(webhook_url),
+ sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
  sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
 RETURNING *;
 

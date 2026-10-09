@@ -43,7 +43,10 @@ type PublishedEventWork struct {
 // PublishedEventRecipient is an immutable source/type candidate captured when
 // the event was accepted. The data filter is evaluated by the scheduler.
 type PublishedEventRecipient struct {
-	WebhookEndpointID string `json:"webhook_endpoint_id,omitempty"`
+	SchemaVersions      []string                     `json:"schema_versions,omitempty"`
+	DeliveryAgeOverride bool                         `json:"delivery_age_override,omitempty"`
+	RoutingRetryPolicy  *api.EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
+	WebhookEndpointID   string                       `json:"webhook_endpoint_id,omitempty"`
 	// WebhookProvider preserves provider-specific event-source identity in the
 	// immutable fanout snapshot. Empty legacy values mean Stripe.
 	WebhookProvider InboundWebhookProvider `json:"webhook_provider,omitempty"`
@@ -70,6 +73,8 @@ type PublishedEventWorkBindingSnapshot struct {
 	KeySelector      string `json:"key_selector"`
 	FairnessSelector string `json:"fairness_selector,omitempty"`
 	Action           string `json:"action"`
+	Ordered          bool   `json:"ordered,omitempty"`
+	RoutingOrder     int64  `json:"routing_order,omitempty"`
 	// Nil on receipts accepted before policy snapshots were introduced.
 	Policy *PublishedEventWorkPolicySnapshot `json:"policy,omitempty"`
 }
@@ -115,15 +120,21 @@ func (snapshot PublishedEventWorkPolicySnapshot) EffectivePolicy(name string) (w
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
 // one candidate. Invocation execution retries are tracked on the invocation.
 type PublishedEventRecipientProgress struct {
-	CapacityDeferrals int        `json:"capacity_deferrals,omitempty"`
-	CapacityScope     string     `json:"capacity_scope,omitempty"`
-	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
-	State             string     `json:"state"`
-	Attempts          int        `json:"attempts"`
-	FailureCode       string     `json:"failure_code,omitempty"`
-	Retryable         bool       `json:"retryable,omitempty"`
-	LastError         string     `json:"last_error,omitempty"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	DeliveryAgeOverride   bool       `json:"delivery_age_override,omitempty"`
+	RetrySpentMS          int64      `json:"retry_spent_ms,omitempty"`
+	RetryGeneration       int64      `json:"retry_generation,omitempty"`
+	FilterReason          string     `json:"filter_reason,omitempty"`
+	RetryStopReason       string     `json:"retry_stop_reason,omitempty"`
+	DeliveryControlReason string     `json:"delivery_control_reason,omitempty"`
+	CapacityDeferrals     int        `json:"capacity_deferrals,omitempty"`
+	CapacityScope         string     `json:"capacity_scope,omitempty"`
+	NextAttemptAt         *time.Time `json:"next_attempt_at,omitempty"`
+	State                 string     `json:"state"`
+	Attempts              int        `json:"attempts"`
+	FailureCode           string     `json:"failure_code,omitempty"`
+	Retryable             bool       `json:"retryable,omitempty"`
+	LastError             string     `json:"last_error,omitempty"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -155,6 +166,8 @@ type EventFanoutFailureCursor struct {
 // request for a captured event recipient. The mutable recipient progress is
 // still the scheduler checkpoint; these rows retain the inspection history.
 type EventFanoutAttempt struct {
+	FilterReason      string `json:"filter_reason,omitempty"`
+	RetryStopReason   string
 	ID                int64
 	OutboxID          int64
 	AppID             string
@@ -257,11 +270,17 @@ type PublishedEventRetentionStore interface {
 }
 
 func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
+	return s.claimDuePublishedEvent(ctx, now, false)
+}
+func (s *PgStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
+	return s.claimDuePublishedEvent(ctx, now, true)
+}
+func (s *PgStore) claimDuePublishedEvent(ctx context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
 	var work PublishedEventWork
 	var payload []byte
 	var snapshot []byte
 	var progress []byte
-	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, pgtypeFromTime(now))
+	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, sqlc.EventRoutingClaimReceiptParams{NowAt: pgtypeFromTime(now), ForRecipientAdoption: adopt})
 	if err == nil {
 		work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
 		work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
@@ -327,6 +346,17 @@ func validatePublishedEventRecipientProgress(progress PublishedEventRecipientPro
 	default:
 		return fmt.Errorf("state: invalid published event recipient state %q", progress.State)
 	}
+	if progress.RetrySpentMS < 0 || progress.RetryGeneration < 0 {
+		return ErrInvalidArgument
+	}
+	if progress.FilterReason != "" && (progress.FilterReason != "schema_version_mismatch" || progress.State != PublishedEventRecipientFiltered) {
+		return ErrInvalidArgument
+	}
+	switch progress.RetryStopReason {
+	case "", "non_retryable", "max_attempts", "max_duration", "delivery_expired":
+	default:
+		return ErrInvalidArgument
+	}
 	if progress.Attempts < 0 || progress.CapacityDeferrals < 0 {
 		return fmt.Errorf("state: published event recipient attempts cannot be negative")
 	}
@@ -361,14 +391,11 @@ func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token stri
 		}
 		return nil
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox SET state = 'pending',
-		available_at = now() + make_interval(secs => least(300, 5 * (1 << least(attempts - 1, 6)))),
-		claim_token = NULL, lease_until = NULL, last_error = left($3, 1024)
-		WHERE id = $1 AND claim_token = $2::uuid AND state = 'processing'`, id, token, routeErr.Error())
+	n, err := sqlc.New().EventRetryFinishReceipt(ctx, s.pool, sqlc.EventRetryFinishReceiptParams{ID: id, ClaimToken: mustPgUUID(token), LastError: routeErr.Error()})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	if n == 0 {
 		return ErrConflict
 	}
 	return nil
@@ -446,7 +473,10 @@ func (s *PgStore) ListEventFanoutAttemptsForApp(ctx context.Context, appID strin
 // candidate. Legacy receipts must settle first; recipient-owned receipts allow
 // replay while siblings route. The original recipient snapshot is kept.
 func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
-	if handled, err := s.replayClaimedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID); handled || err != nil {
+	return s.ReplayFailedPublishedEventRecipientWithAgeOverride(ctx, accountID, appID, eventSource, eventID, subscriptionID, false)
+}
+func (s *PgStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool) error {
+	if handled, err := s.replayClaimedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID, allowExpired); handled || err != nil {
 		return err
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -485,7 +515,7 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("load published event recipient replay: %w", err)
 	}
-	if err := replayEventRecipientTx(ctx, sqlc.New(), tx, outboxID, recipientAppID, subscriptionID, priorJSON, false, time.Now().UTC()); err != nil {
+	if err := replayEventRecipientTx(ctx, sqlc.New(), tx, outboxID, recipientAppID, subscriptionID, priorJSON, false, time.Now().UTC(), allowExpired); err != nil {
 		return fmt.Errorf("replay published event recipient: %w", err)
 	}
 
@@ -585,11 +615,11 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	for _, row := range candidates {
 		recipient := PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
 			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter),
-			WorkSnapshotCaptured: true}
+			SchemaVersions: append([]string(nil), row.SchemaVersions...), WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(row.RoutingRetryPolicy)}
 		if binding, ok := m.eventWorkBindings[row.ID]; ok {
 			recipient.Work = &PublishedEventWorkBindingSnapshot{
 				PolicyName: binding.PolicyName, KeySelector: binding.KeySelector,
-				FairnessSelector: binding.FairnessSelector, Action: binding.Action,
+				FairnessSelector: binding.FairnessSelector, Action: binding.Action, Ordered: binding.Ordered,
 			}
 			if policy, exists := m.workPolicies[memWorkPolicyKey(row.AppID, binding.PolicyName)]; exists {
 				recipient.Work.Policy = snapshotPublishedEventWorkPolicy(policy)
@@ -601,6 +631,20 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+	}
+	nextID := m.eventFanoutNextID + 1
+	for index := range recipients {
+		work := recipients[index].Work
+		if work == nil || (!work.Ordered && !m.memEventWorkLaneOrderedLocked(recipients[index].AppID, work.PolicyName)) {
+			continue
+		}
+		selector, err := workpolicy.ParseSelector(work.KeySelector)
+		if err != nil {
+			continue
+		}
+		if _, err := selector.Resolve(json.RawMessage(payload)); err == nil {
+			work.RoutingOrder = int64(nextID)
+		}
 	}
 	var storageBytes int64
 	if !strings.HasPrefix(event.Source, "gregale.") {
@@ -620,8 +664,8 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	if err := m.pinWorkflowEventRecipientsLocked(recipients); err != nil {
 		return false, err
 	}
-	m.eventFanoutNextID++
-	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), StorageBytes: storageBytes, RecipientSnapshot: recipients,
+	m.eventFanoutNextID = nextID
+	m.eventFanout[key] = &PublishedEventWork{ID: nextID, Payload: bytes.Clone(payload), StorageBytes: storageBytes, RecipientSnapshot: recipients,
 		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),
 		AvailableAt: now, CreatedAt: time.Now().UTC()}
 	return true, nil
@@ -641,12 +685,33 @@ func jsonEqual(a, b []byte) bool {
 	return bytes.Equal(canonicalLeft, canonicalRight)
 }
 
-func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*PublishedEventWork, error) {
+func (m *MemStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
+	return m.claimDuePublishedEvent(ctx, now, false)
+}
+func (m *MemStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
+	return m.claimDuePublishedEvent(ctx, now, true)
+}
+func (m *MemStore) claimDuePublishedEvent(_ context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var chosen *PublishedEventWork
 	for _, work := range m.eventFanout {
 		if work.RecipientClaims || work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
+			continue
+		}
+		blocked := false
+		for recipientIndex, recipient := range work.RecipientSnapshot {
+			state := work.RecipientProgress[recipient.ID].State
+			if state == "" {
+				state = PublishedEventRecipientPending
+			}
+			if state != PublishedEventRecipientEnqueued && state != PublishedEventRecipientFiltered && state != PublishedEventRecipientFailed &&
+				m.orderedEventRecipientBlockedLocked(work, recipientIndex, false) {
+				blocked = true
+				break
+			}
+		}
+		if blocked && !adopt {
 			continue
 		}
 		currentFair := m.eventFairTimeLocked(eventRoutingAccount(work), "")
@@ -680,6 +745,8 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	copy.RecipientSnapshot = make([]PublishedEventRecipient, len(chosen.RecipientSnapshot))
 	for i, recipient := range chosen.RecipientSnapshot {
 		copy.RecipientSnapshot[i] = recipient
+		copy.RecipientSnapshot[i].SchemaVersions = append([]string(nil), recipient.SchemaVersions...)
+		copy.RecipientSnapshot[i].RoutingRetryPolicy = cloneEventRoutingRetryPolicy(recipient.RoutingRetryPolicy)
 		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
 		if recipient.ObjectNotification != nil {
 			n := cloneObjectNotificationSnapshot(*recipient.ObjectNotification)
@@ -752,7 +819,7 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 			work.DeliveredAt = time.Now().UTC()
 		} else {
 			work.AvailableAt = time.Now().Add(5 * time.Second)
-			if errors.Is(routeErr, ErrEventDeliveryCapacity) {
+			if work.SnapshotCaptured {
 				var next time.Time
 				for _, r := range work.RecipientSnapshot {
 					p := work.RecipientProgress[r.ID]
@@ -762,6 +829,9 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 					at := time.Now().Add(5 * time.Second)
 					if p.NextAttemptAt != nil {
 						at = *p.NextAttemptAt
+					}
+					if deadline := EventDeliveryDeadline(r, work.CreatedAt, p); !deadline.IsZero() && deadline.Before(at) {
+						at = deadline
 					}
 					if next.IsZero() || at.Before(next) {
 						next = at
@@ -915,7 +985,10 @@ func (m *MemStore) ListEventFanoutAttemptsForApp(_ context.Context, appID string
 
 // ReplayFailedPublishedEventRecipientForApp mirrors the PostgreSQL state
 // transition and preserves all other recipient outcomes and the snapshot.
-func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+	return m.ReplayFailedPublishedEventRecipientWithAgeOverride(ctx, accountID, appID, eventSource, eventID, subscriptionID, false)
+}
+func (m *MemStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, work := range m.eventFanout {
@@ -923,9 +996,11 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		if json.Unmarshal(work.Payload, &event) != nil || event.ID != eventID || event.Source != eventSource {
 			continue
 		}
+		var replayRecipient PublishedEventRecipient
 		var recipientFound bool
 		for _, recipient := range work.RecipientSnapshot {
 			if recipient.ID == subscriptionID && sameMemUUID(recipient.AppID, appID) && sameMemUUID(recipient.AccountID, accountID) {
+				replayRecipient = recipient
 				recipientFound = true
 				break
 			}
@@ -940,10 +1015,15 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		if !work.Delivered && !work.RecipientClaims {
 			return ErrConflict
 		}
+		if !allowExpired && EventDeliveryExpired(replayRecipient, work.CreatedAt, PublishedEventRecipientProgress{}, time.Now().UTC()) {
+			return ErrEventDeliveryExpired
+		}
+		progress.DeliveryAgeOverride = allowExpired
 		replay := progress
 		replay.State = PublishedEventRecipientPending
 		replay.UpdatedAt = time.Now().UTC()
 		m.appendEventFanoutAttemptLocked(work, subscriptionID, EventFanoutAttemptActionReplay, replay)
+		progress.RetryStopReason = ""
 		progress.State = PublishedEventRecipientPending
 		progress.FailureCode = ""
 		progress.Retryable = false
@@ -988,6 +1068,9 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 			if !sameMemUUID(recipient.AccountID, accountID) || !sameMemUUID(recipient.AppID, appID) {
 				continue
 			}
+			if EventDeliveryExpired(recipient, work.CreatedAt, PublishedEventRecipientProgress{}, time.Now().UTC()) {
+				continue
+			}
 			progress, ok := work.RecipientProgress[recipient.ID]
 			if !ok || progress.State != PublishedEventRecipientFailed || !progress.Retryable {
 				continue
@@ -1015,6 +1098,8 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		replay.State = PublishedEventRecipientPending
 		replay.UpdatedAt = now
 		m.appendEventFanoutAttemptLocked(item.work, item.subscriptionID, EventFanoutAttemptActionReplay, replay)
+		progress.DeliveryAgeOverride = false
+		progress.RetryStopReason = ""
 		progress.State = PublishedEventRecipientPending
 		progress.FailureCode = ""
 		progress.Retryable = false
@@ -1054,4 +1139,17 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		}
 	}
 	return result, nil
+}
+
+// Initialization does not admit invocations. Ordering gates are applied by the
+// independent recipient claim path after the receipt has been materialized.
+type PublishedEventRecipientAdoptionClaimStore interface {
+	ClaimDuePublishedEventForRecipientAdoption(context.Context, time.Time) (*PublishedEventWork, error)
+}
+
+func (r PublishedEventRecipient) EffectiveRoutingRetryPolicy() api.EventRoutingRetryPolicy {
+	if r.RoutingRetryPolicy != nil {
+		return *r.RoutingRetryPolicy
+	}
+	return api.DefaultEventRoutingRetryPolicy()
 }

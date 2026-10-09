@@ -116,10 +116,14 @@ func (s *PgStore) ListEventReplayBackfillItems(ctx context.Context, accountID, j
 			FailureCode: failureCode, LastError: lastError, DetailsTruncated: failureCode != row.FailureCode || lastError != row.LastError,
 			Retryable: row.Retryable, UpdatedAt: timeFromPgtype(row.UpdatedAt),
 		}
+		if row.ConsumerKind == "workflow" {
+			item.WorkflowRunID = row.WorkflowRunID
+			item.WorkflowRunStatus = row.WorkflowRunStatus
+		}
 		if row.ReceiptAvailable {
 			item.ReceiptURL = "/v1/events/receipt?" + url.Values{"source": {row.EventSource}, "id": {row.EventID}}.Encode()
 		}
-		if row.ExecutionHistoryAvailable {
+		if row.ConsumerKind == "application" && row.ExecutionHistoryAvailable {
 			item.AttemptHistoryURL = "/v1/events/receipt/attempts?" + url.Values{"source": {row.EventSource}, "id": {row.EventID}, "subscription_id": {uuidString(row.SubscriptionID)}}.Encode()
 		}
 		out.Items = append(out.Items, item)

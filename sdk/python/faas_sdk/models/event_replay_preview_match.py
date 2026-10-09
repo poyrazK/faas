@@ -20,6 +20,9 @@ T = TypeVar("T", bound="EventReplayPreviewMatch")
 class EventReplayPreviewMatch:
     """Matching retained-event metadata and original recipient membership."""
 
+    delivery_expired: bool
+    """Age limit of the current subscription is exceeded at observation time; historical backfill requires an
+    explicit override to admit it."""
     event_id: str
     event_source: str
     event_type: str
@@ -28,10 +31,13 @@ class EventReplayPreviewMatch:
     """Membership of the immutable original recipient snapshot; unknown indicates a legacy receipt without a
     snapshot. This does not indicate handler completion or replay eligibility."""
     receipt_url: str
+    delivery_deadline_at: datetime.datetime | Unset = UNSET
     schema_version: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        delivery_expired = self.delivery_expired
+
         event_id = self.event_id
 
         event_source = self.event_source
@@ -44,12 +50,17 @@ class EventReplayPreviewMatch:
 
         receipt_url = self.receipt_url
 
+        delivery_deadline_at: str | Unset = UNSET
+        if not isinstance(self.delivery_deadline_at, Unset):
+            delivery_deadline_at = self.delivery_deadline_at.isoformat()
+
         schema_version = self.schema_version
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "delivery_expired": delivery_expired,
                 "event_id": event_id,
                 "event_source": event_source,
                 "event_type": event_type,
@@ -58,6 +69,8 @@ class EventReplayPreviewMatch:
                 "receipt_url": receipt_url,
             }
         )
+        if delivery_deadline_at is not UNSET:
+            field_dict["delivery_deadline_at"] = delivery_deadline_at
         if schema_version is not UNSET:
             field_dict["schema_version"] = schema_version
 
@@ -66,6 +79,8 @@ class EventReplayPreviewMatch:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        delivery_expired = d.pop("delivery_expired")
+
         event_id = d.pop("event_id")
 
         event_source = d.pop("event_source")
@@ -78,15 +93,24 @@ class EventReplayPreviewMatch:
 
         receipt_url = d.pop("receipt_url")
 
+        _delivery_deadline_at = d.pop("delivery_deadline_at", UNSET)
+        delivery_deadline_at: datetime.datetime | Unset
+        if isinstance(_delivery_deadline_at, Unset):
+            delivery_deadline_at = UNSET
+        else:
+            delivery_deadline_at = datetime.datetime.fromisoformat(_delivery_deadline_at)
+
         schema_version = d.pop("schema_version", UNSET)
 
         event_replay_preview_match = cls(
+            delivery_expired=delivery_expired,
             event_id=event_id,
             event_source=event_source,
             event_type=event_type,
             accepted_at=accepted_at,
             original_recipient=original_recipient,
             receipt_url=receipt_url,
+            delivery_deadline_at=delivery_deadline_at,
             schema_version=schema_version,
         )
 

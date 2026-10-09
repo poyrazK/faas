@@ -245,6 +245,7 @@ type AlertRule struct {
 	OrgID                           pgtype.UUID
 	Action                          string
 	PostDeployRollbackWindowSeconds int32
+	EventSubscriptionID             pgtype.UUID
 }
 
 type ApiConsumer struct {
@@ -2453,6 +2454,8 @@ type EventFanoutAttemptHistory struct {
 	CapacityScope     string
 	CapacityDeferrals int64
 	DetailsTruncated  bool
+	RetryStopReason   string
+	FilterReason      string
 	HistoryBytes      int64
 }
 
@@ -2516,6 +2519,62 @@ type EventFanoutRecipient struct {
 	GenerationCapacityDeferrals int32
 	BackfillJobID               pgtype.UUID
 	ReceiptPosition             pgtype.Int8
+	DeliveryDeadlineAt          pgtype.Timestamptz
+}
+
+type EventRecoveryHistory struct {
+	ID            int64
+	JobID         pgtype.UUID
+	OccurredAt    pgtype.Timestamptz
+	Action        string
+	ActorKind     string
+	ActorID       string
+	Reason        string
+	PreviousState string
+	State         string
+	PreviousRate  int32
+	Rate          int32
+}
+
+type EventRecoveryItem struct {
+	JobID              pgtype.UUID
+	Position           int64
+	OutboxID           int64
+	SubscriptionID     string
+	EventSource        string
+	EventID            string
+	EventType          string
+	FailedAt           pgtype.Timestamptz
+	FailureCode        string
+	Retryable          bool
+	ExpectedProgress   []byte
+	State              string
+	Reason             string
+	ReplayInvocationID pgtype.UUID
+	ReplayGeneration   pgtype.Int8
+	ReplayCreatedAt    pgtype.Timestamptz
+}
+
+type EventRecoveryJob struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	AppID                  pgtype.UUID
+	Selection              []byte
+	RatePerSecond          int32
+	WindowStartedAt        pgtype.Timestamptz
+	WindowCount            int32
+	State                  string
+	NextAttemptAt          pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	CompletedAt            pgtype.Timestamptz
+	PausedAt               pgtype.Timestamptz
+	LastProgressAt         pgtype.Timestamptz
+	WaitReason             string
+	CapacityScope          string
+	CapacityWaitStartedAt  pgtype.Timestamptz
+	CapacityWaitObservedAt pgtype.Timestamptz
 }
 
 type EventReplayJob struct {
@@ -2544,6 +2603,8 @@ type EventReplayJob struct {
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 	CompletedAt           pgtype.Timestamptz
+	ConsumerKind          string
+	WorkflowName          string
 }
 
 type EventReplayJobItem struct {
@@ -2576,6 +2637,9 @@ type EventRoutingBacklog struct {
 	CapacityDeferrals int32
 	NextAttemptAt     pgtype.Timestamptz
 	LeaseUntil        pgtype.Timestamptz
+	ConsumerKind      string
+	Origin            string
+	WorkflowName      string
 }
 
 type EventRoutingBacklogSource struct {
@@ -2591,6 +2655,9 @@ type EventRoutingBacklogSource struct {
 	CapacityDeferrals interface{}
 	NextAttemptAt     pgtype.Timestamptz
 	LeaseUntil        interface{}
+	Origin            string
+	ConsumerKind      string
+	WorkflowName      interface{}
 }
 
 type EventRoutingFairness struct {
@@ -2613,15 +2680,38 @@ type EventStorageAdmission struct {
 }
 
 type EventSubscription struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	Source    string
-	Type      string
-	Filter    []byte
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Source             string
+	Type               string
+	Filter             []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	RoutingRetryPolicy []byte
+	SchemaVersions     []string
+}
+
+type EventSubscriptionCircuitBreaker struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Policy         []byte
+	StateData      []byte
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type EventSubscriptionDeliveryControl struct {
+	SubscriptionID  pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Paused          bool
+	RatePerSecond   int32
+	WindowStartedAt pgtype.Timestamptz
+	WindowCount     int32
+	UpdatedAt       pgtype.Timestamptz
+	PausedAt        pgtype.Timestamptz
 }
 
 type EventSubscriptionWorkBinding struct {
@@ -2631,6 +2721,7 @@ type EventSubscriptionWorkBinding struct {
 	KeySelector         string
 	Action              string
 	FairnessKeySelector string
+	Ordered             bool
 }
 
 type ExclusiveWorkEffect struct {
