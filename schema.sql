@@ -42839,3 +42839,14 @@ CREATE TABLE project_environment_clone_checkpoint_object_retirements (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
  OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
 );
+
+-- ADR-590: local completion evidence, never a native absence receipt.
+CREATE TABLE project_environment_clone_checkpoint_unused_object_reservations (
+ operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ source_bucket_id uuid NOT NULL,
+ target_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
+ reservation jsonb NOT NULL CHECK(jsonb_typeof(reservation)='object'),
+ completed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(operation_id,source_bucket_id),
+ UNIQUE(target_bucket_id)
+);

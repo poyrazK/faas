@@ -59,7 +59,10 @@ func (s *server) retireCheckpointObjectSource(ctx context.Context, l state.Proje
 	defer cancel()
 	_, err := store.ReserveProjectEnvironmentCloneCheckpointObjectRetirement(ctx, l, id)
 	if errors.Is(err, state.ErrNotFound) {
-		return nil
+		if err = s.cloneWorkerAdmission(ctx); err != nil {
+			return err
+		}
+		return store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(ctx, l, id)
 	}
 	if err != nil {
 		return err

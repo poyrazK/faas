@@ -15362,3 +15362,25 @@ AND NOT b.public_read AND b.serve_at IS NULL
 AND o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
 AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements i WHERE i.operation_id=o.id AND i.source_bucket_id=b.environment_clone_source_bucket_id AND i.state='retired');
+
+-- name: ReadCloneCheckpointUnusedObjectReservation :one
+SELECT * FROM project_environment_clone_checkpoint_unused_object_reservations WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE;
+
+-- name: CompleteCloneCheckpointUnusedObjectReservation :execrows
+INSERT INTO project_environment_clone_checkpoint_unused_object_reservations(operation_id,source_bucket_id,target_bucket_id,reservation)
+SELECT o.id,sqlc.arg(source_bucket_id)::uuid,sqlc.arg(target_bucket_id)::uuid,sqlc.arg(reservation)::jsonb
+FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=sqlc.arg(source_bucket_id)::uuid);
+
+-- name: DeleteCloneCheckpointUnusedObjectReservationBucket :execrows
+UPDATE object_buckets b SET state='deleted',attempt_count=0,last_error_code='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE b.id=sqlc.arg(target_bucket_id)::uuid AND b.environment_clone_operation_id=o.id AND b.account_id=o.account_id
+AND b.environment_clone_source_bucket_id=sqlc.arg(source_bucket_id)::uuid AND b.state='provisioning'
+AND b.lease_token IS NULL AND b.lease_until IS NULL AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
+AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_unused_object_reservations u WHERE u.operation_id=o.id AND u.source_bucket_id=b.environment_clone_source_bucket_id AND u.target_bucket_id=b.id)
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=b.environment_clone_source_bucket_id);

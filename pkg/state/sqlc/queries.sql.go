@@ -5749,6 +5749,39 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const completeCloneCheckpointUnusedObjectReservation = `-- name: CompleteCloneCheckpointUnusedObjectReservation :execrows
+INSERT INTO project_environment_clone_checkpoint_unused_object_reservations(operation_id,source_bucket_id,target_bucket_id,reservation)
+SELECT o.id,$1::uuid,$2::uuid,$3::jsonb
+FROM project_environment_clone_operations o
+WHERE o.id=$4::uuid AND o.status='compensating'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=$1::uuid)
+`
+
+type CompleteCloneCheckpointUnusedObjectReservationParams struct {
+	SourceBucketID   pgtype.UUID
+	TargetBucketID   pgtype.UUID
+	Reservation      []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompleteCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg CompleteCloneCheckpointUnusedObjectReservationParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCloneCheckpointUnusedObjectReservation,
+		arg.SourceBucketID,
+		arg.TargetBucketID,
+		arg.Reservation,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
 DELETE FROM customer_operation_result_blobs WHERE id = $1::uuid AND state = 'deleting'
 AND lease_token = $2::text AND lease_until > $3::timestamptz
@@ -8856,6 +8889,40 @@ func (q *Queries) DeleteCloneCheckpointPgAppSecret(ctx context.Context, db DBTX,
 		arg.AppID,
 		arg.Scope,
 		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneCheckpointUnusedObjectReservationBucket = `-- name: DeleteCloneCheckpointUnusedObjectReservationBucket :execrows
+UPDATE object_buckets b SET state='deleted',attempt_count=0,last_error_code='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE b.id=$1::uuid AND b.environment_clone_operation_id=o.id AND b.account_id=o.account_id
+AND b.environment_clone_source_bucket_id=$2::uuid AND b.state='provisioning'
+AND b.lease_token IS NULL AND b.lease_until IS NULL AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$3::uuid AND o.status='compensating'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_unused_object_reservations u WHERE u.operation_id=o.id AND u.source_bucket_id=b.environment_clone_source_bucket_id AND u.target_bucket_id=b.id)
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=b.environment_clone_source_bucket_id)
+`
+
+type DeleteCloneCheckpointUnusedObjectReservationBucketParams struct {
+	TargetBucketID   pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) DeleteCloneCheckpointUnusedObjectReservationBucket(ctx context.Context, db DBTX, arg DeleteCloneCheckpointUnusedObjectReservationBucketParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointUnusedObjectReservationBucket,
+		arg.TargetBucketID,
+		arg.SourceBucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
 	)
 	if err != nil {
 		return 0, err
@@ -48172,6 +48239,28 @@ func (q *Queries) ReadCloneCheckpointRelease(ctx context.Context, db DBTX, opera
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointUnusedObjectReservation = `-- name: ReadCloneCheckpointUnusedObjectReservation :one
+SELECT operation_id, source_bucket_id, target_bucket_id, reservation, completed_at FROM project_environment_clone_checkpoint_unused_object_reservations WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointUnusedObjectReservationParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg ReadCloneCheckpointUnusedObjectReservationParams) (ProjectEnvironmentCloneCheckpointUnusedObjectReservation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointUnusedObjectReservation, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointUnusedObjectReservation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.Reservation,
+		&i.CompletedAt,
 	)
 	return i, err
 }

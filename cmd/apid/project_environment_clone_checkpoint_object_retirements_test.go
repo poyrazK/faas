@@ -416,10 +416,10 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 			if d.calls != want {
 				t.Fatal("request cleanup count", d.calls, want)
 			}
-			if phase == "no-creation" {
+			{
 				var retired int
-				if err = f.pool.QueryRow(t.Context(), "select count(*) from object_buckets where environment_clone_operation_id=$1 and state='deleted'", f.lease.Operation.ID).Scan(&retired); err != nil || retired != 0 {
-					t.Fatal("missing creation granted deletion authority", err)
+				if err = f.pool.QueryRow(t.Context(), "select count(*) from object_buckets where environment_clone_operation_id=$1 and state='deleted'", f.lease.Operation.ID).Scan(&retired); err != nil || retired != 2 {
+					t.Fatal("incomplete unused/native cleanup", retired, err)
 				}
 			}
 		})

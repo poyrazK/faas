@@ -5223,6 +5223,14 @@ type ProjectEnvironmentCloneCheckpointRelease struct {
 	ReleasedAt        pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointUnusedObjectReservation struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	TargetBucketID pgtype.UUID
+	Reservation    []byte
+	CompletedAt    pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneConfigurationCapture struct {
 	OperationID       pgtype.UUID
 	Version           int32

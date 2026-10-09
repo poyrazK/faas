@@ -7927,5 +7927,16 @@
       "state"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_unused_object_reservations",
+    "columns": [
+      "completed_at",
+      "operation_id",
+      "reservation",
+      "source_bucket_id",
+      "target_bucket_id"
+    ],
+    "kind": "operational"
   }
 ]

@@ -25,6 +25,7 @@ type ProjectEnvironmentCloneCheckpointObjectRetirement struct {
 }
 
 type ProjectEnvironmentCloneCheckpointObjectRetirementStore interface {
+	ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(context.Context, ProjectEnvironmentCloneLease, string) error
 	ReserveProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointObjectRetirement, error)
 	ClaimProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointObjectRetirement, bool, error)
 	FinishProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentCloneCheckpointObjectRetirementObservation) error

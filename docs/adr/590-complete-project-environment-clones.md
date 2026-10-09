@@ -8831,3 +8831,32 @@ rollback, changed terminal receipts, revival and guarded migration round trips.
 Native provider qualification and the final full-stage publication bridge remain
 outstanding. Public full-stage capture stays gated, and live R2/OVH qualification
 remains deferred at the user's request.
+
+### Private cleanup of unused checkpoint object reservations
+
+Compensation now distinguishes unused local reservations from targets with any
+original native creation journal. The latter still require qualified permanent
+native retirement, even when the original creation is only planned. An unused
+reservation can be marked deleted without native IO only after authenticating
+the original released checkpoint, frozen bindings, manifest and deterministic
+private target placement under the current compensating worker lease. Ordinary
+bucket provisioning excludes checkpoint-owned reservations. Ready/deleting
+buckets, bucket worker leases, published access, foreign credentials (including
+revoked rows), corrupted provenance and unproved deletion remain conflicts.
+
+The local completion record pins the exact reservation metadata and target UUID.
+It commits atomically with bucket deletion, releases the bucket quota reservation,
+and records no native absence receipt. Lost acknowledgement and worker handoff
+replay the same completion; stale workers, changed records or revived targets
+are rejected. Late worker expiry after either mutation rolls back both. Downward
+migration refuses to discard owned completion evidence.
+
+The private retirement coordinator uses this path when the original creation
+journal is absent, allowing mixed native requests and unused reservations to
+complete without dispatching native IO for unused targets. Tests cover mixed
+creation states, lost completion reply, handoff/replay, placement and grant
+fences, late expiry, revival and guarded migration round trips. This first path
+requires a fully released checkpoint: cleanup of earlier incomplete captures
+still needs a separate authenticated reservation-provenance path. Final stage
+publication and native provider qualification remain outstanding; public
+full-stage capture stays gated and live R2/OVH qualification remains deferred.
