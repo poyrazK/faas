@@ -63,6 +63,9 @@ func (r *CrashCaptureReceiver) handleGuestStream(instance string, conn net.Conn)
 	defer cancel()
 	capture, err := r.store.RequestSDKCrashCapture(ctx, appID, instance, req.Route, req.Reason, api.CrashCaptureCooldown, r.now().UTC())
 	if errors.Is(err, state.ErrCrashCaptureRefused) {
+		// Normal (no opt-in, one in flight, cooldown), but the only trace
+		// of why an app's own request was turned away.
+		r.log.Info("vmmd: sdk crash capture refused", "instance", instance, "app", appID)
 		return writeCrashResponse(conn, crashcapturewire.Response{Status: crashcapturewire.StatusRefused})
 	}
 	if err != nil {
