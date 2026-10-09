@@ -121,7 +121,7 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Checkout/setup plus cold-cache Go 1.26 analysis exhausted sixty minutes.
+    # Checkout/setup plus cold-cache analysis exhausted sixty minutes.
     # Leave time for analysis, cold builds and the remaining policy gates.
     timeout-minutes: 120
     steps:
@@ -190,15 +190,17 @@ jobs:
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          # Lint constructs its own SSA from source. Its export-data compile
+          # needs type checking, without costly inlining of the giant API package.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1 -l"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
           GOMAXPROCS: 2
         with:
           version: v2.10.1
-          # Go 1.26 analysis exceeded forty minutes under these memory bounds.
-          # Retain every rule and allow a bounded hour for cold-cache analysis,
+          # Preserve the established checks under the bounded memory settings.
+          # Allow a bounded hour for cold-cache analysis,
           # leaving the job budget for checkout, setup, and daemon builds.
           args: --timeout=60m
           # The action's own cache is keyed per 7-day interval and never re-saved

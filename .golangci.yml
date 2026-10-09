@@ -205,6 +205,23 @@ linters:
     # checks this list against the versioned JSON schema.
     gosec:
       excludes:
+        # New in gosec 2.23. Its exported-field-name heuristic also flags
+        # intentional authenticated password/token wire DTOs and TOML configs.
+        # Keep the previous rule set until a separate credential-serialization
+        # policy distinguishes those contracts from incidental serialization.
+        - G117
+        # New in gosec 2.23 (absent from our previous golangci-lint 2.4 pin).
+        # Preserve the established rules during the Go 1.26 toolchain upgrade.
+        # These six taint analyzers each construct whole-program call graphs;
+        # diagnostic stacks show repeated types.Implements work against our
+        # large Store interfaces after an hour of analysis. Enable separately
+        # once their cost is bounded. Existing AST/SSA security rules remain on.
+        - G701 # newly introduced SQL-injection taint analysis
+        - G702 # newly introduced command-injection taint analysis
+        - G703 # newly introduced path-traversal taint analysis
+        - G704 # newly introduced SSRF taint analysis
+        - G705 # newly introduced XSS taint analysis
+        - G706 # newly introduced log-injection taint analysis
         - G101 # hardcoded credentials: spec §11 names (CodePlanLimitSecrets, SecretKeyPattern, secretsEnvPath) are stable identifiers, not secrets
         - G115 # integer overflow on conversion: every site is a bounded/deliberate conversion (slot ids 0–9999, jail uids 20000–29999, tar Mode masked to ModePerm) — G115 is too noisy on legitimate bit work
         - G204 # subprocess with variadic args — jailer/ip/mkfs/firecracker are invoked by design; args derive from vetted slot/instance ids, never request input
@@ -224,6 +241,20 @@ linters:
       - ".*\\.pb\\.go$"          # generated protobufs
       - ".*_grpc\\.pb\\.go$"     # generated gRPC stubs
     rules:
+      # Retain established forwarding-header behavior during this release.
+      # Director-to-Rewrite migration requires its own proxy contract review.
+      - path: '^(cmd/bridged/main\.go|cmd/gatewayd-internal/(dev_bridge|realtimed_proxy)\.go|pkg/gateway/handler\.go)$'
+        linters:
+          - staticcheck
+        text: 'SA1019:.*Director.*deprecated'
+      # These adapters require x/net's raw-connection HTTP/2 APIs and Ping;
+      # Go 1.26's http.ClientConn lacks Ping and Server lacks ServeConn.
+      # Preserve those protocol contracts with the security-patched x/net.
+      # This exception covers only these deprecated symbols in their adapters.
+      - path: '^(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)\.go|pkg/devbridge/(local|relay)\.go|pkg/gateway/ingress/(guard|transport)\.go|pkg/vmmdgrpc/(forward|stream_bridge_manager)\.go)$'
+        linters:
+          - staticcheck
+        text: 'SA1019:.*(http2\.(Transport|ClientConn)|NewClientConn|CloseIdleConnections|ServeConn|AllowHTTP|MaxHeaderListSize).*deprecated'
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
