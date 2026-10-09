@@ -341,7 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    # Cold compilation and migrated-schema fixtures need time outside the
+    # unchanged 12-minute per-process test deadline.
     strategy:
       fail-fast: false
       matrix:
