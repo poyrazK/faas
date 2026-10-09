@@ -94,8 +94,12 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: request.ArtifactKey,
+		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),

@@ -11,6 +11,7 @@ tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 require (
 	cloud.google.com/go/storage v1.68.0
 	filippo.io/age v1.3.2
+	filippo.io/edwards25519 v1.2.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/PaddleHQ/paddle-go-sdk/v5 v5.2.0
 	github.com/alicebob/miniredis/v2 v2.39.0
