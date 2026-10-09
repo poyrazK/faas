@@ -1207,8 +1207,14 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "canary",
 		DocSlug: "canary",
-		Short:   "Project a canary preset against recent app traffic (canary simulate <slug>)",
+		Short:   "Inspect profiling gates, advance canary stages, or simulate a preset",
 		Subcommands: []cliSub{
+			{Name: "gate", Short: "Read the current profiling gate and route evidence", Positionals: []string{"<deployment-id>"}},
+			{Name: "advance", Short: "Advance one observed stage with an optional audited profiling override", Positionals: []string{"<deployment-id>"}, Flags: []cliFlag{
+				{Name: "expected-step", Short: "observed current canary step", Value: "N"},
+				{Name: "profile-policy-revision", Short: "current policy revision for an explicit override", Value: "REV"},
+				{Name: "profile-override-reason", Short: "audited reason for overriding only the profiling gate", Value: "TEXT"},
+			}},
 			{Name: "simulate", Short: "Estimate per-stage canary success from the last hour", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"slow", "balanced", "aggressive", "1-10-50-100"}},
 			}},
@@ -2635,6 +2641,11 @@ var cliCommands = []cliCommand{
 			}},
 		}}, {Name: "health", Short: "Compare critical route errors and optional p95 latency to gate canary progression", Subcommands: []cliSub{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read selected routes, mode and revision"},
+			{Name: "profile-history", Positionals: []string{"<slug>"}, Short: "Read retained CPU profile assessments for canary stages", Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "canary deployment UUID", Req: true},
+				{Name: "limit", Value: "N", Short: "history page size (default 5; maximum 10)"},
+				{Name: "before", Value: "CURSOR", Short: "opaque cursor from the prior page"},
+			}},
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save exact normalized telemetry route selectors", Flags: []cliFlag{
 				{Name: "routes", Value: "PATH", Short: "JSON array of method/path selectors with optional latency checks and advisory watch_statuses", Req: true},
 				{Name: "mode", Value: "MODE", Short: "report (enforcement unavailable in preview)", Req: true, ClosedSet: []string{"report", "enforce"}},
@@ -2982,6 +2993,7 @@ var cliCommands = []cliCommand{
 		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
 			debugRequestsCLISubcommand(),
+			{Name: "profiles", Short: "Sampled CPU functions and deployment comparison", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Value: "UUID", Short: "candidate deployment"}, {Name: "runtime", Value: "NAME", Short: "runtime name"}, {Name: "start", Value: "RFC3339", Short: "capture start"}, {Name: "end", Value: "RFC3339", Short: "capture end"}, {Name: "baseline-id", Value: "UUID", Short: "baseline deployment"}, {Name: "baseline-start", Value: "RFC3339", Short: "baseline capture start"}, {Name: "baseline-end", Value: "RFC3339", Short: "baseline capture end"}}},
 			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}, {Name: "limit", Short: "maximum recent observations (1..100; default 20)", Value: "N"}}},

@@ -22,7 +22,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Get/update one app or run a deployment-attached command |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
-| [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
+| [`canary`](#canary) | Inspect profiling gates, advance canary stages, or simulate a preset |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`github`](#github) | Manage an app&#39;s GitHub installation and repository binding |
@@ -2982,9 +2982,27 @@ Export a partial FOCUS 1.4 invoice projection
 
 ## canary
 
-Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;)
+Inspect profiling gates, advance canary stages, or simulate a preset
 
 `gregale canary [<subcommand>] <slug>`
+
+### canary gate
+
+Read the current profiling gate and route evidence
+
+`gregale canary gate <deployment-id>`
+
+### canary advance
+
+Advance one observed stage with an optional audited profiling override
+
+`gregale canary advance [--expected-step <N>] [--profile-policy-revision <REV>] [--profile-override-reason <TEXT>] <deployment-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-step <N>` | observed current canary step |  |
+| `--profile-policy-revision <REV>` | current policy revision for an explicit override |  |
+| `--profile-override-reason <TEXT>` | audited reason for overriding only the profiling gate |  |
 
 ### canary simulate
 
@@ -6177,6 +6195,18 @@ Read selected routes, mode and revision
 
 `gregale routes health get <slug>`
 
+#### routes health profile-history
+
+Read retained CPU profile assessments for canary stages
+
+`gregale routes health profile-history --deployment <ID> [--limit <N>] [--before <CURSOR>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | canary deployment UUID | required |
+| `--limit <N>` | history page size (default 5; maximum 10) |  |
+| `--before <CURSOR>` | opaque cursor from the prior page |  |
+
 #### routes health set
 
 Save exact normalized telemetry route selectors
@@ -7444,6 +7474,22 @@ Queue a request replay against a mirror target
 | `--wait` | wait for a terminal replay state |  |
 | `--timeout <DURATION>` | maximum wait (1s..1h) |  |
 | `--interval <DURATION>` | poll interval (250ms..1m) |  |
+
+### debug profiles
+
+Sampled CPU functions and deployment comparison
+
+`gregale debug profiles [--deployment-id <UUID>] [--runtime <NAME>] [--start <RFC3339>] [--end <RFC3339>] [--baseline-id <UUID>] [--baseline-start <RFC3339>] [--baseline-end <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | candidate deployment |  |
+| `--runtime <NAME>` | runtime name |  |
+| `--start <RFC3339>` | capture start |  |
+| `--end <RFC3339>` | capture end |  |
+| `--baseline-id <UUID>` | baseline deployment |  |
+| `--baseline-start <RFC3339>` | baseline capture start |  |
+| `--baseline-end <RFC3339>` | baseline capture end |  |
 
 ### debug dependencies
 

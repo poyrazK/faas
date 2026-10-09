@@ -62,6 +62,9 @@ type RouteHealthWindowEvidence = api.RouteHealthWindowEvidence
 
 type RouteHealthFinding = api.RouteHealthFinding
 
+type CanaryProfileSignal = api.CanaryProfileSignal
+type ProfileCanaryHistoryPage = api.ProfileCanaryHistoryPage
+
 type RouteHealthReport = api.RouteHealthReport
 
 type RouteHealthDecision = api.RouteHealthDecision

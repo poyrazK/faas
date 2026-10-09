@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 823
+// adr: 836
 package migrations_test
 
 import (

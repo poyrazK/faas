@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-ADR-828 publishes lifecycle dates to clients. Owners need a migration queue
+ADR-841 publishes lifecycle dates to clients. Owners need a migration queue
 that combines those dates with retained callers and reviewed successors.
 
 ## Decision

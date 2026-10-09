@@ -1059,6 +1059,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is `pkg/vmmd/activity.ActivityTracker` (PR-B) which counts
 	// in-flight HTTP requests; a worker has none, so the metric is
 	// forever 0 and the engine would never admit.
+	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
+		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
+		return
+	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1525,7 +1529,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		return
 	}
-	if req.BeforeCheckpoint != nil {
+	if req.BeforeCheckpoint != nil || req.Profiling != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
 		// baked manifest does not match this update.

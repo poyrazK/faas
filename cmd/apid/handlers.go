@@ -294,6 +294,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if mc == 0 {
 		mc = 1
 	}
+	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
+		return state.App{}, api.ErrCapacity("CPU profiling is unavailable on this installation")
+	}
 	lifecycle := lifecycleManifestFromCreate(req)
 	// A service's desired replica count is its steady-state instance
 	// requirement. When max_concurrency is omitted, make the default large
@@ -921,6 +924,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			RestartPolicy:                a.Manifest.RestartPolicy,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Profiling:                    a.Manifest.Profiling,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
 			MaxRetries:                   a.Manifest.MaxRetries,
 			RequestTimeoutS:              a.Manifest.RequestTimeoutS,

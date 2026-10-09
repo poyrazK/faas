@@ -8016,11 +8016,35 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
 		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
 	}
-	if params.RequireCanaryStageElapsed && (dep.CanaryStepStartedAt == nil ||
+	if params.RequireCanaryStageElapsed && !params.ProfileGateRollback && (dep.CanaryStepStartedAt == nil ||
 		now.Sub(*dep.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 
+	if params.ProfileGateDecision == nil {
+		params.ProfileGateDecision = &api.ProfileCanaryGateDecision{}
+	}
+	profileDecision, err := pgProfileGateDecision(ctx, tx, snapshot.Account.ID, dep, now)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+	if err := authorizeProfileGate(profileDecision, &params); err != nil {
+		return Deployment{}, 0, err
+	}
+	if params.ProfileGateRollback {
+		clock, err := sqlc.New().RouteHealthClock(ctx, tx)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		now = clock.Time
+		if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
+			return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+		}
+		if err := s.authorizeProductionLifecycle(ctx, tx, params.ProfileGateDecision.StableDeploymentID, true); err != nil {
+			return Deployment{}, 0, err
+		}
+		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
+	}
 	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
@@ -8866,6 +8890,13 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		owner, err := (&sqlc.Queries{}).ReadCanaryRouteGateOwner(ctx, tx, dep.ID)
 		if err != nil {
 			return dep, 0, routePolicyReadError(err)
+		}
+		p, err := readProfileDeploymentPolicy(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyProfileCanaryGate(p, dep); err != nil {
+			return dep, 0, err
 		}
 		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
 		if err != nil {

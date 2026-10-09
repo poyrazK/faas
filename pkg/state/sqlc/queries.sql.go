@@ -10034,6 +10034,37 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 	return i, err
 }
 
+const enqueueProfileAlertNotification = `-- name: EnqueueProfileAlertNotification :exec
+WITH recipients AS (
+ SELECT array_agg(id ORDER BY id) AS ids FROM app_webhooks
+ WHERE app_id=$2::text::uuid AND account_id=$1::text::uuid AND scope='app' AND enabled
+ AND (cardinality(event_filter)=0 OR $3::text=ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT $1::text::uuid,$2::text::uuid,$3::text,
+ $4::text::uuid,$5::jsonb,ids
+FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
+`
+
+type EnqueueProfileAlertNotificationParams struct {
+	AccountID string
+	AppID     string
+	Event     string
+	SourceID  string
+	Payload   []byte
+}
+
+func (q *Queries) EnqueueProfileAlertNotification(ctx context.Context, db DBTX, arg EnqueueProfileAlertNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueProfileAlertNotification,
+		arg.AccountID,
+		arg.AppID,
+		arg.Event,
+		arg.SourceID,
+		arg.Payload,
+	)
+	return err
+}
+
 const enqueueRouteHealthNotification = `-- name: EnqueueRouteHealthNotification :exec
 WITH recipients AS (
  SELECT array_agg(id ORDER BY id) AS ids FROM app_webhooks
@@ -51877,6 +51908,60 @@ func (q *Queries) ReadProductionQueueTriggerInvocation(ctx context.Context, db D
 	return i, err
 }
 
+const readProfileAlertDeploymentScope = `-- name: ReadProfileAlertDeploymentScope :one
+SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::text::uuid AND a.id=$2::text::uuid
+ AND a.account_id=$3::text::uuid AND a.status<>'deleted'
+`
+
+type ReadProfileAlertDeploymentScopeParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+func (q *Queries) ReadProfileAlertDeploymentScope(ctx context.Context, db DBTX, arg ReadProfileAlertDeploymentScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readProfileAlertDeploymentScope, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var d_scope string
+	err := row.Scan(&d_scope)
+	return d_scope, err
+}
+
+const readProfileAlertOwner = `-- name: ReadProfileAlertOwner :one
+SELECT slug FROM apps WHERE id=$1::text::uuid
+ AND account_id=$2::text::uuid AND status <> 'deleted'
+`
+
+type ReadProfileAlertOwnerParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadProfileAlertOwner(ctx context.Context, db DBTX, arg ReadProfileAlertOwnerParams) (string, error) {
+	row := db.QueryRow(ctx, readProfileAlertOwner, arg.AppID, arg.AccountID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
+const readProfileAlertState = `-- name: ReadProfileAlertState :one
+SELECT state FROM profile_route_alert_state WHERE context_key=$1::text
+ AND app_id=$2::text::uuid AND account_id=$3::text::uuid
+`
+
+type ReadProfileAlertStateParams struct {
+	ContextKey string
+	AppID      string
+	AccountID  string
+}
+
+func (q *Queries) ReadProfileAlertState(ctx context.Context, db DBTX, arg ReadProfileAlertStateParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readProfileAlertState, arg.ContextKey, arg.AppID, arg.AccountID)
+	var state []byte
+	err := row.Scan(&state)
+	return state, err
+}
+
 const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
 SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
     EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
@@ -67246,6 +67331,34 @@ func (q *Queries) WriteDeploymentHostingVerification(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const writeProfileAlertState = `-- name: WriteProfileAlertState :exec
+INSERT INTO profile_route_alert_state(context_key,app_id,account_id,deployment_id,state,updated_at)
+VALUES($1::text,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::jsonb,$6::timestamptz)
+ON CONFLICT(context_key) DO UPDATE SET state=EXCLUDED.state,updated_at=EXCLUDED.updated_at
+`
+
+type WriteProfileAlertStateParams struct {
+	ContextKey   string
+	AppID        string
+	AccountID    string
+	DeploymentID string
+	State        []byte
+	UpdatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) WriteProfileAlertState(ctx context.Context, db DBTX, arg WriteProfileAlertStateParams) error {
+	_, err := db.Exec(ctx, writeProfileAlertState,
+		arg.ContextKey,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.State,
+		arg.UpdatedAt,
+	)
+	return err
 }
 
 const writeRouteHealthGate = `-- name: WriteRouteHealthGate :exec

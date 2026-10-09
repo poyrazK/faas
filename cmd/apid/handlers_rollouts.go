@@ -137,6 +137,8 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, problem)
 			return
 		}
+
+		var profileBlocked *state.ProfileGateBlockedError
 		var routeBlocked *state.RouteGateBlockedError
 		var healthBlocked *state.RouteHealthBlockedError
 		switch {
@@ -144,6 +146,8 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, bindingReleaseRequiredProblem())
 		case errors.As(err, &healthBlocked):
 			s.routeHealthError(w, err)
+		case errors.As(err, &profileBlocked):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProfileGateBlocked, "Canary profiling gate held", profileBlocked.Decision.Reason))
 		case errors.As(err, &routeBlocked):
 			s.canaryRouteGateError(w, err)
 		case errors.Is(err, state.ErrNotFound):
