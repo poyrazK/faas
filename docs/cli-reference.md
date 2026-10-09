@@ -1216,10 +1216,12 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <app>`
+`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a live deployment and readiness options |  |
+| `--app <SLUG>` | app slug (linked app or picker in interactive mode) |  |
 | `--scope <SCOPE>` | require the selected deployment to use this scope (default its current scope) |  |
 | `--max-verification-age <DURATION>` | maximum age of passed probe evidence (default 10m) |  |
 | `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
@@ -1232,6 +1234,7 @@ Evaluate recorded binding evidence and runtime freshness for CI
 Examples:
 
 ```sh
+gregale bindings check --app my-api --interactive
 gregale bindings check my-api --max-verification-age 10m --json
 gregale bindings check my-api --scope production
 gregale bindings check my-api --deployment v12 --max-verification-age 10m --json

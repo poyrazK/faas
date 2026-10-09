@@ -652,8 +652,10 @@ var cliCommands = []cliCommand{
 			{
 				Name:        "check",
 				Short:       "Evaluate recorded binding evidence and runtime freshness for CI",
-				Positionals: []string{"<app>"},
+				Positionals: []string{"[<app>]"},
 				Flags: []cliFlag{
+					{Name: "interactive", Bool: true, Short: "choose a live deployment and readiness options"},
+					{Name: "app", Value: "SLUG", Short: "app slug (linked app or picker in interactive mode)"},
 					{Name: "scope", Value: "SCOPE", Short: "require the selected deployment to use this scope (default its current scope)"},
 					{Name: "max-verification-age", Value: "DURATION", Short: "maximum age of passed probe evidence (default 10m)"},
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment whose evidence must pass, including zero-traffic candidates"},
@@ -662,7 +664,7 @@ var cliCommands = []cliCommand{
 					{Name: "wait", Short: "poll read-only inventory while probes, refreshes or application acknowledgements are pending"},
 					{Name: "timeout", Value: "DURATION", Short: "maximum preflight wait (default 5m)"},
 					{Name: "poll-interval", Value: "DURATION", Short: "inventory polling interval with --wait (default 1s)"},
-				}, Examples: []string{"gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
+				}, Examples: []string{"gregale bindings check --app my-api --interactive", "gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
 			},
 			{
 				Name:  "object-storage",

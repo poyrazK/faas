@@ -504,6 +504,30 @@ The flow only reads status and never submits or retries rollback actions.
 
 For scripts, use `alerts actions --app APP --fire UUID [--wait] --json`.
 
+## Check binding readiness interactively
+
+```sh
+gregale bindings check --app my-api --interactive
+# Use the linked app, or choose one:
+gregale bindings check --interactive
+```
+
+Choose a live deployment from paginated history. The check stays pinned to its
+ID and scope, including live candidates with no traffic. Choose the maximum age
+of verification evidence (default 10 minutes), whether to require current
+PostgreSQL/object-storage application acknowledgements, and whether to waive
+unsupported connectivity coverage for active queue/outbound bindings (default no).
+
+The flow prints a reusable command and the readiness report, including blockers
+and runtime freshness. If blocked, optionally wait with the existing read-only
+poller. It stops when checks pass or blockers cannot progress through existing
+work. Configure the wait with `--timeout` and `--poll-interval`; a resume command
+is printed before waiting. The flow does not start probes, rotate credentials,
+or restart applications. A deployment that stops being live cannot pass.
+
+For scripts, use `bindings check APP --deployment ID` with explicit flags and
+`--json`. Blocked checks return a nonzero exit status.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
