@@ -14840,12 +14840,13 @@ const getCustomerOperationCompensationSource = `-- name: GetCustomerOperationCom
 SELECT m.payload
 FROM customer_operation_milestones m
 JOIN customer_operations o ON o.id=m.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
 WHERE m.operation_id=$1::uuid
  AND m.id=$2::uuid
  AND o.account_id=$3::uuid
  AND o.app_id=$4::uuid
  AND o.platform_tenant_id=$5::uuid
- AND o.scope=$6::text
+ AND d.scope=$6::text
  AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
 `
 
