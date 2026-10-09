@@ -2,6 +2,20 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "api-monetization",
+      "name": "API monetization",
+      "category": "billing",
+      "description": "Identify your API's consumers with keys, meter their requests, price them with versioned per-request rate cards and monthly included requests, and produce revisioned usage statements to invoice through your own billing system.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/api-monetization",
+      "acceptance_test": "cmd/apid/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
+    },
+    {
       "id": "application-messaging",
       "name": "Application inbox and outbox",
       "category": "async",
