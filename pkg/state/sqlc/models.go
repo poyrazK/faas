@@ -2568,6 +2568,7 @@ type EventRecoveryJob struct {
 	ExecutionNotificationCaptured bool
 	ExecutionFinishedAt           pgtype.Timestamptz
 	ExecutionNotificationNextAt   pgtype.Timestamptz
+	RequestID                     pgtype.UUID
 }
 
 type EventReplayJob struct {

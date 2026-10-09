@@ -47242,8 +47242,10 @@ components:
     EventRecoveryRequest:
       type: object
       additionalProperties: false
-      description: Select routing failures (default) or the latest replayable retained execution per application event consumer. Execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
+      description: Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
       properties:
+        parent_job_id: { type: string, format: uuid, description: Select only saved failed/dead-lettered queued items from this retained terminal execution recovery in the same account/app. Requires execution mode. Does not follow newer replays. }
+        request_id: { type: string, format: uuid, description: Required on child creation; optional on preview. Account-scoped durable idempotency while the child job is retained. Repeating the normalized selection returns its existing child; different selection/app with the same UUID conflicts. Only allowed with parent_job_id. Operator reason is excluded from comparison and the original audit reason wins. }
         reason:
           type: string
           maxLength: 512
@@ -47299,6 +47301,8 @@ components:
       description: Metadata-only selected recipient. In execution mode invocation_id identifies the selected failure. Queued means replay was admitted, not that the handler succeeded.
       required: [position, event_source, event_id, event_type, subscription_id, failed_at, failure_code, retryable, state]
       properties:
+        parent_job_id: { type: string, format: uuid, description: Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is pruned. }
+        parent_position: { type: integer, format: int64, minimum: 1, maximum: 10000, description: Selected item position in the parent recovery. }
         invocation_id: { type: string, format: uuid }
         replay_invocation_id: { type: string, format: uuid, description: Exact replay admitted by this job; omitted for routing recovery and legacy items. }
         replay_generation: { type: integer, format: int64, minimum: 0, description: Frozen admitted generation including zero for new replay children. }

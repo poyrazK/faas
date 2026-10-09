@@ -15823,7 +15823,9 @@ CREATE TABLE public.event_recovery_jobs (
     execution_notification_captured boolean DEFAULT false NOT NULL,
     execution_finished_at timestamp with time zone,
     execution_notification_next_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id uuid,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
     CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
@@ -32414,6 +32416,13 @@ CREATE INDEX event_outbox_unattributed_age ON public.event_fanout_outbox USING b
 --
 
 CREATE INDEX event_recipient_delivery_deadline_idx ON public.event_fanout_recipients USING btree (delivery_deadline_at, outbox_id) WHERE ((state = ANY (ARRAY['pending'::text, 'processing'::text])) AND (delivery_deadline_at IS NOT NULL));
+
+
+--
+-- Name: event_recovery_child_request_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_recovery_jobs USING btree (account_id, request_id) WHERE (request_id IS NOT NULL);
 
 
 --

@@ -2572,3 +2572,61 @@ that strictly validate webhook event names to accept
 `event_recovery.execution_finished` first. Go exposes
 `EventRecoveryExecutionFinishedWebhookPayload`; Node and Python generate the
 same model. See [ADR-833](adr/833-recovery-execution-completion-notifications.md).
+
+### Retry failures from one recovery job
+
+After fixing a consumer, preview only failures from one terminal execution
+recovery instead of selecting app-wide failures:
+
+```sh
+gregale events recovery-preview APP --parent-job PARENT_JOB_UUID \
+  --outcome failed --json
+gregale events recovery-create APP --parent-job PARENT_JOB_UUID \
+  --outcome failed --request-id 95ba3321-7648-4c93-9720-876ea9b44645 \
+  --rate 5 --protect-receipts --reason 'Consumer fix deployed' --yes
+gregale events recovery-items CHILD_JOB_UUID --json
+```
+
+Generate and save a fresh request UUID for each intended child creation. Repeat
+an uncertain creation with the **same** UUID and selection to return the same
+child job, even after its parent is pruned, while the child remains retained.
+Changing the app or normalized selection with that UUID returns conflict. Changes
+to operator reason do not create another audit entry; the original reason wins.
+If you also set an HTTP `Idempotency-Key`, keep the request body identical for its
+separate transport-level checks. Do not reuse a request UUID after child pruning. Parent-scoped creation requires
+compatible binaries and the migration; a re-upgrade restores request identities
+for retained children from their immutable selection.
+
+`--parent-job` implies execution mode; explicit routing is rejected. The existing
+API endpoints take `parent_job_id`, explicit `mode=execution`, and a `request_id`
+required on creation but optional on preview. The parent must be a retained
+completed/cancelled execution job in the same account and app. Its admission must
+be terminal; other queued handlers can still be running. Routing or active parents
+return conflict; wrong-account/app or pruned parents return not found.
+
+Selection uses only the parent's saved failed or dead-lettered queued executions,
+by exact replay invocation, generation and creation time. Omit `--outcome` to
+select both; `--outcome dead_letter` selects dead letters. Subscription, event
+source/type and minimum-age filters can narrow the set. Success, active, unknown,
+cancelled, expired and superseded results are excluded. A new request freezes the
+current set; retrying that request does not add failures recorded later. Preview
+is advisory and does not reserve a selection or request ID.
+
+A saved failure remains visible even if its execution record or receipt has been
+pruned. The worker revalidates it before admission and reports changed,
+receipt-expired, or expired evidence as skips. It never substitutes a newer replay
+or success, and current uncertain evidence cannot be replayed through this child.
+Concurrent recoveries/manual replays use existing one-child and generation guards
+so a changed identity is skipped instead of admitted again.
+
+The child's selection identifies its parent; every selected item exposes
+`parent_job_id` and `parent_position`, also shown in CLI output. Links remain
+historical metadata after parent pruning. Children retain existing quotas, pacing,
+receipt protection, preflight, pause/resume/cancel controls, audit history and
+execution-finished notifications. Skips are admission outcomes, not handler
+success. Replay is still at least once and does not undo work already applied or
+restore ordering after newer deliveries have advanced.
+
+Apply the child-request migration before upgrading the API and scheduler. Go,
+Node and Python use their existing recovery preview/create methods with the new
+fields. See [ADR-834](adr/834-parent-scoped-execution-recovery-retries.md).

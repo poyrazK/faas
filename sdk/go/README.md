@@ -383,3 +383,12 @@ time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
 created execution jobs with queued deliveries qualify. Update strict webhook
 event-enum consumers before API rollout; existing webhook delivery retries and
 dead-letter tools apply. See [ADR-833](../../docs/adr/833-recovery-execution-completion-notifications.md).
+
+Existing recovery preview/create methods accept `parent_job_id` with
+`mode=execution` to select only saved failed/dead-lettered deliveries from a
+retained terminal recovery in the same app. Child creation requires a stable
+`request_id` UUID: repeat it with the same normalized selection to return the same
+retained child. Changed selections conflict, and the original audit reason wins.
+Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
+execution evidence is skipped at admission; newer replays are never substituted.
+See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).

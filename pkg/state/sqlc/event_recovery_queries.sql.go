@@ -191,8 +191,8 @@ func (q *Queries) EventRecoveryClaimExecutionNotification(ctx context.Context, d
 }
 
 const eventRecoveryCreate = `-- name: EventRecoveryCreate :one
-INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at)
-VALUES ($1::uuid,$2::uuid,$3::jsonb,$4::integer,$5::timestamptz,$5::timestamptz,$5::timestamptz,$5::timestamptz,$6::timestamptz) RETURNING id
+INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at,request_id)
+VALUES ($1::uuid,$2::uuid,$3::jsonb,$4::integer,$5::timestamptz,$5::timestamptz,$5::timestamptz,$5::timestamptz,$6::timestamptz,$7::uuid) RETURNING id
 `
 
 type EventRecoveryCreateParams struct {
@@ -202,6 +202,7 @@ type EventRecoveryCreateParams struct {
 	RatePerSecond int32
 	NowAt         pgtype.Timestamptz
 	ExpiresAt     pgtype.Timestamptz
+	RequestID     pgtype.UUID
 }
 
 func (q *Queries) EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRecoveryCreateParams) (pgtype.UUID, error) {
@@ -212,6 +213,7 @@ func (q *Queries) EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRec
 		arg.RatePerSecond,
 		arg.NowAt,
 		arg.ExpiresAt,
+		arg.RequestID,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -365,7 +367,7 @@ func (q *Queries) EventRecoveryExecutionObservations(ctx context.Context, db DBT
 }
 
 const eventRecoveryGet = `-- name: EventRecoveryGet :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -403,6 +405,7 @@ type EventRecoveryGetRow struct {
 	ExecutionNotificationCaptured bool
 	ExecutionFinishedAt           pgtype.Timestamptz
 	ExecutionNotificationNextAt   pgtype.Timestamptz
+	RequestID                     pgtype.UUID
 	SelectedCount                 int64
 	PendingCount                  int64
 	QueuedCount                   int64
@@ -436,6 +439,7 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 		&i.ExecutionNotificationCaptured,
 		&i.ExecutionFinishedAt,
 		&i.ExecutionNotificationNextAt,
+		&i.RequestID,
 		&i.SelectedCount,
 		&i.PendingCount,
 		&i.QueuedCount,
@@ -446,7 +450,7 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 }
 
 const eventRecoveryHealth = `-- name: EventRecoveryHealth :many
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
 FROM event_recovery_jobs j WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid AND j.state IN ('running','paused')
 ORDER BY j.created_at,j.id
 `
@@ -479,6 +483,7 @@ type EventRecoveryHealthRow struct {
 	ExecutionNotificationCaptured bool
 	ExecutionFinishedAt           pgtype.Timestamptz
 	ExecutionNotificationNextAt   pgtype.Timestamptz
+	RequestID                     pgtype.UUID
 	PendingCount                  int64
 }
 
@@ -514,6 +519,7 @@ func (q *Queries) EventRecoveryHealth(ctx context.Context, db DBTX, arg EventRec
 			&i.ExecutionNotificationCaptured,
 			&i.ExecutionFinishedAt,
 			&i.ExecutionNotificationNextAt,
+			&i.RequestID,
 			&i.PendingCount,
 		); err != nil {
 			return nil, err
@@ -719,7 +725,7 @@ func (q *Queries) EventRecoveryItems(ctx context.Context, db DBTX, arg EventReco
 
 const eventRecoveryList = `-- name: EventRecoveryList :many
 WITH page AS MATERIALIZED (
- SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at FROM event_recovery_jobs j
+ SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id FROM event_recovery_jobs j
  WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid
  AND ($3::text='' OR j.state=$3::text)
  AND ($4::text='' OR coalesce(nullif(j.selection->>'mode',''),'routing')=$4::text)
@@ -729,7 +735,7 @@ WITH page AS MATERIALIZED (
  AND (NOT $8::boolean OR (j.created_at,j.id)<($9::timestamptz,$10::uuid))
 ORDER BY j.created_at DESC,j.id DESC LIMIT $11::integer
 )
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -775,6 +781,7 @@ type EventRecoveryListRow struct {
 	ExecutionNotificationCaptured bool
 	ExecutionFinishedAt           pgtype.Timestamptz
 	ExecutionNotificationNextAt   pgtype.Timestamptz
+	RequestID                     pgtype.UUID
 	SelectedCount                 int64
 	PendingCount                  int64
 	QueuedCount                   int64
@@ -826,6 +833,7 @@ func (q *Queries) EventRecoveryList(ctx context.Context, db DBTX, arg EventRecov
 			&i.ExecutionNotificationCaptured,
 			&i.ExecutionFinishedAt,
 			&i.ExecutionNotificationNextAt,
+			&i.RequestID,
 			&i.SelectedCount,
 			&i.PendingCount,
 			&i.QueuedCount,
@@ -859,7 +867,7 @@ func (q *Queries) EventRecoveryListApp(ctx context.Context, db DBTX, arg EventRe
 }
 
 const eventRecoveryLock = `-- name: EventRecoveryLock :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
 `
 
 type EventRecoveryLockParams struct {
@@ -893,6 +901,7 @@ func (q *Queries) EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecov
 		&i.ExecutionNotificationCaptured,
 		&i.ExecutionFinishedAt,
 		&i.ExecutionNotificationNextAt,
+		&i.RequestID,
 	)
 	return i, err
 }
@@ -926,7 +935,7 @@ func (q *Queries) EventRecoveryNextItem(ctx context.Context, db DBTX, jobID pgty
 }
 
 const eventRecoveryNextJob = `-- name: EventRecoveryNextJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at FROM event_recovery_jobs WHERE state IN ('running','paused')
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id FROM event_recovery_jobs WHERE state IN ('running','paused')
  AND (expires_at<=$1::timestamptz OR (state='running' AND next_attempt_at<=$1::timestamptz
  AND (window_started_at+interval '1 second'<=$1::timestamptz OR window_count<rate_per_second)))
 ORDER BY CASE WHEN expires_at<=$1::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -958,6 +967,7 @@ func (q *Queries) EventRecoveryNextJob(ctx context.Context, db DBTX, nowAt pgtyp
 		&i.ExecutionNotificationCaptured,
 		&i.ExecutionFinishedAt,
 		&i.ExecutionNotificationNextAt,
+		&i.RequestID,
 	)
 	return i, err
 }
@@ -1006,6 +1016,7 @@ SELECT item.position,acct.plan,
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer
    OR inv.replay_generation<>(item.expected_progress->>'generation')::bigint OR inv.created_at<>(item.expected_progress->>'created_at')::timestamptz
    OR inv.completed_at IS DISTINCT FROM (item.expected_progress->>'completed_at')::timestamptz
+   OR (coalesce(item.expected_progress->>'parent_job_id','')<>'' AND inv.outcome='uncertain')
    OR EXISTS (SELECT 1 FROM invocation_plain_replays p WHERE p.parent_invocation_id=inv.id)
    OR EXISTS (SELECT 1 FROM invocation_keyed_replays k WHERE k.parent_invocation_id=inv.id) THEN 'changed'
   WHEN inv.work_expires_at<=$3::timestamptz OR inv.start_deadline_at<=$3::timestamptz THEN 'expired'
@@ -1101,7 +1112,7 @@ func (q *Queries) EventRecoveryPreflight(ctx context.Context, db DBTX, arg Event
 }
 
 const eventRecoveryPreflightJob = `-- name: EventRecoveryPreflightJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
 `
 
 type EventRecoveryPreflightJobParams struct {
@@ -1135,6 +1146,7 @@ func (q *Queries) EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg Ev
 		&i.ExecutionNotificationCaptured,
 		&i.ExecutionFinishedAt,
 		&i.ExecutionNotificationNextAt,
+		&i.RequestID,
 	)
 	return i, err
 }
@@ -1215,6 +1227,123 @@ type EventRecoveryResumeParams struct {
 func (q *Queries) EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error {
 	_, err := db.Exec(ctx, eventRecoveryResume, arg.NowAt, arg.JobID)
 	return err
+}
+
+const eventRecoveryRetryCandidates = `-- name: EventRecoveryRetryCandidates :many
+SELECT item.outbox_id,item.event_source,item.event_id,item.event_type,item.subscription_id,
+ coalesce(result.completed_at,result.recorded_at)::timestamptz AS failed_at,
+ (CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END)::text AS failure_code,
+ true::boolean AS retryable,
+ jsonb_build_object('invocation_id',result.replay_invocation_id::text,
+ 'state',CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END,
+ 'attempts',result.attempts,'generation',result.replay_generation,'created_at',result.replay_created_at,
+ 'completed_at',result.completed_at,'dead_letter_id',coalesce(dead.id::text,''),
+ 'parent_job_id',item.job_id::text,'parent_position',item.position)::jsonb AS expected_progress
+FROM event_recovery_items item JOIN event_recovery_jobs parent ON parent.id=item.job_id
+JOIN event_recovery_execution_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.replay_invocation_id=item.replay_invocation_id AND result.replay_generation=item.replay_generation
+ AND result.replay_created_at=item.replay_created_at
+LEFT JOIN LATERAL (
+ SELECT dead.id FROM production_dead_letter_events dead JOIN invocations inv ON inv.id=dead.source_id
+ WHERE dead.account_id=parent.account_id AND dead.app_id=parent.app_id AND dead.source='invocation'
+  AND dead.source_id=result.replay_invocation_id AND dead.replayed_at IS NULL
+  AND inv.account_id=parent.account_id AND inv.app_id=parent.app_id
+  AND inv.replay_generation=result.replay_generation AND inv.created_at=result.replay_created_at
+ ORDER BY dead.id LIMIT 1
+) dead ON true
+WHERE parent.id=$1::uuid AND parent.account_id=$2::uuid AND parent.app_id=$3::uuid
+ AND parent.selection->>'mode'='execution' AND parent.state IN ('completed','cancelled') AND item.state='queued'
+ AND result.state IN ('failed','dead_lettered') AND result.recorded_at<=$4::timestamptz
+ AND ($5::text='' OR CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END=$5::text)
+ AND ($6::text='' OR item.subscription_id=$6::text)
+ AND ($7::text='' OR item.event_source=$7::text)
+ AND ($8::text='' OR item.event_type=$8::text)
+ AND coalesce(result.completed_at,result.recorded_at)<=$9::timestamptz
+ORDER BY item.position LIMIT $10::integer
+`
+
+type EventRecoveryRetryCandidatesParams struct {
+	ParentJobID    pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	NowAt          pgtype.Timestamptz
+	Outcome        string
+	SubscriptionID string
+	EventSource    string
+	EventType      string
+	FailedBefore   pgtype.Timestamptz
+	PageLimit      int32
+}
+
+type EventRecoveryRetryCandidatesRow struct {
+	OutboxID         int64
+	EventSource      string
+	EventID          string
+	EventType        string
+	SubscriptionID   string
+	FailedAt         pgtype.Timestamptz
+	FailureCode      string
+	Retryable        bool
+	ExpectedProgress []byte
+}
+
+func (q *Queries) EventRecoveryRetryCandidates(ctx context.Context, db DBTX, arg EventRecoveryRetryCandidatesParams) ([]EventRecoveryRetryCandidatesRow, error) {
+	rows, err := db.Query(ctx, eventRecoveryRetryCandidates,
+		arg.ParentJobID,
+		arg.AccountID,
+		arg.AppID,
+		arg.NowAt,
+		arg.Outcome,
+		arg.SubscriptionID,
+		arg.EventSource,
+		arg.EventType,
+		arg.FailedBefore,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRecoveryRetryCandidatesRow{}
+	for rows.Next() {
+		var i EventRecoveryRetryCandidatesRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.EventSource,
+			&i.EventID,
+			&i.EventType,
+			&i.SubscriptionID,
+			&i.FailedAt,
+			&i.FailureCode,
+			&i.Retryable,
+			&i.ExpectedProgress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventRecoveryRetryExisting = `-- name: EventRecoveryRetryExisting :one
+SELECT id FROM event_recovery_jobs
+WHERE account_id=$1::uuid AND request_id=$2::uuid
+FOR KEY SHARE
+`
+
+type EventRecoveryRetryExistingParams struct {
+	AccountID pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+func (q *Queries) EventRecoveryRetryExisting(ctx context.Context, db DBTX, arg EventRecoveryRetryExistingParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventRecoveryRetryExisting, arg.AccountID, arg.RequestID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const eventRecoverySchedule = `-- name: EventRecoverySchedule :exec

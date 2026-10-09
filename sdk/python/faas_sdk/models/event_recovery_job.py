@@ -30,9 +30,10 @@ class EventRecoveryJob:
     coverage: EventRecoveryJobCoverage
     selection: EventRecoveryRequest
     """Select routing failures (default) or the latest replayable retained execution per application event
-    consumer. Execution mode includes publication and materialized backfill recipients, excludes workflows and
-    object notifications, and requires retained admission and execution records. Creation freezes its own selection;
-    preview is advisory."""
+    consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence
+    has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes
+    publication and materialized backfill recipients, excludes workflows and object notifications, and requires
+    retained admission and execution records. Creation freezes its own selection; preview is advisory."""
     state: EventRecoveryJobState
     selected_count: int
     pending_count: int

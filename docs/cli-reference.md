@@ -1887,11 +1887,13 @@ Inspect delivery pause, pacing, and oldest waiting event
 
 Preview a bounded selection of failed event consumers
 
-`gregale events recovery-preview [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] <app>`
+`gregale events recovery-preview [--mode <MODE>] [--parent-job <UUID>] [--request-id <UUID>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--mode <MODE>` | routing (default) or execution recovery |  |
+| `--mode <MODE>` | routing (default) or execution recovery; parent-job defaults to execution |  |
+| `--parent-job <UUID>` | select saved failures from one terminal execution recovery |  |
+| `--request-id <UUID>` | stable request UUID; required for child recovery creation |  |
 | `--outcome <OUTCOME>` | execution outcome: failed or dead_letter |  |
 | `--subscription-id <ID>` | filter by captured consumer identifier |  |
 | `--event-source <SOURCE>` | filter by exact event source |  |
@@ -1906,11 +1908,13 @@ Preview a bounded selection of failed event consumers
 
 Create a durable bulk recovery job
 
-`gregale events recovery-create [--mode <MODE>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] [--reason <TEXT>] --yes <app>`
+`gregale events recovery-create [--mode <MODE>] [--parent-job <UUID>] [--request-id <UUID>] [--outcome <OUTCOME>] [--subscription-id <ID>] [--event-source <SOURCE>] [--event-type <TYPE>] [--failure-code <CODE>] [--min-age <DURATION>] [--include-non-retryable] [--protect-receipts] [--rate <N>] [--reason <TEXT>] --yes <app>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--mode <MODE>` | routing (default) or execution recovery |  |
+| `--mode <MODE>` | routing (default) or execution recovery; parent-job defaults to execution |  |
+| `--parent-job <UUID>` | select saved failures from one terminal execution recovery |  |
+| `--request-id <UUID>` | stable request UUID; required for child recovery creation |  |
 | `--outcome <OUTCOME>` | execution outcome: failed or dead_letter |  |
 | `--subscription-id <ID>` | filter by captured consumer identifier |  |
 | `--event-source <SOURCE>` | filter by exact event source |  |

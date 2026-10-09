@@ -161,6 +161,7 @@ func (m *MemStore) recoveryAttemptIndexLocked(account, app string, now time.Time
 }
 func (m *MemStore) eventRecoveryObservedItemWithAttemptsLocked(job *memEventRecoveryJob, item memEventRecoveryItem, now time.Time, attempts map[recoveryAttemptKey]InvocationAttempt) api.EventRecoveryItem {
 	out := item.EventRecoveryItem
+	recoveryItemLineage(&out, item.ExpectedProgress)
 	out.Execution = nil
 	if item.ReplayGeneration != nil {
 		generation := *item.ReplayGeneration

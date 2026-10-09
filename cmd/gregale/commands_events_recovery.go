@@ -20,6 +20,8 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	flags, positional := splitArgsForFlags(args, "yes", "include-non-retryable", "protect-receipts")
 	fs := newFlagSet("events "+name, flag.ContinueOnError)
 	mode := fs.String("mode", "routing", "routing or execution recovery")
+	parent := fs.String("parent-job", "", "retry saved failures from one terminal execution recovery")
+	requestID := fs.String("request-id", "", "stable request UUID; required when creating a child recovery")
 	outcome := fs.String("outcome", "", "execution outcome: failed or dead_letter")
 	sub := fs.String("subscription-id", "", "filter by captured consumer identifier")
 	source := fs.String("event-source", "", "filter by exact event source")
@@ -34,9 +36,20 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	req := api.EventRecoveryRequest{ProtectReceipts: *protect, Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || *rate < 1 || req.Validate() != nil || !preview && !*yes {
-		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--protect-receipts] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
+	if *parent != "" {
+		explicitMode := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "mode" {
+				explicitMode = true
+			}
+		})
+		if !explicitMode {
+			*mode = "execution"
+		}
+	}
+	req := api.EventRecoveryRequest{ParentJobID: *parent, RequestID: *requestID, ProtectReceipts: *protect, Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || *rate < 1 || req.Validate() != nil || !preview && (!*yes || req.ParentJobID != "" && req.RequestID == "") {
+		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--parent-job UUID] [--request-id UUID] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--protect-receipts] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -142,6 +155,9 @@ func cmdEventsRecoveryItems(args []string) int {
 func writeEventRecoveryJob(out api.EventRecoveryJob) {
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | selected %d | pending %d | queued %d | skipped %d | cancelled %d\n", oneLine(out.ID), oneLine(out.State), out.SelectedCount, out.PendingCount, out.QueuedCount, out.SkippedCount, out.CancelledCount)
 	_, _ = fmt.Fprintf(osStdout, "Admission rate: %d/s\n", out.RatePerSecond)
+	if out.Selection.ParentJobID != "" {
+		_, _ = fmt.Fprintf(osStdout, "Parent recovery: %s | request: %s\n", oneLine(out.Selection.ParentJobID), oneLine(out.Selection.RequestID))
+	}
 	if out.Selection.ProtectReceipts {
 		_, _ = fmt.Fprintf(osStdout, "Receipt protection: pending items only, while active and before %s\n", out.ExpiresAt.Format(time.RFC3339))
 	}
@@ -157,8 +173,12 @@ func writeEventRecoveryJob(out api.EventRecoveryJob) {
 
 }
 func writeEventRecoveryItems(items []api.EventRecoveryItem) {
-	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON")
+	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON\tPARENT JOB\tPARENT POSITION")
 	for _, item := range items {
+		parentPosition := ""
+		if item.ParentPosition != nil {
+			parentPosition = fmt.Sprint(*item.ParentPosition)
+		}
 		generation, execution, attempts, source, recorded := "", "", "", "", ""
 		if item.ReplayGeneration != nil {
 			generation = fmt.Sprint(*item.ReplayGeneration)
@@ -171,7 +191,7 @@ func writeEventRecoveryItems(items []api.EventRecoveryItem) {
 				recorded = item.Execution.RecordedAt.Format(time.RFC3339)
 			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason))
+		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason), oneLine(item.ParentJobID), parentPosition)
 	}
 }
 

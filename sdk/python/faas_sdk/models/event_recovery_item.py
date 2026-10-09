@@ -34,6 +34,11 @@ class EventRecoveryItem:
     failure_code: str
     retryable: bool
     state: EventRecoveryItemState
+    parent_job_id: UUID | Unset = UNSET
+    """Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is
+    pruned."""
+    parent_position: int | Unset = UNSET
+    """Selected item position in the parent recovery."""
     invocation_id: UUID | Unset = UNSET
     replay_invocation_id: UUID | Unset = UNSET
     """Exact replay admitted by this job; omitted for routing recovery and legacy items."""
@@ -64,6 +69,12 @@ class EventRecoveryItem:
         retryable = self.retryable
 
         state: str = self.state
+
+        parent_job_id: str | Unset = UNSET
+        if not isinstance(self.parent_job_id, Unset):
+            parent_job_id = str(self.parent_job_id)
+
+        parent_position = self.parent_position
 
         invocation_id: str | Unset = UNSET
         if not isinstance(self.invocation_id, Unset):
@@ -98,6 +109,10 @@ class EventRecoveryItem:
                 "state": state,
             }
         )
+        if parent_job_id is not UNSET:
+            field_dict["parent_job_id"] = parent_job_id
+        if parent_position is not UNSET:
+            field_dict["parent_position"] = parent_position
         if invocation_id is not UNSET:
             field_dict["invocation_id"] = invocation_id
         if replay_invocation_id is not UNSET:
@@ -133,6 +148,15 @@ class EventRecoveryItem:
         retryable = d.pop("retryable")
 
         state = check_event_recovery_item_state(d.pop("state"))
+
+        _parent_job_id = d.pop("parent_job_id", UNSET)
+        parent_job_id: UUID | Unset
+        if isinstance(_parent_job_id, Unset):
+            parent_job_id = UNSET
+        else:
+            parent_job_id = UUID(_parent_job_id)
+
+        parent_position = d.pop("parent_position", UNSET)
 
         _invocation_id = d.pop("invocation_id", UNSET)
         invocation_id: UUID | Unset
@@ -174,6 +198,8 @@ class EventRecoveryItem:
             failure_code=failure_code,
             retryable=retryable,
             state=state,
+            parent_job_id=parent_job_id,
+            parent_position=parent_position,
             invocation_id=invocation_id,
             replay_invocation_id=replay_invocation_id,
             replay_generation=replay_generation,

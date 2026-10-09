@@ -26,8 +26,8 @@ LIMIT sqlc.arg(page_limit)::integer;
 SELECT count(*) FROM event_recovery_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND state IN ('running','paused');
 
 -- name: EventRecoveryCreate :one
-INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at)
-VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(selection)::jsonb,sqlc.arg(rate_per_second)::integer,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(expires_at)::timestamptz) RETURNING id;
+INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at,request_id)
+VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(selection)::jsonb,sqlc.arg(rate_per_second)::integer,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(expires_at)::timestamptz,sqlc.narg(request_id)::uuid) RETURNING id;
 
 -- name: EventRecoveryInsertItem :exec
 INSERT INTO event_recovery_items(job_id,position,outbox_id,subscription_id,event_source,event_id,event_type,failed_at,failure_code,retryable,expected_progress)
@@ -258,6 +258,7 @@ SELECT item.position,acct.plan,
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer
    OR inv.replay_generation<>(item.expected_progress->>'generation')::bigint OR inv.created_at<>(item.expected_progress->>'created_at')::timestamptz
    OR inv.completed_at IS DISTINCT FROM (item.expected_progress->>'completed_at')::timestamptz
+   OR (coalesce(item.expected_progress->>'parent_job_id','')<>'' AND inv.outcome='uncertain')
    OR EXISTS (SELECT 1 FROM invocation_plain_replays p WHERE p.parent_invocation_id=inv.id)
    OR EXISTS (SELECT 1 FROM invocation_keyed_replays k WHERE k.parent_invocation_id=inv.id) THEN 'changed'
   WHEN inv.work_expires_at<=sqlc.arg(now_at)::timestamptz OR inv.start_deadline_at<=sqlc.arg(now_at)::timestamptz THEN 'expired'
@@ -310,3 +311,40 @@ WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;
 -- name: EventRecoveryDeferExecutionNotification :exec
 UPDATE event_recovery_jobs SET execution_notification_next_at=sqlc.arg(next_at)::timestamptz
 WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;
+
+-- name: EventRecoveryRetryExisting :one
+SELECT id FROM event_recovery_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND request_id=sqlc.arg(request_id)::uuid
+FOR KEY SHARE;
+
+-- name: EventRecoveryRetryCandidates :many
+SELECT item.outbox_id,item.event_source,item.event_id,item.event_type,item.subscription_id,
+ coalesce(result.completed_at,result.recorded_at)::timestamptz AS failed_at,
+ (CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END)::text AS failure_code,
+ true::boolean AS retryable,
+ jsonb_build_object('invocation_id',result.replay_invocation_id::text,
+ 'state',CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END,
+ 'attempts',result.attempts,'generation',result.replay_generation,'created_at',result.replay_created_at,
+ 'completed_at',result.completed_at,'dead_letter_id',coalesce(dead.id::text,''),
+ 'parent_job_id',item.job_id::text,'parent_position',item.position)::jsonb AS expected_progress
+FROM event_recovery_items item JOIN event_recovery_jobs parent ON parent.id=item.job_id
+JOIN event_recovery_execution_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.replay_invocation_id=item.replay_invocation_id AND result.replay_generation=item.replay_generation
+ AND result.replay_created_at=item.replay_created_at
+LEFT JOIN LATERAL (
+ SELECT dead.id FROM production_dead_letter_events dead JOIN invocations inv ON inv.id=dead.source_id
+ WHERE dead.account_id=parent.account_id AND dead.app_id=parent.app_id AND dead.source='invocation'
+  AND dead.source_id=result.replay_invocation_id AND dead.replayed_at IS NULL
+  AND inv.account_id=parent.account_id AND inv.app_id=parent.app_id
+  AND inv.replay_generation=result.replay_generation AND inv.created_at=result.replay_created_at
+ ORDER BY dead.id LIMIT 1
+) dead ON true
+WHERE parent.id=sqlc.arg(parent_job_id)::uuid AND parent.account_id=sqlc.arg(account_id)::uuid AND parent.app_id=sqlc.arg(app_id)::uuid
+ AND parent.selection->>'mode'='execution' AND parent.state IN ('completed','cancelled') AND item.state='queued'
+ AND result.state IN ('failed','dead_lettered') AND result.recorded_at<=sqlc.arg(now_at)::timestamptz
+ AND (sqlc.arg(outcome)::text='' OR CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END=sqlc.arg(outcome)::text)
+ AND (sqlc.arg(subscription_id)::text='' OR item.subscription_id=sqlc.arg(subscription_id)::text)
+ AND (sqlc.arg(event_source)::text='' OR item.event_source=sqlc.arg(event_source)::text)
+ AND (sqlc.arg(event_type)::text='' OR item.event_type=sqlc.arg(event_type)::text)
+ AND coalesce(result.completed_at,result.recorded_at)<=sqlc.arg(failed_before)::timestamptz
+ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;

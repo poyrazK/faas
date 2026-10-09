@@ -7,9 +7,14 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type EventRecoveryRequest struct {
+	ParentJobID string `json:"parent_job_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+
 	ProtectReceipts     bool   `json:"protect_receipts,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 	Mode                string `json:"mode,omitempty"`
@@ -24,6 +29,23 @@ type EventRecoveryRequest struct {
 }
 
 func (r EventRecoveryRequest) Validate() error {
+	if r.ParentJobID != "" {
+		if _, err := uuid.Parse(r.ParentJobID); err != nil {
+			return fmt.Errorf("parent_job_id must be a UUID")
+		}
+		if r.Mode != "execution" {
+			return fmt.Errorf("parent_job_id requires execution mode")
+		}
+	}
+	if r.RequestID != "" {
+		if _, err := uuid.Parse(r.RequestID); err != nil {
+			return fmt.Errorf("request_id must be a UUID")
+		}
+		if r.ParentJobID == "" {
+			return fmt.Errorf("request_id requires parent_job_id")
+		}
+	}
+
 	if err := (EventRecoveryControlRequest{Reason: r.Reason}).Validate(); err != nil {
 		return err
 	}
@@ -80,6 +102,9 @@ type EventRecoveryExecutionSummary struct {
 	Unknown      int64     `json:"unknown"`
 }
 type EventRecoveryItem struct {
+	ParentJobID    string `json:"parent_job_id,omitempty"`
+	ParentPosition *int64 `json:"parent_position,omitempty"`
+
 	ReplayInvocationID string                  `json:"replay_invocation_id,omitempty"`
 	ReplayGeneration   *int64                  `json:"replay_generation,omitempty"`
 	Execution          *EventRecoveryExecution `json:"execution,omitempty"`

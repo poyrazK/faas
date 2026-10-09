@@ -30,6 +30,10 @@ func (s *server) writeEventRecovery(w http.ResponseWriter, r *http.Request, stat
 	switch {
 	case errors.Is(err, state.ErrEventRecoveryQuery):
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+	case errors.Is(err, state.ErrEventRecoveryRetryParent):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Parent recovery is not ready", err.Error()))
+	case errors.Is(err, state.ErrEventRecoveryRequestConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery request conflicts", err.Error()))
 	case errors.Is(err, state.ErrEventRecoveryState):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event recovery is no longer active", "completed, cancelled, and expired jobs cannot be paused, resumed, or rate-adjusted"))
 	case errors.Is(err, state.ErrNotFound):

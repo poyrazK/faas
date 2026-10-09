@@ -902,7 +902,9 @@ var cliCommands = []cliCommand{
 			{Name: "subscription-health", Short: "Inspect consumer backlog, routing rates, latency, and pause duration", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "window", Short: "5m|15m|1h|6h|24h", Value: "WINDOW"}}},
 			{Name: "subscription-status", Short: "Inspect delivery pause, pacing, and oldest waiting event", Positionals: []string{"<app>", "<subscription-id>"}},
 			{Name: "recovery-preview", Short: "Preview a bounded selection of failed event consumers", Positionals: []string{"<app>"}, Flags: []cliFlag{
-				{Name: "mode", Short: "routing (default) or execution recovery", Value: "MODE"},
+				{Name: "mode", Short: "routing (default) or execution recovery; parent-job defaults to execution", Value: "MODE"},
+				{Name: "parent-job", Short: "select saved failures from one terminal execution recovery", Value: "UUID"},
+				{Name: "request-id", Short: "stable request UUID; required for child recovery creation", Value: "UUID"},
 				{Name: "outcome", Short: "execution outcome: failed or dead_letter", Value: "OUTCOME"},
 				{Name: "subscription-id", Short: "filter by captured consumer identifier", Value: "ID"},
 				{Name: "event-source", Short: "filter by exact event source", Value: "SOURCE"},
@@ -914,7 +916,9 @@ var cliCommands = []cliCommand{
 				{Name: "rate", Short: "maximum retries per second (1..100; default 10)", Value: "N"},
 			}},
 			{Name: "recovery-create", Short: "Create a durable bulk recovery job", Positionals: []string{"<app>"}, Flags: []cliFlag{
-				{Name: "mode", Short: "routing (default) or execution recovery", Value: "MODE"},
+				{Name: "mode", Short: "routing (default) or execution recovery; parent-job defaults to execution", Value: "MODE"},
+				{Name: "parent-job", Short: "select saved failures from one terminal execution recovery", Value: "UUID"},
+				{Name: "request-id", Short: "stable request UUID; required for child recovery creation", Value: "UUID"},
 				{Name: "outcome", Short: "execution outcome: failed or dead_letter", Value: "OUTCOME"},
 				{Name: "subscription-id", Short: "filter by captured consumer identifier", Value: "ID"},
 				{Name: "event-source", Short: "filter by exact event source", Value: "SOURCE"},

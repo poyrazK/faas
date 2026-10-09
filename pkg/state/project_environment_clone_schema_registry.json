@@ -2926,6 +2926,7 @@
       "next_attempt_at",
       "paused_at",
       "rate_per_second",
+      "request_id",
       "selection",
       "state",
       "updated_at",

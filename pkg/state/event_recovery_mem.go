@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -43,6 +44,9 @@ func (m *MemStore) eventRecoveryAppLocked(accountID, appID string) bool {
 	return ok && sameMemUUID(app.AccountID, accountID) && app.Status != AppDeleted
 }
 func (m *MemStore) eventRecoveryCandidatesLocked(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest, now time.Time) ([]memEventRecoveryItem, error) {
+	if req.ParentJobID != "" {
+		return m.eventRecoveryRetryCandidatesLocked(ctx, accountID, appID, req, now)
+	}
 	if req.Mode == "execution" {
 		return m.eventExecutionRecoveryCandidatesLocked(ctx, accountID, appID, req, now)
 	}
@@ -134,6 +138,9 @@ func (m *MemStore) PreviewEventRecovery(ctx context.Context, accountID, appID st
 	return out, nil
 }
 func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
+	if req.ParentJobID != "" && req.RequestID == "" {
+		return api.EventRecoveryJob{}, fmt.Errorf("%w: request_id is required for a child recovery", ErrEventRecoveryQuery)
+	}
 	if err := normalizeEventRecovery(accountID, appID, &req); err != nil {
 		return api.EventRecoveryJob{}, err
 	}
@@ -145,6 +152,27 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return api.EventRecoveryJob{}, err
+	}
+	if !m.eventRecoveryAppLocked(accountID, appID) {
+		return api.EventRecoveryJob{}, ErrNotFound
+	}
+	if req.RequestID != "" {
+		for _, existing := range m.eventRecoveryJobs {
+			if sameMemUUID(existing.AccountID, accountID) && existing.Job.Selection.RequestID == req.RequestID {
+				if !sameMemUUID(existing.Job.AppID, appID) || existing.Job.Selection != req {
+					return api.EventRecoveryJob{}, ErrEventRecoveryRequestConflict
+				}
+				return m.eventRecoveryObservedResponseLocked(existing, now), nil
+			}
+		}
+	}
+	if req.ParentJobID != "" {
+		if _, err := m.eventRecoveryRetryParentLocked(accountID, appID, req.ParentJobID); err != nil {
+			return api.EventRecoveryJob{}, err
+		}
+	}
 	active := 0
 	for _, job := range m.eventRecoveryJobs {
 		if sameMemUUID(job.AccountID, accountID) && eventRecoveryActive(job.Job.State) {

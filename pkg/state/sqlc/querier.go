@@ -647,6 +647,8 @@ type Querier interface {
 	EventRecoveryReadApp(ctx context.Context, db DBTX, arg EventRecoveryReadAppParams) (pgtype.UUID, error)
 	EventRecoveryRecordReplay(ctx context.Context, db DBTX, arg EventRecoveryRecordReplayParams) error
 	EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error
+	EventRecoveryRetryCandidates(ctx context.Context, db DBTX, arg EventRecoveryRetryCandidatesParams) ([]EventRecoveryRetryCandidatesRow, error)
+	EventRecoveryRetryExisting(ctx context.Context, db DBTX, arg EventRecoveryRetryExistingParams) (pgtype.UUID, error)
 	EventRecoverySchedule(ctx context.Context, db DBTX, arg EventRecoveryScheduleParams) error
 	EventRecoveryScheduleTerminalState(ctx context.Context, db DBTX, arg EventRecoveryScheduleTerminalStateParams) (string, error)
 	EventRecoverySetItem(ctx context.Context, db DBTX, arg EventRecoverySetItemParams) error

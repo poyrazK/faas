@@ -3,9 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Select routing failures (default) or the latest replayable retained execution per application event consumer. Execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
+ * Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
  */
 export type EventRecoveryRequest = {
+  /**
+   * Select only saved failed/dead-lettered queued items from this retained terminal execution recovery in the same account/app. Requires execution mode. Does not follow newer replays.
+   */
+  parent_job_id?: string;
+  /**
+   * Required on child creation; optional on preview. Account-scoped durable idempotency while the child job is retained. Repeating the normalized selection returns its existing child; different selection/app with the same UUID conflicts. Only allowed with parent_job_id. Operator reason is excluded from comparison and the original audit reason wins.
+   */
+  request_id?: string;
   /**
    * Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
    */
