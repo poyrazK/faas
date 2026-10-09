@@ -171,9 +171,8 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. Its version is pinned in go.mod and repeated below for the
-      # action installer.
-      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
+      # checks. Keep its version aligned with the go.mod tool pin. v2.14.0 is
+      # built with Go 1.27.0 and can lint this Go 1.26.9 module.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
       # repository accumulates baseline coverage; the table identifies tests
@@ -187,7 +186,7 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v8)
+      - name: lint (golangci-lint v2.14.0)
         uses: golangci/golangci-lint-action@v9
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
@@ -196,7 +195,7 @@ jobs:
           GOGC: 75
           GOMAXPROCS: 2
         with:
-          version: v2.4.0
+          version: v2.14.0
           # The expanded repository exceeded the twenty-minute cold-cache
           # deadline under these memory bounds. Retain every rule and give
           # the complete analysis a bounded thirty-minute deadline.
