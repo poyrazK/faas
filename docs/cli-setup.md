@@ -820,6 +820,25 @@ Expression times are candidates: image readiness, overlap, start deadlines,
 missed-run policy, and delays affect actual execution. This command only reads
 Job metadata; use `jobs occurrences` to inspect recorded schedule decisions.
 
+## Browse Job tasks interactively
+
+```sh
+gregale jobs tasks --interactive
+```
+
+Choose a Job and run, then browse all tasks or only unsuccessful tasks
+(failed, timeout, OOM, cancelled). Navigate forward through task pages,
+refresh the current page, or switch filters (which restarts at the first page).
+Each page shows fresh run counts; task labels include status, attempt, and error.
+Filtering applies to each server page, so a page can contain no matching tasks
+while later pages do.
+
+Select a task to inspect outcome, retry decision, error, and execution timestamps.
+Exit code is shown only for a task with a recorded finish time. Commands for
+that task's logs and retained attempt history are printed with the active profile.
+Continuing rereads the page. The flow only observes work; it never retries or
+cancels tasks. Explicit `jobs tasks NAME RUN_ID` remains available for scripts.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

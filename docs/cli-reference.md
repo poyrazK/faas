@@ -3825,7 +3825,17 @@ gregale jobs cancel --interactive
 
 List tasks for one run
 
-`gregale jobs tasks <name> <run-id>`
+`gregale jobs tasks [--interactive] [<name>] [<run-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a run, browse task pages, and filter unsuccessful tasks |  |
+
+Examples:
+
+```sh
+gregale jobs tasks --interactive
+```
 
 ### jobs attempts
 

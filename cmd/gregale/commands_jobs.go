@@ -702,6 +702,9 @@ func cmdJobsCancel(args []string) int {
 // Returns a page of tasks 0..N-1 (zero-based). LeaseToken is OMITTED
 // from the wire (internal dispatch primitive).
 func cmdJobsTasks(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsTasksInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs tasks <name> <run-id>", "jobs")
 		return 1
