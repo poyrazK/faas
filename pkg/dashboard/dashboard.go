@@ -1474,6 +1474,9 @@ type AppDetailData struct {
 	// card uses. The window is echoed via SLODuration so the
 	// page's window-selector tab strip knows which tab is active.
 	SLOApp *views.AppSLOView
+	// CustomSLOs are the app's ADR-747 SLOs with their budget position;
+	// nil skips the "Your SLOs" table.
+	CustomSLOs []views.CustomSLOView
 	// SLODuration is the page-level helper that surfaces the
 	// current SLO window ("1h" / "24h" / "7d") and the as-of
 	// timestamp. The template uses the window to mark the

@@ -59,6 +59,37 @@ checkout — 99.9% available over 30 days
 
 `GET /v1/apps/{slug}/slos/{id}` returns the same figures in `status`.
 
+## Alert on an SLO
+
+Two alert metrics watch one SLO, named with `slo_id` (`--slo` in the CLI):
+
+```sh
+# Page when the budget is burning fast: both the last hour at 14.4x and the
+# last six hours at 6x the sustainable rate.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "checkout burning" \
+  --metric slo_budget_burn --slo SLO_ID --comparison gt --threshold 14.4 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+# Warn when less than a quarter of the window's budget is left.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "checkout budget low" \
+  --metric slo_budget_remaining_pct --slo SLO_ID --comparison lt --threshold 25 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+- `slo_budget_burn` is the 1-hour burn rate, with the 6-hour rate scaled onto
+  the same threshold, so `gt 14.4` fires only when both windows burn fast. A
+  short spike that has already passed, or a slow leak, stays below it. This is
+  the same shape as the fixed `slo_burn_rate` alert, measured against your
+  own objective.
+- `slo_budget_remaining_pct` is the budget-left figure from `gregale slos
+  status`. With no traffic in the window the rule is `unknown` rather than
+  reading as 100%.
+- The rule's `window_spec` is required but ignored: the SLO defines the
+  windows. Deleting the SLO deletes its alert rules.
+
+The dashboard's app page lists every SLO with its budget left and current
+burn rate under **Your SLOs**.
+
 An app can hold up to 10 SLOs. SLOs are available on Hobby and above, like
 the per-app metrics they are computed from. SLOs cover the whole app; route
 SLOs are a planned follow-up.

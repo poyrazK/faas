@@ -173,6 +173,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateSLOAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.checkEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
@@ -205,6 +209,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		EventSubscriptionID:             req.EventSubscriptionID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
+		SLOID:                           req.SLOID,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -253,6 +258,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"threshold":                           row.Threshold,
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
+		"slo_id":                              row.SLOID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -694,6 +700,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		WindowSpec:                      string(r.WindowSpec),
 		EventSubscriptionID:             r.EventSubscriptionID,
 		FailureSource:                   string(r.FailureSource),
+		SLOID:                           r.SLOID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		CooldownMinutes:                 r.CooldownMinutes,
@@ -959,6 +966,10 @@ func alertRuleFamily(m state.AlertMetric) string {
 	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations
+	}
+	if api.IsSLOAlertMetric(string(m)) {
+		// slo_id only means something for these metrics (alert_rules_slo_chk).
+		return "slo"
 	}
 	return "other"
 }

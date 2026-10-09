@@ -143,6 +143,9 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
 	"slo_burn_rate",
+	// ADR-747: one customer SLO, named by slo_id.
+	AlertRuleMetricSLOBudgetBurn,
+	AlertRuleMetricSLOBudgetRemaining,
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
@@ -154,6 +157,19 @@ var AllowedAlertRuleMetrics = []string{
 	"safedeploy_audit_emit_failing",
 	"deployment_audit_gc_failing",
 	"canary_fleet_in_flight_high",
+}
+
+// ADR-747 SLO alert metrics. Both are app-scoped and name one SLO by slo_id.
+// slo_budget_burn is the multi-window burn rate against the SLO's own
+// objective; slo_budget_remaining_pct is the share of its budget left.
+const (
+	AlertRuleMetricSLOBudgetBurn      = "slo_budget_burn"
+	AlertRuleMetricSLOBudgetRemaining = "slo_budget_remaining_pct"
+)
+
+// IsSLOAlertMetric reports whether a metric names a customer SLO via slo_id.
+func IsSLOAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSLOBudgetBurn || metric == AlertRuleMetricSLOBudgetRemaining
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -216,6 +232,7 @@ type CreateAlertRuleRequest struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	SLOID                           string  `json:"slo_id,omitempty"`
 	Action                          *string `json:"action,omitempty"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecret                   string  `json:"webhook_secret"`
@@ -276,6 +293,7 @@ type AlertRuleResponse struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	SLOID                           string  `json:"slo_id,omitempty"`
 	Action                          string  `json:"action"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
@@ -305,6 +323,7 @@ type AlertRuleRow struct {
 	Threshold                       float64
 	WindowSpec                      string
 	FailureSource                   string
+	SLOID                           string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -337,6 +356,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
+		SLOID:                           r.SLOID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,

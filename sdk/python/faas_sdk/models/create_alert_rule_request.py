@@ -53,6 +53,10 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    slo_id: UUID | Unset = UNSET
+    """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
+    slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
+    is ignored for these metrics."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
@@ -86,6 +90,10 @@ class CreateAlertRuleRequest:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        slo_id: str | Unset = UNSET
+        if not isinstance(self.slo_id, Unset):
+            slo_id = str(self.slo_id)
+
         cooldown_minutes = self.cooldown_minutes
 
         action: str | Unset = UNSET
@@ -113,6 +121,8 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if slo_id is not UNSET:
+            field_dict["slo_id"] = slo_id
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if action is not UNSET:
@@ -155,6 +165,13 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        _slo_id = d.pop("slo_id", UNSET)
+        slo_id: UUID | Unset
+        if isinstance(_slo_id, Unset):
+            slo_id = UNSET
+        else:
+            slo_id = UUID(_slo_id)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         _action = d.pop("action", UNSET)
@@ -176,6 +193,7 @@ class CreateAlertRuleRequest:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            slo_id=slo_id,
             cooldown_minutes=cooldown_minutes,
             action=action,
         )

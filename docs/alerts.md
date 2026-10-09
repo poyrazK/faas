@@ -48,6 +48,11 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## SLO alerts
+
+`slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own
+SLOs, named with `slo_id`. See [SLOs and error budgets](slos.md#alert-on-an-slo).
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable

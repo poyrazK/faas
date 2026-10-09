@@ -881,6 +881,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		}
 		observed := float64(n)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
+		return e.observeCustomSLO(ctx, rule)
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
 		// the 1h/14.4x and 6h/6x windows into one effective value so
@@ -1056,6 +1058,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
+	}
+	if rule.SLOID != "" {
+		m["slo_id"] = rule.SLOID
 	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations

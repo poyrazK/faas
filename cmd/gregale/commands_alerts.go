@@ -127,6 +127,7 @@ func cmdAlertAdd(args []string) int {
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
+	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
@@ -149,6 +150,9 @@ func cmdAlertAdd(args []string) int {
 	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action) {
 		return 1
 	}
+	if api.IsSLOAlertMetric(*metric) != (*sloID != "") {
+		return printErr("Invalid slo", fmt.Errorf("--slo is required with --metric slo_budget_burn or slo_budget_remaining_pct and not allowed otherwise"))
+	}
 	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
 	if err != nil || windowSeconds > 0 && *action != "rollback" {
 		return printErr("Invalid post-deploy rollback window", fmt.Errorf("requires action=rollback and a whole-second duration from 0 to 1h"))
@@ -169,6 +173,7 @@ func cmdAlertAdd(args []string) int {
 		WindowSpec:                      *windowSpec,
 		EventSubscriptionID:             *eventSubscription,
 		FailureSource:                   *failureSource,
+		SLOID:                           *sloID,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
 		WebhookSecret:                   *webhookSecret,
@@ -267,6 +272,9 @@ func cmdAlertInfo(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "window_spec:  %s\n", resp.WindowSpec)
 	if resp.FailureSource != "" {
 		_, _ = fmt.Fprintf(osStdout, "failure_source: %s\n", resp.FailureSource)
+	}
+	if resp.SLOID != "" {
+		_, _ = fmt.Fprintf(osStdout, "slo:          %s\n", resp.SLOID)
 	}
 	_, _ = fmt.Fprintf(osStdout, "action:       %s\n", resp.Action)
 	_, _ = fmt.Fprintf(osStdout, "webhook_url:  %s\n", resp.WebhookURL)

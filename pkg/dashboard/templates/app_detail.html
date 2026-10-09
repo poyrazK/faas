@@ -707,6 +707,30 @@
         </section>
       {{end}}
 
+      {{/* ADR-747: the app's own SLOs and how much of each error budget
+           is left. Defined with `gregale slos create`. */}}
+      {{if .Data.CustomSLOs}}
+        <section id="slos" aria-label="Your SLOs">
+          <h2>Your SLOs</h2>
+          <table>
+            <thead><tr><th>SLO</th><th>Objective</th><th>Attained</th><th>Budget left</th><th>Burn rate</th><th>History</th></tr></thead>
+            <tbody>
+              {{range .Data.CustomSLOs}}
+                <tr>
+                  <td>{{.Name}}{{if .Degraded}} <span class="badge dim" title="{{.Degraded}}">degraded</span>{{end}}</td>
+                  <td>{{.Objective}}</td>
+                  <td>{{.Attained}}</td>
+                  <td><span class="badge {{.BudgetClass}}">{{.BudgetRemaining}}</span></td>
+                  <td>{{.BurnRate}}</td>
+                  <td>{{.History}}</td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+          <p><small>Budget left is the share of the window's error budget not yet spent. A burn rate of 1× spends exactly the budget over the window; alert on <code>slo_budget_burn</code> above 14.4 to page on fast burns.</small></p>
+        </section>
+      {{end}}
+
       {{/* Customer request analytics is the durable, weighted rollup
            behind GET /v1/apps/{slug}/analytics. It complements the live
            Prometheus snapshot above with a retention-window view and a

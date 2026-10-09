@@ -33,6 +33,8 @@ CreateAlertRuleRequestMetric = Literal[
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
 ]
 
@@ -69,6 +71,8 @@ CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
 }
 
