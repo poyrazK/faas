@@ -37520,6 +37520,30 @@ func (q *Queries) LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMo
 	return i, err
 }
 
+const lockRouteMonitorRollbackIncident = `-- name: LockRouteMonitorRollbackIncident :one
+SELECT coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=$1::text::uuid AND account_id=$2::text::uuid FOR UPDATE
+`
+
+type LockRouteMonitorRollbackIncidentParams struct {
+	AppID     string
+	AccountID string
+}
+
+type LockRouteMonitorRollbackIncidentRow struct {
+	LastDeploymentID string
+	ActiveIncidentID string
+}
+
+// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+// claim reads the incident that evaluation committed.
+func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error) {
+	row := db.QueryRow(ctx, lockRouteMonitorRollbackIncident, arg.AppID, arg.AccountID)
+	var i LockRouteMonitorRollbackIncidentRow
+	err := row.Scan(&i.LastDeploymentID, &i.ActiveIncidentID)
+	return i, err
+}
+
 const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
 SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot FROM accounts WHERE id = $1::text::uuid FOR UPDATE
 `
@@ -56336,7 +56360,8 @@ func (q *Queries) ReadRouteLifecycleApproval(ctx context.Context, db DBTX, arg R
 const readRouteMonitorConfig = `-- name: ReadRouteMonitorConfig :one
 SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
 	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
- CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END ||
+ CASE WHEN coalesce(m.on_violation,'report')='report' THEN '{}'::jsonb ELSE jsonb_build_object('on_violation',m.on_violation) END)::text AS config
 FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
 WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
 `
@@ -69768,9 +69793,9 @@ func (q *Queries) WriteRouteHealthNotificationState(ctx context.Context, db DBTX
 }
 
 const writeRouteMonitorConfig = `-- name: WriteRouteMonitorConfig :exec
-INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
-VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text)
-ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by,on_violation)
+VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text,$7::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,on_violation=EXCLUDED.on_violation,
 	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb
 `
 
@@ -69781,6 +69806,7 @@ type WriteRouteMonitorConfigParams struct {
 	Revision        int64
 	Routes          []byte
 	CustomerGroupBy string
+	OnViolation     string
 }
 
 func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg WriteRouteMonitorConfigParams) error {
@@ -69791,6 +69817,7 @@ func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg Writ
 		arg.Revision,
 		arg.Routes,
 		arg.CustomerGroupBy,
+		arg.OnViolation,
 	)
 	return err
 }

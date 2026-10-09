@@ -9100,6 +9100,11 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// error-budget incident must open within this long after the deployment
+// started serving all traffic.
+const RouteMonitorRollbackWindow = 30 * time.Minute
+
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
 	RouteMonitorVersion                               = 1

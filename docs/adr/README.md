@@ -645,6 +645,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
+- [ADR-845: Opt-in automatic rollback for early production route incidents](845-route-monitor-automatic-rollback.md) — request one checked rollback to the saved healthy baseline when an error budget is violated within 30 minutes of release
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
 - [ADR-593: Static Go net/http route impact](593-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence

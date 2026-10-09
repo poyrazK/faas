@@ -31,6 +31,16 @@ func Validate(req api.SetRouteMonitorRequest) error {
 	if req.Routes == nil || req.Enabled && len(req.Routes) == 0 {
 		return errors.New("supply a routes array; enabled monitoring requires routes")
 	}
+	switch OnViolation(req.OnViolation) {
+	case "report":
+	case "rollback":
+		// Automatic rollback acts only on error budgets (ADR-845).
+		if !slices.ContainsFunc(req.Routes, func(r api.RouteMonitorRoute) bool { return r.Max5xxRateBPS != nil }) {
+			return errors.New("on_violation rollback requires at least one route with max_5xx_rate_bps")
+		}
+	default:
+		return errors.New("on_violation must be report or rollback")
+	}
 	return routehealth.Validate(api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: req.ExpectedRevision, Routes: selectors})
 }
 

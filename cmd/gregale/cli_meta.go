@@ -2529,6 +2529,7 @@ var cliCommands = []cliCommand{
 				{Name: "mode", Value: "MODE", Short: "enabled or disabled", Req: true, ClosedSet: []string{"enabled", "disabled"}},
 				{Name: "routes", Value: "PATH", Short: "JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms", Req: true},
 				{Name: "expected-revision", Value: "N", Short: "current monitor revision; 0 initially", Req: true},
+				{Name: "on-violation", Value: "ACTION", Short: "report (default) or rollback to the last healthy deployment when an error budget is violated within 30 minutes of release", ClosedSet: []string{"report", "rollback"}},
 			}},
 			{Name: "report", Positionals: []string{"<slug>"}, Short: "Read observed health for the fully serving production deployment", Flags: []cliFlag{{Name: "fail-on-unhealthy", Short: "exit nonzero unless every selected budget is healthy"}}},
 			{Name: "incidents", Positionals: []string{"<slug>"}, Short: "List retained production route incidents", Flags: []cliFlag{
