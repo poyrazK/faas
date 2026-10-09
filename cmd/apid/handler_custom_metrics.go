@@ -105,6 +105,7 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 			Name:       row.Name,
 			Value:      row.Value,
 			ObservedAt: row.ObservedAt.UTC(),
+			Kind:       row.Kind,
 			// Stale is computed here rather than left to the client so
 			// the API and the scheduler cannot disagree about which rows
 			// are driving scaling.

@@ -920,6 +920,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					t.log.Warn("targets: custom metrics failed", "app_id", app.ID, "err", err)
 				}
 				for _, row := range rows {
+					// ADR-745: a cumulative counter only grows; as a
+					// backlog it would mean monotonic scale-out.
+					if row.Kind == state.CustomMetricKindCounter {
+						continue
+					}
 					stored[row.Name] = row
 				}
 			}

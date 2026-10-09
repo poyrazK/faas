@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.custom_metric_series_response_kind import (
+    CustomMetricSeriesResponseKind,
+    check_custom_metric_series_response_kind,
+)
 from ..models.custom_metric_series_response_range import (
     CustomMetricSeriesResponseRange,
     check_custom_metric_series_response_range,
@@ -24,6 +28,8 @@ class CustomMetricSeriesResponse:
 
     app_id: str
     name: str
+    kind: CustomMetricSeriesResponseKind
+    """counter histories are a per-second rate of the cumulative count."""
     range_: CustomMetricSeriesResponseRange
     step: str
     """Prometheus step between points."""
@@ -36,6 +42,8 @@ class CustomMetricSeriesResponse:
         app_id = self.app_id
 
         name = self.name
+
+        kind: str = self.kind
 
         range_: str = self.range_
 
@@ -59,6 +67,7 @@ class CustomMetricSeriesResponse:
             {
                 "app_id": app_id,
                 "name": name,
+                "kind": kind,
                 "range": range_,
                 "step": step,
                 "source": source,
@@ -76,6 +85,8 @@ class CustomMetricSeriesResponse:
         app_id = d.pop("app_id")
 
         name = d.pop("name")
+
+        kind = check_custom_metric_series_response_kind(d.pop("kind"))
 
         range_ = check_custom_metric_series_response_range(d.pop("range"))
 
@@ -106,6 +117,7 @@ class CustomMetricSeriesResponse:
         custom_metric_series_response = cls(
             app_id=app_id,
             name=name,
+            kind=kind,
             range_=range_,
             step=step,
             source=source,

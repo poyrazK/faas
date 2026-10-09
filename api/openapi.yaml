@@ -9470,6 +9470,44 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/otlp/v1/metrics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: postOTLPMetrics
+      summary: Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+      description: |
+        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+        otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+        with a `metrics:write` API key as the bearer token.
+
+        Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+        or `application/json` (at most 1 MiB) and answers in the same encoding.
+        Gauges are stored as gauges and cumulative monotonic sums as counters;
+        metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+        or non-monotonic sums, histograms, data points with attributes,
+        negative values, and names beyond the per-app limit are not stored and
+        are reported through `partialSuccess`.
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+          application/json:
+            schema: { type: object, description: OTLP ExportMetricsServiceRequest in its JSON encoding. }
+      responses:
+        '200':
+          description: The export was processed; rejected data points are reported in partialSuccess.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: object, description: OTLP ExportMetricsServiceResponse in its JSON encoding. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -44159,14 +44197,19 @@ components:
         stale:
           description: "True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-side so the API and the scheduler cannot disagree about which rows count."
           type: boolean
-      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false }
+        kind:
+          type: string
+          enum: [gauge, counter]
+          description: "gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling."
+      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge }
     CustomMetricSeriesResponse:
       description: "ADR-745 history of one pushed custom metric. Degraded responses carry null points."
       type: object
-      required: [app_id, name, range, step, source, points]
+      required: [app_id, name, kind, range, step, source, points]
       properties:
         app_id: { type: string }
         name: { type: string }
+        kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
         range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
         step: { type: string, description: "Prometheus step between points." }
         source: { type: string, description: '"prometheus" or "degraded: <reason>".' }

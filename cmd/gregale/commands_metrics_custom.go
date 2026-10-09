@@ -29,7 +29,11 @@ func cmdMetricsCustom(client *api.Client, slug, name, rng string) int {
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
 
 func renderCustomMetricSeries(w io.Writer, slug string, s api.CustomMetricSeriesResponse) {
-	_, _ = fmt.Fprintf(w, "%s / %s — last %s (step %s)\n", slug, s.Name, s.Range, s.Step)
+	unit := ""
+	if s.Kind == "counter" {
+		unit = ", rate per second"
+	}
+	_, _ = fmt.Fprintf(w, "%s / %s — last %s (step %s%s)\n", slug, s.Name, s.Range, s.Step, unit)
 	if s.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (no history available right now)\n", s.Source)
 		return

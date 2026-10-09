@@ -13,10 +13,14 @@
   2. **Read surfaces.** `GET /v1/apps/{slug}/custom-metrics/{name}/series?range=`
      returns the history; the CLI (`gregale metrics <app> --custom <name>`) and
      the app dashboard chart it next to platform metrics.
-  3. **OTLP ingestion.** `POST /v1/otel/v1/metrics` on `gatewayd-public`
-     accepts OTLP gauges and monotonic sums and applies them as the same
-     ADR-202 upserts, so an app already instrumented with OpenTelemetry needs
-     only an endpoint and a key.
+  3. **OTLP ingestion.** `POST /v1/apps/{slug}/otlp/v1/metrics` on apid
+     accepts OTLP gauges and cumulative monotonic sums and applies them as the
+     same ADR-202 upserts, so an app already instrumented with OpenTelemetry
+     needs only an endpoint and a key. (An earlier draft placed this on
+     `gatewayd-public` like trace ingestion; the push endpoint, its
+     `metrics:write` keys and the per-app cap all live in apid, and the
+     gateway would have needed a new apid RPC to forward each value. OTLP
+     exporters accept a full per-signal URL, so the app is scoped by path.)
   4. **Alerts.** A `custom_metric` alert metric names one pushed metric and
      supports both absolute thresholds and ADR-744 baseline comparisons.
 
@@ -38,17 +42,19 @@
   - **Freshness** follows ADR-202: a value older than
     `CustomMetricFreshnessSeconds` is not exported, so a stopped pusher shows
     as a gap rather than a flat line that looks healthy.
-  - **Counters:** OTLP monotonic sums are stored as their cumulative value;
-    charts and alerts apply `rate()` to them. Gauges are stored as-is. The
-    kind is recorded with the metric so the read side knows which to apply.
-    Negative values stay rejected (ADR-202's CHECK), so OTLP non-monotonic sums
-    and negative gauges are refused.
+  - **Counters:** OTLP cumulative monotonic sums are stored as their
+    cumulative value with `kind = 'counter'`; history and alerts apply
+    `rate()` to them. Gauges are stored as-is. The scheduler ignores counters
+    as scaling signals, because a cumulative value only grows and would mean
+    monotonic scale-out. Negative values stay rejected (ADR-202's CHECK), so
+    delta or non-monotonic sums and negative gauges are refused.
   - **Export cost:** the exporter reads at most `apps × MaxCustomMetricsPerApp`
     rows per scrape, cached for the scrape interval. With several apid
     replicas each exports the same series; readers aggregate with `max by
     (app, name)`.
-  - **Auth:** OTLP ingestion uses the same `metrics:write` API keys as the
-    existing push endpoint and the plan rate limits of trace ingestion.
+  - **Auth:** OTLP ingestion uses the same `metrics:write` API keys, plan gate,
+    and API rate limiting as the existing push endpoint; bodies are capped at
+    `OTLPMetricsMaxBodyBytes`.
   - **Alerts** need one nullable `alert_rules.custom_metric_name` column, set
     only when `metric = 'custom_metric'`, enforced by a CHECK.
   - **No DogStatsD in this ADR:** UDP into the control plane is a new network

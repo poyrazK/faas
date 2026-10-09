@@ -1234,6 +1234,52 @@ export class AppsService {
     });
   }
   /**
+   * Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+   * with a `metrics:write` API key as the bearer token.
+   *
+   * Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+   * or `application/json` (at most 1 MiB) and answers in the same encoding.
+   * Gauges are stored as gauges and cumulative monotonic sums as counters;
+   * metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+   * or non-monotonic sums, histograms, data points with attributes,
+   * negative values, and names beyond the per-app limit are not stored and
+   * are reported through `partialSuccess`.
+   *
+   * @returns any The export was processed; rejected data points are reported in partialSuccess.
+   * @throws ApiError
+   */
+  public static postOtlpMetrics({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: Record<string, any>,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/otlp/v1/metrics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Observe-mode decisions for each configured pre-auth policy.
    * Read-only security telemetry, available on every app plan. Each policy
    * reports how often observe mode would have blocked a request and the

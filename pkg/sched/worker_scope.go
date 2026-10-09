@@ -368,6 +368,9 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 			}
 			stored := make(map[string]state.CustomMetric, len(rows))
 			for _, row := range rows {
+				if row.Kind == state.CustomMetricKindCounter {
+					continue // ADR-745: counters are never a backlog signal
+				}
 				stored[row.Name] = row
 			}
 			now := e.now()

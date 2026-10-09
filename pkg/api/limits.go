@@ -5140,6 +5140,14 @@ const (
 	// omitted (ADR-745).
 	CustomMetricSeriesDefaultRange = "24h"
 
+	// OTLPMetricsMaxBodyBytes bounds one OTLP metrics export (ADR-745). An
+	// app holds at most MaxCustomMetricsPerApp names, so a larger body is
+	// almost certainly attribute-heavy data the endpoint would reject anyway.
+	OTLPMetricsMaxBodyBytes = 1 << 20
+
+	// CustomMetricCounterRateWindow is the rate() window for counter history.
+	CustomMetricCounterRateWindow = "5m"
+
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling

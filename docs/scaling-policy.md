@@ -107,25 +107,6 @@ Things to know:
 - **Names are capped per app.** Pushing a new value for an existing metric
   always works; only a *new* name can hit the cap. `DELETE` one to free a
   slot.
-
-### See a custom metric's history
-
-Where custom metric history is enabled (preview, ADR-745), every fresh value
-you push is recorded for 15 days, so you can watch the number over time as
-well as scale on it:
-
-```sh
-gregale metrics my-api --custom orders_pending            # last 24 hours
-gregale metrics my-api --custom orders_pending --range 7d
-gregale metrics my-api --custom orders_pending --json     # every point
-```
-
-`--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom
-metrics** page (`/dashboard/apps/<app>/custom-metrics`) shows every metric with
-its latest value and a 24-hour chart, and the API serves the same history at
-`GET /v1/apps/{slug}/custom-metrics/{name}/series?range=24h`. A gap means
-nothing was pushed in that period: values are only recorded while they are
-fresh, so a stopped pusher never looks like a steady value.
 - Paid plans only.
 
 When more than one target is declared, Gregale evaluates each independently
@@ -147,6 +128,53 @@ greater than zero.
 
 The single `target:` form is still accepted and behaves as a one-element
 `targets` list, so existing manifests keep working unchanged.
+
+### See a custom metric's history
+
+Where custom metric history is enabled (preview, ADR-745), every fresh value
+you push is recorded for 15 days, so you can watch the number over time as
+well as scale on it:
+
+```sh
+gregale metrics my-api --custom orders_pending            # last 24 hours
+gregale metrics my-api --custom orders_pending --range 7d
+gregale metrics my-api --custom orders_pending --json     # every point
+```
+
+`--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom
+metrics** page (`/dashboard/apps/<app>/custom-metrics`) shows every metric with
+its latest value and a 24-hour chart, and the API serves the same history at
+`GET /v1/apps/{slug}/custom-metrics/{name}/series?range=24h`. A gap means
+nothing was pushed in that period: values are only recorded while they are
+fresh, so a stopped pusher never looks like a steady value.
+
+### Send metrics with OpenTelemetry
+
+Where custom metric history is enabled, an app already instrumented with
+OpenTelemetry can send its metrics over OTLP/HTTP instead of calling the push
+endpoint. Point the exporter at the app's metrics URL with a `metrics:write`
+key:
+
+```sh
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://api.gregale.dev/v1/apps/my-api/otlp/v1/metrics
+OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+```
+
+Both `http/protobuf` and `http/json` work; bodies are limited to 1 MiB.
+Each data point becomes a custom metric under the same per-app name cap:
+
+- **Gauges** are stored like a pushed value and can drive scaling.
+- **Cumulative monotonic sums** (counters) are stored as counters. Their
+  history shows a per-second rate over 5 minutes, and they never drive
+  scaling, because a total that only grows would mean scaling out for ever.
+- **Names are normalised:** lowercase, with `.`, `-` and `/` turned into `_`,
+  so `orders.pending` becomes `orders_pending`.
+- **Rejected:** data points with attributes (each attribute value would be a
+  separate series), delta or non-monotonic sums, histograms, summaries,
+  negative values, and new names beyond the cap. The response's
+  `partial_success` says how many points were rejected and why; the rest are
+  stored.
 
 ## How apps scale back down
 

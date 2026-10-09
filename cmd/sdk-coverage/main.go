@@ -51,6 +51,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"POST /v1/apps/{slug}/otlp/v1/metrics":                true, // ADR-745 OTLP/HTTP ingestion; called by OpenTelemetry exporters, not the SDK
 	"GET /v1/openapi.yaml":                                true, // metadata
 	"GET /v1/openapi.json":                                true, // metadata
 	"GET /docs":                                           true, // anonymous Swagger UI metadata page

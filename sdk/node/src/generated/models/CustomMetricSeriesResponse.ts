@@ -8,6 +8,10 @@
 export type CustomMetricSeriesResponse = {
   app_id: string;
   name: string;
+  /**
+   * counter histories are a per-second rate of the cumulative count.
+   */
+  kind: 'gauge' | 'counter';
   range: '1h' | '6h' | '24h' | '7d' | '15d';
   /**
    * Prometheus step between points.

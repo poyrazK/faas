@@ -39,14 +39,31 @@ func (s *server) getCustomMetricSeries(w http.ResponseWriter, r *http.Request, a
 			"range must be one of: "+strings.Join(customMetricSeriesRanges(), ", ")))
 		return
 	}
-	writeJSON(w, http.StatusOK, s.customMetricSeries(r.Context(), app.ID, name, rng, time.Now().UTC()))
+	kind := s.customMetricKind(r.Context(), app.ID, name)
+	writeJSON(w, http.StatusOK, s.customMetricSeries(r.Context(), app.ID, name, kind, rng, time.Now().UTC()))
 }
 
-// customMetricSeries reads one metric's history. Prometheus failures become a
-// degraded Source with no points; the dashboard shares it.
-func (s *server) customMetricSeries(ctx context.Context, appID, name, rng string, now time.Time) api.CustomMetricSeriesResponse {
+// customMetricKind looks up a stored metric's kind, defaulting to gauge for
+// unknown or deleted names (their history, if any, is shown raw).
+func (s *server) customMetricKind(ctx context.Context, appID, name string) string {
+	rows, err := s.store.ListCustomMetrics(ctx, appID)
+	if err != nil {
+		return state.CustomMetricKindGauge
+	}
+	for _, row := range rows {
+		if row.Name == name && row.Kind == state.CustomMetricKindCounter {
+			return state.CustomMetricKindCounter
+		}
+	}
+	return state.CustomMetricKindGauge
+}
+
+// customMetricSeries reads one metric's history. Counters are returned as a
+// per-second rate. Prometheus failures become a degraded Source with no
+// points; the dashboard shares it.
+func (s *server) customMetricSeries(ctx context.Context, appID, name, kind, rng string, now time.Time) api.CustomMetricSeriesResponse {
 	step := api.CustomMetricSeriesSteps[rng]
-	out := api.CustomMetricSeriesResponse{AppID: appID, Name: name, Range: rng, Step: step, Points: []api.CustomMetricSeriesPoint{}}
+	out := api.CustomMetricSeriesResponse{AppID: appID, Name: name, Kind: kind, Range: rng, Step: step, Points: []api.CustomMetricSeriesPoint{}}
 	if s.promqlClient == nil {
 		out.Source, out.Points = appmetrics.SourceDegradedPrefix+"prometheus not configured", nil
 		return out
@@ -54,6 +71,9 @@ func (s *server) customMetricSeries(ctx context.Context, appID, name, rng string
 	window := time.Duration(customMetricRangeHours(rng)) * time.Hour
 	// Several apid replicas export the same series; max collapses them.
 	query := fmt.Sprintf(`max(gregale_app_custom_metric{app=%q,name=%q})`, appID, name)
+	if kind == state.CustomMetricKindCounter {
+		query = fmt.Sprintf(`max(rate(gregale_app_custom_metric{app=%q,name=%q}[%s]))`, appID, name, api.CustomMetricCounterRateWindow)
+	}
 	series, err := s.promqlClient.QueryRange(ctx, query,
 		fmt.Sprint(now.Add(-window).Unix()), fmt.Sprint(now.Unix()), step)
 	if err != nil {

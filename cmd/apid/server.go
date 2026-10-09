@@ -2039,6 +2039,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
 	// ADR-745 — custom metric history recorded from the exporter.
 	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics/{name}/series", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCustomMetricSeries)))
+	// ADR-745 — OTLP/HTTP metric exports stored as custom metrics.
+	mux.HandleFunc("POST /v1/apps/{slug}/otlp/v1/metrics", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.postOTLPMetrics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))

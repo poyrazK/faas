@@ -17,8 +17,11 @@ var CustomMetricSeriesSteps = map[string]string{
 // Source follows the metrics contract: "prometheus", or "degraded: <reason>"
 // with no points. A gap in Points means no fresh value was pushed then.
 type CustomMetricSeriesResponse struct {
-	AppID  string                    `json:"app_id"`
-	Name   string                    `json:"name"`
+	AppID string `json:"app_id"`
+	Name  string `json:"name"`
+	// Kind is "gauge" (values as pushed) or "counter" (values are a
+	// per-second rate of the cumulative count).
+	Kind   string                    `json:"kind"`
 	Range  string                    `json:"range"`
 	Step   string                    `json:"step"`
 	Source string                    `json:"source"`

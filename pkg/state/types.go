@@ -1956,7 +1956,17 @@ type CustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt time.Time
+	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
+	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
+	Kind string
 }
+
+// Custom metric kinds (ADR-745). Counters are charted with rate() and are
+// never a scaling signal: a cumulative value only grows.
+const (
+	CustomMetricKindGauge   = "gauge"
+	CustomMetricKindCounter = "counter"
+)
 
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
 // It is the ONLY way a trigger should reach the targets: callers that read

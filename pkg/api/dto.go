@@ -11854,6 +11854,9 @@ type CustomMetricResponse struct {
 	// therefore NOT driving scaling. Computed server-side so the API and
 	// the scheduler cannot disagree about which rows count.
 	Stale bool `json:"stale"`
+	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
+	// OTLP cumulative sum, charted as a rate and never a scaling signal).
+	Kind string `json:"kind,omitempty"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator

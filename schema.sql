@@ -12211,6 +12211,8 @@ CREATE TABLE public.app_custom_metrics (
     name text NOT NULL,
     value double precision NOT NULL,
     observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'gauge'::text NOT NULL,
+    CONSTRAINT app_custom_metrics_kind_chk CHECK ((kind = ANY (ARRAY['gauge'::text, 'counter'::text]))),
     CONSTRAINT app_custom_metrics_name_shape CHECK ((name ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT app_custom_metrics_value_finite CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
 );

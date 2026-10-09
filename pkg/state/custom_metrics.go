@@ -25,12 +25,30 @@ var ErrCustomMetricLimit = errors.New("state: app custom metric limit reached")
 // that is merely at its limit and pushing a fresh value for a metric it
 // already owns.
 func (s *PgStore) PutCustomMetric(ctx context.Context, appID, name string, value float64, observedAt time.Time, distinctLimit int) error {
+	return s.PutCustomMetricOfKind(ctx, appID, name, CustomMetricKindGauge, value, observedAt, distinctLimit)
+}
+
+// CustomMetricKindStore upserts a metric with an explicit kind (ADR-745).
+// The latest write decides the kind, so re-instrumenting a gauge as an OTLP
+// counter (or back) takes effect on the next push.
+type CustomMetricKindStore interface {
+	PutCustomMetricOfKind(ctx context.Context, appID, name, kind string, value float64, observedAt time.Time, distinctLimit int) error
+}
+
+var (
+	_ CustomMetricKindStore = (*PgStore)(nil)
+	_ CustomMetricKindStore = (*MemStore)(nil)
+)
+
+// PutCustomMetricOfKind is PutCustomMetric with an explicit kind; the cap and
+// upsert semantics are identical.
+func (s *PgStore) PutCustomMetricOfKind(ctx context.Context, appID, name, kind string, value float64, observedAt time.Time, distinctLimit int) error {
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: put custom metric %q: distinct limit must be > 0", name)
 	}
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO app_custom_metrics (app_id, name, value, observed_at)
-		SELECT $1::uuid, $2::text, $3::double precision, $4::timestamptz
+		INSERT INTO app_custom_metrics (app_id, name, value, observed_at, kind)
+		SELECT $1::uuid, $2::text, $3::double precision, $4::timestamptz, $6::text
 		WHERE EXISTS (
 			-- Always allow a push to a name the app already holds: it is
 			-- an upsert and cannot grow the row count.
@@ -40,8 +58,8 @@ func (s *PgStore) PutCustomMetric(ctx context.Context, appID, name string, value
 			SELECT count(*) FROM app_custom_metrics WHERE app_id = $1::uuid
 		) < $5::int
 		ON CONFLICT (app_id, name) DO UPDATE
-		   SET value = EXCLUDED.value, observed_at = EXCLUDED.observed_at
-	`, appID, name, value, observedAt, distinctLimit)
+		   SET value = EXCLUDED.value, observed_at = EXCLUDED.observed_at, kind = EXCLUDED.kind
+	`, appID, name, value, observedAt, distinctLimit, kind)
 	if err != nil {
 		return fmt.Errorf("state: put custom metric %q for app %s: %w", name, appID, err)
 	}
@@ -62,7 +80,7 @@ func (s *PgStore) PutCustomMetric(ctx context.Context, appID, name string, value
 // evaluation silently wrong.
 func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]CustomMetric, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT name, value, observed_at
+		SELECT name, value, observed_at, kind
 		  FROM app_custom_metrics
 		 WHERE app_id = $1::uuid
 		 ORDER BY name
@@ -74,7 +92,7 @@ func (s *PgStore) ListCustomMetrics(ctx context.Context, appID string) ([]Custom
 	out := make([]CustomMetric, 0, 4)
 	for rows.Next() {
 		var m CustomMetric
-		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt); err != nil {
+		if err := rows.Scan(&m.Name, &m.Value, &m.ObservedAt, &m.Kind); err != nil {
 			return nil, fmt.Errorf("state: scan custom metric for app %s: %w", appID, err)
 		}
 		out = append(out, m)
@@ -174,7 +192,13 @@ func (m *MemStore) ListFreshCustomMetrics(_ context.Context, since time.Time, li
 // only to NEW names. The conformance suite runs both implementations against
 // the same cases; a MemStore that were merely permissive here would let a
 // handler test pass while the production path rejected the same push.
-func (m *MemStore) PutCustomMetric(_ context.Context, appID, name string, value float64, observedAt time.Time, distinctLimit int) error {
+func (m *MemStore) PutCustomMetric(ctx context.Context, appID, name string, value float64, observedAt time.Time, distinctLimit int) error {
+	return m.PutCustomMetricOfKind(ctx, appID, name, CustomMetricKindGauge, value, observedAt, distinctLimit)
+}
+
+// PutCustomMetricOfKind mirrors the PgStore upsert, including the latest
+// write deciding the kind.
+func (m *MemStore) PutCustomMetricOfKind(_ context.Context, appID, name, kind string, value float64, observedAt time.Time, distinctLimit int) error {
 	if distinctLimit <= 0 {
 		return fmt.Errorf("state: put custom metric %q: distinct limit must be > 0", name)
 	}
@@ -191,7 +215,7 @@ func (m *MemStore) PutCustomMetric(_ context.Context, appID, name string, value 
 	if _, exists := byName[name]; !exists && len(byName) >= distinctLimit {
 		return ErrCustomMetricLimit
 	}
-	byName[name] = CustomMetric{Name: name, Value: value, ObservedAt: observedAt}
+	byName[name] = CustomMetric{Name: name, Value: value, ObservedAt: observedAt, Kind: kind}
 	return nil
 }
 
