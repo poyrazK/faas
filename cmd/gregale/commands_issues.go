@@ -25,9 +25,12 @@ func cmdIssues(args []string) int {
 		}
 		return 1
 	}
-	if args[0] == "get" {
+	if args[0] == "get" || args[0] == "resolve" {
 		for _, arg := range args[1:] {
 			if arg == "--interactive" || strings.HasPrefix(arg, "--interactive=") {
+				if args[0] == "resolve" {
+					return cmdIssuesResolveInteractive(args[1:])
+				}
 				return cmdIssuesGetInteractive(args[1:])
 			}
 		}

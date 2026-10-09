@@ -6941,12 +6941,19 @@ Assign an issue to an account
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> --deployment <UUID> <issue-id>`
+`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
-| `--deployment <UUID>` | deployment UUID that fixed the issue | required |
+| `--interactive` | choose an open issue and fixing release, then confirm resolution |  |
+| `--deployment <UUID>` | fixing deployment UUID (required unless interactive) |  |
+
+Examples:
+
+```sh
+gregale issues resolve --app my-api --interactive
+```
 
 ### issues reopen
 

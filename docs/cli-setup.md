@@ -875,6 +875,25 @@ additional event, release, or activity pages when available. This flow only
 reads issues and never changes ownership or resolution state. For scripts,
 use `issues get ISSUE_ID --app APP` with explicit history cursors.
 
+## Resolve an issue interactively
+
+```sh
+gregale issues resolve --app my-api --interactive
+# Use the linked app, or choose one:
+gregale issues resolve --interactive
+```
+
+Choose an open issue and a fixing deployment from paginated release history.
+Review the fresh issue title/environment and selected release status/scope,
+then confirm resolution. This records your assertion that the selected release
+fixed the issue; it does not deploy code or verify the fix.
+
+The CLI rereads both targets before saving and stops if either changed. This
+client-side check is not an atomic server lock. The server enforces resolution
+rules and the returned receipt is checked against the selected app, issue,
+and fixing deployment. For scripts, use
+`issues resolve ISSUE_ID --app APP --deployment DEPLOYMENT_ID`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
