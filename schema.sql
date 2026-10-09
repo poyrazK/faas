@@ -42812,3 +42812,12 @@ CREATE TABLE project_environment_clone_checkpoint_object_publications (
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
  state text NOT NULL DEFAULT 'published' CHECK(state='published')
 );
+
+-- ADR-590: permanently retire owned private gateway metadata during compensation.
+ALTER TABLE project_environment_clone_checkpoint_object_publications
+ DROP CONSTRAINT project_environment_clone_checkpoint_object_publica_state_check,
+ ADD COLUMN withdrawn_at timestamptz,
+ ADD CONSTRAINT clone_checkpoint_object_publications_state_shape CHECK (
+  (state='published' AND withdrawn_at IS NULL) OR
+  (state='withdrawn' AND withdrawn_at IS NOT NULL)
+ );

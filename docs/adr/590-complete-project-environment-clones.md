@@ -8713,3 +8713,39 @@ failure, late worker expiry, complete rollback, and guarded migration round
 trips. Withdrawal/retirement and the final stage publication bridge remain
 separate implementation steps. Live R2/OVH qualification remains deferred at
 the user's request and public full-stage capture stays gated.
+
+### Private object publication withdrawal
+
+Private checkpoint compensation now atomically withdraws the complete local
+object publication matrix. Only a compensating operation's current worker lease
+can perform this transition. The sealed plan and all normal credential, secret
+and API-key grant rows are authenticated before mutation. Managed secrets and
+exact grants are removed; standalone and managed gateway credentials remain as
+revoked audit rows. Every credential revocation shares the journal's immutable
+transaction retirement timestamp. The original plan and sealed values remain
+owned, and withdrawal grants no native-provider deletion/revocation authority.
+
+The journal moves permanently from published to withdrawn. Replay requires the
+same revoked credential payloads and retirement stamps, no secrets referencing
+those credentials, and no target grants. Unexpected credentials (including
+revoked rows), changed grants, foreign/missing secret owners, changed target
+names and corrupt journals fail closed. Replay works after owned target buckets
+enter deleting/deleted state, while preserving their operation/app/scope/name
+ownership. Revived credential rows are rejected rather than silently repaired.
+Unrelated app secrets and original production credentials/grants are untouched.
+
+Worker identity, revision and live lease are checked before and after the
+transaction. Late expiry rolls back the entire withdrawal; a lost commit reply
+is recovered by worker handoff without decrypting or regenerating keys. An absent
+publication is a no-op under the same compensation fence, not proof of native
+cleanup. A capturing worker cannot withdraw or re-publish retired metadata.
+Downgrade refuses owned retirement evidence. The private coordinator provides
+an admission-checked, renewed-lease withdrawal entry point for use before native
+target cleanup; public capture remains gated.
+
+Database tests cover lost acknowledgement/handoff, stale workers, exact revoked
+stamps, unrelated/source preservation, replay after bucket deletion, ownership
+tampering, extra revoked rows, late-expiry rollback/retry, revival rejection,
+absent journals, state fences and guarded migration round trips. Native object
+target retirement/cleanup and final stage publication remain further steps. Live
+R2/OVH qualification remains deferred at the user's request.

@@ -7909,7 +7909,8 @@
       "operation_id",
       "plan",
       "plan_sha256",
-      "state"
+      "state",
+      "withdrawn_at"
     ],
     "kind": "operational"
   }

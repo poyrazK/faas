@@ -5079,6 +5079,7 @@ type ProjectEnvironmentCloneCheckpointObjectPublication struct {
 	Plan        []byte
 	PlanSha256  string
 	State       string
+	WithdrawnAt pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneCheckpointObjectTarget struct {

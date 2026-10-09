@@ -15308,3 +15308,25 @@ AND (sqlc.arg(permission)::text<>'read_write' OR k.scopes @> ARRAY['storage:read
 INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id,secret_class,secret_version)
 VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(key)::text,
 sqlc.arg(ciphertext)::bytea,sqlc.arg(kid)::text,sqlc.arg(value_hash)::text,sqlc.arg(credential_id)::uuid,'persistent',1);
+
+-- name: LockCloneCheckpointObjectPublicationBucket :one
+SELECT * FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND environment_clone_operation_id=$4 FOR UPDATE;
+
+-- name: DeleteCloneCheckpointObjectPublicationSecret :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=sqlc.arg(credential_id)::uuid
+AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text;
+
+-- name: RevokeCloneCheckpointObjectPublicationCredential :execrows
+UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
+WHERE id=sqlc.arg(credential_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND bucket_id=sqlc.arg(bucket_id)::uuid
+AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL;
+
+-- name: DeleteCloneCheckpointObjectPublicationGrant :execrows
+DELETE FROM object_storage_access_grants WHERE account_id=sqlc.arg(account_id)::uuid AND bucket_id=sqlc.arg(bucket_id)::uuid
+AND api_key_id=sqlc.arg(api_key_id)::uuid AND permission=sqlc.arg(permission)::text;
+
+-- name: WithdrawCloneCheckpointObjectPublication :execrows
+UPDATE project_environment_clone_checkpoint_object_publications p SET state='withdrawn',withdrawn_at=now()
+WHERE p.operation_id=sqlc.arg(operation_id)::uuid AND p.state='published'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=p.operation_id AND o.status='compensating'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());

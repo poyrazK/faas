@@ -8750,6 +8750,58 @@ func (q *Queries) DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, a
 	return err
 }
 
+const deleteCloneCheckpointObjectPublicationGrant = `-- name: DeleteCloneCheckpointObjectPublicationGrant :execrows
+DELETE FROM object_storage_access_grants WHERE account_id=$1::uuid AND bucket_id=$2::uuid
+AND api_key_id=$3::uuid AND permission=$4::text
+`
+
+type DeleteCloneCheckpointObjectPublicationGrantParams struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+}
+
+func (q *Queries) DeleteCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointObjectPublicationGrant,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ApiKeyID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneCheckpointObjectPublicationSecret = `-- name: DeleteCloneCheckpointObjectPublicationSecret :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1::uuid
+AND account_id=$2::uuid AND app_id=$3::uuid AND scope=$4::text AND key=$5::text
+`
+
+type DeleteCloneCheckpointObjectPublicationSecretParams struct {
+	CredentialID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+}
+
+func (q *Queries) DeleteCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationSecretParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointObjectPublicationSecret,
+		arg.CredentialID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteCloneCheckpointPgAppSecret = `-- name: DeleteCloneCheckpointPgAppSecret :execrows
 DELETE FROM app_secrets WHERE managed_postgres_binding_id=$1 AND account_id=$2 AND app_id=$3 AND scope=$4 AND key=$5
 `
@@ -17108,7 +17160,7 @@ const insertCloneCheckpointObjectPublication = `-- name: InsertCloneCheckpointOb
 INSERT INTO project_environment_clone_checkpoint_object_publications(operation_id,plan,plan_sha256)
 SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
 WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
-AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state, withdrawn_at
 `
 
 type InsertCloneCheckpointObjectPublicationParams struct {
@@ -17133,6 +17185,7 @@ func (q *Queries) InsertCloneCheckpointObjectPublication(ctx context.Context, db
 		&i.Plan,
 		&i.PlanSha256,
 		&i.State,
+		&i.WithdrawnAt,
 	)
 	return i, err
 }
@@ -30918,6 +30971,51 @@ func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg Loc
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockCloneCheckpointObjectPublicationBucket = `-- name: LockCloneCheckpointObjectPublicationBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND environment_clone_operation_id=$4 FOR UPDATE
+`
+
+type LockCloneCheckpointObjectPublicationBucketParams struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+}
+
+func (q *Queries) LockCloneCheckpointObjectPublicationBucket(ctx context.Context, db DBTX, arg LockCloneCheckpointObjectPublicationBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointObjectPublicationBucket,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentCloneOperationID,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
 }
 
 const lockCloneCheckpointObjectPublicationKeys = `-- name: LockCloneCheckpointObjectPublicationKeys :many
@@ -47486,7 +47584,7 @@ func (q *Queries) ReadCloneCheckpointObjectCredentialReservation(ctx context.Con
 }
 
 const readCloneCheckpointObjectPublication = `-- name: ReadCloneCheckpointObjectPublication :one
-SELECT operation_id, plan, plan_sha256, state FROM project_environment_clone_checkpoint_object_publications WHERE operation_id=$1 FOR UPDATE
+SELECT operation_id, plan, plan_sha256, state, withdrawn_at FROM project_environment_clone_checkpoint_object_publications WHERE operation_id=$1 FOR UPDATE
 `
 
 func (q *Queries) ReadCloneCheckpointObjectPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectPublication, error) {
@@ -47497,6 +47595,7 @@ func (q *Queries) ReadCloneCheckpointObjectPublication(ctx context.Context, db D
 		&i.Plan,
 		&i.PlanSha256,
 		&i.State,
+		&i.WithdrawnAt,
 	)
 	return i, err
 }
@@ -57722,6 +57821,26 @@ func (q *Queries) RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllS
 	return items, nil
 }
 
+const revokeCloneCheckpointObjectPublicationCredential = `-- name: RevokeCloneCheckpointObjectPublicationCredential :execrows
+UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
+WHERE id=$1::uuid AND account_id=$2::uuid AND bucket_id=$3::uuid
+AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
+`
+
+type RevokeCloneCheckpointObjectPublicationCredentialParams struct {
+	CredentialID pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+}
+
+func (q *Queries) RevokeCloneCheckpointObjectPublicationCredential(ctx context.Context, db DBTX, arg RevokeCloneCheckpointObjectPublicationCredentialParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeCloneCheckpointObjectPublicationCredential, arg.CredentialID, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeCustomerOperationWorkflowCustody = `-- name: RevokeCustomerOperationWorkflowCustody :exec
 UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_run_id=$1::uuid
 `
@@ -62574,6 +62693,27 @@ func (q *Queries) WebhookAutomationLegacyReceiptExists(ctx context.Context, db D
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const withdrawCloneCheckpointObjectPublication = `-- name: WithdrawCloneCheckpointObjectPublication :execrows
+UPDATE project_environment_clone_checkpoint_object_publications p SET state='withdrawn',withdrawn_at=now()
+WHERE p.operation_id=$1::uuid AND p.state='published'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=p.operation_id AND o.status='compensating'
+AND o.revision=$2::bigint AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp())
+`
+
+type WithdrawCloneCheckpointObjectPublicationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointObjectPublicationParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointObjectPublication, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const withdrawCloneCheckpointPgBinding = `-- name: WithdrawCloneCheckpointPgBinding :execrows

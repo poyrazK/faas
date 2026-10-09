@@ -25,7 +25,7 @@ func readCheckpointObjectPublicationTx(ctx context.Context, tx pgx.Tx, op Projec
 		return zero, mapErr(err)
 	}
 	var stored ProjectEnvironmentCloneCheckpointObjectPublicationPlan
-	if row.State != "published" || json.Unmarshal(row.Plan, &stored) != nil {
+	if (row.State != "published" && row.State != "withdrawn") || (row.State == "withdrawn") != row.WithdrawnAt.Valid || json.Unmarshal(row.Plan, &stored) != nil {
 		return zero, ErrConflict
 	}
 	stored.SHA256 = row.PlanSha256
@@ -51,7 +51,7 @@ func readCheckpointObjectPublicationTx(ctx context.Context, tx pgx.Tx, op Projec
 	if !reflect.DeepEqual(stored, expected) {
 		return zero, fmt.Errorf("checkpoint object publication plan: %w", ErrConflict)
 	}
-	return ProjectEnvironmentCloneCheckpointObjectPublication{Plan: expected, State: row.State}, nil
+	return ProjectEnvironmentCloneCheckpointObjectPublication{Plan: expected, State: row.State, WithdrawnAt: optionalObjectS3Time(row.WithdrawnAt)}, nil
 }
 
 func checkpointObjectPublicationSecretsTx(ctx context.Context, tx pgx.Tx, p ProjectEnvironmentCloneObjectCredentialPreparation) error {
@@ -76,9 +76,15 @@ func checkpointObjectPublicationSecretsTx(ctx context.Context, tx pgx.Tx, p Proj
 func checkpointObjectPublicationRowsTx(ctx context.Context, tx pgx.Tx, in ProjectEnvironmentCloneCheckpointObjectPublication) error {
 	q := sqlc.New()
 	for _, b := range in.Plan.Buckets {
-		if _, err := q.LockProjectEnvironmentCloneCredentialBucket(ctx, tx, sqlc.LockProjectEnvironmentCloneCredentialBucketParams{AccountID: mustPgUUID(in.Plan.AccountID), AppID: mustPgUUID(b.AppID), ID: mustPgUUID(b.TargetBucketID), EnvironmentCloneOperationID: mustPgUUID(in.Plan.OperationID)}); err != nil {
+		bucket, err := q.LockCloneCheckpointObjectPublicationBucket(ctx, tx, sqlc.LockCloneCheckpointObjectPublicationBucketParams{AccountID: mustPgUUID(in.Plan.AccountID), AppID: mustPgUUID(b.AppID), ID: mustPgUUID(b.TargetBucketID), EnvironmentCloneOperationID: mustPgUUID(in.Plan.OperationID)})
+		if err != nil {
 			return mapErr(err)
 		}
+		owner := ProjectEnvironmentCloneOperation{ID: in.Plan.OperationID, ProjectID: in.Plan.ProjectID, TargetEnvironment: in.Plan.TargetEnvironment}
+		if bucket.Scope != in.Plan.TargetEnvironment || bucket.Name != ProjectEnvironmentCloneObjectBucketName(owner, b.AppID, b.SourceBucketID) || bucket.PublicRead || bucket.ServeAt.Valid || (bucket.State != "ready" && (in.State != "withdrawn" || (bucket.State != "deleting" && bucket.State != "deleted"))) {
+			return ErrConflict
+		}
+
 		rows, err := q.ReadCloneCheckpointObjectPublicationCredentials(ctx, tx, mustPgUUID(b.TargetBucketID))
 		if err != nil {
 			return mapErr(err)
@@ -92,21 +98,41 @@ func checkpointObjectPublicationRowsTx(ctx context.Context, tx pgx.Tx, in Projec
 		}
 		for _, p := range b.Preparations {
 			r, ok := byID[p.Credential.ID]
-			if !ok || r.LastUsedAt.Valid || r.RevokedAt.Valid || r.RotationParentID.Valid || r.RotationWakeID.Valid || r.RotationStampedAt.Valid || len(r.UrlRequest) != 0 || r.UrlApiKeyID.Valid || r.UrlExpiresAt.Valid || r.UrlReceiptID.Valid {
+			if !ok || r.LastUsedAt.Valid || r.RotationParentID.Valid || r.RotationWakeID.Valid || r.RotationStampedAt.Valid || len(r.UrlRequest) != 0 || r.UrlApiKeyID.Valid || r.UrlExpiresAt.Valid || r.UrlReceiptID.Valid {
 				return fmt.Errorf("checkpoint object publication credential/grant ownership: %w", ErrConflict)
 			}
 			actual := objectS3CredentialFromSQL(r)
 			actual.CreatedAt = time.Time{}
-			if !reflect.DeepEqual(actual, p.Credential) {
+			expected := p.Credential
+			if in.State == "withdrawn" {
+				if in.WithdrawnAt == nil || !r.RevokedAt.Valid || !r.RevokedAt.Time.Equal(*in.WithdrawnAt) {
+					return ErrConflict
+				}
+				expected.Status = ObjectS3CredentialStatusRevoked
+				actual.RevokedAt = nil
+			} else if in.State != "published" || r.RevokedAt.Valid {
+				return ErrConflict
+			}
+			if !reflect.DeepEqual(actual, expected) {
 				return fmt.Errorf("checkpoint object publication credential/grant ownership: %w", ErrConflict)
 			}
-			if err = checkpointObjectPublicationSecretsTx(ctx, tx, p); err != nil {
+			secretOwner := p
+			if in.State == "withdrawn" {
+				secretOwner.Secrets = nil
+			}
+			if err = checkpointObjectPublicationSecretsTx(ctx, tx, secretOwner); err != nil {
 				return err
 			}
 		}
 		grants, err := q.ReadCloneCheckpointObjectPublicationGrants(ctx, tx, mustPgUUID(b.TargetBucketID))
 		if err != nil {
 			return mapErr(err)
+		}
+		if in.State == "withdrawn" {
+			if len(grants) != 0 {
+				return ErrConflict
+			}
+			continue
 		}
 		if len(grants) != len(b.AccessGrants) {
 			return fmt.Errorf("checkpoint object publication credential/grant ownership: %w", ErrConflict)
@@ -131,7 +157,7 @@ func checkpointObjectPublicationOwnedTx(ctx context.Context, tx pgx.Tx, op Proje
 	if err = checkpointObjectPublicationRowsTx(ctx, tx, in); err != nil {
 		return false, err
 	}
-	return true, nil
+	return in.State == "published", nil
 }
 
 func checkpointObjectPublicationAdmissionTx(ctx context.Context, tx pgx.Tx, plan ProjectEnvironmentCloneCheckpointObjectPublicationPlan) error {
@@ -247,6 +273,9 @@ func (s *PgStore) PublishProjectEnvironmentCloneCheckpointObjects(ctx context.Co
 		}
 		out, err = readCheckpointObjectPublicationTx(ctx, tx, op)
 		if err == nil {
+			if out.State != "published" {
+				return ErrConflict
+			}
 			return checkpointObjectPublicationRowsTx(ctx, tx, out)
 		}
 		if !errors.Is(err, ErrNotFound) {
