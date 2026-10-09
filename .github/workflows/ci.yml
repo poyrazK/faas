@@ -706,7 +706,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # The complete state test inventory runs on two independent PostgreSQL
+  # The complete state test inventory runs on four independent PostgreSQL
   # runners. Fuzz seeds and runnable examples belong to exactly one shard;
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
@@ -717,7 +717,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       id-token: write
@@ -753,7 +753,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          # Both shards compile the identical ./pkg/state race test binary, so
+          # All shards compile the identical ./pkg/state race test binary, so
           # they share one cache entry (written by shard 1 only, below).
           key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
@@ -763,10 +763,10 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -check -list-file=coverage/state-inventory.txt
       - name: state tests (shard ${{ matrix.shard }})
         run: |
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
       - name: upload state coverage
         uses: actions/upload-artifact@v4
@@ -825,7 +825,7 @@ jobs:
             job_timeout_minutes: 30
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
-    # in its two deterministic shards above.
+    # in its four deterministic shards above.
     # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
     # and artifact upload after the main suite completes.
     timeout-minutes: ${{ matrix.job_timeout_minutes }}
@@ -992,7 +992,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Require all three compatible profiles. A half-suite or parity-only profile
+  # Require all five compatible profiles. A partial suite or parity-only profile
   # cannot replace the full exact-package 70% gate.
   state-coverage:
     name: pkg/state coverage gate (all shards)
@@ -1010,7 +1010,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 

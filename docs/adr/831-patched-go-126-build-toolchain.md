@@ -51,6 +51,12 @@ existing required lint/build job explicitly fails if any lint shard fails,
 including cancellation or enumeration failure. Local `make lint` uses the same
 executor with one shard.
 
+The expanded state suite also exceeds its aggregate 20-minute test budget.
+Run its complete registered test, fuzz-seed, and example inventory across four
+PostgreSQL shards, retaining the existing per-shard timeout, race and coverage
+instrumentation. Require all four coverage profiles plus PostgreSQL parity
+coverage for the unchanged exact-package coverage floor.
+
 The patched x/net release deprecates its HTTP/2 connection APIs in favor of
 standard-library APIs with different dialing and connection ownership.
 Retain the qualified connection pool with a deprecation exception confined to
