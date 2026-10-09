@@ -34,10 +34,15 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 // an active app and the singleton reconciler skips parked apps (H8-23). Like
 // a wake of a parked request app, it reactivates the app, then lets the
 // worker reconciler admit the deployment's worker under the API's wake id.
-// It reports handled=false for every non-worker app.
+// It reports handled=false for every non-worker app. A lookup error comes back
+// with handled=false: the caller falls through to the regular wake path, which
+// reads the app again and reports the failure.
 func (e *Engine) WakeWorkerApp(ctx context.Context, appID string) (bool, error) {
 	app, err := e.store.AppByID(ctx, appID)
-	if err != nil || !e.ownsApp(app) {
+	if err != nil {
+		return false, fmt.Errorf("sched: load app for worker wake: %w", err)
+	}
+	if !e.ownsApp(app) {
 		return false, nil
 	}
 	if instanceModeForApp(app) != string(state.InstanceModeWorker) && app.WorkloadClass != state.WorkloadClassWorker {

@@ -437,7 +437,7 @@ func readOpenapiDocument(path string) (map[string]any, error) {
 		// import|dry-run` rejected them as "not valid JSON".
 		var raw any
 		if yamlErr := yaml.Unmarshal(body, &raw); yamlErr != nil {
-			return nil, fmt.Errorf("document is neither valid JSON (%v) nor valid YAML (%v)", jsonErr, yamlErr)
+			return nil, fmt.Errorf("document is neither valid JSON (%w) nor valid YAML (%w)", jsonErr, yamlErr)
 		}
 		object, ok := openapiYAMLValue(raw).(map[string]any)
 		if !ok {
