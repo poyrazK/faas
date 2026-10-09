@@ -42,8 +42,12 @@ python3 scripts/ops/mcp-qualification.py status --dir <evidence>
 ```
 
 Repeat `record` for each required row. Use `--status failed` to preserve a failed
-observation; the gate remains closed. The runner records operator-supplied
-receipts and does not deploy apps or contact OAuth providers, clients or hosts.
+observation; the gate remains closed. When a receipt is a native rollout report,
+`record --status passed` verifies that it passed with native observations, matches
+the manifest commit, carries matching clean source and binary provenance, and
+contains the expected binary and plan digests. Other provider/client receipts
+remain operator-supplied and need reviewer assessment. The runner does not deploy
+apps or contact OAuth providers, clients or hosts.
 Do not commit credentials or unredacted customer data.
 
 The manifest has this shape:
