@@ -2159,23 +2159,31 @@ export class EventsService {
   }
   /**
    * List saved recovery notification retry decisions.
-   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when the job is pruned.
+   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. The optional status filter selects a comma-separated union of original-generation request statuses. Totals cover all retained requests before filtering; matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is pruned.
    * @returns EventRecoveryNotificationRetryHistory Saved retry request summaries and counts.
    * @throws ApiError
    */
   public static listEventRecoveryNotificationRetryHistory({
     jobId,
+    status,
   }: {
     /**
      * Retained recovery job identifier whose retry decisions are listed.
      */
     jobId: string,
+    /**
+     * Comma-separated distinct request statuses selected as a union; omitting returns all retained requests. Aggregate totals remain unfiltered.
+     */
+    status?: string,
   }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
       path: {
         'jobID': jobId,
+      },
+      query: {
+        'status': status,
       },
       errors: {
         400: `Invalid job identifier or unsupported query parameters for retry history.`,

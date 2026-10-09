@@ -27723,7 +27723,7 @@ paths:
       tags: [events]
       operationId: listEventRecoveryNotificationRetryHistory
       summary: List saved recovery notification retry decisions.
-      description: Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when the job is pruned.
+      description: Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. The optional status filter selects a comma-separated union of original-generation request statuses. Totals cover all retained requests before filtering; matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is pruned.
       security: [{ bearerAuth: [] }]
       parameters:
       - name: jobID
@@ -27731,6 +27731,15 @@ paths:
         required: true
         description: Retained recovery job identifier whose retry decisions are listed.
         schema: { type: string, format: uuid }
+      - name: status
+        in: query
+        required: false
+        description: Comma-separated distinct request statuses selected as a union; omitting returns all retained requests. Aggregate totals remain unfiltered.
+        schema:
+          type: string
+          pattern: '^(succeeded|failed|pending|inconclusive)(,(succeeded|failed|pending|inconclusive))*$'
+        example: failed,inconclusive
+
       responses:
         '200':
           description: Saved retry request summaries and counts.
@@ -47786,14 +47795,31 @@ components:
           format: date-time
           description: Latest terminal attempt finish time, present only when every queued target has a retained terminal outcome and at least one target was queued.
 
+    EventRecoveryNotificationRetryHistoryTotals:
+      type: object
+      description: Counts of all retained retry requests in the owned job before status filtering, observed at the enclosing history timestamp. Request status counts sum to request_count; evidence gaps are counted separately.
+      required: [request_count, succeeded_count, failed_count, pending_count, inconclusive_count, incomplete_evidence_count]
+      properties:
+        request_count: { type: integer, minimum: 0, maximum: 100 }
+        succeeded_count: { type: integer, minimum: 0, maximum: 100 }
+        failed_count: { type: integer, minimum: 0, maximum: 100 }
+        pending_count: { type: integer, minimum: 0, maximum: 100 }
+        inconclusive_count: { type: integer, minimum: 0, maximum: 100 }
+        incomplete_evidence_count: { type: integer, minimum: 0, maximum: 100 }
     EventRecoveryNotificationRetryHistory:
       type: object
-      description: All retained explicit retry decisions for one recovery job, newest first. The job stores at most 100 decisions and pruning removes this history.
-      required: [job_id, app_id, observed_at, decisions]
+      description: Retained explicit retry decisions for one recovery job, optionally filtered by status and newest first. The job stores at most 100 decisions and pruning removes this history.
+      required: [job_id, app_id, observed_at, decisions, matched_count, totals]
       properties:
         job_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }
+        matched_count:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Number of returned request summaries matching the optional status filter.
+        totals: { $ref: '#/components/schemas/EventRecoveryNotificationRetryHistoryTotals' }
         decisions:
           type: array
           maxItems: 100

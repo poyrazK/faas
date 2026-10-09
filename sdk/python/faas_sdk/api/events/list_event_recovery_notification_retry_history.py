@@ -9,18 +9,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.event_recovery_notification_retry_history import EventRecoveryNotificationRetryHistory
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     job_id: UUID,
+    *,
+    status: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["status"] = status
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/event-recoveries/{job_id}/notification-retry-decisions".format(
             job_id=quote(str(job_id), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -85,15 +94,20 @@ def sync_detailed(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    status: str | Unset = UNSET,
 ) -> Response[EventRecoveryNotificationRetryHistory | Problem]:
     """List saved recovery notification retry decisions.
 
      Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time
-    order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when
-    the job is pruned.
+    order for the retained owned recovery job. The optional status filter selects a comma-separated
+    union of original-generation request statuses. Totals cover all retained requests before filtering;
+    matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate
+    statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is
+    pruned.
 
     Args:
         job_id (UUID):
+        status (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,6 +119,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         job_id=job_id,
+        status=status,
     )
 
     response = client.get_httpx_client().request(
@@ -118,15 +133,20 @@ def sync(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    status: str | Unset = UNSET,
 ) -> EventRecoveryNotificationRetryHistory | Problem | None:
     """List saved recovery notification retry decisions.
 
      Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time
-    order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when
-    the job is pruned.
+    order for the retained owned recovery job. The optional status filter selects a comma-separated
+    union of original-generation request statuses. Totals cover all retained requests before filtering;
+    matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate
+    statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is
+    pruned.
 
     Args:
         job_id (UUID):
+        status (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,6 +159,7 @@ def sync(
     return sync_detailed(
         job_id=job_id,
         client=client,
+        status=status,
     ).parsed
 
 
@@ -146,15 +167,20 @@ async def asyncio_detailed(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    status: str | Unset = UNSET,
 ) -> Response[EventRecoveryNotificationRetryHistory | Problem]:
     """List saved recovery notification retry decisions.
 
      Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time
-    order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when
-    the job is pruned.
+    order for the retained owned recovery job. The optional status filter selects a comma-separated
+    union of original-generation request statuses. Totals cover all retained requests before filtering;
+    matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate
+    statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is
+    pruned.
 
     Args:
         job_id (UUID):
+        status (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,6 +192,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         job_id=job_id,
+        status=status,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -177,15 +204,20 @@ async def asyncio(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    status: str | Unset = UNSET,
 ) -> EventRecoveryNotificationRetryHistory | Problem | None:
     """List saved recovery notification retry decisions.
 
      Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time
-    order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when
-    the job is pruned.
+    order for the retained owned recovery job. The optional status filter selects a comma-separated
+    union of original-generation request statuses. Totals cover all retained requests before filtering;
+    matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate
+    statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is
+    pruned.
 
     Args:
         job_id (UUID):
+        status (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,5 +231,6 @@ async def asyncio(
         await asyncio_detailed(
             job_id=job_id,
             client=client,
+            status=status,
         )
     ).parsed

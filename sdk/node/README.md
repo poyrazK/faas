@@ -840,3 +840,10 @@ counts for the originally queued generations, aggregate `status`,
 `evidence_complete`, and optional `completed_at`. Completion time requires
 terminal evidence for every queued target. All-skipped requests are inconclusive;
 later retries never establish an earlier generation's outcome.
+
+Retry history lists accept an optional comma-separated `status` union such as
+`failed,inconclusive`. Statuses must be distinct values from succeeded, failed,
+pending, and inconclusive. The response includes `matched_count` and `totals`;
+totals count all retained requests before filtering, including a separate count
+of requests with incomplete evidence. No matches returns an empty list and
+preserves full totals. Request detail and waiting do not accept this filter.

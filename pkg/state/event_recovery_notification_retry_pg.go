@@ -196,6 +196,7 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 			recoveryNotificationRetrySummarize(&out.Decisions[i], details[i])
 		}
 	}
+	out.ApplyStatusFilter(nil)
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {

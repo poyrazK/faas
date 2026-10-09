@@ -150,6 +150,7 @@ func (m *MemStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context,
 		return out, err
 	}
 	if len(out.Decisions) == 0 {
+		out.ApplyStatusFilter(nil)
 		return out, ctx.Err()
 	}
 	report, err := m.recoveryNotificationReportLocked(ctx, entry, now)
@@ -167,6 +168,7 @@ func (m *MemStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context,
 		m.recoveryNotificationRetryOutcomesLocked(account, entry, report, &details[i])
 		recoveryNotificationRetrySummarize(&out.Decisions[i], details[i])
 	}
+	out.ApplyStatusFilter(nil)
 	return out, ctx.Err()
 }
 func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {

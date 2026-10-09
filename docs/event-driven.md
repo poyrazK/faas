@@ -2863,3 +2863,16 @@ The retry history list now includes `succeeded_count`, `failed_count`, `pending_
 `status` is `failed` if any queued generation failed, otherwise `inconclusive` for unknown evidence or no queued targets, otherwise `pending` while any target remains pending, otherwise `succeeded`. Later retries do not establish earlier generation outcomes. `completed_at` is the latest terminal attempt finish time and appears only when every queued target has a known terminal outcome and at least one target was queued.
 
 `evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale events recovery-notification-retry-history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
+
+### Filter unresolved notification retry requests
+
+```bash
+gregale events recovery-notification-retry-history JOB_ID \
+  --status failed,inconclusive --json
+```
+
+The history list accepts an optional `status` query parameter with distinct comma-separated values from `succeeded`, `failed`, `pending`, and `inconclusive`. Values form a union; omitting the filter returns all retained requests. Empty values, duplicates, unknown statuses, repeated status parameters, malformed encoding, and other query parameters are rejected. CLI `--status` is list-only and cannot be combined with `--request-id` or waiting.
+
+`matched_count` is the number of returned rows. `totals` always covers the full retained history before filtering and contains `request_count`, request counts by status, and `incomplete_evidence_count`. Status counts sum to `request_count`; incomplete evidence can overlap failed, pending, or inconclusive statuses. A no-match response contains an empty `decisions` array while retaining full totals. Counts and statuses share `observed_at`, use originally queued generations, and do not change stored decisions or retention.
+
+Go callers can pass `api.EventRecoveryNotificationRetryHistoryQuery{Status: "failed,inconclusive"}` as the optional third argument to `ListEventRecoveryNotificationRetryHistory`. Existing two-argument calls remain valid; an empty options status omits filtering. Node/Python SDK list methods expose the optional status parameter.

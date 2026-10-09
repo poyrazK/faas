@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -59,7 +60,8 @@ func (s *server) listEventRecoveryNotificationRetryHistory(w http.ResponseWriter
 		return
 	}
 	defer cancel()
-	if r.URL.RawQuery != "" {
+	statuses, queryErr := eventRecoveryNotificationRetryHistoryStatus(r)
+	if queryErr != nil {
 		s.writeEventRecovery(w, r, 0, nil, state.ErrEventRecoveryQuery)
 		return
 	}
@@ -69,6 +71,9 @@ func (s *server) listEventRecoveryNotificationRetryHistory(w http.ResponseWriter
 		return
 	}
 	out, err := store.GetEventRecoveryNotificationRetryHistory(r.Context(), acct.ID, r.PathValue("jobID"), time.Now().UTC())
+	if err == nil {
+		out.ApplyStatusFilter(statuses)
+	}
 	s.writeEventRecovery(w, r, http.StatusOK, out, err)
 }
 func (s *server) getEventRecoveryNotificationRetryDecision(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -88,4 +93,23 @@ func (s *server) getEventRecoveryNotificationRetryDecision(w http.ResponseWriter
 	}
 	out, err := store.GetEventRecoveryNotificationRetryDecision(r.Context(), acct.ID, r.PathValue("jobID"), r.PathValue("requestID"), time.Now().UTC())
 	s.writeEventRecovery(w, r, http.StatusOK, out, err)
+}
+
+func eventRecoveryNotificationRetryHistoryStatus(r *http.Request) ([]string, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, state.ErrEventRecoveryQuery
+	}
+	if len(query) == 0 {
+		return nil, nil
+	}
+	values, ok := query["status"]
+	if !ok || len(query) != 1 || len(values) != 1 {
+		return nil, state.ErrEventRecoveryQuery
+	}
+	statuses, err := api.ParseEventRecoveryNotificationRetryHistoryStatus(values[0])
+	if err != nil {
+		return nil, state.ErrEventRecoveryQuery
+	}
+	return statuses, nil
 }

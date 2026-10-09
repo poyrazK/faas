@@ -528,6 +528,7 @@ export type { EventRecoveryNotificationRetryDecision } from './models/EventRecov
 export type { EventRecoveryNotificationRetryDecisionDetail } from './models/EventRecoveryNotificationRetryDecisionDetail.js';
 export type { EventRecoveryNotificationRetryDecisionSummary } from './models/EventRecoveryNotificationRetryDecisionSummary.js';
 export type { EventRecoveryNotificationRetryHistory } from './models/EventRecoveryNotificationRetryHistory.js';
+export type { EventRecoveryNotificationRetryHistoryTotals } from './models/EventRecoveryNotificationRetryHistoryTotals.js';
 export type { EventRecoveryNotificationRetryPreview } from './models/EventRecoveryNotificationRetryPreview.js';
 export type { EventRecoveryNotificationRetryRequest } from './models/EventRecoveryNotificationRetryRequest.js';
 export type { EventRecoveryNotificationRetryResponse } from './models/EventRecoveryNotificationRetryResponse.js';

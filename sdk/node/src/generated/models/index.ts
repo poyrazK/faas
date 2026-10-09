@@ -522,6 +522,7 @@ export type { EventRecoveryNotificationRetryDecision } from './EventRecoveryNoti
 export type { EventRecoveryNotificationRetryDecisionDetail } from './EventRecoveryNotificationRetryDecisionDetail.js';
 export type { EventRecoveryNotificationRetryDecisionSummary } from './EventRecoveryNotificationRetryDecisionSummary.js';
 export type { EventRecoveryNotificationRetryHistory } from './EventRecoveryNotificationRetryHistory.js';
+export type { EventRecoveryNotificationRetryHistoryTotals } from './EventRecoveryNotificationRetryHistoryTotals.js';
 export type { EventRecoveryNotificationRetryPreview } from './EventRecoveryNotificationRetryPreview.js';
 export type { EventRecoveryNotificationRetryRequest } from './EventRecoveryNotificationRetryRequest.js';
 export type { EventRecoveryNotificationRetryResponse } from './EventRecoveryNotificationRetryResponse.js';

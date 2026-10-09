@@ -1943,10 +1943,11 @@ Inspect recovery notification capture and receiver acknowledgements
 
 Inspect saved retry decisions and current delivery status
 
-`gregale events recovery-notification-retry-history [--request-id <UUID>] [--wait] [--timeout <DURATION>] <job-id>`
+`gregale events recovery-notification-retry-history [--status <STATUS,...>] [--request-id <UUID>] [--wait] [--timeout <DURATION>] <job-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--status <STATUS,...>` | Filter list by succeeded, failed, pending, or inconclusive; incompatible with --request-id |  |
 | `--request-id <UUID>` | Show one saved retry request in detail |  |
 | `--wait` | Wait for the requested retry generations; requires --request-id |  |
 | `--timeout <DURATION>` | Maximum wait duration (default 5m); requires --wait |  |
@@ -1954,6 +1955,7 @@ Inspect saved retry decisions and current delivery status
 Examples:
 
 ```sh
+gregale events recovery-notification-retry-history JOB_ID --status failed,inconclusive --json
 gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --wait --timeout 5m --json
 ```
 

@@ -107,21 +107,31 @@ func cmdEventsRecoveryNotificationRetry(args []string) int {
 func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 	flags, positional := splitArgsForFlags(args, "wait")
 	fs := newFlagSet("events recovery-notification-retry-history", flag.ContinueOnError)
+	status := fs.String("status", "", "comma-separated request statuses; list only")
 	requestID := fs.String("request-id", "", "show one saved retry request in detail")
 	wait := fs.Bool("wait", false, "wait for the requested retry generations to finish")
 	timeout := fs.Duration("timeout", api.EventRecoveryNotificationRetryWaitTimeout, "maximum wait duration (default 5m)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	statusSet := false
 	timeoutSet := false
 	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "status" {
+			statusSet = true
+		}
 		if f.Name == "timeout" {
 			timeoutSet = true
 		}
 	})
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *timeout <= 0 || (*wait && *requestID == "") || (timeoutSet && !*wait) {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-notification-retry-history <job-id> [--request-id UUID [--wait [--timeout 5m]]]", "events")
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *timeout <= 0 || (*wait && *requestID == "") || (timeoutSet && !*wait) || (statusSet && *requestID != "") {
+		PrintUsage(os.Stderr, "usage: gregale events recovery-notification-retry-history <job-id> [--status STATUS,... | --request-id UUID [--wait [--timeout 5m]]]", "events")
 		return 1
+	}
+	if statusSet {
+		if _, err := api.ParseEventRecoveryNotificationRetryHistoryStatus(*status); err != nil {
+			return printErr("Invalid retry history status", err)
+		}
 	}
 	job, err := uuid.Parse(positional[0])
 	if err != nil || job == uuid.Nil {
@@ -150,7 +160,7 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 			}
 			return jsonOut(writeJSON(out))
 		}
-		out, err := client.ListEventRecoveryNotificationRetryHistory(context.Background(), positional[0])
+		out, err := client.ListEventRecoveryNotificationRetryHistory(context.Background(), positional[0], api.EventRecoveryNotificationRetryHistoryQuery{Status: *status})
 		if err != nil {
 			return printErr("Notification retry history failed", err)
 		}
@@ -164,11 +174,12 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		outputRecoveryNotificationRetryDecision(out)
 		return 0
 	}
-	out, err := client.ListEventRecoveryNotificationRetryHistory(context.Background(), positional[0])
+	out, err := client.ListEventRecoveryNotificationRetryHistory(context.Background(), positional[0], api.EventRecoveryNotificationRetryHistoryQuery{Status: *status})
 	if err != nil {
 		return printErr("Notification retry history failed", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s | app: %s | observed: %s\n", oneLine(out.JobID), oneLine(out.AppID), out.ObservedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(osStdout, "Retained requests: %d | matched: %d | succeeded: %d | failed: %d | pending: %d | inconclusive: %d | incomplete evidence: %d\n", out.Totals.RequestCount, out.MatchedCount, out.Totals.SucceededCount, out.Totals.FailedCount, out.Totals.PendingCount, out.Totals.InconclusiveCount, out.Totals.IncompleteEvidenceCount)
 	_, _ = fmt.Fprintln(osStdout, "REQUEST\tDECIDED\tTARGETS\tQUEUED\tSKIPPED\tSTATUS\tSUCCEEDED\tFAILED\tPENDING\tUNKNOWN\tEVIDENCE COMPLETE\tCOMPLETED")
 	for _, d := range out.Decisions {
 		completed := "-"
