@@ -746,7 +746,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "synthetics",
 		DocSlug: "synthetics",
-		Short:   "Scheduled HTTP checks against an app (synthetics list|create|pause|resume|rm --app <slug>)",
+		Short:   "Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -760,6 +760,9 @@ var cliCommands = []cliCommand{
 				{Name: "timeout-ms", Short: "timeout including any wake, 1000-30000", Value: "MS"},
 				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
 			}},
+			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
 			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},

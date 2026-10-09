@@ -13,7 +13,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`synthetics`](#synthetics) | Scheduled HTTP checks against an app (synthetics list\|create\|pause\|resume\|rm --app &lt;slug&gt;) |
+| [`synthetics`](#synthetics) | Scheduled HTTP checks against an app (synthetics list\|create\|status\|pause\|resume\|rm --app &lt;slug&gt;) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1342,7 +1342,7 @@ Show feature maturity and plan availability
 
 ## synthetics
 
-Scheduled HTTP checks against an app (synthetics list|create|pause|resume|rm --app &lt;slug&gt;)
+Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app &lt;slug&gt;)
 
 `gregale synthetics [<subcommand>]`
 
@@ -1371,6 +1371,16 @@ Schedule a GET or HEAD check on a path
 | `--expect-status <N>` | exact expected status (default any 2xx) |  |
 | `--timeout-ms <MS>` | timeout including any wake, 1000-30000 |  |
 | `--every-minutes <MIN>` | interval | one of `5` · `15` · `60` |
+
+### synthetics status
+
+Show a check&#39;s uptime, latency and recent runs
+
+`gregale synthetics status --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### synthetics pause
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -14,6 +14,10 @@ from ..models.synthetic_check_response_interval_seconds import (
 )
 from ..models.synthetic_check_response_method import SyntheticCheckResponseMethod, check_synthetic_check_response_method
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.synthetic_check_results import SyntheticCheckResults
+
 
 T = TypeVar("T", bound="SyntheticCheckResponse")
 
@@ -34,6 +38,8 @@ class SyntheticCheckResponse:
     created_at: datetime.datetime
     expected_status: int | Unset = UNSET
     """Exact expected status; absent means any 2xx."""
+    results: SyntheticCheckResults | Unset = UNSET
+    """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +63,10 @@ class SyntheticCheckResponse:
 
         expected_status = self.expected_status
 
+        results: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.results, Unset):
+            results = self.results.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,11 +84,15 @@ class SyntheticCheckResponse:
         )
         if expected_status is not UNSET:
             field_dict["expected_status"] = expected_status
+        if results is not UNSET:
+            field_dict["results"] = results
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.synthetic_check_results import SyntheticCheckResults
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -100,6 +114,13 @@ class SyntheticCheckResponse:
 
         expected_status = d.pop("expected_status", UNSET)
 
+        _results = d.pop("results", UNSET)
+        results: SyntheticCheckResults | Unset
+        if isinstance(_results, Unset):
+            results = UNSET
+        else:
+            results = SyntheticCheckResults.from_dict(_results)
+
         synthetic_check_response = cls(
             id=id,
             name=name,
@@ -111,6 +132,7 @@ class SyntheticCheckResponse:
             enabled=enabled,
             created_at=created_at,
             expected_status=expected_status,
+            results=results,
         )
 
         synthetic_check_response.additional_properties = d

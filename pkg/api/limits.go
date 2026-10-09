@@ -9448,6 +9448,7 @@ const (
 	SyntheticCheckDefaultTimeoutMS = 10000
 	SyntheticCheckPathMaxBytes     = 512
 	SyntheticCheckRunRetentionDays = 7
+	SyntheticCheckRecentRuns       = 20
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.

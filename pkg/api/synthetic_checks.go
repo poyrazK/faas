@@ -52,6 +52,27 @@ type SyntheticCheckResponse struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	Enabled         bool   `json:"enabled"`
 	CreatedAt       string `json:"created_at"`
+	// Results is present on GET /v1/apps/{slug}/synthetics/{id} only.
+	Results *SyntheticCheckResults `json:"results,omitempty"`
+}
+
+// SyntheticCheckResults summarises a check's recent runs (ADR-748). Uptime
+// percentages are null when the period had no runs.
+type SyntheticCheckResults struct {
+	Uptime24hPct    *float64            `json:"uptime_24h_pct"`
+	Uptime7dPct     *float64            `json:"uptime_7d_pct"`
+	Runs24h         int64               `json:"runs_24h"`
+	P95LatencyMS24h float64             `json:"p95_latency_ms_24h"`
+	Recent          []SyntheticCheckRun `json:"recent"`
+}
+
+// SyntheticCheckRun is one probe outcome. ErrorClass is empty on success.
+type SyntheticCheckRun struct {
+	StartedAt  string `json:"started_at"`
+	OK         bool   `json:"ok"`
+	StatusCode int    `json:"status_code,omitempty"`
+	LatencyMS  int    `json:"latency_ms"`
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // NormalizeCreateSyntheticCheck applies defaults and checks the request

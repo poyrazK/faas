@@ -92,7 +92,9 @@ func (s *server) getSyntheticCheck(w http.ResponseWriter, r *http.Request, acct 
 		s.notFound(w, "no such synthetic check")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.syntheticCheckResponse(app, row))
+	resp := s.syntheticCheckResponse(app, row)
+	resp.Results = s.syntheticCheckResults(r.Context(), row.ID, time.Now())
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // updateSyntheticCheck serves PATCH /v1/apps/{slug}/synthetics/{id}: pause

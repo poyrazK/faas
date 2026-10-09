@@ -1244,8 +1244,8 @@ export class AppsService {
     });
   }
   /**
-   * Get one synthetic check (ADR-748)
-   * Returns one check definition. An id belonging to another app returns 404.
+   * Get one synthetic check and its recent results (ADR-748)
+   * Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404.
    * @returns SyntheticCheckResponse The check definition.
    * @throws ApiError
    */

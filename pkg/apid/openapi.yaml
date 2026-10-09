@@ -10614,8 +10614,8 @@ paths:
         schema: { type: string, format: uuid }
     get:
       operationId: getSyntheticCheck
-      summary: Get one synthetic check (ADR-748)
-      description: "Returns one check definition. An id belonging to another app returns 404."
+      summary: Get one synthetic check and its recent results (ADR-748)
+      description: "Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404."
       tags: [apps]
       responses:
         '200':
@@ -46897,6 +46897,45 @@ components:
         interval_seconds: { type: integer, enum: [300, 900, 3600] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
+        results:
+          $ref: '#/components/schemas/SyntheticCheckResults'
+    SyntheticCheckResults:
+      description: 'Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748).'
+      type: object
+      required: [uptime_24h_pct, uptime_7d_pct, runs_24h, p95_latency_ms_24h, recent]
+      properties:
+        uptime_24h_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 24 hours that succeeded; null when none ran.'
+        uptime_7d_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 7 days that succeeded; null when none ran.'
+        runs_24h: { type: integer, format: int64, description: 'Runs in the last 24 hours.' }
+        p95_latency_ms_24h:
+          type: number
+          format: double
+          description: '95th-percentile latency of successful runs in the last 24 hours, including any wake; 0 when none succeeded.'
+        recent:
+          type: array
+          description: 'The most recent runs, newest first (at most 20).'
+          items: { $ref: '#/components/schemas/SyntheticCheckRun' }
+    SyntheticCheckRun:
+      description: 'One synthetic check probe.'
+      type: object
+      required: [started_at, ok, latency_ms]
+      properties:
+        started_at: { type: string, format: date-time }
+        ok: { type: boolean }
+        status_code:
+          type: integer
+          description: 'HTTP status received; absent when no response arrived.'
+        latency_ms: { type: integer }
+        error_class:
+          type: string
+          enum: [status, timeout, dns, connect, tls, other]
+          description: 'Why the run failed; absent on success. status means a response arrived with an unexpected code.'
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object

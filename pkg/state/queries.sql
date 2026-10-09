@@ -17305,3 +17305,32 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid RETURNING *;
 
 -- name: DeleteSyntheticCheck :execrows
 DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- ADR-748 slice 2: synthetic check runs (meterd is the only writer).
+
+-- name: ListRunnableSyntheticChecks :many
+-- Every enabled check on a live app, with its app slug and last run time;
+-- the runner decides which are due.
+SELECT c.*, a.slug AS app_slug,
+ (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
+FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
+WHERE c.enabled AND a.status <> 'deleted'
+ORDER BY c.id;
+
+-- name: InsertSyntheticCheckRun :exec
+INSERT INTO synthetic_check_runs (check_id, started_at, ok, status_code, latency_ms, error_class)
+VALUES (sqlc.arg(check_id)::uuid, sqlc.arg(started_at)::timestamptz, sqlc.arg(ok)::boolean,
+ sqlc.arg(status_code)::integer, sqlc.arg(latency_ms)::integer, sqlc.arg(error_class)::text)
+ON CONFLICT (check_id, started_at) DO NOTHING;
+
+-- name: ListSyntheticCheckRuns :many
+SELECT * FROM synthetic_check_runs WHERE check_id = sqlc.arg(check_id)::uuid
+ORDER BY started_at DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: SyntheticCheckRunStats :one
+SELECT count(*)::bigint AS runs, count(*) FILTER (WHERE ok)::bigint AS ok_runs,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE ok), 0)::double precision AS p95_latency_ms
+FROM synthetic_check_runs WHERE check_id = sqlc.arg(check_id)::uuid AND started_at >= sqlc.arg(since)::timestamptz;
+
+-- name: PurgeSyntheticCheckRunsBefore :execrows
+DELETE FROM synthetic_check_runs WHERE started_at < sqlc.arg(before)::timestamptz;

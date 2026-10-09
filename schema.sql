@@ -24342,6 +24342,24 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: synthetic_check_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.synthetic_check_runs (
+    check_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ok boolean NOT NULL,
+    status_code integer NOT NULL,
+    latency_ms integer NOT NULL,
+    error_class text NOT NULL,
+    CONSTRAINT synthetic_check_runs_error_chk CHECK ((error_class = ANY (ARRAY[''::text, 'status'::text, 'timeout'::text, 'dns'::text, 'connect'::text, 'tls'::text, 'other'::text]))),
+    CONSTRAINT synthetic_check_runs_latency_chk CHECK ((latency_ms >= 0)),
+    CONSTRAINT synthetic_check_runs_ok_chk CHECK ((ok = (error_class = ''::text))),
+    CONSTRAINT synthetic_check_runs_status_chk CHECK (((status_code = 0) OR ((status_code >= 100) AND (status_code <= 599))))
+);
+
+
+--
 -- Name: synthetic_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30647,6 +30665,14 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 
 --
+-- Name: synthetic_check_runs synthetic_check_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_check_runs
+    ADD CONSTRAINT synthetic_check_runs_pkey PRIMARY KEY (check_id, started_at);
+
+
+--
 -- Name: synthetic_checks synthetic_checks_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36537,6 +36563,13 @@ CREATE INDEX stripe_push_dedupe_hour_idx ON public.stripe_push_dedupe USING btre
 --
 
 CREATE INDEX stripe_push_dedupe_org_id_idx ON public.stripe_push_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: synthetic_check_runs_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX synthetic_check_runs_started_idx ON public.synthetic_check_runs USING btree (started_at);
 
 
 --
@@ -47823,6 +47856,14 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: synthetic_check_runs synthetic_check_runs_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_check_runs
+    ADD CONSTRAINT synthetic_check_runs_check_id_fkey FOREIGN KEY (check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
 
 
 --

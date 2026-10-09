@@ -7160,6 +7160,15 @@ type SyntheticCheck struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type SyntheticCheckRun struct {
+	CheckID    pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	Ok         bool
+	StatusCode int32
+	LatencyMs  int32
+	ErrorClass string
+}
+
 type TenantHostname struct {
 	ID                    pgtype.UUID
 	SurfaceID             pgtype.UUID

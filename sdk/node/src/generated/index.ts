@@ -1558,6 +1558,8 @@ export type { StorageUsageListResponse } from './models/StorageUsageListResponse
 export type { StorageUsageResponse } from './models/StorageUsageResponse.js';
 export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse.js';
 export type { SyntheticCheckResponse } from './models/SyntheticCheckResponse.js';
+export type { SyntheticCheckResults } from './models/SyntheticCheckResults.js';
+export type { SyntheticCheckRun } from './models/SyntheticCheckRun.js';
 export type { TCPListenerResponse } from './models/TCPListenerResponse.js';
 export type { TCPListenerTLSCertificateStatus } from './models/TCPListenerTLSCertificateStatus.js';
 export type { TCPListenerTLSConfig } from './models/TCPListenerTLSConfig.js';

@@ -2913,6 +2913,9 @@ from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .synthetic_check_response import SyntheticCheckResponse
 from .synthetic_check_response_interval_seconds import SyntheticCheckResponseIntervalSeconds
 from .synthetic_check_response_method import SyntheticCheckResponseMethod
+from .synthetic_check_results import SyntheticCheckResults
+from .synthetic_check_run import SyntheticCheckRun
+from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -6015,6 +6018,9 @@ __all__ = (
     "SyntheticCheckResponse",
     "SyntheticCheckResponseIntervalSeconds",
     "SyntheticCheckResponseMethod",
+    "SyntheticCheckResults",
+    "SyntheticCheckRun",
+    "SyntheticCheckRunErrorClass",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

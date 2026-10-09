@@ -493,14 +493,7 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 // retired apps.gregale.dev setting as a safety net so stale configuration
 // cannot put a legacy hostname back into customer-facing URLs.
 func appHostForDomain(slug, domain string) string {
-	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == domainUnset || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	if domain == "" {
-		return slug
-	}
-	return slug + "." + domain
+	return api.AppHostname(slug, domain)
 }
 
 // appURLForDomain returns the HTTPS customer URL for an app or preview slug.

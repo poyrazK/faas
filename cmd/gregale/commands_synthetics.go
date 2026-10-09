@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const syntheticsUsage = "usage: gregale synthetics <list|create|pause|resume|rm> --app <slug>"
+const syntheticsUsage = "usage: gregale synthetics <list|create|status|pause|resume|rm> --app <slug>"
 
 // cmdSynthetics implements `gregale synthetics` (ADR-748): scheduled HTTP
 // checks against an app's own hostname.
@@ -30,6 +30,8 @@ func cmdSynthetics(args []string) int {
 		return cmdSyntheticsSetEnabled(args[1:], true)
 	case subRm:
 		return cmdSyntheticsRm(args[1:])
+	case "status":
+		return cmdSyntheticsStatus(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown synthetics subcommand %q\n", args[0])
 	PrintUsage(os.Stderr, syntheticsUsage, "synthetics")

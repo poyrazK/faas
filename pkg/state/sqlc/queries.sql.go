@@ -23066,6 +23066,34 @@ func (q *Queries) InsertSyntheticCheck(ctx context.Context, db DBTX, arg InsertS
 	return i, err
 }
 
+const insertSyntheticCheckRun = `-- name: InsertSyntheticCheckRun :exec
+INSERT INTO synthetic_check_runs (check_id, started_at, ok, status_code, latency_ms, error_class)
+VALUES ($1::uuid, $2::timestamptz, $3::boolean,
+ $4::integer, $5::integer, $6::text)
+ON CONFLICT (check_id, started_at) DO NOTHING
+`
+
+type InsertSyntheticCheckRunParams struct {
+	CheckID    pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	Ok         bool
+	StatusCode int32
+	LatencyMs  int32
+	ErrorClass string
+}
+
+func (q *Queries) InsertSyntheticCheckRun(ctx context.Context, db DBTX, arg InsertSyntheticCheckRunParams) error {
+	_, err := db.Exec(ctx, insertSyntheticCheckRun,
+		arg.CheckID,
+		arg.StartedAt,
+		arg.Ok,
+		arg.StatusCode,
+		arg.LatencyMs,
+		arg.ErrorClass,
+	)
+	return err
+}
+
 const insertTenantScheduledWorkflowRun = `-- name: InsertTenantScheduledWorkflowRun :one
 INSERT INTO workflow_runs (id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text,
@@ -33315,6 +33343,70 @@ func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRunnableSyntheticChecks = `-- name: ListRunnableSyntheticChecks :many
+
+SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status, c.timeout_ms, c.interval_seconds, c.enabled, c.created_at, c.updated_at, a.slug AS app_slug,
+ (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
+FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
+WHERE c.enabled AND a.status <> 'deleted'
+ORDER BY c.id
+`
+
+type ListRunnableSyntheticChecksRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	Enabled         bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	AppSlug         string
+	LastRunAt       pgtype.Timestamptz
+}
+
+// ADR-748 slice 2: synthetic check runs (meterd is the only writer).
+// Every enabled check on a live app, with its app slug and last run time;
+// the runner decides which are due.
+func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
+	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunnableSyntheticChecksRow{}
+	for rows.Next() {
+		var i ListRunnableSyntheticChecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppSlug,
+			&i.LastRunAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReleases = `-- name: ListRuntimeReleases :many
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
 `
@@ -33523,6 +33615,43 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
+SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
+ORDER BY started_at DESC LIMIT $2::integer
+`
+
+type ListSyntheticCheckRunsParams struct {
+	CheckID pgtype.UUID
+	MaxRows int32
+}
+
+func (q *Queries) ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error) {
+	rows, err := db.Query(ctx, listSyntheticCheckRuns, arg.CheckID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheckRun{}
+	for rows.Next() {
+		var i SyntheticCheckRun
+		if err := rows.Scan(
+			&i.CheckID,
+			&i.StartedAt,
+			&i.Ok,
+			&i.StatusCode,
+			&i.LatencyMs,
+			&i.ErrorClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -50181,6 +50310,18 @@ func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Contex
 	return err
 }
 
+const purgeSyntheticCheckRunsBefore = `-- name: PurgeSyntheticCheckRunsBefore :execrows
+DELETE FROM synthetic_check_runs WHERE started_at < $1::timestamptz
+`
+
+func (q *Queries) PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSyntheticCheckRunsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -66837,6 +66978,30 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const syntheticCheckRunStats = `-- name: SyntheticCheckRunStats :one
+SELECT count(*)::bigint AS runs, count(*) FILTER (WHERE ok)::bigint AS ok_runs,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE ok), 0)::double precision AS p95_latency_ms
+FROM synthetic_check_runs WHERE check_id = $1::uuid AND started_at >= $2::timestamptz
+`
+
+type SyntheticCheckRunStatsParams struct {
+	CheckID pgtype.UUID
+	Since   pgtype.Timestamptz
+}
+
+type SyntheticCheckRunStatsRow struct {
+	Runs         int64
+	OkRuns       int64
+	P95LatencyMs float64
+}
+
+func (q *Queries) SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error) {
+	row := db.QueryRow(ctx, syntheticCheckRunStats, arg.CheckID, arg.Since)
+	var i SyntheticCheckRunStatsRow
+	err := row.Scan(&i.Runs, &i.OkRuns, &i.P95LatencyMs)
+	return i, err
 }
 
 const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec

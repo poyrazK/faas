@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SyntheticCheckResults } from './SyntheticCheckResults.js';
 /**
  * One synthetic check definition (ADR-748).
  */
@@ -22,5 +23,6 @@ export type SyntheticCheckResponse = {
   interval_seconds: 300 | 900 | 3600;
   enabled: boolean;
   created_at: string;
+  results?: SyntheticCheckResults;
 };
 
