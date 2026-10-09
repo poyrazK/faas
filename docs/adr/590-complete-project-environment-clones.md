@@ -8894,3 +8894,26 @@ corrupted receipts, snapshots, manifests and configuration provenance.
 Reservations lacking complete authenticated adoption remain blocked. Source
 barrier compensation and final stage publication are separate remaining work;
 public full-stage capture stays gated and live R2/OVH qualification is deferred.
+
+### Private source compensation proof contract
+
+Source compensation now has an immutable private proof contract that pins the
+original common-capture plan, capture intent, optional original receipt and
+optional release journal. Planned and unknown capture or release outcomes both
+require permanent fencing of their original native request keys: absence alone
+cannot prove that a delayed request will never close source access again.
+
+The receipt must cover every original source, in the original order and at the
+original physical placement. Each source must be unchanged, accessible and free
+of native holds, owned by this operation, with any recorded original capture
+identity preserved. Claim and completion timestamps are checked, and a completed
+journal accepts only identical receipt replay. Cleanup has no retention deadline;
+expired capture retention must not prevent restoring source access.
+
+This is shape validation only. It does not dispatch native work or release local
+holds. The remaining durable coordinator must authenticate the frozen original
+journals, claim compensation once before native IO, independently observe unknown
+outcomes, and commit the receipt together with local configuration, PostgreSQL and
+object hold release under the current compensation worker fence. It must preserve
+original capture provenance for unfinished target cleanup after source reopening.
+No native adapter or public full-stage capture is enabled by this contract.
