@@ -128,6 +128,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_API_DISCOVERY_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270)"},
 	{Name: "FAAS_API_HOSTING_SMOKE_REQUIRED", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification"},
 	{Name: "FAAS_API_HOSTING_SMOKE_URL", Owners: []string{"imaged"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain"},
+	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-847 synthetic route probes; unset disables probes"},
 	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public", "githubd", "imaged", "shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_APPS_ROOT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APP_ERRORS_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceRuntimeConfig},
