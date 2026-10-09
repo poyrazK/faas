@@ -845,7 +845,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("vmmd: register snapshot fan-out metrics: %w", metricErr)
 		}
 		fanout := snapshothipd.New(replicaStore, storageBackend, nodeID, log).
-			WithMetrics(fanoutMetrics)
+			WithMetrics(fanoutMetrics).
+			// ADR-911: on unless an operator switches it off.
+			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {
