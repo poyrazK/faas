@@ -671,8 +671,8 @@ func TestCmdDeploy_JSON_DeployErrorEmitsRFC7807OnStderr(t *testing.T) {
 	_ = w.Close()
 	data, _ := io.ReadAll(r)
 
-	if code != 1 {
-		t.Errorf("expected exit 1 (404), got %d", code)
+	if code != 4 {
+		t.Errorf("expected exit 4 (404), got %d", code)
 	}
 	var p api.Problem
 	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &p); err != nil {
@@ -865,9 +865,9 @@ func TestExitCodeForStatus(t *testing.T) {
 		200: 1, // unexpected success path; never called here, but default is 1
 		401: 2,
 		402: 1,
-		403: 1,
-		404: 1,
-		409: 1,
+		403: 6,
+		404: 4,
+		409: 5,
 		500: 3,
 		503: 3,
 	}
@@ -1094,8 +1094,8 @@ func TestPrintErr_JSON_EmitsProblemOnStderr(t *testing.T) {
 		Status: 409, Code: api.CodeConflict, Title: "Conflict", Detail: "app exists",
 	}}
 	code := printErr("Create failed", ae)
-	if code != 1 {
-		t.Errorf("printErr code = %d, want 1", code)
+	if code != 5 {
+		t.Errorf("printErr code = %d, want 5", code)
 	}
 	_ = w.Close()
 	data, _ := io.ReadAll(r)
@@ -1428,9 +1428,9 @@ func TestCmdApp_Min1_Hobby_NoEcho(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdApp([]string{"jane-api", "--min", "1"}); code != 1 {
-		// printErr returns 1 for user-facing rejections (Plan limits → exit 1 per UX §3.2).
-		t.Fatalf("cmdApp exit = %d, want 1 (Hobby rejected)", code)
+	if code := cmdApp([]string{"jane-api", "--min", "1"}); code != 6 {
+		// Plan access restrictions return the shared permission failure code.
+		t.Fatalf("cmdApp exit = %d, want 6 (Hobby rejected)", code)
 	}
 	if strings.Contains(stdout.String(), "kept warm") {
 		t.Errorf("Hobby plan must not echo cost; got %q", stdout.String())
