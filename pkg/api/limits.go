@@ -5161,6 +5161,16 @@ const (
 	MinScaleInCooldownS  = 5
 	MaxScaleInCooldownS  = 86400
 
+	// WorkerScaleInStabilizationSeconds is the look-back window for
+	// worker-pool scale-in. Computed demand may only shrink a pool to the
+	// highest recommendation observed inside the window, so a queue that
+	// drains and refills between 1 s ticks does not stop and re-boot
+	// workers. Scale-out is never delayed. A schedd that has not yet
+	// observed a full window for a pool (fresh start, new deployment
+	// generation) holds the current size rather than trusting one sample.
+	// Explicit replica counts bypass the window.
+	WorkerScaleInStabilizationSeconds = 60
+
 	// Tier A4 (cross-node app rebalance, ADR-064 follow-up to
 	// ADR-062): pacing + per-tick cap on pkg/sched/rebalancer.go.
 	//

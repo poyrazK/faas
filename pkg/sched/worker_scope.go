@@ -127,6 +127,10 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
 			}
+			if override == nil {
+				key := workerPoolKey{appID: app.ID, scope: scope, deploymentID: plan.target}
+				plan.desired = e.workerScaleIn.stabilize(key, plan.targetWorkers(), plan.desired, e.now())
+			}
 			if policy := plan.app.ScalingPolicy; policy != nil && (policy.ScaleOutCooldownS > 0 || policy.ScaleInCooldownS > 0) {
 				history, err := e.store.WorkerPoolHistory(ctx, app.ID, plan.target)
 				if err != nil {
@@ -194,9 +198,19 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			e.ops.ObserveScaleUp(app.ID, "no_signal")
 		}
 	}()
+	// Workers are kept in this order, so the tail is stopped first: settled
+	// before booting, busy before idle, then oldest first.
+	now := e.now()
+	busy := make(map[string]int, len(plan.workers))
+	for _, ins := range plan.workers {
+		busy[ins.ID] = e.workerBusyRank(ins, now)
+	}
 	sort.SliceStable(plan.workers, func(i, j int) bool {
 		left, right := workerStatePreference(plan.workers[i]), workerStatePreference(plan.workers[j])
 		if left != right {
+			return left < right
+		}
+		if left, right := busy[plan.workers[i].ID], busy[plan.workers[j].ID]; left != right {
 			return left < right
 		}
 		if plan.workers[i].StartedAt.Equal(plan.workers[j].StartedAt) {
@@ -247,16 +261,22 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	return nil
 }
 
-func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history state.WorkerPoolHistory, now time.Time) {
-	if policy == nil {
-		return
-	}
+// targetWorkers counts the live generation's workers that hold a slot.
+func (p *workerScopePlan) targetWorkers() int {
 	current := 0
 	for _, ins := range p.workers {
 		if ins.DeploymentID == p.target && state.State(ins.State).CountsForConcurrency() {
 			current++
 		}
 	}
+	return current
+}
+
+func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history state.WorkerPoolHistory, now time.Time) {
+	if policy == nil {
+		return
+	}
+	current := p.targetWorkers()
 	// A cold environment or a new generation must not inherit a neighbor's
 	// cooldown. Retained rows preserve admission/termination history even
 	// after a recent replica has gone away.
