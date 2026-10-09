@@ -49,8 +49,11 @@ type Input struct {
 	Method      string
 	ClientIP    string
 	Country     string
-	Headers     http.Header
-	Body        []byte
+	// ASN is the simulated client autonomous system for asn conditions
+	// (ADR-910); 0 means unknown.
+	ASN     uint32
+	Headers http.Header
+	Body    []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -2492,7 +2495,7 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	}
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
-		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country,
+		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
 	})
 }
 

@@ -1,8 +1,9 @@
 from typing import Literal
 
-EdgeRuleListResponseKind = Literal["country", "host", "ip", "string"]
+EdgeRuleListResponseKind = Literal["asn", "country", "host", "ip", "string"]
 
 EDGE_RULE_LIST_RESPONSE_KIND_VALUES: set[EdgeRuleListResponseKind] = {
+    "asn",
     "country",
     "host",
     "ip",

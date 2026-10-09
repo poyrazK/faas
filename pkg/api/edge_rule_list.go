@@ -10,6 +10,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,8 @@ const (
 	EdgeRuleListKindCountry = "country"
 	EdgeRuleListKindHost    = "host"
 	EdgeRuleListKindString  = "string"
+	// EdgeRuleListKindASN holds autonomous system numbers (ADR-910).
+	EdgeRuleListKindASN = "asn"
 )
 
 // EdgeRuleListMaxDescriptionBytes bounds a list's free-text description.
@@ -38,7 +41,7 @@ func ValidateEdgeRuleListName(name string) error {
 // ValidEdgeRuleListKind reports whether kind is a known list kind.
 func ValidEdgeRuleListKind(kind string) bool {
 	switch kind {
-	case EdgeRuleListKindIP, EdgeRuleListKindCountry, EdgeRuleListKindHost, EdgeRuleListKindString:
+	case EdgeRuleListKindIP, EdgeRuleListKindCountry, EdgeRuleListKindHost, EdgeRuleListKindString, EdgeRuleListKindASN:
 		return true
 	}
 	return false
@@ -49,7 +52,7 @@ func ValidEdgeRuleListKind(kind string) bool {
 // form (CIDRs masked), countries uppercased, hosts lowercased.
 func NormalizeEdgeRuleListItems(kind string, items []string) ([]string, error) {
 	if !ValidEdgeRuleListKind(kind) {
-		return nil, fmt.Errorf("unknown list kind %q (ip, country, host, string)", kind)
+		return nil, fmt.Errorf("unknown list kind %q (ip, country, host, string, asn)", kind)
 	}
 	seen := make(map[string]struct{}, len(items))
 	out := make([]string, 0, len(items))
@@ -97,6 +100,8 @@ func normalizeEdgeRuleListItem(kind, item string) (string, error) {
 		return strings.ToUpper(item), nil
 	case EdgeRuleListKindHost:
 		return normalizeEdgeRuleListHost(item)
+	case EdgeRuleListKindASN:
+		return canonicalASN(item)
 	}
 	return item, nil
 }
@@ -171,6 +176,8 @@ func edgeRuleListFits(kind string, field matchFieldKind) bool {
 		return field == fieldHost
 	case EdgeRuleListKindString:
 		return field == fieldPath || field == fieldHeader || field == fieldCookie || field == fieldQuery
+	case EdgeRuleListKindASN:
+		return field == fieldASN
 	}
 	return false
 }
@@ -232,4 +239,14 @@ func EdgeRuleMatchListRefs(expr *EdgeRuleMatchExpr) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// canonicalASN accepts "13335" or "AS13335" and returns the decimal form.
+func canonicalASN(v string) (string, error) {
+	digits := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(v), "AS"), "as")
+	n, err := strconv.ParseUint(digits, 10, 32)
+	if err != nil || n == 0 {
+		return "", fmt.Errorf("invalid ASN %q (use 13335 or AS13335)", v)
+	}
+	return strconv.FormatUint(n, 10), nil
 }

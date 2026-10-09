@@ -2304,7 +2304,7 @@ var cliCommands = []cliCommand{
 				"gregale edge-rule-lists create blocked --kind country --items-file countries.txt",
 				`gregale edge-rules create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
 			}, Flags: []cliFlag{
-				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string"}},
+				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string", "asn"}},
 				{Name: "item", Short: "list item (repeat)", Value: "VALUE"},
 				{Name: "items-file", Short: "file with one item per line (# comments allowed), or - for stdin", Value: "path|-"},
 				{Name: "description", Short: "free-text description", Value: "TEXT"},
@@ -2334,6 +2334,7 @@ var cliCommands = []cliCommand{
 				{Name: "method", Short: "request method (default GET)", Value: "method"},
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
+				{Name: "asn", Short: "simulated client autonomous system for asn conditions (e.g. AS13335)", Value: "AS"},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 				{Name: "proposal", Short: "compare against a proposed change: JSON {add,update,remove} file or - for stdin", Value: "file|-"},

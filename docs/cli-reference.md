@@ -5509,7 +5509,7 @@ Create a list
 
 | Flag | Meaning | |
 |---|---|---|
-| `--kind <KIND>` | list kind | required; one of `ip` · `country` · `host` · `string` |
+| `--kind <KIND>` | list kind | required; one of `ip` · `country` · `host` · `string` · `asn` |
 | `--item <VALUE>` | list item (repeat) |  |
 | `--items-file <path|->` | file with one item per line (# comments allowed), or - for stdin |  |
 | `--description <TEXT>` | free-text description |  |
@@ -5568,7 +5568,7 @@ List edge rules
 
 Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5578,6 +5578,7 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
+| `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 | `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |

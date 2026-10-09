@@ -26,7 +26,7 @@ func TestNormalizeEdgeRuleListItems(t *testing.T) {
 		{kind: "string", items: []string{"Bot/1.0", "bot/1.0"}, want: []string{"Bot/1.0", "bot/1.0"}},
 		{kind: "string", items: []string{""}, wantErr: "empty item"},
 		{kind: "string", items: []string{strings.Repeat("x", EdgeRuleMatchMaxValueBytes+1)}, wantErr: "longer than"},
-		{kind: "asn", items: []string{"1"}, wantErr: "unknown list kind"},
+		{kind: "regex", items: []string{"1"}, wantErr: "unknown list kind"},
 	}
 	for _, tc := range cases {
 		got, err := NormalizeEdgeRuleListItems(tc.kind, tc.items)

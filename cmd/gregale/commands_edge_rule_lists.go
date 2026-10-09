@@ -133,7 +133,7 @@ func readEdgeRuleListItems(path string) ([]string, error) {
 
 func cmdEdgeRuleListsCreate(args []string) int {
 	fs := newFlagSet("edge-rule-lists create", flag.ContinueOnError)
-	kind := fs.String("kind", "", "list kind: ip, country, host or string (required)")
+	kind := fs.String("kind", "", "list kind: ip, country, host, string or asn (required)")
 	description := fs.String("description", "", "free-text description")
 	var items multiFlag
 	fs.Var(&items, "item", "list item (repeat)")
@@ -141,7 +141,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	const usage = "<name> --kind ip|country|host|string [--item V]... [--items-file path|-] [--description D]"
+	const usage = "<name> --kind ip|country|host|string|asn [--item V]... [--items-file path|-] [--description D]"
 	name, ok := edgeRuleListNameArg(fs, "create", usage)
 	if !ok {
 		return 1
