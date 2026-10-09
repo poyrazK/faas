@@ -27128,8 +27128,8 @@ paths:
     get:
       tags: [events]
       operationId: getEventRecoveryHealth
-      summary: Inspect active recovery progress and expiry risk.
-      description: Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
+      summary: Inspect recovery admission and unresolved execution health.
+      description: Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs missing exact saved replay results, samples up to three, and marks partial counts as lower bounds. Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24 hours before the nominal 30-day job retention boundary. Reads do not capture results or notifications. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -27139,7 +27139,7 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Current active recovery health; terminal jobs are omitted.
+          description: Admission health and bounded unresolved execution observations.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventRecoveryHealth' }
@@ -47473,12 +47473,153 @@ components:
           type: string
           enum: [capacity, legacy_claim]
           description: Most recently recorded admission wait; cleared on tracked progress.
+    EventRecoveryExecutionHealth:
+      type: object
+      description: Oldest retained terminal admission jobs still missing exact saved execution
+        results. Counts overlap and are lower bounds when counts_complete is false. Reads
+        do not capture results or notifications.
+      required:
+      - coverage
+      - observed_jobs
+      - waiting_jobs
+      - prolonged_wait_jobs
+      - unknown_jobs
+      - retention_risk_jobs
+      - counts_complete
+      - job_limit
+      - wait_warning_seconds
+      - retention_warning_seconds
+      - jobs
+      properties:
+        coverage:
+          type: string
+          enum:
+          - bounded_retained_execution_jobs
+        observed_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+        waiting_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+        prolonged_wait_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+        unknown_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+        retention_risk_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+        counts_complete:
+          type: boolean
+        job_limit:
+          type: integer
+          enum:
+          - 50
+        wait_warning_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+        retention_warning_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+        jobs:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/EventRecoveryExecutionJobHealth'
+    EventRecoveryExecutionJobHealth:
+      type: object
+      description: Wait age starts at admission completion; prolonged waits do not assert
+        scheduler or handler failure. retain_until is the nominal job retention boundary.
+        Unknown includes admitted items without replay identity. Awaiting saved results
+        counts known terminal observations without saved confirmation.
+      required:
+      - job_id
+      - state
+      - status
+      - completed_at
+      - wait_age_seconds
+      - retain_until
+      - prolonged_wait
+      - retention_risk
+      - notification_pending
+      - queued_count
+      - untracked_count
+      - unknown_count
+      - unresolved_count
+      - awaiting_saved_results_count
+      - execution
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        parent_job_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - completed
+          - cancelled
+        status:
+          type: string
+          enum:
+          - waiting
+          - prolonged_wait
+          - unknown
+          - retention_risk
+        completed_at:
+          type: string
+          format: date-time
+        wait_age_seconds:
+          type: number
+          minimum: 0
+        retain_until:
+          type: string
+          format: date-time
+        prolonged_wait:
+          type: boolean
+        retention_risk:
+          type: boolean
+        notification_pending:
+          type: boolean
+        queued_count:
+          type: integer
+          format: int64
+          minimum: 0
+        untracked_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unknown_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unresolved_count:
+          type: integer
+          format: int64
+          minimum: 0
+        awaiting_saved_results_count:
+          type: integer
+          format: int64
+          minimum: 0
+        execution:
+          $ref: '#/components/schemas/EventRecoveryExecutionSummary'
     EventRecoveryHealth:
-      description: "Bounded application recovery health summary and sampled actionable jobs."
+      description: "Application admission health and bounded unresolved execution health with sampled actionable jobs."
       type: object
       additionalProperties: false
       required: [capacity_wait_warning_seconds, capacity_waiting_jobs, prolonged_capacity_wait_jobs, app_id, observed_at, stall_grace_seconds, expiry_warning_seconds, running_jobs, paused_jobs, stalled_jobs, expiring_jobs, paused_expiring_jobs, jobs]
       properties:
+        execution:
+          $ref: '#/components/schemas/EventRecoveryExecutionHealth'
         capacity_wait_warning_seconds: { type: integer, format: int64, minimum: 1 }
         capacity_waiting_jobs: { type: integer, format: int64, minimum: 0, description: Running capacity-wait jobs observed within the five-minute freshness grace. }
         prolonged_capacity_wait_jobs: { type: integer, format: int64, minimum: 0, description: Fresh running capacity episodes lasting at least fifteen minutes; excludes paused and expired jobs and scheduler stalls. }
@@ -52797,6 +52938,10 @@ components:
             - event_recovery_stalled_jobs
             - event_recovery_expiring_jobs
             - event_recovery_capacity_wait_jobs
+            - event_recovery_execution_waiting_jobs
+            - event_recovery_execution_prolonged_wait_jobs
+            - event_recovery_execution_unknown_jobs
+            - event_recovery_execution_retention_risk_jobs
             - event_retention_expiring_receipts
             - event_storage_utilization_pct
             - workflow_failures
@@ -52858,7 +53003,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -52898,7 +53043,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

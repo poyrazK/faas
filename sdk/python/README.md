@@ -386,3 +386,8 @@ retained child. Changed selections conflict, and the original audit reason wins.
 Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
 execution evidence is skipped at admission; newer replays are never substituted.
 See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+
+`get_event_recovery_health` includes optional execution health for the oldest
+retained unresolved terminal-admission jobs. `counts_complete=False` marks
+lower-bound counts; prolonged waits measure time since admission completion.
+See [execution recovery health](../../docs/adr/835-execution-recovery-health-alerts.md).

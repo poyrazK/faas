@@ -2392,9 +2392,37 @@ separately and do not contribute to stalled or running-expiry alert counts.
 
 Pending work within an hour of expiry, or already overdue for expiry cleanup,
 is flagged as expiring. Paused expiry risk remains visible separately. Terminal
-jobs are omitted from health; use recovery-list or recovery-status for them.
-Health describes recovery admission, while handler outcomes remain on status
-and items.
+jobs are omitted from the admission section; use recovery-list or recovery-status
+for their full details. The separate execution section describes unresolved
+handlers after admission finishes.
+
+The `execution` section inspects the oldest 50 retained execution jobs with
+completed/cancelled admission and missing exact saved replay results. It reports
+waiting jobs, waits lasting at least 15 minutes since admission completion,
+unknown evidence, and jobs within 24 hours of their nominal 30-day retention
+boundary. These counts overlap. A prolonged wait does not imply handler failure.
+Up to three oldest job diagnostics show queued/running/retrying handlers,
+untracked replay identities, unknown evidence, missing saved results and known
+terminal observations still awaiting saved confirmation. Historical jobs remain
+visible even when they cannot emit a new notification; `notification_pending`
+describes capture eligibility separately. Reads never capture results or send
+notifications. Fully saved and zero-admission jobs are excluded.
+
+`counts_complete=false` means the counts are lower bounds from the oldest 50
+jobs. Metadata selection may scan other retained items; the entire read has a
+five-second budget. A timeout yields a failed health read, not healthy counts.
+The retention boundary is nominal; cleanup may occur later.
+
+Four app-scoped, webhook-only alert metrics use this execution section:
+`event_recovery_execution_waiting_jobs`,
+`event_recovery_execution_prolonged_wait_jobs`,
+`event_recovery_execution_unknown_jobs`, and
+`event_recovery_execution_retention_risk_jobs`. Existing windows control evaluation
+cadence for these snapshot gauges. Partial counts can fire satisfied `gt`/`gte`
+thresholds, but cannot clear an alert; other partial comparisons degrade. Older
+servers lacking the section and failed reads also degrade. Configure rules using
+the existing alert tools; none are created automatically. See
+[ADR-835](adr/835-execution-recovery-health-alerts.md) for rollout and downgrade.
 
 The API is `GET /v1/apps/{slug}/event-recoveries/health`, requiring apps-read/admin
 scope and MFA. SDK clients expose Go `GetEventRecoveryHealth`, Node

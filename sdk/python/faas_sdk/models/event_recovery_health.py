@@ -7,7 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.event_recovery_execution_health import EventRecoveryExecutionHealth
     from ..models.event_recovery_job_health import EventRecoveryJobHealth
 
 
@@ -16,7 +19,7 @@ T = TypeVar("T", bound="EventRecoveryHealth")
 
 @_attrs_define
 class EventRecoveryHealth:
-    """Bounded application recovery health summary and sampled actionable jobs."""
+    """Application admission health and bounded unresolved execution health with sampled actionable jobs."""
 
     capacity_wait_warning_seconds: int
     capacity_waiting_jobs: int
@@ -35,6 +38,9 @@ class EventRecoveryHealth:
     """Running jobs with pending work approaching expiry; excludes paused jobs."""
     paused_expiring_jobs: int
     jobs: list[EventRecoveryJobHealth]
+    execution: EventRecoveryExecutionHealth | Unset = UNSET
+    """Oldest retained terminal admission jobs still missing exact saved execution results. Counts overlap and are
+    lower bounds when counts_complete is false. Reads do not capture results or notifications."""
 
     def to_dict(self) -> dict[str, Any]:
         capacity_wait_warning_seconds = self.capacity_wait_warning_seconds
@@ -66,6 +72,10 @@ class EventRecoveryHealth:
             jobs_item = jobs_item_data.to_dict()
             jobs.append(jobs_item)
 
+        execution: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.execution, Unset):
+            execution = self.execution.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -85,11 +95,14 @@ class EventRecoveryHealth:
                 "jobs": jobs,
             }
         )
+        if execution is not UNSET:
+            field_dict["execution"] = execution
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_recovery_execution_health import EventRecoveryExecutionHealth
         from ..models.event_recovery_job_health import EventRecoveryJobHealth
 
         d = dict(src_dict)
@@ -124,6 +137,13 @@ class EventRecoveryHealth:
 
             jobs.append(jobs_item)
 
+        _execution = d.pop("execution", UNSET)
+        execution: EventRecoveryExecutionHealth | Unset
+        if isinstance(_execution, Unset):
+            execution = UNSET
+        else:
+            execution = EventRecoveryExecutionHealth.from_dict(_execution)
+
         event_recovery_health = cls(
             capacity_wait_warning_seconds=capacity_wait_warning_seconds,
             capacity_waiting_jobs=capacity_waiting_jobs,
@@ -138,6 +158,7 @@ class EventRecoveryHealth:
             expiring_jobs=expiring_jobs,
             paused_expiring_jobs=paused_expiring_jobs,
             jobs=jobs,
+            execution=execution,
         )
 
         return event_recovery_health

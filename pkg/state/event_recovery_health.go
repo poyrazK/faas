@@ -77,6 +77,8 @@ func appendRecoveryHealth(out *api.EventRecoveryHealth, job api.EventRecoveryJob
 	out.Jobs = append(out.Jobs, job)
 }
 func (s *PgStore) GetEventRecoveryHealth(ctx context.Context, account, app string, now time.Time) (api.EventRecoveryHealth, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
 	out := recoveryHealthResponse(app, now)
 	if err := eventRecoveryIDs(account, app); err != nil {
 		return out, err
@@ -104,9 +106,15 @@ func (s *PgStore) GetEventRecoveryHealth(ctx context.Context, account, app strin
 		}
 		appendRecoveryHealth(&out, api.EventRecoveryJobHealth{JobID: uuidString(r.ID), Mode: selection.Mode, State: r.State, PendingCount: r.PendingCount, RatePerSecond: int(r.RatePerSecond), LastProgressAt: timestamptzToTimePtr(r.LastProgressAt), NextAttemptAt: timeFromPgtype(r.NextAttemptAt), ExpiresAt: timeFromPgtype(r.ExpiresAt), WaitReason: r.WaitReason, CapacityWait: recoveryCapacityWait(r.CapacityScope, timestamptzToTimePtr(r.CapacityWaitStartedAt), timestamptzToTimePtr(r.CapacityWaitObservedAt))}, timeFromPgtype(r.CreatedAt), timeFromPgtype(r.WindowStartedAt), int(r.WindowCount))
 	}
+	out.Execution, err = observeRecoveryExecutionHealth(ctx, q, tx, account, app, now)
+	if err != nil {
+		return out, err
+	}
 	return out, tx.Commit(ctx)
 }
 func (m *MemStore) GetEventRecoveryHealth(ctx context.Context, account, app string, now time.Time) (api.EventRecoveryHealth, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
 	out := recoveryHealthResponse(app, now)
 	if err := eventRecoveryIDs(account, app); err != nil {
 		return out, err
@@ -148,7 +156,9 @@ func (m *MemStore) GetEventRecoveryHealth(ctx context.Context, account, app stri
 		}
 		appendRecoveryHealth(&out, api.EventRecoveryJobHealth{JobID: entry.Job.ID, Mode: entry.Job.Selection.Mode, State: entry.Job.State, PendingCount: pending, RatePerSecond: entry.Job.RatePerSecond, LastProgressAt: progress, NextAttemptAt: entry.NextAttemptAt, ExpiresAt: entry.Job.ExpiresAt, WaitReason: entry.WaitReason, CapacityWait: recoveryCapacityWait(entry.CapacityScope, entry.CapacityWaitStartedAt, entry.CapacityWaitObservedAt)}, entry.Job.CreatedAt, entry.WindowStartedAt, entry.WindowCount)
 	}
-	return out, nil
+	var err error
+	out.Execution, err = m.recoveryExecutionHealthLocked(ctx, account, app, now)
+	return out, err
 }
 
 func recoveryCapacityWait(scope string, started, observed *time.Time) *api.EventRecoveryCapacityWait {

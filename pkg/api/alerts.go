@@ -112,6 +112,10 @@ var AllowedAlertRuleMetrics = []string{
 
 	"event_recovery_stalled_jobs",
 	"event_recovery_expiring_jobs",
+	"event_recovery_execution_waiting_jobs",
+	"event_recovery_execution_prolonged_wait_jobs",
+	"event_recovery_execution_unknown_jobs",
+	"event_recovery_execution_retention_risk_jobs",
 	"event_recovery_capacity_wait_jobs",
 	"event_pending_recipients",
 	"event_oldest_pending_seconds",

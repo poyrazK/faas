@@ -1009,6 +1009,12 @@ from .event_recovery_execution_finished_webhook_payload_state import EventRecove
 from .event_recovery_execution_finished_webhook_payload_unresolved_count import (
     EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount,
 )
+from .event_recovery_execution_health import EventRecoveryExecutionHealth
+from .event_recovery_execution_health_coverage import EventRecoveryExecutionHealthCoverage
+from .event_recovery_execution_health_job_limit import EventRecoveryExecutionHealthJobLimit
+from .event_recovery_execution_job_health import EventRecoveryExecutionJobHealth
+from .event_recovery_execution_job_health_state import EventRecoveryExecutionJobHealthState
+from .event_recovery_execution_job_health_status import EventRecoveryExecutionJobHealthStatus
 from .event_recovery_execution_source import EventRecoveryExecutionSource
 from .event_recovery_execution_state import EventRecoveryExecutionState
 from .event_recovery_execution_summary import EventRecoveryExecutionSummary
@@ -4024,6 +4030,12 @@ __all__ = (
     "EventRecoveryExecutionFinishedWebhookPayloadPendingCount",
     "EventRecoveryExecutionFinishedWebhookPayloadState",
     "EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount",
+    "EventRecoveryExecutionHealth",
+    "EventRecoveryExecutionHealthCoverage",
+    "EventRecoveryExecutionHealthJobLimit",
+    "EventRecoveryExecutionJobHealth",
+    "EventRecoveryExecutionJobHealthState",
+    "EventRecoveryExecutionJobHealthStatus",
     "EventRecoveryExecutionSource",
     "EventRecoveryExecutionState",
     "EventRecoveryExecutionSummary",

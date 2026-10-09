@@ -265,6 +265,70 @@ func (q *Queries) EventRecoveryEnqueueNotification(ctx context.Context, db DBTX,
 	return err
 }
 
+const eventRecoveryExecutionHealthJobs = `-- name: EventRecoveryExecutionHealthJobs :many
+SELECT j.id, j.completed_at, j.selection, j.state, j.execution_notification_captured,
+ (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued') AS queued_count
+FROM event_recovery_jobs j
+WHERE j.account_id=$1 AND j.app_id=$2
+ AND j.state IN ('completed','cancelled') AND j.selection->>'mode'='execution'
+ AND j.completed_at<=$3 AND j.execution_finished_at IS NULL
+ AND EXISTS (
+ SELECT 1 FROM event_recovery_items i
+ LEFT JOIN event_recovery_execution_results r ON r.job_id=i.job_id AND r.position=i.position
+ AND r.replay_invocation_id=i.replay_invocation_id AND r.replay_generation=i.replay_generation
+ AND r.replay_created_at=i.replay_created_at AND r.recorded_at<=$3
+ WHERE i.job_id=j.id AND i.state='queued' AND r.job_id IS NULL)
+ORDER BY j.completed_at,j.id LIMIT $4
+`
+
+type EventRecoveryExecutionHealthJobsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	NowAt     pgtype.Timestamptz
+	JobLimit  int32
+}
+
+type EventRecoveryExecutionHealthJobsRow struct {
+	ID                            pgtype.UUID
+	CompletedAt                   pgtype.Timestamptz
+	Selection                     []byte
+	State                         string
+	ExecutionNotificationCaptured bool
+	QueuedCount                   int64
+}
+
+func (q *Queries) EventRecoveryExecutionHealthJobs(ctx context.Context, db DBTX, arg EventRecoveryExecutionHealthJobsParams) ([]EventRecoveryExecutionHealthJobsRow, error) {
+	rows, err := db.Query(ctx, eventRecoveryExecutionHealthJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.NowAt,
+		arg.JobLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRecoveryExecutionHealthJobsRow{}
+	for rows.Next() {
+		var i EventRecoveryExecutionHealthJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompletedAt,
+			&i.Selection,
+			&i.State,
+			&i.ExecutionNotificationCaptured,
+			&i.QueuedCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRecoveryExecutionObservations = `-- name: EventRecoveryExecutionObservations :many
 SELECT item.position,
  coalesce(result.state,'')::text AS result_state,coalesce(result.attempts,0)::integer AS result_attempts,

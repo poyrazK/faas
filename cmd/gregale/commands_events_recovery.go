@@ -363,6 +363,15 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "  Capacity: %s | gate: %s | since: %s | last observed: %s | age: %.0fs\n  %s\n", oneLine(wait.Scope), oneLine(wait.Gate), wait.StartedAt.Format(time.RFC3339), wait.ObservedAt.Format(time.RFC3339), wait.AgeSeconds, oneLine(wait.Explanation))
 		}
 	}
+	if execution := out.Execution; execution != nil {
+		_, _ = fmt.Fprintf(osStdout, "Execution waiting: %d | prolonged waits: %d | unknown evidence: %d | retention risk: %d | observed: %d\n", execution.WaitingJobs, execution.ProlongedWaitJobs, execution.UnknownJobs, execution.RetentionRiskJobs, execution.ObservedJobs)
+		if !execution.CountsComplete {
+			_, _ = fmt.Fprintf(osStdout, "Partial counts: oldest %d unresolved jobs; counts are lower bounds.\n", execution.JobLimit)
+		}
+		for _, job := range execution.Jobs {
+			_, _ = fmt.Fprintf(osStdout, "%s | %s | waiting %.0fs | queued/running/retrying: %d/%d/%d | unknown: %d | missing saved results: %d | retain until: %s | notification pending: %t\n", oneLine(job.JobID), oneLine(job.Status), job.WaitAgeSeconds, job.Execution.Queued, job.Execution.Running, job.Execution.Retrying, job.UnknownCount, job.UnresolvedCount, job.RetainUntil.Format(time.RFC3339), job.NotificationPending)
+		}
+	}
 	return 0
 }
 

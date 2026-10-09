@@ -1674,9 +1674,9 @@ export class EventsService {
     });
   }
   /**
-   * Inspect active recovery progress and expiry risk.
-   * Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
-   * @returns EventRecoveryHealth Current active recovery health; terminal jobs are omitted.
+   * Inspect recovery admission and unresolved execution health.
+   * Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs missing exact saved replay results, samples up to three, and marks partial counts as lower bounds. Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24 hours before the nominal 30-day job retention boundary. Reads do not capture results or notifications. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
+   * @returns EventRecoveryHealth Admission health and bounded unresolved execution observations.
    * @throws ApiError
    */
   public static getEventRecoveryHealth({

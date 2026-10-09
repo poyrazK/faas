@@ -9415,3 +9415,10 @@ const (
 
 // Recheck unresolved execution recovery jobs without scanning retained history on every tick.
 const EventRecoveryExecutionNotificationPollInterval = 10 * time.Second
+
+const (
+	EventRecoveryExecutionHealthJobsMax    = 50
+	EventRecoveryExecutionHealthSampleMax  = 3
+	EventRecoveryExecutionWaitWarning      = 15 * time.Minute
+	EventRecoveryExecutionRetentionWarning = 24 * time.Hour
+)

@@ -348,3 +348,18 @@ WHERE parent.id=sqlc.arg(parent_job_id)::uuid AND parent.account_id=sqlc.arg(acc
  AND (sqlc.arg(event_type)::text='' OR item.event_type=sqlc.arg(event_type)::text)
  AND coalesce(result.completed_at,result.recorded_at)<=sqlc.arg(failed_before)::timestamptz
 ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventRecoveryExecutionHealthJobs :many
+SELECT j.id, j.completed_at, j.selection, j.state, j.execution_notification_captured,
+ (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued') AS queued_count
+FROM event_recovery_jobs j
+WHERE j.account_id=sqlc.arg(account_id) AND j.app_id=sqlc.arg(app_id)
+ AND j.state IN ('completed','cancelled') AND j.selection->>'mode'='execution'
+ AND j.completed_at<=sqlc.arg(now_at) AND j.execution_finished_at IS NULL
+ AND EXISTS (
+ SELECT 1 FROM event_recovery_items i
+ LEFT JOIN event_recovery_execution_results r ON r.job_id=i.job_id AND r.position=i.position
+ AND r.replay_invocation_id=i.replay_invocation_id AND r.replay_generation=i.replay_generation
+ AND r.replay_created_at=i.replay_created_at AND r.recorded_at<=sqlc.arg(now_at)
+ WHERE i.job_id=j.id AND i.state='queued' AND r.job_id IS NULL)
+ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit);

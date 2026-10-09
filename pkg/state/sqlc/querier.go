@@ -624,6 +624,7 @@ type Querier interface {
 	EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRecoveryCreateParams) (pgtype.UUID, error)
 	EventRecoveryDeferExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryDeferExecutionNotificationParams) error
 	EventRecoveryEnqueueNotification(ctx context.Context, db DBTX, arg EventRecoveryEnqueueNotificationParams) error
+	EventRecoveryExecutionHealthJobs(ctx context.Context, db DBTX, arg EventRecoveryExecutionHealthJobsParams) ([]EventRecoveryExecutionHealthJobsRow, error)
 	// Exact replay identity and generation, never the latest descendant's outcome.
 	EventRecoveryExecutionObservations(ctx context.Context, db DBTX, arg EventRecoveryExecutionObservationsParams) ([]EventRecoveryExecutionObservationsRow, error)
 	EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecoveryGetParams) (EventRecoveryGetRow, error)
