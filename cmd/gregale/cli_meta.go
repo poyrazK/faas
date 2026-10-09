@@ -1352,7 +1352,9 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}},
 			{Name: "run", Short: "Fire one cron immediately", Positionals: []string{"<cron-id>"}},
 			{Name: "fire-now", Short: "Show the status of a manual fire request", Positionals: []string{"<request-id>"}},
-			{Name: "runs", Short: "Show execution history", Positionals: []string{"<id>"}, Flags: []cliFlag{
+			{Name: "runs", Short: "Show execution history", Positionals: []string{"[<id>]"}, Examples: []string{"gregale crons runs --app my-api --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose a task, browse runs, and inspect command output", Bool: true},
+				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
 				{Name: "before", Short: "pagination cursor for older runs", Value: "CURSOR"},
 				{Name: "limit", Short: "max runs to show (1..100)", Value: "N"},
 				{Name: "run", Short: "show details and captured output for one command run", Value: "TASK-ID"},

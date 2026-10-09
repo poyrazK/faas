@@ -323,6 +323,28 @@ during review. An equivalent command is printed for reuse. `--app` is accepted
 only in interactive mode; scripts and advanced settings continue to use
 `gregale crons update ID` with explicit update flags.
 
+## Browse scheduled-task history
+
+```sh
+gregale crons runs --app my-api --interactive
+# Use the linked app, or choose one:
+gregale crons runs --interactive
+```
+
+Choose an HTTP or command task, then select a recent run to inspect its outcome,
+duration, and failure text. Command runs also show captured stdout/stderr,
+retry information, and output truncation when available. The guide returns to
+the run picker after displaying details. Choose **Show older runs** to browse
+the next page or **Done** to exit. An equivalent command is printed for each
+page and selected command run.
+
+The history API returns ten rows per page without an explicit next cursor.
+A full page offers older runs; the next page may be empty. The browser detects
+repeated cursors and bounds page traversal. Only `--app` can accompany
+`--interactive`; for scripts or JSON, use `gregale crons runs ID` with
+`--before`, `--limit`, or `--run` as appropriate. The guide reads history without
+firing or canceling tasks.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

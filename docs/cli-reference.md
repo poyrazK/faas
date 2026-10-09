@@ -3336,13 +3336,21 @@ Show the status of a manual fire request
 
 Show execution history
 
-`gregale crons runs [--before <CURSOR>] [--limit <N>] [--run <TASK-ID>] <id>`
+`gregale crons runs [--interactive] [--app <SLUG>] [--before <CURSOR>] [--limit <N>] [--run <TASK-ID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a task, browse runs, and inspect command output |  |
+| `--app <SLUG>` | app slug for interactive selection (linked app or picker by default) |  |
 | `--before <CURSOR>` | pagination cursor for older runs |  |
 | `--limit <N>` | max runs to show (1..100) |  |
 | `--run <TASK-ID>` | show details and captured output for one command run |  |
+
+Examples:
+
+```sh
+gregale crons runs --app my-api --interactive
+```
 
 ### crons occurrences
 
