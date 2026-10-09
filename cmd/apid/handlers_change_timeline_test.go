@@ -192,3 +192,65 @@ func TestAppChangeTimeline_CapsNewestEvents(t *testing.T) {
 		t.Fatalf("newest event = %v, want the most recent row kept", out.Events[0].At)
 	}
 }
+
+func renderAppChangesPage(t *testing.T, e testEnv, slug, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/"+slug+"/changes"+query, nil)
+	r.SetPathValue("slug", slug)
+	r = r.WithContext(WithAccount(r.Context(), e.acct))
+	rec := httptest.NewRecorder()
+	e.s.renderAppChangesDashboard(rec, r)
+	return rec
+}
+
+func TestAppChangesDashboard_RendersMarkersAndTable(t *testing.T) {
+	e := changeTimelineEnv(t)
+	ctx := context.Background()
+	app := createApp(t, e, "shop")
+	dep, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeploymentStatus("active")})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	if _, err := e.store.AppendDeploymentAudit(ctx, state.DeploymentAudit{DeploymentID: uuid.MustParse(dep.ID), Kind: "deploy.rolled_back", Actor: "system", At: time.Now().UTC().Add(-2 * time.Hour)}); err != nil {
+		t.Fatalf("append audit: %v", err)
+	}
+
+	rec := renderAppChangesPage(t, e, "shop", "?range=7d")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"<strong>7d</strong>",
+		"Metrics are unavailable right now",
+		`<line x1=`,
+		"Rollback recorded for deployment " + shortChangeID(dep.ID),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
+func TestAppChangesDashboard_DisabledAndForeign(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	createApp(t, e, "shop")
+	if body := renderAppChangesPage(t, e, "shop", "").Body.String(); !strings.Contains(body, "not enabled for this deployment") {
+		t.Fatalf("disabled page should say so:\n%s", body)
+	}
+	foreign, _ := mustCreateAccount(t, e.store, "changes-dashboard-foreign", api.PlanHobby)
+	mustSeedAppFor(t, e.store, foreign.ID, "foreign-shop")
+	if rec := renderAppChangesPage(t, e, "foreign-shop", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("foreign app page = %d, want 404", rec.Code)
+	}
+}
+
+// adr: 741 — the dashboard route sits behind the session chain like its peers.
+func TestAppChangesDashboard_RequiresSession(t *testing.T) {
+	e := changeTimelineEnv(t)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/apps/shop/changes", nil))
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), loginPath) {
+		t.Fatalf("unauthenticated GET = %d %q, want redirect to %s", rec.Code, rec.Header().Get("Location"), loginPath)
+	}
+}

@@ -14,6 +14,7 @@
     {"path": "build/source", "source": "docs/deploys.md"},
     {"path": "build/source-ref", "source": "docs/source-ref.md"},
     {"path": "builds", "source": "docs/build.md"},
+    {"path": "change-timeline", "source": "docs/change-timeline.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},

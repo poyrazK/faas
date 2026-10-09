@@ -1051,6 +1051,13 @@ var cliCommands = []cliCommand{
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
 			{Name: subHealth, Short: "Explain default-scope serving health and missing evidence"},
+			{Name: subChanges, Short: "List recorded changes and health transitions, newest first (ADR-741)", Examples: []string{
+				"gregale app my-api changes",
+				"gregale app my-api changes --since 2026-10-08T12:00:00Z --json",
+			}, Flags: []cliFlag{
+				{Name: "since", Short: "window start, RFC3339 (default: 24h before until)", Value: "RFC3339"},
+				{Name: "until", Short: "window end, RFC3339 (default: now)", Value: "RFC3339"},
+			}},
 			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
 				"gregale app my-api scale --plan --ram 512 --out scale-change.json",
 				"gregale app my-api scale --apply scale-change.json --confirm",
