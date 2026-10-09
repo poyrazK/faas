@@ -932,6 +932,27 @@ open state, and cleared resolution and suppression are checked before reporting
 success. A profile-aware inspection command is printed afterward. For scripts,
 use `issues reopen ISSUE_ID --app APP`.
 
+## Assign an issue interactively
+
+```sh
+gregale issues assign --app my-api --interactive
+# Use the linked app, or choose one:
+gregale issues assign --interactive
+```
+
+Choose an open issue by title, then choose **Assign to me** or **Unassign**.
+Assign to me reads the authenticated account identity. Review the current owner
+and proposed owner before confirming. If ownership already matches, the command
+exits without a write.
+
+The CLI rereads the issue after confirmation and stops if it changed. This
+client-side check is not an atomic server lock. The server enforces assignment
+permissions. The returned issue identity, state, and owner are checked before
+reporting success, followed by a profile-aware inspection command. For scripts
+or assignment to another account, use
+`issues assign ISSUE_ID --app APP --assignee ACCOUNT_ID`; omit `--assignee` to
+unassign.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

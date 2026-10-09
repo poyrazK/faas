@@ -6930,12 +6930,19 @@ gregale issues get --app my-api --interactive
 
 Assign an issue to an account
 
-`gregale issues assign --app <SLUG> [--assignee <UUID>] <issue-id>`
+`gregale issues assign --app <SLUG> [--interactive] [--assignee <UUID>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--interactive` | choose an open issue, assign to yourself or unassign, and confirm ownership |  |
 | `--assignee <UUID>` | owner account UUID (empty unassigns) |  |
+
+Examples:
+
+```sh
+gregale issues assign --app my-api --interactive
+```
 
 ### issues resolve
 
