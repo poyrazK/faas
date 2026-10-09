@@ -1,22 +1,25 @@
 //go:build metal
 
 // guest_tracing_metal_test.go — ADR-829 native acceptance for zero-config
-// in-guest tracing. A scratch image whose server has an OpenTelemetry SDK
-// compiled in, but no tracing configuration of its own, is deployed with
-// `tracing.enabled`. One request through the gateway must produce a debugger
-// request whose spans include the app's "SELECT orders" client span, proving
-// the whole path inside a real Firecracker guest:
+// in-guest tracing. Each scenario deploys an app with `tracing.enabled`,
+// wakes it from its init snapshot with one request carrying an unsampled
+// traceparent, and requires the app's span on the debugger evidence:
 //
 //	guest-init env stamping → 127.0.0.1:4318 bridge → vsock 1041 → vmmd
 //	broker (host-owned identity) → apid IngestGuestSpans → accumulator flush
 //	→ request_telemetry.spans_summary → GET /v1/apps/{slug}/debug/requests/{id}/evidence
 //
-// The inbound traceparent is deliberately unsampled: guest-init's default
-// sampler must not let the gateway's head sampling suppress the app's spans.
+// TestGuestTracingMetal uses an app with an OTel SDK compiled in and no
+// tracing configuration. TestGuestTracingNodePreloadMetal uses a plain Node
+// app with no tracing code at all: guest-init's NODE_OPTIONS preload of the
+// pinned auto-instrumentation must produce its HTTP client span, which the
+// debugger classifies as an app_dependency.
 //
 // Build tag: metal. Requires /dev/kvm + root, FAAS_TEST_KERNEL and
 // FAAS_BUILDER_BASE_PATH. On hosts without a matching Go toolchain set
-// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY.
+// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY; the Node
+// scenario needs FAAS_E2E_NODE_TRACING_IMAGE_DIR (a prebuilt node:22-alpine
+// image with /opt/gregale/tracing, see e2etest.PrebuiltImage).
 
 package e2e_test
 
@@ -36,8 +39,57 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+type guestTracingScenario struct {
+	slug string
+	// addImage registers the app image with the fake registry and returns
+	// its digest-pinned reference.
+	addImage func(*e2etest.FakeRegistry) string
+	// respPrefix is the expected start of the woken app's response body.
+	respPrefix string
+	// evidenceOK reports whether the request evidence shows the app's span.
+	evidenceOK func(detail string) bool
+}
+
 // adr: 829 — in-guest spans reach the debugger with no app tracing config.
 func TestGuestTracingMetal(t *testing.T) {
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _ := e2etest.TracingImage("library/guest-tracing")
+			return registry.AddImage("library/guest-tracing", image)
+		},
+		respPrefix: "traced ",
+		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+	})
+}
+
+// adr: 829 — the Node preload instruments an app that has no tracing code.
+func TestGuestTracingNodePreloadMetal(t *testing.T) {
+	dir := os.Getenv("FAAS_E2E_NODE_TRACING_IMAGE_DIR")
+	if dir == "" {
+		t.Skip("FAAS_E2E_NODE_TRACING_IMAGE_DIR unset; skipping Node preload acceptance")
+	}
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-node",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _, err := e2etest.PrebuiltImage("library/guest-tracing-node", dir)
+			if err != nil {
+				t.Fatalf("prebuilt Node image: %v", err)
+			}
+			return registry.AddImage("library/guest-tracing-node", image)
+		},
+		// The fixture echoes FAAS_TRACING_ENABLED, proving guest-init stamped
+		// the preload environment for this process.
+		respPrefix: "preloaded 1",
+		evidenceOK: func(detail string) bool {
+			return strings.Contains(detail, `"dependency_type":"app_dependency"`) &&
+				strings.Contains(detail, `"dependency_kind":"http"`)
+		},
+	})
+}
+
+func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
+	t.Helper()
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping guest tracing acceptance")
 	}
@@ -69,8 +121,8 @@ func TestGuestTracingMetal(t *testing.T) {
 		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET=" + filepath.Join(telemetryDir, "spans.sock"),
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request-telemetry.sock"),
-		// Flush spans after the gateway's 5s request-row publisher so the
-		// UPDATE finds the row.
+		// Flush spans after the gateway's 5s request-row publisher; a span
+		// that still beats its row is retried (no_row) on the next flush.
 		"FAAS_OTEL_FLUSH_INTERVAL=10s",
 	}
 
@@ -78,7 +130,7 @@ func TestGuestTracingMetal(t *testing.T) {
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
-	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "guest-tracing")
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sc.slug)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
@@ -90,25 +142,23 @@ func TestGuestTracingMetal(t *testing.T) {
 	})
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
-	const slug = "guest-tracing"
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{
-		Slug: slug, Type: "app", RequireAuthn: &falsy,
+		Slug: sc.slug, Type: "app", RequireAuthn: &falsy,
 		Tracing: &api.TracingConfig{Enabled: true},
 	}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
-	appID := mustGetAppID(t, h, key, slug)
+	appID := mustGetAppID(t, h, key, sc.slug)
 
-	image, _ := e2etest.TracingImage("library/guest-tracing")
-	ref := registry.AddImage("library/guest-tracing", image)
-	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/deployments", api.CreateDeploymentRequest{Image: ref})
+	ref := sc.addImage(registry)
+	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+sc.slug+"/deployments", api.CreateDeploymentRequest{Image: ref})
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	// The fixture is a 14 MB full-rootfs image; imaging plus the layer scan
-	// takes well over a minute on a small acceptance host.
+	// Fixtures are full-rootfs images; imaging plus the layer scan takes well
+	// over a minute on a small acceptance host.
 	deployCtx, deployCancel := context.WithTimeout(context.Background(), 320*time.Second)
 	defer deployCancel()
 	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 300*time.Second); err != nil {
@@ -131,9 +181,9 @@ func TestGuestTracingMetal(t *testing.T) {
 	)
 	wakeDeadline := time.Now().Add(120 * time.Second)
 	for {
-		headers, respBody, respStatus = doReqHeaders(t, h, slug+".apps.test.example", http.MethodGet, "/checkout", nil,
+		headers, respBody, respStatus = doReqHeaders(t, h, sc.slug+".apps.test.example", http.MethodGet, "/checkout", nil,
 			map[string]string{"Authorization": "Bearer " + key, "Traceparent": "00-" + traceID + "-00f067aa0ba902b7-00"})
-		if respStatus == http.StatusOK && strings.HasPrefix(string(respBody), "traced ") {
+		if respStatus == http.StatusOK && strings.HasPrefix(string(respBody), sc.respPrefix) {
 			break
 		}
 		if time.Now().After(wakeDeadline) {
@@ -143,10 +193,7 @@ func TestGuestTracingMetal(t *testing.T) {
 	}
 	gotTrace := headers.Get(api.TraceIDHeader)
 	if gotTrace == "" {
-		gotTrace = strings.TrimSpace(strings.TrimPrefix(string(respBody), "traced "))
-	}
-	if gotTrace != traceID {
-		t.Logf("gateway continued trace %q (sent %q); matching on the gateway trace", gotTrace, traceID)
+		gotTrace = traceID
 	}
 	// The request woke a live instance. Park it before the harness stops so
 	// no Firecracker process outlives the test (cleanups run in LIFO order,
@@ -154,7 +201,7 @@ func TestGuestTracingMetal(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cleanupCancel()
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+sc.slug+"/park", nil); status != http.StatusNoContent {
 			t.Errorf("cleanup park: status=%d", status)
 			return
 		}
@@ -166,7 +213,7 @@ func TestGuestTracingMetal(t *testing.T) {
 	deadline := time.Now().Add(90 * time.Second)
 	var lastDetail string
 	for time.Now().Before(deadline) {
-		listBody, listStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/debug/requests", nil)
+		listBody, listStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+sc.slug+"/debug/requests", nil)
 		if listStatus == http.StatusOK {
 			var list api.DebugTelemetryListResponse
 			if err := json.Unmarshal(listBody, &list); err != nil {
@@ -176,9 +223,9 @@ func TestGuestTracingMetal(t *testing.T) {
 				if item.TraceID == nil || *item.TraceID != gotTrace {
 					continue
 				}
-				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/debug/requests/"+item.ID+"/evidence", nil)
+				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+sc.slug+"/debug/requests/"+item.ID+"/evidence", nil)
 				lastDetail = string(detail)
-				if detailStatus == http.StatusOK && strings.Contains(lastDetail, "SELECT orders") {
+				if detailStatus == http.StatusOK && sc.evidenceOK(lastDetail) {
 					return
 				}
 			}

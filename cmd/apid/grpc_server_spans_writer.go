@@ -50,6 +50,8 @@ const (
 	swOutcomeRateLimited     = "rate_limited"
 	swOutcomeValidationError = "validation_error"
 	swOutcomeDBError         = "db_error"
+	// swOutcomeNoRow: the request_telemetry row is not written yet.
+	swOutcomeNoRow = "no_row"
 )
 
 // traceIDPattern is the W3C trace-id regex — 32 lowercase hex
@@ -189,6 +191,12 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 		// db_error so an operator chasing a Postgres
 		// failover drill doesn't get misled by client-side
 		// shape drift.
+		// ADR-829: spans that arrive before their request row are
+		// retryable, not delivered; producers keep them for the next flush.
+		if errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+			r.observe(swOutcomeNoRow)
+			return &apidpb.WriteSpansSummaryResponse{Outcome: swOutcomeNoRow}, nil
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
 			r.observe(swOutcomeValidationError)

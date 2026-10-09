@@ -162,9 +162,19 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			}
 		}
 
-		// Store in the pending map; the next loop writes it.
+		// Store in the pending map; the next loop writes it. A
+		// trace still pending (for example waiting for its
+		// request row) keeps its earlier spans: new spans are
+		// merged, not substituted, then re-bounded below the
+		// same per-trace cap. The writer dedupes by span identity.
 		if existing, ok := pending[traceID]; ok {
-			existing.summary = spans
+			existing.summary = append(existing.summary, spans...)
+			if cfg.MaxSpansPerTrace != nil {
+				if max := cfg.MaxSpansPerTrace(planFromAccountID(accountID)); max > 0 && len(existing.summary) > max {
+					sortSpansByDurationDesc(existing.summary)
+					existing.summary = existing.summary[:max]
+				}
+			}
 			existing.accountID = accountID
 		} else {
 			pending[traceID] = &pendingEntry{
@@ -213,6 +223,12 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 				"trace_id", traceID, "retry_after_ms", retryAfterMs)
 			delete(pending, traceID)
 		case outcome == "db_error":
+			entry.retries++
+		case outcome == "no_row":
+			// ADR-829: the request_telemetry row is published on
+			// its own cadence and may land after the spans. Keep
+			// the entry and retry on the next tick, bounded by
+			// MaxRetries like any transient failure.
 			entry.retries++
 		default:
 			// Unknown outcome → drop to avoid wedging the

@@ -64995,7 +64995,7 @@ func (q *Queries) UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
-const updateSpansSummary = `-- name: UpdateSpansSummary :exec
+const updateSpansSummary = `-- name: UpdateSpansSummary :execrows
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -65061,9 +65061,12 @@ type UpdateSpansSummaryParams struct {
 // lookup still hits request_telemetry_trace_idx for the trace_id
 // selectivity; the residual account_id check is a post-fetch
 // row-level filter (one row, microseconds).
-func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error {
-	_, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
-	return err
+func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateTenantWorkflowScheduleLastAdmittedAt = `-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows

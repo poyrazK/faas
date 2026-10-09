@@ -3895,7 +3895,7 @@ SELECT DISTINCT app_id
 FROM request_telemetry
 WHERE received_at > now() - $1::interval;
 
--- name: UpdateSpansSummary :exec
+-- name: UpdateSpansSummary :execrows
 -- ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 -- OTLP/HTTP handler coalesces incoming batches for the same trace_id
 -- in-process (pkg/gateway/spans_accumulator.go) and flushes the
