@@ -39,6 +39,10 @@ class CreateAlertRuleRequest:
     name: str
     metric: CreateAlertRuleRequestMetric
     comparison: CreateAlertRuleRequestComparison
+    """above_baseline and below_baseline (ADR-744, preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the
+    median of the same metric at the same time of day over the previous 7 days; threshold is then a multiplier
+    (1.5-20 above, 0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct
+    and request_count (below_baseline: request_count only)."""
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
     webhook_url: str

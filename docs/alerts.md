@@ -48,6 +48,44 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Alert on unusual values
+
+A fixed threshold has to be chosen in advance: 1% errors is an emergency for
+one app and a normal day for another. A baseline rule instead compares a metric
+with its usual value for that app at the same time of day, so you can alert on
+"three times the normal error rate" without picking a number.
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app my-api --name errors-unusual \
+  --metric error_rate_pct --comparison above_baseline --threshold 3 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+# Traffic dropped to under a third of normal, for example a broken client release.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app my-api --name traffic-drop \
+  --metric request_count --comparison below_baseline --threshold 0.3 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The usual value is the median of the same metric, over the same window length,
+at the same time of day on each of the previous seven days. With
+`above_baseline` the threshold is a multiplier from 1.5 to 20; with
+`below_baseline` (request count only) it is a fraction from 0.05 to 0.67.
+Supported metrics are `error_rate_pct`, `latency_p95_ms`, `latency_p99_ms`,
+`cold_start_pct`, and `request_count`.
+
+To avoid alerts on tiny numbers, a baseline rule does not fire when:
+
+- the window had fewer than 50 requests;
+- the value is below a sensible minimum (1% errors, 50 ms latency, 5% cold
+  starts) even if it is several times the usual value;
+- the usual value is zero;
+- fewer than five of the previous seven days had traffic, for example for a new
+  app. The rule shows as unknown until enough history exists.
+
+The webhook payload adds `baseline` (the usual value), `baseline_days`, and
+`ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
+preview (ADR-744) and must be enabled for your deployment.
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable

@@ -166,6 +166,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.anomalyAlertsGate(req.Comparison); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// FailureSource family check: failed_invocations needs a
 	// non-empty failure_source; every other metric needs empty.
 	// Mirrors the DB alert_rules_failure_source_xor_chk constraint.
@@ -399,6 +403,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// shape, not just the partial request.
 	merged := alertRuleRowForValidation(row, req)
 	if prob := validateAlertRuleRowUpdate(merged); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.anomalyAlertsGate(string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -776,6 +784,16 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // trimmed name. The same trim-non-empty check is mirrored on the
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
+// anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
+// operator enables FAAS_ANOMALY_ALERTS_ENABLED.
+func (s *server) anomalyAlertsGate(comparison string) *api.Problem {
+	if api.IsAnomalyAlertComparison(comparison) && !s.anomalyAlertsEnabled {
+		return api.NewProblem(http.StatusServiceUnavailable, "anomaly_alerts_unavailable",
+			"Anomaly alerts unavailable", "baseline comparisons are not enabled for this deployment")
+	}
+	return nil
+}
+
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if p := validateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
 		return p
@@ -786,8 +804,13 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if !api.AllowedAlertRuleMetric(req.Metric) {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("metric must be one of error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, %s", alertRuleMetricFailedInvocations))
 	}
-	if !api.AllowedAlertRuleComparison(req.Comparison) {
-		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte")
+	if api.IsAnomalyAlertComparison(req.Comparison) {
+		// Create routes are app-scoped by path (ADR-744 requires it).
+		if reason := api.ValidateAnomalyAlertRule(req.Metric, req.Comparison, req.Threshold, true); reason != "" {
+			return api.ErrAlertRuleInvalid(reason)
+		}
+	} else if !api.AllowedAlertRuleComparison(req.Comparison) {
+		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte, above_baseline, below_baseline")
 	}
 	if !api.AllowedAlertRuleWindowSpec(req.WindowSpec) {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")
@@ -855,8 +878,12 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if !api.AllowedAlertRuleMetric(string(merged.Metric)) {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("metric must be one of error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, %s", alertRuleMetricFailedInvocations))
 	}
-	if !api.AllowedAlertRuleComparison(string(merged.Comparison)) {
-		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte")
+	if api.IsAnomalyAlertComparison(string(merged.Comparison)) {
+		if reason := api.ValidateAnomalyAlertRule(string(merged.Metric), string(merged.Comparison), merged.Threshold, merged.AppID != ""); reason != "" {
+			return api.ErrAlertRuleInvalid(reason)
+		}
+	} else if !api.AllowedAlertRuleComparison(string(merged.Comparison)) {
+		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte, above_baseline, below_baseline")
 	}
 	if !api.AllowedAlertRuleWindowSpec(string(merged.WindowSpec)) {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")

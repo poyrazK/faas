@@ -179,6 +179,9 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+
+	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
+	anomaly anomalyState
 }
 
 // SetActionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) swaps
@@ -464,7 +467,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule))
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule), e.anomalyPayload(rule, observed))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -721,6 +724,9 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
+		return e.observeAnomaly(ctx, rule)
+	}
 	if api.IsEventRecoveryAlertMetric(string(rule.Metric)) {
 		return e.observeEventRecovery(ctx, rule)
 	}
@@ -1040,7 +1046,7 @@ func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.Al
 	}
 }
 
-func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([]byte, map[string]any, error) {
+func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths, extra map[string]any) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -1060,6 +1066,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
 		m["dashboard_path"] = paths.dashboard
+	}
+	for k, v := range extra { // ADR-744 baseline fields
+		m[k] = v
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

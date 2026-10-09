@@ -1452,6 +1452,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithBillingMode(billingMode)
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
+	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
 	if srv.devBridgeURL == "" {
 		srv.devBridgeURL = "http://127.0.0.1:9098"

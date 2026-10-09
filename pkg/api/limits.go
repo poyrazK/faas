@@ -9408,3 +9408,28 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
+// with the median of its value at the same time of day over the previous
+// AnomalyBaselineDays days.
+const (
+	AnomalyBaselineDays       = 7
+	AnomalyBaselineMinDays    = 5
+	AnomalyBaselineCacheTTL   = time.Hour
+	AnomalyAlertMinRequests   = 50
+	AnomalyAboveMultiplierMin = 1.5
+	AnomalyAboveMultiplierMax = 20.0
+	AnomalyBelowMultiplierMin = 0.05
+	AnomalyBelowMultiplierMax = 0.67
+)
+
+// AnomalyAlertMetrics are the request metrics that support baseline
+// comparisons, mapped to the absolute floor an above_baseline value must also
+// clear so ratios on tiny numbers never fire.
+var AnomalyAlertMetrics = map[string]float64{
+	"error_rate_pct": 1.0,  // percent
+	"latency_p95_ms": 50.0, // milliseconds
+	"latency_p99_ms": 50.0,
+	"cold_start_pct": 5.0,
+	"request_count":  AnomalyAlertMinRequests,
+}

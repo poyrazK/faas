@@ -46,8 +46,9 @@
   - **Payload:** the webhook adds `baseline`, `baseline_days`, and `ratio` to
     the existing observed value, so a receiver can say "error rate 4.2%, usual
     1.1% (3.8×)".
-  - **Preset:** `error_rate_anomaly` (error rate at least 3× usual over 15
-    minutes) joins the preset catalog, behind the same flag.
+  - **Preset:** an `error_rate_anomaly` preset (error rate at least 3× usual
+    over 15 minutes) is a follow-up; presets are seeded by migration and gated
+    by plan, so it lands once the comparison itself has run in preview.
   - **Schema:** only the `alert_rules_comparison_chk` constraint widens.
 - **Rejected alternatives:**
   - *Standard-deviation (z-score) bands.* Request metrics are heavy-tailed and

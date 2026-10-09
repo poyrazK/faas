@@ -64,6 +64,7 @@ type server struct {
 	durableEntityMaintenanceEnabled bool
 	durableEntityMetrics            *durableEntityMetrics
 	devBridgeEnabled                bool
+	anomalyAlertsEnabled            bool
 	devBridgeURL                    string
 	devBridgeObserver               *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.

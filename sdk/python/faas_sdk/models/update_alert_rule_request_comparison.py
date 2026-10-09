@@ -1,8 +1,10 @@
 from typing import Literal
 
-UpdateAlertRuleRequestComparison = Literal["gt", "gte", "lt", "lte"]
+UpdateAlertRuleRequestComparison = Literal["above_baseline", "below_baseline", "gt", "gte", "lt", "lte"]
 
 UPDATE_ALERT_RULE_REQUEST_COMPARISON_VALUES: set[UpdateAlertRuleRequestComparison] = {
+    "above_baseline",
+    "below_baseline",
     "gt",
     "gte",
     "lt",

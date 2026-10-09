@@ -1384,7 +1384,7 @@ Add an alert rule
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
 | `--metric <METRIC>` | metric, e.g. error_rate_pct or latency_p95_ms |  |
-| `--comparison <OP>` | gt\|gte\|lt\|lte |  |
+| `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |

@@ -22,6 +22,7 @@ package api
 // the FK lookup.
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -158,6 +159,43 @@ var AllowedAlertRuleMetrics = []string{
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
 var AllowedAlertRuleComparisons = []string{"gt", "gte", "lt", "lte"}
+
+// Baseline comparisons (ADR-744): threshold is a multiplier of the app's
+// usual value rather than an absolute number.
+const (
+	AlertComparisonAboveBaseline = "above_baseline"
+	AlertComparisonBelowBaseline = "below_baseline"
+)
+
+// IsAnomalyAlertComparison reports whether comparison is a baseline one.
+func IsAnomalyAlertComparison(comparison string) bool {
+	return comparison == AlertComparisonAboveBaseline || comparison == AlertComparisonBelowBaseline
+}
+
+// ValidateAnomalyAlertRule checks a baseline rule's metric, multiplier, and
+// scope. It returns "" when valid, otherwise a customer-facing reason.
+func ValidateAnomalyAlertRule(metric, comparison string, multiplier float64, appScoped bool) string {
+	if _, ok := AnomalyAlertMetrics[metric]; !ok {
+		return "baseline comparisons support error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct, and request_count"
+	}
+	if !appScoped {
+		return "baseline comparisons require an app-scoped rule"
+	}
+	switch comparison {
+	case AlertComparisonAboveBaseline:
+		if multiplier < AnomalyAboveMultiplierMin || multiplier > AnomalyAboveMultiplierMax {
+			return fmt.Sprintf("above_baseline threshold is a multiplier between %.1f and %.0f", AnomalyAboveMultiplierMin, AnomalyAboveMultiplierMax)
+		}
+	case AlertComparisonBelowBaseline:
+		if metric != "request_count" {
+			return "below_baseline is supported for request_count only"
+		}
+		if multiplier < AnomalyBelowMultiplierMin || multiplier > AnomalyBelowMultiplierMax {
+			return fmt.Sprintf("below_baseline threshold is a fraction between %.2f and %.2f", AnomalyBelowMultiplierMin, AnomalyBelowMultiplierMax)
+		}
+	}
+	return ""
+}
 
 // AllowedAlertRuleWindowSpecs is the closed set for the `window_spec` field.
 // Bounded by Prometheus retention (15d).

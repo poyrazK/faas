@@ -25,6 +25,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_ANOMALY_ALERTS_ENABLED` | apid | `default` |  | 0 | `` | ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TARGET` | apid, gatewayd-internal | `dropin` |  |  | `` |  |

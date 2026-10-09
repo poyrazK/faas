@@ -758,7 +758,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
 				{Name: "metric", Short: "metric, e.g. error_rate_pct or latency_p95_ms", Value: "METRIC"},
-				{Name: "comparison", Short: "gt|gte|lt|lte", Value: "OP"},
+				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
 				{Name: "threshold", Short: "threshold value", Value: "N"},
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
 				{Name: "event-subscription-id", Short: "Subscription UUID for event consumer metrics", Value: "UUID"},
