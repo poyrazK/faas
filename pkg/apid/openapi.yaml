@@ -42338,6 +42338,11 @@ components:
           maxItems: 10
           description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          maxProperties: 50
+          description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
     APIConsumerRateCardTier:
@@ -42362,6 +42367,10 @@ components:
         tiers:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          description: "Units charged per request on a listed route; unlisted routes count 1."
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 

@@ -1281,8 +1281,11 @@ type CreateAPIConsumerRateCardRequest struct {
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
 	// Tiers is an optional graduated ladder (ADR-845) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
-	Tiers         []APIConsumerRateCardTier `json:"tiers,omitempty"`
-	EffectiveFrom *time.Time                `json:"effective_from,omitempty"`
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights counts each request on a listed "METHOD /template" route
+	// as that many units (ADR-846); unlisted routes count 1.
+	RouteWeights  map[string]int64 `json:"route_weights,omitempty"`
+	EffectiveFrom *time.Time       `json:"effective_from,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1304,6 +1307,7 @@ type APIConsumerRateCardResponse struct {
 	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
 	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	EffectiveFrom          time.Time                 `json:"effective_from"`
 	CreatedAt              time.Time                 `json:"created_at"`
 }

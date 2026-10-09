@@ -383,3 +383,54 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 		t.Fatalf("finalize adjustment: %d %s", res.Code, res.Body)
 	}
 }
+
+// adr: 846 — route weights turn requests into weighted units before
+// allowances and prices apply.
+func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	if now.Add(10*time.Minute).Month() != now.Month() {
+		t.Skip("allowance months must not roll over during the test")
+	}
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-weights")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "weight-customer", Name: "Weight Customer",
+	}, nil)
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil || created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	cards := "/v1/apps/consumer-weights/rate-cards"
+	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &now,
+		RouteWeights: map[string]int64{"/generate": 20},
+	}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("route without method: %d %s, want 422", res.Code, res.Body)
+	}
+	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10,
+		IncludedUnitsPerMonth: 10, RouteWeights: map[string]int64{"POST /generate": 20}, EffectiveFrom: &now,
+	}, nil)
+	var card api.APIConsumerRateCardResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &card); err != nil || res.Code != http.StatusCreated || card.RouteWeights["POST /generate"] != 20 {
+		t.Fatalf("weighted card: %d %s", res.Code, res.Body)
+	}
+	minute := now.Add(time.Minute)
+	for _, route := range []string{"POST /generate", "POST /generate", "GET /items", "GET /items", "GET /items"} {
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
+			WindowStart: minute, RequestCount: 1, BillableUnits: 1, BillingRoute: route,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	end := now.Add(time.Hour)
+	res = e.do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers/"+consumer.ID+"/usage-statements",
+		api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
+	var statement api.APIConsumerUsageStatementResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &statement); err != nil || res.Code != http.StatusCreated {
+		t.Fatalf("statement: %d %s", res.Code, res.Body)
+	}
+	// 2 x 20 + 3 x 1 = 43 weighted units; 10 are included, 33 cost 10 each.
+	if statement.BillableUnits != 43 || statement.AmountMillicents != 330 {
+		t.Fatalf("statement = %+v, want 43 weighted units and 330 millicents", statement)
+	}
+}

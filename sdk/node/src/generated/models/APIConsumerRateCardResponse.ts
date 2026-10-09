@@ -14,6 +14,10 @@ export type APIConsumerRateCardResponse = {
   price_millicents_per_unit: number;
   included_units_per_month: number;
   tiers?: Array<APIConsumerRateCardTier>;
+  /**
+   * Units charged per request on a listed route; unlisted routes count 1.
+   */
+  route_weights?: Record<string, number>;
   effective_from: string;
   created_at: string;
 };

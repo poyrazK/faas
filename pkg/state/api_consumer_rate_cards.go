@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type APIConsumerRateCardInput struct {
 	PriceMillicentsPerUnit int64
 	IncludedUnitsPerMonth  int64
 	Tiers                  []APIConsumerRateCardTier
+	RouteWeights           map[string]int64
 	EffectiveFrom          time.Time
 }
 
@@ -57,8 +59,19 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", in.AccountID, in.AppID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {
 		return in, err
 	}
+	if err := ValidateAPIConsumerRouteWeights(in.RouteWeights); err != nil {
+		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
+	}
 	in.Tiers = cloneRateCardTiers(in.Tiers)
+	in.RouteWeights = cloneRouteWeights(in.RouteWeights)
 	return in, nil
+}
+
+func cloneRouteWeights(weights map[string]int64) map[string]int64 {
+	if len(weights) == 0 {
+		return nil
+	}
+	return maps.Clone(weights)
 }
 
 func cloneRateCardTiers(tiers []APIConsumerRateCardTier) []APIConsumerRateCardTier {

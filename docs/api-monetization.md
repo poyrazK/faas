@@ -81,6 +81,29 @@ that costs EUR 0.0001.
 - **Whole-month statements.** Statements for periods priced by a tiered card
   must cover exactly one UTC calendar month, so use `--month`.
 
+### Route weights
+
+When some endpoints cost much more to serve, weight them. A request on a
+weighted route counts as that many units, and every other request counts as
+one:
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 \
+  --weight "POST /generate=20" --weight "GET /reports/{id}=5"
+```
+
+- **What gets weighted.** Weighted units are what free requests, tiers, and
+  statements count. With the card above, one `POST /generate` call uses 20 of
+  a consumer's free requests and is billed as 20 units.
+- **Route labels.** Labels are an HTTP method and a path template, such as
+  `GET /items/{id}`. They match your app's declared route templates, or the
+  shapes Gregale infers from paths when none is declared. Up to 50 routes per
+  card, each weighted 1 to 1000.
+- **Unlisted routes.** Requests on unlisted routes, and on routes past an
+  app's first 50 labels, count as one unit.
+- **No backdating.** Like free requests, weighted cards cannot take effect in
+  the past.
+
 `gregale consumers quote` estimates charges for a window at current prices
 without creating anything.
 
@@ -124,14 +147,14 @@ To bill one customer across several apps, link their consumers to a
 [platform tenant](platform-tenants.md). You can then create cross-app
 statements and a customer-wide rate card with
 `gregale platform-tenants statement-draft` and `rate-card-create`. Tenant rate
-cards do not support free requests or tiers yet. A cross-app statement cannot
-fall back to an app rate card with free requests or tiers, so bill those
+cards do not support free requests, tiers, or route weights yet. A cross-app
+statement cannot fall back to an app rate card that uses them, so bill those
 consumers with app statements.
 
 ## Limits
 
-- The only unit is a request. Pricing by compute time, bytes, or route is not
-  available.
+- Units are requests, optionally weighted by route. Pricing by measured
+  compute time or bytes is not available.
 - Tiers are graduated. Pricing every request in the month at the price of the
   step the month ends in is not available.
 - Usage is recorded when a request finishes. If the gateway crashes before the
@@ -141,5 +164,6 @@ consumers with app statements.
   customers.
 
 See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
-[ADR-844](adr/844-api-consumer-monthly-allowances.md), and
-[ADR-845](adr/845-api-consumer-graduated-tiers.md) for the billing rules.
+[ADR-844](adr/844-api-consumer-monthly-allowances.md),
+[ADR-845](adr/845-api-consumer-graduated-tiers.md), and
+[ADR-846](adr/846-api-consumer-route-weights.md) for the billing rules.

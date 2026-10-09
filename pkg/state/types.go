@@ -769,11 +769,15 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
-	DiscoveredAt    time.Time
-	WindowStart     time.Time
-	RequestCount    int64
-	ErrorCount      int64
-	BillableUnits   int64
+	// BillingRoute is the bounded "METHOD /template" label of
+	// consumer-attributed traffic; its billable units are also kept per route
+	// so rate cards can weight routes (ADR-846).
+	BillingRoute  string
+	DiscoveredAt  time.Time
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -824,6 +828,29 @@ type APIConsumerUsageBucket struct {
 	BillableUnits          int64
 }
 
+// APIConsumerRouteUsageBucket is one consumer's billable units on one
+// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// APIConsumerUsageBucket stay authoritative; a minute's route units never
+// exceed them, and routes missing here count at weight 1.
+type APIConsumerRouteUsageBucket struct {
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
+// MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
+const MaxBillingRouteBytes = 256
+
+// ValidBillingRoute reports whether label is a storable billing route: an
+// HTTP method, one space, and a path, without control characters.
+func ValidBillingRoute(label string) bool {
+	method, path, ok := strings.Cut(label, " ")
+	if !ok || method == "" || len(method) > 16 || !strings.HasPrefix(path, "/") || len(label) > MaxBillingRouteBytes {
+		return false
+	}
+	return !strings.ContainsAny(label, "\x00\r\n\t?#")
+}
+
 // APIConsumerRateCard is an immutable, versioned price for one request unit
 // emitted by an app. A later EffectiveFrom supersedes an earlier card for
 // future usage; historical cards remain readable so quotes are auditable.
@@ -840,9 +867,36 @@ type APIConsumerRateCard struct {
 	IncludedUnitsPerMonth int64
 	// Tiers is an optional graduated price ladder (ADR-845). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
-	Tiers         []APIConsumerRateCardTier
+	Tiers []APIConsumerRateCardTier
+	// RouteWeights counts each request on a listed route label as that many
+	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// allowance and tiers.
+	RouteWeights  map[string]int64
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
+}
+
+// Route weight bounds: a card weights at most this many route labels, each
+// counting 1..MaxAPIConsumerRouteWeight units per request.
+const (
+	MaxAPIConsumerRouteWeights = 50
+	MaxAPIConsumerRouteWeight  = 1000
+)
+
+// ValidateAPIConsumerRouteWeights checks a card's route weights.
+func ValidateAPIConsumerRouteWeights(weights map[string]int64) error {
+	if len(weights) > MaxAPIConsumerRouteWeights {
+		return fmt.Errorf("rate card route weights: at most %d routes", MaxAPIConsumerRouteWeights)
+	}
+	for route, weight := range weights {
+		if !ValidBillingRoute(route) {
+			return fmt.Errorf("rate card route weights: %q is not a \"METHOD /template\" route", route)
+		}
+		if weight < 1 || weight > MaxAPIConsumerRouteWeight {
+			return fmt.Errorf("rate card route weights: weight for %q must be 1..%d", route, MaxAPIConsumerRouteWeight)
+		}
+	}
+	return nil
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder: units whose

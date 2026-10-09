@@ -14,9 +14,9 @@ const maxInt64 = int64(1<<63 - 1)
 var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate cards use multiple currencies")
 
 // ErrAPIConsumerAllowanceInTenantStatement rejects a cross-app statement that
-// would fall back to an app rate card with a monthly allowance (ADR-844) or
-// a graduated ladder (ADR-845).
-var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units or tiers cannot price platform tenant statements")
+// would fall back to an app rate card with a monthly allowance (ADR-844), a
+// graduated ladder (ADR-845), or route weights (ADR-846).
+var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, or route weights cannot price platform tenant statements")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
 // minute. RateCardID is empty when no card was effective for that minute.
@@ -42,8 +42,8 @@ type APIConsumerUsageChargeBucket struct {
 // determined each immutable statement line.
 func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
 	for _, card := range appCards {
-		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 {
-			// Allowances and tiers are per consumer; a cross-app statement mixes sources
+		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 {
+			// Allowances, tiers, and weights are per consumer; a cross-app statement mixes sources
 			// and prices only usage deltas, so it cannot apply them correctly.
 			return APIConsumerUsageQuote{}, ErrAPIConsumerAllowanceInTenantStatement
 		}

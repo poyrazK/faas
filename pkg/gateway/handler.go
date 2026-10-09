@@ -1160,6 +1160,9 @@ type Handler struct {
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
 	routeSets sync.Map // appID(string) → *routeLabelSet
+	// billingRouteSets bounds each app's billing route labels independently
+	// of route metrics, so opting out of metrics never changes billing.
+	billingRouteSets sync.Map // appID(string) → *routeLabelSet
 	// routeSetsPi (ADR-093) deduplicates Metrics.PreInstantiateAppRoute
 	// calls keyed by (appID, routeLabel). The closed `class` set is
 	// written once per app per route; the dedupe map is never
@@ -5916,7 +5919,10 @@ haveApp:
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	// Consumer-attributed traffic always carries a bounded billing route so
+	// rate cards can weight routes (ADR-846); consumer auth ran above.
+	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5926,6 +5932,9 @@ haveApp:
 		preLabel := observedRouteLabel(r.Method, path)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
+		}
+		if consumerAttributed {
+			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
 		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
@@ -7750,6 +7759,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
 					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
 					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
+				}
+				if row.ConsumerID != "" {
+					usageEvent.BillingRoute = billingRouteFrom(r)
 				}
 				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 					usageEvent.DiscoveredRoute = auditRouteFrom(r)

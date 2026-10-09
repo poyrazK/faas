@@ -773,6 +773,7 @@ type MemStore struct {
 	// event is applied at most once even when the gateway retries a
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
+	apiConsumerRouteUsage  map[string]APIConsumerRouteUsageBucket
 	platformTenantUsage    map[string]APIConsumerUsageBucket
 	apiConsumerUsageEvents map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
@@ -1404,6 +1405,7 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},

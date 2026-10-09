@@ -3,6 +3,7 @@ package billing
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -29,6 +30,57 @@ type statementCoverage struct {
 func MonthStart(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// WeightAPIConsumerUsage converts each minute's billable requests into
+// weighted units (ADR-846): a request on a route the effective card weights
+// counts that many units, every other request counts one. Weighted units are
+// what allowances, tiers, and statements then measure. Route rows never add
+// more requests than the minute's total; an unattributed remainder counts at
+// weight 1. Callers pass usage ascending by minute.
+func WeightAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, routes []state.APIConsumerRouteUsageBucket) ([]state.APIConsumerUsageBucket, error) {
+	ordered := append([]state.APIConsumerRateCard(nil), cards...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
+	byMinute := map[int64][]state.APIConsumerRouteUsageBucket{}
+	for _, route := range routes {
+		minute := route.WindowStart.UTC().Unix()
+		byMinute[minute] = append(byMinute[minute], route)
+	}
+	out := make([]state.APIConsumerUsageBucket, 0, len(usage))
+	cardIndex := -1
+	for _, bucket := range usage {
+		minute := bucket.WindowStart.UTC()
+		for cardIndex+1 < len(ordered) && !ordered[cardIndex+1].EffectiveFrom.After(minute) {
+			cardIndex++
+		}
+		if cardIndex >= 0 && len(ordered[cardIndex].RouteWeights) > 0 {
+			weighted, err := weightedUnits(ordered[cardIndex].RouteWeights, bucket.BillableUnits, byMinute[minute.Unix()])
+			if err != nil {
+				return nil, err
+			}
+			bucket.BillableUnits = weighted
+		}
+		out = append(out, bucket)
+	}
+	return out, nil
+}
+
+func weightedUnits(weights map[string]int64, units int64, routes []state.APIConsumerRouteUsageBucket) (int64, error) {
+	total, remaining := units, units
+	for _, route := range routes {
+		weight, ok := weights[route.Route]
+		if !ok || weight <= 1 || remaining <= 0 {
+			continue
+		}
+		counted := min(route.BillableUnits, remaining)
+		remaining -= counted
+		extra, err := multiplyMillicents(counted, weight-1)
+		if err != nil || total > maxInt64-extra {
+			return 0, fmt.Errorf("billing: API consumer weighted units overflow")
+		}
+		total += extra
+	}
+	return total, nil
 }
 
 // IsCalendarMonth reports whether [start, end) is exactly one UTC month.

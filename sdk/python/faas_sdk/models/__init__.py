@@ -94,6 +94,7 @@ from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_consumer_list_response import APIConsumerListResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
+from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
 from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUnit
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
@@ -470,6 +471,7 @@ from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFail
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
+from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
@@ -3113,6 +3115,7 @@ __all__ = (
     "APIConsumerListResponse",
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
+    "APIConsumerRateCardResponseRouteWeights",
     "APIConsumerRateCardResponseUnit",
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
@@ -3489,6 +3492,7 @@ __all__ = (
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
     "CreateAPIConsumerRateCardRequest",
+    "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
     "CreateAppLogDrainRequest",

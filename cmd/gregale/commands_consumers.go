@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -47,6 +49,7 @@ type consumerFlags struct {
 	periodStart, periodEnd, month      string
 	invoiceID                          string
 	tiers                              multiFlag
+	weights                            multiFlag
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -54,7 +57,7 @@ var consumerVerbFlags = map[string][]string{
 	"key-create":        {"name", "scopes", "expires"},
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
-	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "effective-from"},
+	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
 }
@@ -84,6 +87,7 @@ func cmdConsumers(args []string) int {
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf (rate-card-create)")
+	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1 (rate-card-create)")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -188,6 +192,40 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 // buildAppRateCardRequest builds a flat, allowance, or graduated card. A
 // ladder replaces the flat price and allowance, so they cannot be combined.
 func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequest, error) {
+	req, err := buildPricingRequest(f)
+	if err != nil {
+		return req, err
+	}
+	req.RouteWeights, err = parseRouteWeights(f.weights)
+	return req, err
+}
+
+// parseRouteWeights reads "METHOD /template=N" entries; the server checks
+// route shape and weight bounds so the rules live in one place.
+func parseRouteWeights(entries []string) (map[string]int64, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	weights := make(map[string]int64, len(entries))
+	for _, entry := range entries {
+		at := strings.LastIndex(entry, "=")
+		if at < 0 {
+			return nil, fmt.Errorf("--weight %q: use \"METHOD /template=N\"", entry)
+		}
+		route := strings.TrimSpace(entry[:at])
+		weight, err := strconv.ParseInt(strings.TrimSpace(entry[at+1:]), 10, 64)
+		if err != nil || route == "" {
+			return nil, fmt.Errorf("--weight %q: use \"METHOD /template=N\"", entry)
+		}
+		if _, dup := weights[route]; dup {
+			return nil, fmt.Errorf("--weight %q: route given twice", entry)
+		}
+		weights[route] = weight
+	}
+	return weights, nil
+}
+
+func buildPricingRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequest, error) {
 	if len(f.tiers) == 0 {
 		req, err := buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
 		if err == nil && f.includedUnits < 0 {
@@ -423,6 +461,10 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 	case api.APIConsumerRateCardResponse:
 		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\nIncluded per month\t%d requests per consumer\n",
 			v.ID, v.EffectiveFrom.Format(time.RFC3339), formatRateCardPrice(v), v.IncludedUnitsPerMonth)
+		routes := slices.Sorted(maps.Keys(v.RouteWeights))
+		for _, route := range routes {
+			_, _ = fmt.Fprintf(tw, "Route weight\t%s = %d units\n", route, v.RouteWeights[route])
+		}
 	case api.APIConsumerUsageStatementListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tPERIOD START\tPERIOD END\tREVISION\tUNITS\tAMOUNT")
 		for _, s := range v.Statements {

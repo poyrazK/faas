@@ -18,6 +18,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   tiers?: Array<APIConsumerRateCardTier>;
   /**
+   * Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates.
+   */
+  route_weights?: Record<string, number>;
+  /**
    * UTC minute at which this version starts; omitted means the next UTC minute.
    */
   effective_from?: string | null;

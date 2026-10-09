@@ -5338,6 +5338,7 @@ gregale consumers create my-api --external-ref customer-42 --name "Customer 42"
 gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000
 gregale consumers rate-card-create my-api --currency EUR --tier 10000:0 --tier 1000000:25 --tier inf:10
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight "POST /generate=20"
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
 ```
@@ -5427,7 +5428,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--effective-from <RFC3339>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--effective-from <RFC3339>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5435,6 +5436,7 @@ Add an immutable per-request price version
 | `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
 | `--included-units <N>` | free requests per consumer per UTC calendar month |  |
 | `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf (replaces price and included units) |  |
+| `--weight <METHOD /template=N>` | count each request on a route as N units; unlisted routes count 1 |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 
 ### consumers statements

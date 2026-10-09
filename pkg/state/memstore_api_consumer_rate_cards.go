@@ -35,12 +35,14 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth:  in.IncludedUnitsPerMonth,
 		Tiers:                  in.Tiers,
+		RouteWeights:           in.RouteWeights,
 		EffectiveFrom:          in.EffectiveFrom,
 		CreatedAt:              time.Now().UTC(),
 	}
 	m.apiConsumerRateCards[card.ID] = card
 	out := card
 	out.Tiers = cloneRateCardTiers(card.Tiers)
+	out.RouteWeights = cloneRouteWeights(card.RouteWeights)
 	return out, nil
 }
 
@@ -54,6 +56,7 @@ func (m *MemStore) ListAPIConsumerRateCardsForApp(_ context.Context, accountID, 
 	for _, card := range m.apiConsumerRateCards {
 		if card.AccountID == accountID && card.AppID == appID {
 			card.Tiers = cloneRateCardTiers(card.Tiers)
+			card.RouteWeights = cloneRouteWeights(card.RouteWeights)
 			out = append(out, card)
 		}
 	}
@@ -77,5 +80,6 @@ func (m *MemStore) GetAPIConsumerRateCardByID(_ context.Context, accountID, card
 		return APIConsumerRateCard{}, ErrNotFound
 	}
 	card.Tiers = cloneRateCardTiers(card.Tiers)
+	card.RouteWeights = cloneRouteWeights(card.RouteWeights)
 	return card, nil
 }

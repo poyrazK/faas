@@ -166,6 +166,9 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 	if billing.TieredCardEffectiveIn(cards, start, end) && !billing.IsCalendarMonth(start, end) {
 		return state.APIConsumerUsageStatementInput{}, false, errTieredStatementPeriod
 	}
+	if usage, err = s.weightConsumerUsage(r, cards, usage, accountID, appID, consumerID, billing.MonthStart(start), end); err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
 	current, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, start)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err

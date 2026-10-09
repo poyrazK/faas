@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+    from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
 
 
 T = TypeVar("T", bound="APIConsumerRateCardResponse")
@@ -34,6 +35,7 @@ class APIConsumerRateCardResponse:
     effective_from: datetime.datetime
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+    route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +62,10 @@ class APIConsumerRateCardResponse:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
 
+        route_weights: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_weights, Unset):
+            route_weights = self.route_weights.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -76,12 +82,15 @@ class APIConsumerRateCardResponse:
         )
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if route_weights is not UNSET:
+            field_dict["route_weights"] = route_weights
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+        from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -109,6 +118,13 @@ class APIConsumerRateCardResponse:
 
                 tiers.append(tiers_item)
 
+        _route_weights = d.pop("route_weights", UNSET)
+        route_weights: APIConsumerRateCardResponseRouteWeights | Unset
+        if isinstance(_route_weights, Unset):
+            route_weights = UNSET
+        else:
+            route_weights = APIConsumerRateCardResponseRouteWeights.from_dict(_route_weights)
+
         api_consumer_rate_card_response = cls(
             id=id,
             app_id=app_id,
@@ -119,6 +135,7 @@ class APIConsumerRateCardResponse:
             effective_from=effective_from,
             created_at=created_at,
             tiers=tiers,
+            route_weights=route_weights,
         )
 
         api_consumer_rate_card_response.additional_properties = d
