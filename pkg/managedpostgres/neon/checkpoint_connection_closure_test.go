@@ -343,9 +343,22 @@ func TestCheckpointConnectionControllerNativePostcheckFailuresRetainOriginalClos
 					t.Fatal(err)
 				}
 			}
-			observed, err := f.p.checkpointConnectionClosure(t.Context(), f.definition, f.maintenance, f.request, false, f.connectPool(t))
-			if err != nil || !observed.Drained || observed.Validate(f.request) != nil {
-				t.Fatalf("lost reply could not recover same closed owner: %+v %v", observed, err)
+			// Closure is durable, but pg_stat_activity can still include a
+			// transient autovacuum worker on the shared native test cluster.
+			// Validate every observation and wait only for those sessions to drain.
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				observed, err := f.p.checkpointConnectionClosure(t.Context(), f.definition, f.maintenance, f.request, false, f.connectPool(t))
+				if err != nil || observed.Validate(f.request) != nil {
+					t.Fatalf("lost reply could not recover same closed owner: %+v %v", observed, err)
+				}
+				if observed.Drained {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("recovered closure did not drain: %+v", observed)
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		})
 	}

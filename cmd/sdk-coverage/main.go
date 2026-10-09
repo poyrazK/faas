@@ -1685,7 +1685,7 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 // names declared on *Client (the public SDK surface).
 func loadClientMethods(dir string) (map[string]bool, error) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(os.FileInfo) bool { return true }, parser.ParseComments)
+	pkgs, err := parser.ParseDir(fset, dir, func(os.FileInfo) bool { return true }, parser.ParseComments) //nolint:staticcheck // SA1019: inventory intentionally includes all files, independent of build tags.
 	if err != nil {
 		return nil, err
 	}

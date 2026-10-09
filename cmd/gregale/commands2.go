@@ -4257,16 +4257,17 @@ func cmdRollback(args []string) int {
 			if i >= len(rest) {
 				return printErr("Missing value", fmt.Errorf("%s requires a value", a))
 			}
+			value := rest[i] //nolint:gosec // G602: i is non-negative and bounds checked immediately above.
 			switch a {
 			case "--expected-current":
 				checked = true
-				current = rest[i]
+				current = value
 			case "--reason":
-				reason = rest[i]
+				reason = value
 			case "--timeout":
-				timeout, err = time.ParseDuration(rest[i])
+				timeout, err = time.ParseDuration(value)
 			case "--poll-interval":
-				interval, err = time.ParseDuration(rest[i])
+				interval, err = time.ParseDuration(value)
 			}
 			if err != nil {
 				return printErr("Invalid duration", err)

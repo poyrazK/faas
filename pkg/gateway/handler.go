@@ -9053,8 +9053,8 @@ var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
 func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
-	director := p.Director
-	p.Director = func(req *http.Request) {
+	director := p.Director                 //nolint:staticcheck // SA1019: retain the qualified guest forwarding contract during the compiler patch.
+	p.Director = func(req *http.Request) { //nolint:staticcheck // SA1019: supported API; Rewrite migration needs guest-contract qualification.
 		director(req)
 		req.Header.Del(apihostingreceipt.PlatformSmokeTokenHeader)
 		req.Header.Del(apihostingreceipt.PlatformSmokeDeploymentHeader)

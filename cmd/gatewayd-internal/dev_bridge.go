@@ -223,8 +223,8 @@ func developmentBridgeForwarder(store state.DevBridgeStore, target *url.URL) fun
 			return true
 		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
-		director := proxy.Director
-		proxy.Director = func(out *http.Request) {
+		director := proxy.Director //nolint:staticcheck // SA1019: retain the qualified bridge forwarding contract during the compiler patch.
+		proxy.Director = func(out *http.Request) { //nolint:staticcheck // SA1019: supported Go 1.26 API; Rewrite migration needs bridge-contract qualification.
 			director(out)
 			out.URL.Path = "/v1/dev/bridges/" + id + "/traffic" + r.URL.Path
 			if r.URL.RawPath != "" {

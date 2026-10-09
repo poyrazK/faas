@@ -4441,6 +4441,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 
 func replayIdempotent(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Idempotent-Replayed", "true")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)

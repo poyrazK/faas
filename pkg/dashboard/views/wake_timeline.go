@@ -119,7 +119,7 @@ func RenderTriggerHistogram(counts map[string]int) template.HTML {
 		b.WriteString(`<code>`)
 		b.WriteString(template.HTMLEscapeString(k))
 		b.WriteString(`</code>=`)
-		b.WriteString(fmt.Sprintf(`%d`, counts[k]))
+		_, _ = fmt.Fprintf(&b, `%d`, counts[k])
 	}
 	return template.HTML(b.String()) //nolint:gosec // G203: chassis static, values escaped via template.HTMLEscapeString above
 }

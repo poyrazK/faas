@@ -1779,8 +1779,8 @@ func (r *testProxyRecorder) snapshot() testWakeEvidence {
 func newTestProxy(target *url.URL) (*httptest.Server, *testProxyRecorder) {
 	recorder := &testProxyRecorder{}
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	originalDirector := proxy.Director
-	proxy.Director = func(request *http.Request) {
+	originalDirector := proxy.Director //nolint:staticcheck // SA1019: fixture mirrors the retained production forwarding contract.
+	proxy.Director = func(request *http.Request) { //nolint:staticcheck // SA1019: fixture mirrors the retained production forwarding contract.
 		originalDirector(request)
 		request.Host = target.Host
 	}

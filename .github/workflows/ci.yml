@@ -115,18 +115,79 @@ jobs:
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
   #
-  # `test` (lint + build + small checks), `unit-tests` (race-enabled Go
-  # test suite + pg integration), and `spec-check` (vacuum lint + AST
-  # parity) all start independently on PR open. No `needs:` between them.
+  # Lint shards, race-enabled unit tests, and spec-check start independently.
+  # The existing required `test` job retains a failing result if any lint
+  # shard fails, then runs its build and repository policy checks.
   # The job ID `test` is preserved so the commented-out `needs: test` in
   # cd-digitalocean.yml still resolves if anyone re-enables it.
+  go-lint:
+    name: Go lint (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+      GOMEMLIMIT: 10GiB
+      GOGC: 100
+      GOMAXPROCS: 4
+    steps:
+      - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore lint shard cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-
+            go-lint-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: install linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          install-only: true
+          skip-cache: true
+      - name: validate lint configuration and shard executor
+        run: |
+          golangci-lint config verify
+          python3 scripts/ci/check_gosec_baseline.py
+          python3 -m unittest discover -s scripts/ci -p check_gosec_baseline_test.py
+          python3 -m unittest discover -s scripts/ci -p lint_go_shard_test.py
+      - name: lint every assigned package
+        run: python3 scripts/ci/lint_go_shard.py --shard ${{ matrix.shard }} --shards 4 -- golangci-lint
+      - name: save lint shard cache
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
   test:
     name: lint + build
+    needs: go-lint
+    if: always()
     runs-on: ubuntu-latest
-    # Full cold-cache lint exceeded twenty minutes with bounded memory.
-    # Leave time for analysis, cold builds and the remaining policy gates.
     timeout-minutes: 60
     steps:
+      - name: require all lint shards
+        env:
+          LINT_RESULT: ${{ needs.go-lint.result }}
+        run: test "$LINT_RESULT" = success
       - uses: actions/checkout@v7
         with:
           # PR-4a compares the PR head against the event's base SHA and
@@ -173,9 +234,6 @@ jobs:
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
-      # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.10.0 supports the patched Go 1.26 toolchain.
-      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
       # repository accumulates baseline coverage; the table identifies tests
@@ -189,24 +247,6 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v8)
-        uses: golangci/golangci-lint-action@v9
-        env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          # Bound analysis memory after repeated hosted-runner shutdowns.
-          GOMEMLIMIT: 3GiB
-          GOGC: 75
-          GOMAXPROCS: 2
-        with:
-          version: v2.10.0
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
-          # The action's own cache is keyed per 7-day interval and never re-saved
-          # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
-          skip-cache: true
-
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
       # changes). Keeps the existing local Makefile contract honest.
