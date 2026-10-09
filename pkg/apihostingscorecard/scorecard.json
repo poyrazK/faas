@@ -203,6 +203,35 @@
       ]
     },
     {
+      "id": "route-change-safety",
+      "name": "Route change safety",
+      "category": "delivery",
+      "description": "Route changes are reviewed before release: source impact maps a diff to affected endpoints, saved route requirements check authentication, throttle and budget policy, and lifecycle review keeps a route that still has customer traffic or a saved requirement from being retired without evidence.",
+      "capabilities": ["route-lifecycle-review", "route-requirements", "route-source-impact"],
+      "targets": [{"metric": "count", "operator": "gte", "value": 1, "unit": "runs"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/routerequirements/evaluate_test.go::TestEvaluateRequirementsUsesSelectedPolicyAndAppBudget"},
+        {"kind": "test", "locator": "pkg/routeimpact/analyze_test.go::TestFastAPINestedRoutersAndImportedHandlers"},
+        {"kind": "test", "locator": "cmd/gregale/commands_routes_lifecycle_test.go::TestBuildRouteLifecycleReviewClassifiesOnlySupportedQuietRouteAsCandidate"}
+      ]
+    },
+    {
+      "id": "route-release-protection",
+      "name": "Route release protection",
+      "category": "reliability",
+      "description": "A release that breaks a critical route is caught per route rather than in aggregate: canary route health is seeded by customer reach and judges sparse routes over pooled or synthetic evidence, and production route budgets can request one checked rollback to the last healthy deployment when an error budget is violated within 30 minutes of release.",
+      "capabilities": ["production-route-monitoring", "route-health-canary-guard"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 1800, "unit": "seconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"},
+        {"kind": "test", "locator": "pkg/routemonitor/monitor_test.go::TestProductionRouteMonitorBudgets"},
+        {"kind": "test", "locator": "cmd/apid/route_monitor_rollback_test.go::TestRouteMonitorRollbackRequestsCheckedRollbackOnce"},
+        {"kind": "test", "locator": "pkg/routehealth/pooled_test.go::TestEvaluateAdoptsPooledVerdictsAndKeepsMinuteWindows"},
+        {"kind": "test", "locator": "pkg/routehealth/probe_test.go::TestEvaluateAdoptsSyntheticEvidenceOnlyWhenSparse"},
+        {"kind": "test", "locator": "pkg/gateway/route_probe_test.go::TestRouteProbePinsDeploymentProvesResponseAndStripsHeaders"}
+      ]
+    },
+    {
       "id": "service-mesh-readiness",
       "name": "Internal service reachability and isolation",
       "category": "reliability",
