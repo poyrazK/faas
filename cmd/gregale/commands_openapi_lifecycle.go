@@ -161,14 +161,24 @@ func contractDiffProblem(err error) *api.Problem {
 }
 
 func printOpenapiContractPreview(resp api.OpenAPIContractDiffResponse) {
-	_, _ = fmt.Fprintf(osStdout, "Contract: source=%s scope=%s blocking=%t breaks=%d additions=%d\n",
-		resp.Source, resp.Scope, resp.Blocking, len(resp.Breaks), len(resp.Additions))
+	_, _ = fmt.Fprintf(osStdout, "Contract: source=%s scope=%s blocking=%t breaks=%d unknowns=%d additions=%d\n",
+		resp.Source, resp.Scope, resp.Blocking, len(resp.Breaks), len(resp.Unknowns), len(resp.Additions))
 	for _, br := range resp.Breaks {
 		anchor := br.Method + " " + br.Path
 		if br.Status != "" {
 			anchor += " " + br.Status
 		}
 		_, _ = fmt.Fprintf(osStdout, "  BREAKING %-36s %s\n", anchor, br.Kind)
+	}
+	for _, unknown := range resp.Unknowns {
+		anchor := unknown.Method + " " + unknown.Path
+		if unknown.Status != "" {
+			anchor += " " + unknown.Status
+		}
+		_, _ = fmt.Fprintf(osStdout, "  UNKNOWN  %-36s %s\n", anchor, unknown.Code)
+		if unknown.PathInSchema != "" {
+			_, _ = fmt.Fprintf(osStdout, "           at: %s\n", unknown.PathInSchema)
+		}
 	}
 }
 

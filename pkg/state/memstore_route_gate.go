@@ -105,5 +105,11 @@ func (m *MemStore) checkCanaryRouteGateLocked(deployment Deployment, params Cana
 		m.enqueueAutomaticRouteCheckLocked(app.ID, deployment.ID, false)
 		decision.CheckQueued = true
 	}
+	if err := m.lifecycleGateLocked(snapshot, deployment, &decision, time.Now().UTC(), saved, params.RouteCheckFingerprint); err != nil {
+		return err
+	}
+	if decision.Status == "blocked" && routeRemovalProductionScope(deployment.Scope) {
+		m.recordLifecycleHistoryLocked(deployment, decision, false, "blocked")
+	}
 	return requireCanaryRouteGate(gate, decision, params.RouteGateDecision)
 }

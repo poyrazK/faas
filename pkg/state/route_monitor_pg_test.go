@@ -106,6 +106,11 @@ func TestRoutePolicyMonitoringCompletionAndChildInsert(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	// Configuration writes fence the account before the app so successor
+	// invalidation and route-check completion share one lock order.
+	if _, err := tx.Exec(t.Context(), "SELECT id FROM accounts WHERE id = $1 FOR UPDATE", account.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(t.Context(), "SELECT id FROM apps WHERE id = $1 FOR UPDATE", app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -117,22 +122,18 @@ func TestRoutePolicyMonitoringCompletionAndChildInsert(t *testing.T) {
 		}
 		finished <- err
 	}()
-	// Wait until completion holds the account parent before inserting a child
-	// while the competing transaction owns the app. Full UPDATE parent locks
-	// deadlock here; NO KEY UPDATE remains compatible with the child's FK lock.
+	// Wait for completion to reach the account fence before changing rules.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		probe, err := pool.Begin(t.Context())
-		if err != nil {
+		var waiting bool
+		if err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%LockRouteCheckCompletionAccount%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
-		_, lockErr := probe.Exec(t.Context(), "SELECT id FROM accounts WHERE id = $1 FOR UPDATE NOWAIT", account.ID)
-		_ = probe.Rollback(t.Context())
-		if lockErr != nil {
+		if waiting {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("completion did not lock its account")
+			t.Fatal("completion did not wait on its account fence")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

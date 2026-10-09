@@ -134,10 +134,14 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				continue
 			}
 			for _, v := range vs {
+				if isCachedRouteLifecycleHeader(k, v) {
+					continue
+				}
 				w.Header().Add(k, v)
 			}
 		}
 		w.Header().Set("Content-Length", itoaLen(entry.body))
+		h.applyCachedRouteLifecycle(w, r, app, entry)
 		w.WriteHeader(entry.statusCode)
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode
@@ -171,6 +175,9 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				continue
 			}
 			for _, v := range vs {
+				if isCachedRouteLifecycleHeader(k, v) {
+					continue
+				}
 				w.Header().Add(k, v)
 			}
 		}
@@ -178,6 +185,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		w.Header().Set("X-From-Cache", "stale")
 		w.Header().Add("Warning", `110 - "Response is Stale"`)
 		w.Header().Set("Content-Length", itoaLen(entry.body))
+		h.applyCachedRouteLifecycle(w, r, app, entry)
 		w.WriteHeader(entry.statusCode)
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode

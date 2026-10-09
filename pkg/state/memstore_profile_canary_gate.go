@@ -87,6 +87,9 @@ func (m *MemStore) abortProfileGatedCanaryLocked(ctx context.Context, d Deployme
 	d.RolloutState = "aborted"
 	d.RolloutAbortedAt = &now
 	d.RolloutAbortedReason = params.ProfileGateDecision.Reason
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = true
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	stable.TrafficPercent = 100
 	m.putDeploymentLocked(stableID, stable)
 	m.putDeploymentLocked(d.ID, d)

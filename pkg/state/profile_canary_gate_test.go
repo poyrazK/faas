@@ -139,6 +139,10 @@ func TestProfileCanaryGateAdvanceOverrideAndRollback(t *testing.T) {
 				if got.RolloutState != "aborted" || got.TrafficPercent != 0 || decision.Status != "rolled_back" || m.deployments[decision.StableDeploymentID].TrafficPercent != 100 {
 					t.Fatal("rollback not atomic", got, decision)
 				}
+				history, historyErr := m.ListRouteLifecycleHistory(t.Context(), acct, d.AppID, 1, "")
+				if historyErr != nil || len(history.Entries) != 1 || history.Entries[0].DeploymentID != decision.StableDeploymentID || !history.Entries[0].Recovery || history.Entries[0].Outcome != "applied" || m.lifecycleRecovery {
+					t.Fatalf("profiling rollback lifecycle history: %+v %v", history, historyErr)
+				}
 			} else if got.CanaryStep != 1 || got.TrafficPercent != 50 {
 				t.Fatal("advance failed", got)
 			}
