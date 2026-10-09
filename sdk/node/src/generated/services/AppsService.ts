@@ -3399,7 +3399,7 @@ export class AppsService {
   /**
    * Configure server route removal enforcement.
    * Requires account admin authorization and completed MFA. expected_revision is mandatory. First configuration requires one production baseline at 100 percent, or no production deployments. Policy changes invalidate previous approvals. Quiet observation begins when a policy first adopts a baseline, resets on full cutover or capture changes, and survives policy mode changes.
-   * @returns RouteRemovalPolicy Saved policy.
+   * @returns RouteRemovalPolicy Saved route retirement policy.
    * @throws ApiError
    */
   public static setRouteRemovalPolicy({
@@ -3448,6 +3448,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Maximum retained reviews to return.
+     */
     limit?: number,
     /**
      * Retained app-owned review ID from next_cursor.
@@ -3523,6 +3526,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * App-owned lifecycle approval receipt identifier.
+     */
     approvalId: string,
   }): CancelablePromise<RouteLifecycleApproval> {
     return __request(OpenAPI, {
@@ -3595,6 +3601,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Candidate deployment whose removed routes are evaluated.
+     */
     deploymentId: string,
   }): CancelablePromise<RouteRemovalCheck> {
     return __request(OpenAPI, {

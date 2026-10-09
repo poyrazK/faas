@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RouteLifecycleHistoryPage")
 
 @_attrs_define
 class RouteLifecycleHistoryPage:
+    """Newest retained lifecycle reviews with an optional continuation cursor."""
+
     app_id: str
     entries: list[RouteLifecycleHistoryEntry]
     next_cursor: str | Unset = UNSET

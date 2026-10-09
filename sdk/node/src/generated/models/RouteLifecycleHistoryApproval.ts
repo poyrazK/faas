@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Historical approval binding with its current validity status.
+ */
 export type RouteLifecycleHistoryApproval = {
   id: string;
   used: boolean;

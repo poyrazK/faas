@@ -12271,7 +12271,7 @@ paths:
             schema: { $ref: '#/components/schemas/SetRouteRemovalPolicyRequest' }
       responses:
         '200':
-          description: Saved policy.
+          description: Saved route retirement policy.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RouteRemovalPolicy' }
@@ -12290,7 +12290,7 @@ paths:
       description: Requires read authorization and completed MFA. Returns newest retained reviews first by immutable review ID. Successful production traffic increases and blocked application review attempts are retained; rolled-back successful reviews and direct SQL rejections are not retained. Captures and graph IDs are historical metadata. Approval status is evaluated at read time and is not a fresh rollout authorization. Older reviews may have no recorded binding evidence. Metadata is bounded to 20 approvals, 64 captures and 64 graph IDs per approval; truncated indicates omitted metadata. Full successor pins remain available through the approval receipt endpoint. Configuration snapshots, credentials and OpenAPI payloads are never returned.
       parameters:
         - $ref: '#/components/parameters/Slug'
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 20, default: 10 } }
+        - { name: limit, in: query, description: Maximum retained reviews to return., schema: { type: integer, minimum: 1, maximum: 20, default: 10 } }
         - { name: before, in: query, description: Retained app-owned review ID from next_cursor., schema: { type: string, pattern: '^[1-9][0-9]*$' } }
       responses:
         '200':
@@ -12333,6 +12333,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: approval_id
+        description: App-owned lifecycle approval receipt identifier.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -12389,6 +12390,7 @@ paths:
       description: Requires apps:read or admin and completed MFA. Uses the same evaluator as production traffic transitions. This read is advisory; enforcement repeats within the traffic transaction. Missing captures, stale approvals, changed policies or renewed old-route observations block enforce mode.
       parameters:
         - name: deployment_id
+          description: Candidate deployment whose removed routes are evaluated.
           in: query
           required: true
           schema: { type: string, format: uuid }
@@ -33900,6 +33902,7 @@ components:
         next_action: { type: string }
     RouteRemovalPolicy:
       type: object
+      description: App route retirement policy and its current observation baseline.
       required: [app_id, mode, revision, grace_period, max_approval_age]
       properties:
         app_id: { type: string, format: uuid }
@@ -33911,6 +33914,7 @@ components:
         updated_at: { type: string, format: date-time }
     SetRouteRemovalPolicyRequest:
       type: object
+      description: Replacement route retirement policy with an optimistic revision check.
       additionalProperties: false
       required: [expected_revision, mode]
       properties:
@@ -33920,6 +33924,7 @@ components:
         max_approval_age: { type: string, description: Go duration between 1m and 72h; default 1h. }
     RouteRemovalMapping:
       type: object
+      description: Removed operation and its optional successor operation.
       additionalProperties: false
       required: [method, path]
       properties:
@@ -33929,6 +33934,7 @@ components:
         successor_path: { type: string, maxLength: 4096 }
     ApproveRouteRemovalRequest:
       type: object
+      description: Pinned route retirement evidence and explicit acknowledgement of telemetry limits.
       additionalProperties: false
       required: [expected_policy_revision, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mappings, acknowledge_observed_only]
       properties:
@@ -33949,6 +33955,7 @@ components:
         acknowledge_observed_only: { type: boolean, enum: [true], description: Explicit owner acknowledgement that telemetry is sampled and asynchronous and cannot establish absence of every client. }
     RouteLifecycleMapping:
       type: object
+      description: Retiring operation mapped to a verified captured successor.
       additionalProperties: false
       required: [method, path, successor_url, successor_method, successor_path]
       properties:
@@ -33962,6 +33969,7 @@ components:
         successor_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: "Authoritative destination doc_sha256 capture metadata." }
     ApproveRouteLifecycleRequest:
       type: object
+      description: Pinned policy, contract and successor evidence for a lifecycle approval.
       additionalProperties: false
       required: [expected_gate_revision, expected_requirements_revision, expected_removal_policy_revision, configuration_sha256, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mappings]
       properties:
@@ -33980,12 +33988,14 @@ components:
           items: { $ref: '#/components/schemas/RouteLifecycleMapping' }
     RouteLifecycleHistoryCapture:
       type: object
+      description: Deployment contract digest recorded at production review time.
       required: [deployment_id, sha256]
       properties:
         deployment_id: { type: string }
         sha256: { type: string }
     RouteLifecycleHistoryApproval:
       type: object
+      description: Historical approval binding with its current validity status.
       required: [id, used, status, status_reason, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, configuration_sha256, valid_until, graph_ids]
       properties:
         id: { type: string, format: uuid }
@@ -34002,6 +34012,7 @@ components:
         graph_ids: { type: array, maxItems: 64, items: { type: string } }
     RouteLifecycleHistoryEntry:
       type: object
+      description: Retained production review outcome and bounded historical evidence.
       required: [id, app_id, deployment_id, reviewed_at, scope, outcome, recovery, decision, evidence_available, truncated, captures, graph_ids, approvals]
       properties:
         id: { type: string, pattern: '^[1-9][0-9]*$' }
@@ -34019,6 +34030,7 @@ components:
         approvals: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteLifecycleHistoryApproval' } }
     RouteLifecycleHistoryPage:
       type: object
+      description: Newest retained lifecycle reviews with an optional continuation cursor.
       required: [app_id, entries]
       properties:
         app_id: { type: string }
@@ -34027,6 +34039,7 @@ components:
 
     RouteLifecycleApproval:
       type: object
+      description: Time-limited lifecycle receipt bound to configuration and captured successors.
       required: [id, app_id, gate_revision, requirements_revision, removal_policy_revision, configuration_sha256, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mapping_sha256, mappings, compatibility, checker_version, approved_by, approved_at, valid_until]
       properties:
         id: { type: string, format: uuid }
@@ -34049,6 +34062,7 @@ components:
         invalidated_at: { type: string, format: date-time, description: Permanently invalidated by capture replacement or deletion; old bytes cannot revive the receipt. }
     RouteRemovalApproval:
       type: object
+      description: Time-limited retirement receipt bound to captures and observed route usage.
       required: [id, app_id, policy_revision, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mapping_sha256, mappings, approved_by, approved_at, valid_until, observation_from, observation_until, coverage]
       properties:
         id: { type: string, format: uuid }
@@ -34068,6 +34082,7 @@ components:
         coverage: { type: string, enum: [observed_only] }
     RouteRemovalCheck:
       type: object
+      description: Current retirement evaluation with blockers and recovery guidance.
       required: [policy, candidate_deployment_id, status, removed, blockers]
       properties:
         earliest_approval_at: { type: string, format: date-time, description: Earliest approval time for the current observed baseline and capture. }

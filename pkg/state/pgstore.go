@@ -9355,6 +9355,16 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	// A cancelled deployment remains an invalid transition even after its app
+	// is deleted. Recheck under the deployment lock below before publishing.
+	var initialStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, id).Scan(&initialStatus); err != nil {
+		return mapErr(err)
+	}
+	if initialStatus == string(DeployCancelled) {
+		return ErrInvalidStateTransition
+	}
+
 	if err := s.authorizeLifecycleActivation(ctx, tx, id); err != nil {
 		return err
 	}

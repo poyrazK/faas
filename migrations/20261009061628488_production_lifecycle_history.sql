@@ -1,15 +1,15 @@
 -- +goose Up
-ALTER TABLE production_lifecycle_reviews ADD COLUMN scope text;
-ALTER TABLE production_lifecycle_reviews ADD COLUMN evidence jsonb;
-CREATE INDEX production_lifecycle_reviews_cursor ON production_lifecycle_reviews(app_id,id DESC);
+ALTER TABLE production_lifecycle_reviews ADD COLUMN IF NOT EXISTS scope text;
+ALTER TABLE production_lifecycle_reviews ADD COLUMN IF NOT EXISTS evidence jsonb;
+CREATE INDEX IF NOT EXISTS production_lifecycle_reviews_cursor ON production_lifecycle_reviews(app_id,id DESC);
 -- +goose StatementBegin
-CREATE FUNCTION lifecycle_history_graph_ids(snapshot jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_history_graph_ids(snapshot jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT coalesce(jsonb_agg(id ORDER BY id),'[]'::jsonb) FROM (
  SELECT DISTINCT g->>'id' id FROM jsonb_array_elements(coalesce(snapshot,'[]'::jsonb)) b,
  LATERAL jsonb_array_elements(coalesce(nullif(b#>'{project,graphs}','null'::jsonb),'[]'::jsonb)) g
  WHERE g->>'id' IS NOT NULL ORDER BY id LIMIT 64) graphs
 $$;
-CREATE FUNCTION lifecycle_history_evidence(app uuid, deployment uuid, decision jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_history_evidence(app uuid, deployment uuid, decision jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
  WITH candidates AS (SELECT r.*,coalesce(decision->'lifecycle_approval_ids','[]'::jsonb) ? r.id::text used
  FROM route_lifecycle_approvals r WHERE r.app_id=app AND r.candidate_deployment_id=deployment),
  chosen AS (SELECT * FROM candidates ORDER BY used DESC,approved_at DESC,id DESC LIMIT 20),

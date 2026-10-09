@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteLifecycleMapping } from './RouteLifecycleMapping.js';
+/**
+ * Time-limited lifecycle receipt bound to configuration and captured successors.
+ */
 export type RouteLifecycleApproval = {
   id: string;
   app_id: string;

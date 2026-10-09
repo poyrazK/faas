@@ -19,6 +19,8 @@ T = TypeVar("T", bound="RouteRemovalApproval")
 
 @_attrs_define
 class RouteRemovalApproval:
+    """Time-limited retirement receipt bound to captures and observed route usage."""
+
     id: UUID
     app_id: UUID
     policy_revision: int

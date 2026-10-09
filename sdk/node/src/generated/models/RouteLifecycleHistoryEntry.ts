@@ -5,6 +5,9 @@
 import type { RouteGateDecision } from './RouteGateDecision.js';
 import type { RouteLifecycleHistoryApproval } from './RouteLifecycleHistoryApproval.js';
 import type { RouteLifecycleHistoryCapture } from './RouteLifecycleHistoryCapture.js';
+/**
+ * Retained production review outcome and bounded historical evidence.
+ */
 export type RouteLifecycleHistoryEntry = {
   id: string;
   app_id: string;

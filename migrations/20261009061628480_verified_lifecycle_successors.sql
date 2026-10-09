@@ -1,7 +1,7 @@
 -- +goose Up
-ALTER TABLE route_lifecycle_approvals ADD COLUMN successor_snapshot jsonb;
+ALTER TABLE route_lifecycle_approvals ADD COLUMN IF NOT EXISTS successor_snapshot jsonb;
 -- +goose StatementBegin
-CREATE FUNCTION lifecycle_successor_bindings(source uuid, mappings jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_successor_bindings(source uuid, mappings jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT coalesce(jsonb_agg(jsonb_build_object('mapping',m,'app',a.id,'status',a.status,'visibility',a.visibility,'org_id',a.org_id,'project_id',a.project_id,'only_declared_routes',a.only_declared_routes,'declared_routes',a.declared_routes,
  'configuration',lifecycle_configuration(a.id),
  'domain', (SELECT jsonb_build_object('domain',d.domain,'app_id',d.app_id,'environment_id',d.environment_id,'verified_at',d.verified_at) FROM custom_domains d WHERE d.domain::text=split_part(split_part(m->>'successor_url','/',3),':',1)),
@@ -10,10 +10,10 @@ CREATE FUNCTION lifecycle_successor_bindings(source uuid, mappings jsonb) RETURN
  'routes',CASE WHEN a.id=source THEN '[]'::jsonb ELSE coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'scope',d.scope,'status',d.status,'traffic',d.traffic_percent) ORDER BY d.id) FROM deployments d WHERE d.app_id=a.id AND d.status='live' AND d.traffic_percent>0 AND coalesce(nullif(d.scope,''),'default') IN ('default','prod','production')),'[]'::jsonb) END) ORDER BY m->>'method',m->>'path'),'[]'::jsonb)
  FROM jsonb_array_elements(mappings) m LEFT JOIN apps a ON a.id=coalesce(nullif(m->>'successor_app_id','')::uuid,source)
 $$;
-CREATE FUNCTION lifecycle_approval_successor_bindings(source uuid, receipt jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_approval_successor_bindings(source uuid, receipt jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT lifecycle_successor_bindings(source,coalesce((SELECT jsonb_agg(m || jsonb_build_object('candidate_deployment_id',receipt->>'candidate_deployment_id')) FROM jsonb_array_elements(receipt->'mappings') m),'[]'::jsonb))
 $$;
-CREATE FUNCTION invalidate_lifecycle_successor_routes() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION invalidate_lifecycle_successor_routes() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE oldrow jsonb; newrow jsonb; affected uuid; owner uuid; hostname text;
 BEGIN
  IF TG_OP<>'INSERT' THEN oldrow:=to_jsonb(OLD); END IF;
@@ -30,10 +30,15 @@ BEGIN
  END LOOP;
  RETURN NULL;
 END $$;
+DROP TRIGGER IF EXISTS lifecycle_successor_domains ON custom_domains;
 CREATE TRIGGER lifecycle_successor_domains AFTER INSERT OR DELETE OR UPDATE OF app_id,domain,environment_id,verified_at ON custom_domains FOR EACH ROW EXECUTE FUNCTION invalidate_lifecycle_successor_routes();
+DROP TRIGGER IF EXISTS lifecycle_successor_apps ON apps;
 CREATE TRIGGER lifecycle_successor_apps AFTER DELETE OR UPDATE OF status,slug,manifest,visibility,org_id,project_id,account_id,only_declared_routes,declared_routes,consumer_auth_mode,maintenance_mode ON apps FOR EACH ROW EXECUTE FUNCTION invalidate_lifecycle_successor_routes();
+DROP TRIGGER IF EXISTS lifecycle_successor_rules ON edge_rules;
 CREATE TRIGGER lifecycle_successor_rules AFTER INSERT OR UPDATE OR DELETE ON edge_rules FOR EACH ROW EXECUTE FUNCTION invalidate_lifecycle_successor_routes();
+DROP TRIGGER IF EXISTS lifecycle_successor_deployments ON deployments;
 CREATE TRIGGER lifecycle_successor_deployments AFTER INSERT OR DELETE OR UPDATE OF app_id,status,traffic_percent,scope ON deployments FOR EACH ROW EXECUTE FUNCTION invalidate_lifecycle_successor_routes();
+DROP TRIGGER IF EXISTS lifecycle_successor_tenant_hosts ON tenant_hostnames;
 CREATE TRIGGER lifecycle_successor_tenant_hosts AFTER INSERT OR DELETE OR UPDATE OF hostname,surface_id,verified_at ON tenant_hostnames FOR EACH ROW EXECUTE FUNCTION invalidate_lifecycle_successor_routes();
 CREATE OR REPLACE FUNCTION invalidate_route_lifecycle_approvals() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

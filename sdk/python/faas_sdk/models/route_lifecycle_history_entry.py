@@ -23,6 +23,8 @@ T = TypeVar("T", bound="RouteLifecycleHistoryEntry")
 
 @_attrs_define
 class RouteLifecycleHistoryEntry:
+    """Retained production review outcome and bounded historical evidence."""
+
     id: str
     app_id: str
     deployment_id: str

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RouteRemovalPolicy")
 
 @_attrs_define
 class RouteRemovalPolicy:
+    """App route retirement policy and its current observation baseline."""
+
     app_id: UUID
     mode: RouteRemovalPolicyMode
     revision: int

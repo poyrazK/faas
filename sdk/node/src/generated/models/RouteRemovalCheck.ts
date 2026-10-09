@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { RouteRemovalMapping } from './RouteRemovalMapping.js';
 import type { RouteRemovalPolicy } from './RouteRemovalPolicy.js';
+/**
+ * Current retirement evaluation with blockers and recovery guidance.
+ */
 export type RouteRemovalCheck = {
   /**
    * Earliest approval time for the current observed baseline and capture.

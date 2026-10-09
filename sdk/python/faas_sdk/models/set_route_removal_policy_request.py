@@ -16,6 +16,8 @@ T = TypeVar("T", bound="SetRouteRemovalPolicyRequest")
 
 @_attrs_define
 class SetRouteRemovalPolicyRequest:
+    """Replacement route retirement policy with an optimistic revision check."""
+
     expected_revision: int
     mode: SetRouteRemovalPolicyRequestMode
     grace_period: str | Unset = UNSET

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RouteLifecycleMapping")
 
 @_attrs_define
 class RouteLifecycleMapping:
+    """Retiring operation mapped to a verified captured successor."""
+
     method: RouteLifecycleMappingMethod
     path: str
     successor_url: str

@@ -264,7 +264,7 @@ func TestProjectDependencyGateWaitsForDependencyRetirementCommit(t *testing.T) {
 	defer ticker.Stop()
 	for {
 		var waiting bool
-		if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%ReadDependencyGateTarget%')").Scan(&waiting); err != nil {
+		if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%ReadDependencyGateTarget%' OR query LIKE '%LockRoutePolicyAccount%'))").Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {

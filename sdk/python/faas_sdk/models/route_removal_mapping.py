@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RouteRemovalMapping")
 
 @_attrs_define
 class RouteRemovalMapping:
+    """Removed operation and its optional successor operation."""
+
     method: RouteRemovalMappingMethod
     path: str
     successor_method: RouteRemovalMappingSuccessorMethod | Unset = UNSET

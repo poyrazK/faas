@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION lifecycle_configuration(app uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_configuration(app uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT jsonb_build_object('app',jsonb_build_object('id',a.id,'account',a.account_id,'slug',a.slug,
  'consumer_auth_mode',a.consumer_auth_mode,'maintenance_mode',a.maintenance_mode,
  'manifest',a.manifest,'ram_mb',a.ram_mb,'max_concurrency',a.max_concurrency,'idle_timeout_s',a.idle_timeout_s,'type',a.type,'cpu_millicores',a.cpu_millicores,'scaling_policy',a.scaling_policy,'request_rate_limit_rps',a.request_rate_limit_rps,'request_rate_limit_burst',a.request_rate_limit_burst),
@@ -8,17 +8,17 @@ CREATE FUNCTION lifecycle_configuration(app uuid) RETURNS jsonb LANGUAGE sql STA
  'rules',coalesce((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM edge_rules r WHERE r.app_id=a.id),'[]'::jsonb))
  FROM apps a JOIN accounts c ON c.id=a.account_id WHERE a.id=app
 $$;
-ALTER TABLE route_lifecycle_approvals ADD COLUMN configuration_snapshot jsonb;
+ALTER TABLE route_lifecycle_approvals ADD COLUMN IF NOT EXISTS configuration_snapshot jsonb;
 -- Old receipts lack the additional binding and must be reviewed again.
 UPDATE route_lifecycle_approvals SET invalidated_at=clock_timestamp() WHERE invalidated_at IS NULL;
-CREATE FUNCTION lifecycle_traffic_inputs(app uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION lifecycle_traffic_inputs(app uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT jsonb_build_object('configuration',lifecycle_configuration(app),
  'gate',coalesce((SELECT to_jsonb(g) FROM canary_route_gates g WHERE g.app_id=app),'{}'::jsonb),
  'requirements',coalesce((SELECT to_jsonb(s) FROM saved_route_requirements s WHERE s.app_id=app),'{}'::jsonb),
  'removal',coalesce((SELECT to_jsonb(p)-'baseline_since'-'baseline_deployment_id' FROM app_route_removal_policies p WHERE p.app_id=app),'{}'::jsonb),
  'captures',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.deployment_id,'sha',encode(d.doc_sha256,'hex'),'document_sha',encode(sha256(convert_to(d.doc::text,'UTF8')),'hex'),'truncated',d.truncated,'captured_at',d.captured_at,'updated_at',d.updated_at) ORDER BY d.deployment_id) FROM deployment_openapi_docs d WHERE d.app_id=app),'[]'::jsonb))
 $$;
-CREATE TABLE production_lifecycle_reviews (
+CREATE TABLE IF NOT EXISTS production_lifecycle_reviews (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
@@ -26,8 +26,8 @@ CREATE TABLE production_lifecycle_reviews (
  decision jsonb NOT NULL CHECK(jsonb_typeof(decision)='object'),
  recovery boolean NOT NULL DEFAULT false
 );
-CREATE INDEX production_lifecycle_reviews_app ON production_lifecycle_reviews(app_id,reviewed_at DESC);
-CREATE FUNCTION guard_production_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE INDEX IF NOT EXISTS production_lifecycle_reviews_app ON production_lifecycle_reviews(app_id,reviewed_at DESC);
+CREATE OR REPLACE FUNCTION guard_production_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE gate canary_route_gates%ROWTYPE; fence jsonb;
 BEGIN
  IF NEW.status<>'live' OR NEW.traffic_percent<=0 OR coalesce(nullif(NEW.scope,''),'default') NOT IN ('default','prod','production') OR
@@ -47,7 +47,9 @@ BEGIN
  INSERT INTO production_lifecycle_reviews(app_id,deployment_id,decision,recovery) VALUES(NEW.app_id,NEW.id,coalesce(fence->'decision',jsonb_build_object('mode','report','status','report_only','reasons',jsonb_build_array('lifecycle_transaction_review_unavailable'))),coalesce((fence->>'recovery')::boolean,false));
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS deployment_production_lifecycle_guard ON deployments;
 CREATE TRIGGER deployment_production_lifecycle_guard BEFORE UPDATE OF status,traffic_percent,scope,app_id ON deployments FOR EACH ROW EXECUTE FUNCTION guard_production_lifecycle();
+DROP TRIGGER IF EXISTS deployment_production_lifecycle_insert_guard ON deployments;
 CREATE TRIGGER deployment_production_lifecycle_insert_guard AFTER INSERT ON deployments FOR EACH ROW EXECUTE FUNCTION guard_production_lifecycle();
 -- +goose StatementEnd
 

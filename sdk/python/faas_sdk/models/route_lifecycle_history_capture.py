@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RouteLifecycleHistoryCapture")
 
 @_attrs_define
 class RouteLifecycleHistoryCapture:
+    """Deployment contract digest recorded at production review time."""
+
     deployment_id: str
     sha256: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -19,6 +19,8 @@ T = TypeVar("T", bound="RouteLifecycleHistoryApproval")
 
 @_attrs_define
 class RouteLifecycleHistoryApproval:
+    """Historical approval binding with its current validity status."""
+
     id: UUID
     used: bool
     status: RouteLifecycleHistoryApprovalStatus

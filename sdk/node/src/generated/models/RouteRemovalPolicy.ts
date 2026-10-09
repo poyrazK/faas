@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * App route retirement policy and its current observation baseline.
+ */
 export type RouteRemovalPolicy = {
   app_id: string;
   mode: 'report' | 'enforce';

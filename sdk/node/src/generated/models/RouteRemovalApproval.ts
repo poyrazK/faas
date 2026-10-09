@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteRemovalMapping } from './RouteRemovalMapping.js';
+/**
+ * Time-limited retirement receipt bound to captures and observed route usage.
+ */
 export type RouteRemovalApproval = {
   id: string;
   app_id: string;

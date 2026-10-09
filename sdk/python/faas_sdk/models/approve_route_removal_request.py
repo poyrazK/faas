@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ApproveRouteRemovalRequest")
 
 @_attrs_define
 class ApproveRouteRemovalRequest:
+    """Pinned route retirement evidence and explicit acknowledgement of telemetry limits."""
+
     expected_policy_revision: int
     baseline_deployment_id: UUID
     candidate_deployment_id: UUID

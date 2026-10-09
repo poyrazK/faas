@@ -27,6 +27,8 @@ T = TypeVar("T", bound="RouteLifecycleApproval")
 
 @_attrs_define
 class RouteLifecycleApproval:
+    """Time-limited lifecycle receipt bound to configuration and captured successors."""
+
     id: UUID
     app_id: UUID
     gate_revision: int

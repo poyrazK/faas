@@ -21,7 +21,10 @@ T = TypeVar("T", bound="RouteRemovalCheck")
 
 @_attrs_define
 class RouteRemovalCheck:
+    """Current retirement evaluation with blockers and recovery guidance."""
+
     policy: RouteRemovalPolicy
+    """App route retirement policy and its current observation baseline."""
     candidate_deployment_id: UUID
     status: RouteRemovalCheckStatus
     removed: list[RouteRemovalMapping]

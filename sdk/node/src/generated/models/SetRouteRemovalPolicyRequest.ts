@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Replacement route retirement policy with an optimistic revision check.
+ */
 export type SetRouteRemovalPolicyRequest = {
   expected_revision: number;
   mode: 'report' | 'enforce';

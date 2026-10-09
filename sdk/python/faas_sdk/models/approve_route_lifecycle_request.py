@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ApproveRouteLifecycleRequest")
 
 @_attrs_define
 class ApproveRouteLifecycleRequest:
+    """Pinned policy, contract and successor evidence for a lifecycle approval."""
+
     expected_gate_revision: int
     expected_requirements_revision: int
     expected_removal_policy_revision: int

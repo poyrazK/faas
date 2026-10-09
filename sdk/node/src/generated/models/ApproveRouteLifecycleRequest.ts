@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteLifecycleMapping } from './RouteLifecycleMapping.js';
+/**
+ * Pinned policy, contract and successor evidence for a lifecycle approval.
+ */
 export type ApproveRouteLifecycleRequest = {
   expected_gate_revision: number;
   expected_requirements_revision: number;
