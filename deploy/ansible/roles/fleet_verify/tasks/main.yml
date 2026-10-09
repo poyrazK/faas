@@ -23,7 +23,12 @@
   loop: "{{ faas_verify_enabled.results }}"
   loop_control:
     label: "{{ item.item }}"
-  when: faas_verify_strict | bool
+  # A unit the playbook stages disabled for an operator to enable (for
+  # example faas-profiled) must not fail every compute rollout; rc.249's
+  # production-us rollout stopped here on fsn-2.
+  when:
+    - faas_verify_strict | bool
+    - item.item not in (faas_operator_enabled_units | default([]))
 
 - name: fleet_verify — collect the units that must be active
   ansible.builtin.set_fact:
