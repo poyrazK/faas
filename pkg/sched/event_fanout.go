@@ -43,11 +43,6 @@ func eventFanoutFailureDetails(err error) (string, bool) {
 	return state.EventFanoutFailureCodeInternal, false
 }
 
-func eventFanoutRetryable(err error) bool {
-	_, retryable := eventFanoutFailureDetails(err)
-	return retryable
-}
-
 // routePublishedEvent is the schedd-side fanout seam for the internal event
 // fabric. The publish endpoint persists the canonical envelope before sending
 // its advisory wake; this worker matches only subscriptions owned by the same
