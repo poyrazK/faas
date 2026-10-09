@@ -748,6 +748,24 @@ After acceptance, a profile-aware follow command is printed. Optionally follow
 the returned recovery run for up to 10 minutes. Stopping observation does not
 cancel it. For scripts, use `jobs replay-failed NAME RUN_ID` with explicit IDs.
 
+## Browse recurring Job decisions interactively
+
+```sh
+gregale jobs occurrences --interactive
+```
+
+Choose a Job, then browse occurrence history with older-page navigation.
+Inspect a scheduled time, status, reason, outcome/retry decision, scheduling
+policy, start deadline, execution timestamps, and blocking occurrence when
+present. These are recorded decisions, which can evolve while you browse.
+Choosing another occurrence rereads the page.
+
+A command to read the current history page is printed with the active profile.
+When an occurrence has a run, the CLI verifies its Job and occurrence identity
+and prints a `jobs wait` command. The flow only reads history; it never starts
+or retries a run. For scripts, use `jobs occurrences NAME --json` with explicit
+pagination flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

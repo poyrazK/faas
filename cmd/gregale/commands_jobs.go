@@ -613,6 +613,9 @@ func cmdJobsRuns(args []string) int {
 }
 
 func cmdJobsOccurrences(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsOccurrencesInteractive()
+	}
 	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "number of occurrence decisions to return (1..200)")
 	before := fs.String("before", "", "occurrence id cursor from the previous page")

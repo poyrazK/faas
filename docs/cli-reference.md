@@ -3759,14 +3759,21 @@ List runs for one job
 
 Inspect recurring schedule decisions
 
-`gregale jobs occurrences [--before <ID>] [--cursor <ID>] [--all] [--limit <N>] <name>`
+`gregale jobs occurrences [--interactive] [--before <ID>] [--cursor <ID>] [--all] [--limit <N>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a Job and browse scheduled occurrence decisions |  |
 | `--before <ID>` | alias for --cursor |  |
 | `--cursor <ID>` | opaque continuation cursor |  |
 | `--all` | walk every page using --limit and --cursor |  |
 | `--limit <N>` | max occurrence decisions (1..200) |  |
+
+Examples:
+
+```sh
+gregale jobs occurrences --interactive
+```
 
 ### jobs wait
 

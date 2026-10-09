@@ -1526,7 +1526,8 @@ var cliCommands = []cliCommand{
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
-			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs occurrences --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a Job and browse scheduled occurrence decisions"},
 				{Name: "before", Short: "alias for --cursor", Value: "ID"},
 				{Name: "cursor", Short: "opaque continuation cursor", Value: "ID"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
