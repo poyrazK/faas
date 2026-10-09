@@ -1284,8 +1284,11 @@ type CreateAPIConsumerRateCardRequest struct {
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
 	// as that many units (ADR-846); unlisted routes count 1.
-	RouteWeights  map[string]int64 `json:"route_weights,omitempty"`
-	EffectiveFrom *time.Time       `json:"effective_from,omitempty"`
+	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// empty prices the app default plan.
+	PlanID        string     `json:"plan_id,omitempty"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1308,6 +1311,7 @@ type APIConsumerRateCardResponse struct {
 	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	PlanID                 string                    `json:"plan_id,omitempty"`
 	EffectiveFrom          time.Time                 `json:"effective_from"`
 	CreatedAt              time.Time                 `json:"created_at"`
 }

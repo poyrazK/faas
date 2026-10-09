@@ -15,7 +15,7 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-		Tiers: apiRateCardTiers(card.Tiers), RouteWeights: card.RouteWeights,
+		Tiers: apiRateCardTiers(card.Tiers), RouteWeights: card.RouteWeights, PlanID: card.PlanID,
 		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 	}
 }
@@ -65,12 +65,15 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 			return invalid("tiers replace included_units_per_month; make the first step free instead")
 		}
 	}
-	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0
+	// Plan prices (ADR-847) are never backdated either: assignments price
+	// minutes by the plan's history, so a backdated plan card would re-price
+	// minutes that statements may already have billed.
+	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0 || req.PlanID != ""
 	for _, card := range existing {
-		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0
+		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != ""
 	}
 	if positional && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, or route weights")
+		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, route weights, or plans")
 	}
 	return nil
 }
@@ -162,9 +165,13 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	card, err := store.CreateAPIConsumerRateCardVersion(r.Context(), state.APIConsumerRateCardInput{
 		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
-		RouteWeights: req.RouteWeights, EffectiveFrom: effectiveFrom,
+		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom,
 	})
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such consumer plan")
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Rate card already exists", "another rate card already uses this effective_from"))
@@ -179,6 +186,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		"included_units_per_month":  card.IncludedUnitsPerMonth,
 		"tier_count":                len(card.Tiers),
 		"route_weight_count":        len(card.RouteWeights),
+		"plan_id":                   card.PlanID,
 		"effective_from":            card.EffectiveFrom.UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, apiConsumerRateCardResponse(card))
@@ -218,6 +226,9 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		return
 	}
 	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
+	if err == nil {
+		cards, err = s.consumerPriceHistory(r, cards, acct.ID, app.ID, consumer.ID)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
 		return

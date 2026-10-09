@@ -36,6 +36,7 @@ class APIConsumerRateCardResponse:
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
+    plan_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +67,10 @@ class APIConsumerRateCardResponse:
         if not isinstance(self.route_weights, Unset):
             route_weights = self.route_weights.to_dict()
 
+        plan_id: str | Unset = UNSET
+        if not isinstance(self.plan_id, Unset):
+            plan_id = str(self.plan_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -84,6 +89,8 @@ class APIConsumerRateCardResponse:
             field_dict["tiers"] = tiers
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
+        if plan_id is not UNSET:
+            field_dict["plan_id"] = plan_id
 
         return field_dict
 
@@ -125,6 +132,13 @@ class APIConsumerRateCardResponse:
         else:
             route_weights = APIConsumerRateCardResponseRouteWeights.from_dict(_route_weights)
 
+        _plan_id = d.pop("plan_id", UNSET)
+        plan_id: UUID | Unset
+        if isinstance(_plan_id, Unset):
+            plan_id = UNSET
+        else:
+            plan_id = UUID(_plan_id)
+
         api_consumer_rate_card_response = cls(
             id=id,
             app_id=app_id,
@@ -136,6 +150,7 @@ class APIConsumerRateCardResponse:
             created_at=created_at,
             tiers=tiers,
             route_weights=route_weights,
+            plan_id=plan_id,
         )
 
         api_consumer_rate_card_response.additional_properties = d

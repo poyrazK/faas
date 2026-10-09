@@ -5341,6 +5341,8 @@ gregale consumers rate-card-create my-api --currency EUR --tier 10000:0 --tier 1
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight "POST /generate=20"
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
+gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000
+gregale consumers set-plan my-api CONSUMER_ID --plan free
 ```
 
 ### consumers list
@@ -5428,7 +5430,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--effective-from <RFC3339>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5437,6 +5439,7 @@ Add an immutable per-request price version
 | `--included-units <N>` | free requests per consumer per UTC calendar month |  |
 | `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf (replaces price and included units) |  |
 | `--weight <METHOD /template=N>` | count each request on a route as N units; unlisted routes count 1 |  |
+| `--plan <NAME>` | add the price to a consumer plan instead of the app default |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 
 ### consumers statements
@@ -5478,6 +5481,53 @@ Record your invoice reference for a finalized revision
 | Flag | Meaning | |
 |---|---|---|
 | `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
+
+### consumers plans
+
+List an app&#39;s consumer plans
+
+`gregale consumers plans <slug>`
+
+### consumers plan-create
+
+Create a consumer plan with request limits
+
+`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
+| `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
+| `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+
+### consumers plan-update
+
+Change a plan&#39;s limits (applied within 15 seconds)
+
+`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <NAME>` | plan name | required |
+| `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
+| `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+
+### consumers set-plan
+
+Move a consumer onto a plan from a minute
+
+`gregale consumers set-plan --plan <NAME> [--effective-from <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <NAME>` | plan name, or &#34;default&#34; for the app default plan | required |
+| `--effective-from <RFC3339>` | UTC minute the plan takes effect (default next minute) |  |
+
+### consumers plan-history
+
+List a consumer&#39;s plan assignments
+
+`gregale consumers plan-history <slug> <consumer-id>`
 
 
 ## platform-tenants

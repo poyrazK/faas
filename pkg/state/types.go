@@ -871,7 +871,10 @@ type APIConsumerRateCard struct {
 	// RouteWeights counts each request on a listed route label as that many
 	// units (ADR-846); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
-	RouteWeights  map[string]int64
+	RouteWeights map[string]int64
+	// PlanID names the consumer plan whose price history this card belongs
+	// to (ADR-847); empty is the app default plan.
+	PlanID        string
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
 }

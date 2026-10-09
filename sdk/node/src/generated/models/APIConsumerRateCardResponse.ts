@@ -18,6 +18,7 @@ export type APIConsumerRateCardResponse = {
    * Units charged per request on a listed route; unlisted routes count 1.
    */
   route_weights?: Record<string, number>;
+  plan_id?: string;
   effective_from: string;
   created_at: string;
 };

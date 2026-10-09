@@ -8777,6 +8777,119 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumer-plans:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlans
+      summary: List an app's consumer plans.
+      responses:
+        '200':
+          description: Consumer plans by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerPlan
+      summary: Create a named consumer plan.
+      description: |
+        A plan bundles enforcement limits with its own rate-card history
+        (rate cards created with plan_id). App-wide rate cards are the default
+        plan for consumers without an assignment. At most 20 plans per app.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumer-plans/{plan_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: plan_id
+        in: path
+        required: true
+        description: Consumer plan UUID.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [consumers]
+      operationId: updateAPIConsumerPlanLimits
+      summary: Replace a consumer plan's limits.
+      description: Limits are enforcement, not prices, so they change in place; the gateway applies them within 15 seconds. Prices change through new rate-card versions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAPIConsumerPlanLimitsRequest' }
+      responses:
+        '200':
+          description: The updated plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose plan assignments are listed or appended.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlanAssignments
+      summary: List a consumer's plan assignments, oldest first.
+      responses:
+        '200':
+          description: Append-only plan history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: assignAPIConsumerPlan
+      summary: Move a consumer onto a plan from a UTC minute.
+      description: The assignment takes effect from effective_from (default the next minute; never in the past) and requires the target plan to have a rate card in force then. Statements price each minute with the plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns the consumer to the default plan.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new assignment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/rate-cards/{rate_card_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42343,7 +42456,74 @@ components:
           maxProperties: 50
           description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
+
+    CreateAPIConsumerPlanRequest:
+      description: "Named consumer plan. Zero limits are unlimited."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
+        max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+
+    UpdateAPIConsumerPlanLimitsRequest:
+      description: "Replacement limits for a consumer plan."
+      type: object
+      required: [max_requests_per_minute, max_units_per_month]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerPlanResponse:
+      description: "Named consumer plan with enforcement limits."
+      type: object
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    APIConsumerPlanListResponse:
+      description: "An app's consumer plans by name."
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+
+    AssignAPIConsumerPlanRequest:
+      description: "Plan assignment; an empty plan_id returns the consumer to the default plan."
+      type: object
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute the plan takes effect; omitted means the next minute." }
+
+    APIConsumerPlanAssignmentResponse:
+      description: "One append-only plan assignment; no plan_id is the default plan."
+      type: object
+      required: [id, consumer_id, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    APIConsumerPlanAssignmentListResponse:
+      description: "A consumer's plan assignments, oldest first."
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
 
     APIConsumerRateCardTier:
       description: "One step of a graduated per-request price ladder."
@@ -42371,6 +42551,7 @@ components:
           type: object
           description: "Units charged per request on a listed route; unlisted routes count 1."
           additionalProperties: { type: integer, format: int64, minimum: 1 }
+        plan_id: { type: string, format: uuid }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 

@@ -160,6 +160,9 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
 	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, appID)
+	if err == nil {
+		cards, err = s.consumerPriceHistory(r, cards, accountID, appID, consumerID)
+	}
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}

@@ -36,6 +36,7 @@ type APIConsumerRateCardInput struct {
 	IncludedUnitsPerMonth  int64
 	Tiers                  []APIConsumerRateCardTier
 	RouteWeights           map[string]int64
+	PlanID                 string
 	EffectiveFrom          time.Time
 }
 
@@ -61,6 +62,11 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 	}
 	if err := ValidateAPIConsumerRouteWeights(in.RouteWeights); err != nil {
 		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
+	}
+	if in.PlanID != "" {
+		if _, err := uuid.Parse(in.PlanID); err != nil {
+			return in, fmt.Errorf("CreateAPIConsumerRateCard: plan_id must be a UUID: %w", err)
+		}
 	}
 	in.Tiers = cloneRateCardTiers(in.Tiers)
 	in.RouteWeights = cloneRouteWeights(in.RouteWeights)

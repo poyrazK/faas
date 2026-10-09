@@ -2,6 +2,10 @@
 /* istanbul ignore file */
 
 export type { APIConsumerListResponse } from './APIConsumerListResponse.js';
+export type { APIConsumerPlanAssignmentListResponse } from './APIConsumerPlanAssignmentListResponse.js';
+export type { APIConsumerPlanAssignmentResponse } from './APIConsumerPlanAssignmentResponse.js';
+export type { APIConsumerPlanListResponse } from './APIConsumerPlanListResponse.js';
+export type { APIConsumerPlanResponse } from './APIConsumerPlanResponse.js';
 export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
@@ -160,6 +164,7 @@ export type { ApplyResponse } from './ApplyResponse.js';
 export type { ApproveEnvironmentGitRevisionRequest } from './ApproveEnvironmentGitRevisionRequest.js';
 export type { ApproveEnvironmentGitRevisionResponse } from './ApproveEnvironmentGitRevisionResponse.js';
 export type { AppsMetricsResponse } from './AppsMetricsResponse.js';
+export type { AssignAPIConsumerPlanRequest } from './AssignAPIConsumerPlanRequest.js';
 export type { AsyncInvokeResponse } from './AsyncInvokeResponse.js';
 export type { AuditEventResponse } from './AuditEventResponse.js';
 export type { AuditLogEntry } from './AuditLogEntry.js';
@@ -240,6 +245,7 @@ export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';
+export type { CreateAPIConsumerPlanRequest } from './CreateAPIConsumerPlanRequest.js';
 export type { CreateAPIConsumerRateCardRequest } from './CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './CreateAPIConsumerRequest.js';
 export type { CreateAPIConsumerUsageStatementRequest } from './CreateAPIConsumerUsageStatementRequest.js';
@@ -1491,6 +1497,7 @@ export type { TriggerRoutedTo } from './TriggerRoutedTo.js';
 export type { TriggerWorkBinding } from './TriggerWorkBinding.js';
 export type { TrustedSigner } from './TrustedSigner.js';
 export type { UDPListenerResponse } from './UDPListenerResponse.js';
+export type { UpdateAPIConsumerPlanLimitsRequest } from './UpdateAPIConsumerPlanLimitsRequest.js';
 export type { UpdateAccountBillingInfoRequest } from './UpdateAccountBillingInfoRequest.js';
 export type { UpdateAccountReleaseWebhookRequest } from './UpdateAccountReleaseWebhookRequest.js';
 export type { UpdateAlertRuleRequest } from './UpdateAlertRuleRequest.js';

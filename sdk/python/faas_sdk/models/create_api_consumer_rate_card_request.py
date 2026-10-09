@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -32,6 +33,9 @@ class CreateAPIConsumerRateCardRequest:
     increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods
     priced by a tiered card must cover exactly one UTC calendar month."""
     route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset = UNSET
+    plan_id: UUID | Unset = UNSET
+    """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be
+    backdated."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -53,6 +57,10 @@ class CreateAPIConsumerRateCardRequest:
         route_weights: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_weights, Unset):
             route_weights = self.route_weights.to_dict()
+
+        plan_id: str | Unset = UNSET
+        if not isinstance(self.plan_id, Unset):
+            plan_id = str(self.plan_id)
 
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
@@ -77,6 +85,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["tiers"] = tiers
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
+        if plan_id is not UNSET:
+            field_dict["plan_id"] = plan_id
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -110,6 +120,13 @@ class CreateAPIConsumerRateCardRequest:
         else:
             route_weights = CreateAPIConsumerRateCardRequestRouteWeights.from_dict(_route_weights)
 
+        _plan_id = d.pop("plan_id", UNSET)
+        plan_id: UUID | Unset
+        if isinstance(_plan_id, Unset):
+            plan_id = UNSET
+        else:
+            plan_id = UUID(_plan_id)
+
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -133,6 +150,7 @@ class CreateAPIConsumerRateCardRequest:
             included_units_per_month=included_units_per_month,
             tiers=tiers,
             route_weights=route_weights,
+            plan_id=plan_id,
             effective_from=effective_from,
         )
 

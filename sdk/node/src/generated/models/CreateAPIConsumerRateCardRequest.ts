@@ -22,6 +22,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   route_weights?: Record<string, number>;
   /**
+   * Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated.
+   */
+  plan_id?: string;
+  /**
    * UTC minute at which this version starts; omitted means the next UTC minute.
    */
   effective_from?: string | null;

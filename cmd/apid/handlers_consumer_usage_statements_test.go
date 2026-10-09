@@ -434,3 +434,71 @@ func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 		t.Fatalf("statement = %+v, want 43 weighted units and 330 millicents", statement)
 	}
 }
+
+// adr: 847 — a consumer's plan prices its minutes from the assignment on.
+func TestAPIConsumerPlansPriceAssignedMinutes(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	if now.Add(10*time.Minute).Month() != now.Month() {
+		t.Skip("months must not roll over during the test")
+	}
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-plans")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "plan-customer", Name: "Plan Customer",
+	}, nil)
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil || created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	if res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &now,
+	}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("default card: %d %s", res.Code, res.Body)
+	}
+	res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "pro", MaxRequestsPerMinute: 100}, nil)
+	var plan api.APIConsumerPlanResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &plan); err != nil || res.Code != http.StatusCreated {
+		t.Fatalf("create plan: %d %s", res.Code, res.Body)
+	}
+	assignments := "/v1/apps/consumer-plans/consumers/" + consumer.ID + "/plan-assignments"
+	switchAt := now.Add(2 * time.Minute)
+	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("assign to an unpriced plan: %d %s, want 422", res.Code, res.Body)
+	}
+	if res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 1, PlanID: plan.ID, EffectiveFrom: &now,
+	}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("plan card: %d %s", res.Code, res.Body)
+	}
+	past := now.Add(-time.Hour)
+	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &past}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("backdated assignment: %d %s, want 422", res.Code, res.Body)
+	}
+	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("assign: %d %s", res.Code, res.Body)
+	}
+	for _, at := range []time.Time{now.Add(time.Minute), switchAt.Add(time.Minute)} {
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
+			WindowStart: at, RequestCount: 3, BillableUnits: 3,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	end := now.Add(time.Hour)
+	res = e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers/"+consumer.ID+"/usage-statements",
+		api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
+	var statement api.APIConsumerUsageStatementResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &statement); err != nil || res.Code != http.StatusCreated {
+		t.Fatalf("statement: %d %s", res.Code, res.Body)
+	}
+	// 3 default-plan units at 10 before the switch, 3 pro units at 1 after.
+	if statement.AmountMillicents != 33 || len(statement.Buckets) != 2 {
+		t.Fatalf("statement = %+v, want 33 millicents across both plans", statement)
+	}
+	listed := e.do(t, http.MethodGet, assignments, nil, nil)
+	var history api.APIConsumerPlanAssignmentListResponse
+	if err := json.Unmarshal(listed.Body.Bytes(), &history); err != nil || len(history.Assignments) != 1 || history.Assignments[0].PlanID != plan.ID {
+		t.Fatalf("assignments = %s", listed.Body)
+	}
+}

@@ -35,9 +35,14 @@ var consumerVerbPositionals = map[string][]string{
 	"statement-show":     {"slug", "consumer-id", "statement-id"},
 	"statement-finalize": {"slug", "consumer-id", "statement-id"},
 	"statement-handoff":  {"slug", "consumer-id", "statement-id"},
+	"plans":              {"slug"},
+	"plan-create":        {"slug"},
+	"plan-update":        {"slug"},
+	"set-plan":           {"slug", "consumer-id"},
+	"plan-history":       {"slug", "consumer-id"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -50,6 +55,8 @@ type consumerFlags struct {
 	invoiceID                          string
 	tiers                              multiFlag
 	weights                            multiFlag
+	plan                               string
+	maxPerMinute, maxPerMonth          int64
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -57,7 +64,10 @@ var consumerVerbFlags = map[string][]string{
 	"key-create":        {"name", "scopes", "expires"},
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
-	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "effective-from"},
+	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from"},
+	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month"},
+	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month"},
+	"set-plan":          {"plan", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
 }
@@ -93,6 +103,9 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM (instead of --period-start/--period-end)")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference (statement-handoff)")
+	fs.StringVar(&f.plan, "plan", "", "consumer plan name; \"default\" is the app default plan")
+	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
+	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -148,6 +161,21 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 			return nil, errors.New("--external-ref and --name are required")
 		}
 		return api.CreateAPIConsumerRequest{ExternalRef: f.externalRef, Name: f.name}, nil
+	case "plan-create":
+		if strings.TrimSpace(f.name) == "" {
+			return nil, errors.New("--name is required")
+		}
+		return nil, nil
+	case "plan-update":
+		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0) {
+			return nil, errors.New("--plan and at least one of --max-requests-per-minute or --max-units-per-month are required")
+		}
+		return nil, nil
+	case "set-plan":
+		if f.plan == "" {
+			return nil, errors.New("--plan is required; use \"default\" for the app default plan")
+		}
+		return nil, nil
 	case "key-create":
 		return buildConsumerKeyRequest(f)
 	case "rate-card-create":
@@ -344,6 +372,9 @@ func statementPeriod(startText, endText, month string) (time.Time, time.Time, er
 
 func callConsumers(ctx context.Context, client *Client, verb string, args []string, f consumerFlags, request any) (any, error) {
 	slug := args[0]
+	if out, handled, err := callConsumerPlans(ctx, client, verb, args, f); handled {
+		return out, err
+	}
 	switch verb {
 	case "list":
 		return client.ListAPIConsumers(ctx, slug)
@@ -366,7 +397,15 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	case "rate-cards":
 		return client.ListAPIConsumerRateCards(ctx, slug)
 	case "rate-card-create":
-		return client.CreateAPIConsumerRateCard(ctx, slug, request.(api.CreateAPIConsumerRateCardRequest))
+		req := request.(api.CreateAPIConsumerRateCardRequest)
+		if f.plan != "" && f.plan != defaultPlanName {
+			planID, err := resolvePlanID(ctx, client, slug, f.plan)
+			if err != nil {
+				return nil, err
+			}
+			req.PlanID = planID
+		}
+		return client.CreateAPIConsumerRateCard(ctx, slug, req)
 	}
 	return callConsumerStatements(ctx, client, verb, args, request)
 }
@@ -446,6 +485,9 @@ func consumerKeyStatus(k api.ConsumerKeyResponse) string {
 }
 
 func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
+	if printConsumerPlanResult(tw, out) {
+		return tw.Flush()
+	}
 	switch v := out.(type) {
 	case api.APIConsumerUsageResponse:
 		_, _ = fmt.Fprintf(tw, "Window\t%s – %s\nRequests\t%d\nErrors\t%d\nBillable units\t%d\n",

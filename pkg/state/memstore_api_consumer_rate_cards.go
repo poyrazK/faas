@@ -21,8 +21,14 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if in.PlanID != "" {
+		plan, ok := m.apiConsumerPlans[in.PlanID]
+		if !ok || plan.AccountID != in.AccountID || plan.AppID != in.AppID {
+			return APIConsumerRateCard{}, ErrNotFound
+		}
+	}
 	for _, card := range m.apiConsumerRateCards {
-		if card.AppID == in.AppID && card.EffectiveFrom.Equal(in.EffectiveFrom) {
+		if card.AppID == in.AppID && card.PlanID == in.PlanID && card.EffectiveFrom.Equal(in.EffectiveFrom) {
 			return APIConsumerRateCard{}, ErrConflict
 		}
 	}
@@ -36,6 +42,7 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		IncludedUnitsPerMonth:  in.IncludedUnitsPerMonth,
 		Tiers:                  in.Tiers,
 		RouteWeights:           in.RouteWeights,
+		PlanID:                 in.PlanID,
 		EffectiveFrom:          in.EffectiveFrom,
 		CreatedAt:              time.Now().UTC(),
 	}

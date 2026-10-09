@@ -107,6 +107,41 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 \
 `gregale consumers quote` estimates charges for a window at current prices
 without creating anything.
 
+### Plans
+
+Package prices and limits as named plans, such as a capped free tier and a
+paid tier:
+
+```bash
+gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000
+gregale consumers rate-card-create my-api --plan free --currency EUR --price-millicents 0
+gregale consumers plan-create my-api --name pro --max-requests-per-minute 600
+gregale consumers rate-card-create my-api --plan pro --currency EUR --tier 100000:0 --tier inf:20
+gregale consumers set-plan my-api CONSUMER_ID --plan free
+```
+
+- **What a plan contains.** A plan has its own rate-card history, created
+  with `--plan`. Rate cards without a plan form the app's default plan, which
+  prices every consumer you have not assigned.
+- **Limits.** A plan limits requests per minute and weighted units per UTC
+  month, where `0` means unlimited.
+  - Gregale enforces both at the edge across all gateway replicas.
+  - Over a limit, your consumer gets `429` with `Retry-After` and
+    `x-faas-rate-limit-scope: consumer-plan-minute` or
+    `consumer-plan-month`.
+  - Rejected requests are not billed.
+  - Limit changes apply within 15 seconds.
+- **Changing plans.** `set-plan` moves a consumer from the next minute, or from
+  `--effective-from`, which cannot be in the past. Statements price each minute
+  with the plan in force then. Free requests and tiers keep counting through
+  the month, so an upgrade mid-month does not reset them.
+- **Plan prices first.** The target plan needs a rate card in force before
+  consumers can move onto it. Use `--plan default` to return a consumer to the
+  default plan, and `plan-history` to review their changes.
+- **Cap versus bill.** The monthly cap counts requests when they are admitted,
+  so a request that later fails on Gregale's side still uses cap but is not
+  billed.
+
 ## 4. Bill with statements
 
 A statement snapshots one consumer's usage for a period and prices every
@@ -147,9 +182,9 @@ To bill one customer across several apps, link their consumers to a
 [platform tenant](platform-tenants.md). You can then create cross-app
 statements and a customer-wide rate card with
 `gregale platform-tenants statement-draft` and `rate-card-create`. Tenant rate
-cards do not support free requests, tiers, or route weights yet. A cross-app
-statement cannot fall back to an app rate card that uses them, so bill those
-consumers with app statements.
+cards do not support free requests, tiers, route weights, or plans yet. A
+cross-app statement cannot price an app whose rate cards use them, so bill
+those consumers with app statements.
 
 ## Limits
 
@@ -165,5 +200,6 @@ consumers with app statements.
 
 See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
 [ADR-844](adr/844-api-consumer-monthly-allowances.md),
-[ADR-845](adr/845-api-consumer-graduated-tiers.md), and
-[ADR-846](adr/846-api-consumer-route-weights.md) for the billing rules.
+[ADR-845](adr/845-api-consumer-graduated-tiers.md),
+[ADR-846](adr/846-api-consumer-route-weights.md), and
+[ADR-847](adr/847-api-consumer-plans.md) for the billing rules.

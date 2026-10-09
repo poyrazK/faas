@@ -159,6 +159,62 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 	}
 }
 
+// adr: 847
+func TestCmdConsumersPlans(t *testing.T) {
+	var created api.CreateAPIConsumerPlanRequest
+	var updated api.UpdateAPIConsumerPlanLimitsRequest
+	var assigned api.AssignAPIConsumerPlanRequest
+	var card api.CreateAPIConsumerRateCardRequest
+	plans := api.APIConsumerPlanListResponse{Plans: []api.APIConsumerPlanResponse{{ID: "p-free", Name: "free", MaxRequestsPerMinute: 60, MaxUnitsPerMonth: 1000}}}
+	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/apps/my-api/consumer-plans":
+			_ = json.NewEncoder(w).Encode(plans)
+		case "POST /v1/apps/my-api/consumer-plans":
+			_ = json.NewDecoder(r.Body).Decode(&created)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerPlanResponse{ID: "p-pro", Name: created.Name, MaxRequestsPerMinute: created.MaxRequestsPerMinute})
+		case "PUT /v1/apps/my-api/consumer-plans/p-free":
+			_ = json.NewDecoder(r.Body).Decode(&updated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerPlanResponse{ID: "p-free", Name: "free", MaxRequestsPerMinute: updated.MaxRequestsPerMinute, MaxUnitsPerMonth: updated.MaxUnitsPerMonth})
+		case "POST /v1/apps/my-api/consumers/c1/plan-assignments":
+			assigned = api.AssignAPIConsumerPlanRequest{} // plan_id is omitted for the default plan
+			_ = json.NewDecoder(r.Body).Decode(&assigned)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerPlanAssignmentResponse{ConsumerID: "c1", PlanID: assigned.PlanID})
+		case "POST /v1/apps/my-api/rate-cards":
+			_ = json.NewDecoder(r.Body).Decode(&card)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerRateCardResponse{ID: "rc", Currency: "EUR", PlanID: card.PlanID})
+		default:
+			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
+		}
+	})
+	if code := cmdConsumers([]string{"plan-create", "my-api", "--name", "pro", "--max-requests-per-minute", "600"}); code != 0 ||
+		created.Name != "pro" || created.MaxRequestsPerMinute != 600 || created.MaxUnitsPerMonth != 0 {
+		t.Fatalf("plan-create exit=%d body=%+v", code, created)
+	}
+	if code := cmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--max-units-per-month", "5000"}); code != 0 ||
+		updated.MaxRequestsPerMinute != 60 || updated.MaxUnitsPerMonth != 5000 {
+		t.Fatalf("plan-update exit=%d body=%+v, want the per-minute limit kept", code, updated)
+	}
+	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "free"}); code != 0 || assigned.PlanID != "p-free" {
+		t.Fatalf("set-plan exit=%d body=%+v", code, assigned)
+	}
+	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "default"}); code != 0 || assigned.PlanID != "" {
+		t.Fatalf("set-plan default exit=%d body=%+v", code, assigned)
+	}
+	if code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "5", "--plan", "free"}); code != 0 || card.PlanID != "p-free" {
+		t.Fatalf("plan rate card exit=%d body=%+v", code, card)
+	}
+	if code := cmdConsumers([]string{"plans", "my-api"}); code != 0 || !strings.Contains(stdout.String(), "1000 units") {
+		t.Fatalf("plans output = %q", stdout.String())
+	}
+	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "missing"}); code == 0 {
+		t.Fatal("unknown plan name accepted")
+	}
+}
+
 func TestFormatMillicents(t *testing.T) {
 	for _, tc := range []struct {
 		currency   string

@@ -943,7 +943,10 @@ type Handler struct {
 	accountLimiter *Limiter
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
-	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetStore TenantRequestBudgetStore
+	// consumerPlanStore and its policy cache enforce consumer plans (ADR-847).
+	consumerPlanStore          ConsumerPlanStore
+	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
 	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
@@ -6554,6 +6557,9 @@ haveApp:
 	// request" which is the standard X-RateLimit-Remaining contract.
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
+	}
+	if !h.enforceConsumerPlan(w, r, rec, app, deploymentSmoke) {
+		return
 	}
 	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
 		return

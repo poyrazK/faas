@@ -2239,6 +2239,8 @@ var cliCommands = []cliCommand{
 			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight \"POST /generate=20\"",
 			"gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001",
+			"gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000",
+			"gregale consumers set-plan my-api CONSUMER_ID --plan free",
 		},
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}},
@@ -2270,6 +2272,7 @@ var cliCommands = []cliCommand{
 				{Name: "included-units", Short: "free requests per consumer per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
+				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
@@ -2283,6 +2286,22 @@ var cliCommands = []cliCommand{
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
+			{Name: "plans", Short: "List an app's consumer plans", Positionals: []string{"<slug>"}},
+			{Name: "plan-create", Short: "Create a consumer plan with request limits", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "name", Short: "plan name (lowercase letters, digits, hyphens)", Value: "NAME", Req: true},
+				{Name: "max-requests-per-minute", Short: "requests per consumer per minute; 0 is unlimited", Value: "N"},
+				{Name: "max-units-per-month", Short: "weighted units per consumer per UTC month; 0 is unlimited", Value: "N"},
+			}},
+			{Name: "plan-update", Short: "Change a plan's limits (applied within 15 seconds)", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "plan", Short: "plan name", Value: "NAME", Req: true},
+				{Name: "max-requests-per-minute", Short: "requests per consumer per minute; 0 is unlimited", Value: "N"},
+				{Name: "max-units-per-month", Short: "weighted units per consumer per UTC month; 0 is unlimited", Value: "N"},
+			}},
+			{Name: "set-plan", Short: "Move a consumer onto a plan from a minute", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "plan", Short: "plan name, or \"default\" for the app default plan", Value: "NAME", Req: true},
+				{Name: "effective-from", Short: "UTC minute the plan takes effect (default next minute)", Value: "RFC3339"},
+			}},
+			{Name: "plan-history", Short: "List a consumer's plan assignments", Positionals: []string{"<slug>", "<consumer-id>"}},
 		},
 	},
 	{
