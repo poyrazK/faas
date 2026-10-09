@@ -26,9 +26,9 @@ name: paddle sandbox
 # Hardening (PR #962 MED-2 review fix): bring this in line with
 # ci.yml conventions — pin setup-go to v7 (the v5 it inherited from
 # stripex-sandbox.yml is older than ci.yml's pin), pin the Go version
-# to the same 1.25.13 ci.yml uses (so the sandbox CI never runs
+# to the same 1.26.9 ci.yml uses (so the sandbox CI never runs
 # against a drift-patched toolchain — gofmt differs between 1.25.0
-# and 1.25.13), enable Go module/build cache, set timeout-minutes,
+# and 1.26.9), enable Go module/build cache, set timeout-minutes,
 # and add a concurrency cancel-in-progress group (the metal/stripex
 # siblings also lack these but are out of scope here; their hardening
 # is a follow-up PR).
@@ -58,7 +58,7 @@ jobs:
     env:
       PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
       PADDLE_SANDBOX_WEBHOOK_SECRET: ${{ secrets.PADDLE_SANDBOX_WEBHOOK_SECRET }}
-      GO_VERSION: "1.25.13"
+      GO_VERSION: "1.26.9"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

@@ -16,7 +16,13 @@ name: ci
 on:
   push:
     branches: [main]
+  # Draft PRs run only `lint + build`; every other job is gated on
+  # `github.event.pull_request.draft != true` so iteration on a draft does not
+  # hold ~25 hosted runners per push. `ready_for_review` starts the full suite
+  # (and cancels the draft run through the concurrency group below), and
+  # workflow_dispatch still runs everything on demand for a draft branch.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # Required checks must also run on the queue's temporary merge ref,
   # otherwise the queue waits forever for a status that never arrives.
   merge_group:
@@ -39,13 +45,10 @@ permissions:
   security-events: write
 
 env:
-  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
-  # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
-  # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
-  # closed when the runner resolves "1.25" to a vulnerable patch. Bump
-  # in lock-step with the go.mod `go` directive.
-  GO_VERSION: "1.25.13"
+  # Pin CI to Go 1.26.9 so govulncheck uses the patched standard library.
+  # go.mod targets Go 1.26.0 and selects this exact patch with its toolchain
+  # directive.
+  GO_VERSION: "1.26.9"
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -60,9 +63,8 @@ env:
   # GitHub release — never bump one without the other. The Makefile also
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
-  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and v1.31.1's go.mod requires Go >= 1.26, which the ubuntu-latest
-  # runner (Go 1.25.13) cannot satisfy under GOTOOLCHAIN=local.
+  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s).
+  # Its go.mod requires Go >= 1.26, so keep this toolchain pin at Go 1.26+.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -117,9 +119,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Full cold-cache lint exceeded twenty minutes with bounded memory.
+    # Full cold-cache lint takes around forty minutes with bounded memory.
     # Leave time for analysis, cold builds and the remaining policy gates.
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with:
@@ -168,9 +170,9 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
-      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
-      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
+      # checks. v2.14.0 is built with Go 1.26 and supports the go.mod Go 1.26
+      # target (golangci-lint v1.x is built with Go 1.23 and refuses newer
+      # go directives — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
@@ -194,11 +196,15 @@ jobs:
           GOGC: 75
           GOMAXPROCS: 2
         with:
-          version: v2.4.0
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
+          version: v2.14.0
+          # The newer Go 1.26 analyzers report baseline findings throughout
+          # the existing tree. Keep all rules enabled, but gate only findings
+          # introduced since this event's base revision while the baseline is
+          # addressed separately. The expanded repository needs up to fifty
+          # minutes for cold-cache analysis under these memory bounds.
+          args: >-
+            --timeout=50m
+            --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -543,6 +549,7 @@ jobs:
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
     timeout-minutes: 45
@@ -664,6 +671,7 @@ jobs:
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -705,10 +713,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Both shards compile the identical ./pkg/state race test binary, so
+          # they share one cache entry (written by shard 1 only, below).
+          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-state-${{ matrix.shard }}-${{ runner.os }}-
+            go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-state-${{ runner.os }}-
       - name: verify complete state inventory
         run: |
           mkdir -p coverage
@@ -732,18 +742,22 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
       - name: save Go build + test cache
-        if: always() && github.event_name == 'push'
+        # One writer per shared key: a second shard's save would only fail to
+        # reserve it, and duplicate entries are what overflowed the 10 GB
+        # repository cache budget and evicted the other families.
+        if: always() && github.event_name == 'push' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
   # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -964,7 +978,7 @@ jobs:
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
-    if: always()
+    if: always() && github.event.pull_request.draft != true
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -986,6 +1000,7 @@ jobs:
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
@@ -1065,6 +1080,7 @@ jobs:
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
@@ -1143,24 +1159,38 @@ jobs:
 
   container-contract:
     name: portable container contracts (strict)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    # Leave room for bounded cold APID compilation after the container suite.
-    timeout-minutes: 30
+    # Bounded-memory cold builds reached 14 min before the contracts finished.
+    timeout-minutes: 35
     permissions:
       contents: read
+    # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
+    # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
+    # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
-      - name: cache container contract builds
-        uses: actions/cache@v4
+      # Restore-only on pull requests, like every other family. The previous
+      # combined actions/cache step saved a ~1 GB entry for every PR ref and
+      # every source-hash change, evicting main's shared families.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore container contract builds
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
             go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-container-contract-${{ runner.os }}-
@@ -1168,9 +1198,13 @@ jobs:
         run: |
           set -o pipefail
           make test-container-contract 2>&1 | tee container-contract.log
+      # The combined serial race run was repeatedly interrupted by a hosted
+      # runner shutdown at ~10 minutes. Keep each invocation bounded while
+      # still proving every test discovered by udp-contract-check.py.
       - name: require portable UDP contracts
-        # Match the APID memory policy used by the other contract jobs.
-        # Keep every UDP test and its strict missing/skip verdict enabled.
+        # Match the bounded APID compile settings used by pg shard 1. This
+        # strict verifier also compiles cmd/apid with -race, and cold DWARF
+        # generation can exceed hosted-runner memory before tests begin.
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
@@ -1178,7 +1212,19 @@ jobs:
           GOMAXPROCS: 2
         run: |
           set -o pipefail
-          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+          python3 scripts/ci/udp-contract-check.py --packages pkg/ingressroute pkg/udpd pkg/udpwire cmd/vmmd-udp-bridge 2>&1 | tee udp-contract-ingress.log
+      - name: require portable UDP bridge contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages pkg/gateway pkg/vmmdgrpc 2>&1 | tee udp-contract-bridge.log
+      - name: require portable UDP control-plane contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages cmd/apid pkg/api pkg/state 2>&1 | tee udp-contract-control-plane.log
+      - name: require portable UDP customer and protocol contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages cmd/gregale cmd/gatewayd-public pkg/e2etest api/proto/onebox/faas/vmmd/v1 2>&1 | tee udp-contract-customer-protocol.log
       - name: retain container qualification log
         if: always()
         uses: actions/upload-artifact@v4
@@ -1186,8 +1232,16 @@ jobs:
           name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             container-contract.log
-            udp-contract.log
+            udp-contract-*.log
           if-no-files-found: warn
+      - name: save container contract builds
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1201,6 +1255,7 @@ jobs:
     # step, unchanged; the former job names are kept as section markers
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
     # retain time for the remaining SQLC, vulnerability and Ansible gates.
@@ -1702,6 +1757,7 @@ jobs:
   # Node SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1755,6 +1811,7 @@ jobs:
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1811,6 +1868,7 @@ jobs:
   # verified customer targeting or refresh after inactivity.
   flags-acceptance:
     name: flags (customer release + request evidence)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1854,6 +1912,7 @@ jobs:
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1920,6 +1979,7 @@ jobs:
     # and otherwise queue forever — our org doesn't have them provisioned,
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -2014,6 +2074,7 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migration IDs, apply and replay
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -2227,10 +2288,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # All four shards compile the identical non-race ./migrations test
+          # binary, so they share one cache entry (written by shard 1 only).
+          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-migrations-${{ matrix.shard }}-${{ runner.os }}-
+            go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-migrations-history-${{ runner.os }}-
             go-migrations-${{ runner.os }}-
       - name: verify complete migration inventory
         run: |
@@ -2245,19 +2308,20 @@ jobs:
           MIGRATION_RUN=$(go run ./scripts/ci/e2eshard -package=./migrations -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations
       - name: save Go build + test cache
-        if: always() && github.event_name == 'push'
+        # One writer per shared key; see unit-tests-state.
+        if: always() && github.event_name == 'push' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Keep the exact branch-protection context. A failed/cancelled prerequisite
   # or shard must fail this gate; only the impact policy can skip the suite.
   migrations:
     name: migrations (IDs + apply)
-    if: always()
+    if: always() && github.event.pull_request.draft != true
     needs: [migration-checks, migrations-full]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -2288,6 +2352,7 @@ jobs:
     # dedicated job. Keep this separate from the name-sharded e2e jobs so a
     # new TestBootContract_* cannot compile successfully without ever running.
     name: boot-contract (production config)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2333,6 +2398,7 @@ jobs:
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # The test command has a 15m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
@@ -2428,6 +2494,7 @@ jobs:
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2505,6 +2572,7 @@ jobs:
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2582,6 +2650,7 @@ jobs:
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:

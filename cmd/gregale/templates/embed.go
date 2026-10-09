@@ -41,7 +41,7 @@ var FS embed.FS
 // Go starters. Keep this aligned with the repository toolchain pin: unlike a
 // customer-owned go.mod, these generated modules are platform-owned defaults
 // and must not knowingly create images with HIGH stdlib findings.
-const GoToolchainVersion = "1.25.13"
+const GoToolchainVersion = "1.26.9"
 
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The seven

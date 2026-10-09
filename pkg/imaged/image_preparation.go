@@ -215,7 +215,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := h.replicateLayer(ctx, dep.RootfsKey); err != nil {
 		return imageRecoveryError(err)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	var stages state.StageState

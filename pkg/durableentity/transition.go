@@ -109,9 +109,13 @@ func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state 
 	}
 	latest.Version, latest.SnapshotKey, latest.SnapshotHash = state.Version, key, digest(body)
 	latest.StorageUsage = usage
+	latest.AlarmDelivery = nil
 	if err := m.putManifest(ctx, latest, etag); err != nil {
 		return Result{}, err
 	}
+	// Index hints are repairable. Failure after the authoritative publication
+	// cannot turn an acknowledged transition into a failure.
+	m.publishAlarmHint(ctx, latest, state)
 	// Return the encoded receipt representation so first delivery and replay
 	// agree even when a handler supplied whitespace in its JSON result.
 	encoded, err := json.Marshal(saved.Result)

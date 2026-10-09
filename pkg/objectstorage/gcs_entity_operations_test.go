@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
@@ -32,7 +33,7 @@ func TestGCSEntityInventoryCapCleanupAndAlarmWireConformance(t *testing.T) {
 	if err := m.Release(t.Context(), claim); err != nil {
 		t.Fatal(err)
 	}
-	qualifyGCSEntityAlarm(t, m, id, time.Unix(0, clock.Load()).Add(-time.Second))
+	qualifyGCSEntityAlarm(t, m, id, clock)
 	wire.mu.Lock()
 	defer wire.mu.Unlock()
 	if wire.lists < 2 || wire.deletes == 0 {
@@ -98,8 +99,12 @@ func qualifyGCSEntityCleanup(t *testing.T, m *durableentity.Manager, claim durab
 	}
 }
 
-func qualifyGCSEntityAlarm(t *testing.T, m *durableentity.Manager, id durableentity.ID, at time.Time) {
+func qualifyGCSEntityAlarm(t *testing.T, m *durableentity.Manager, id durableentity.ID, clock *atomic.Int64) {
 	t.Helper()
+	at := time.Unix(0, clock.Load()).Add(-time.Second)
+	if err := m.CheckAlarmDiscovery(t.Context()); err != nil {
+		t.Fatal("GCS alarm index capabilities", err)
+	}
 	if _, err := m.Invoke(t.Context(), id, "caller", gcsEntityRequest("schedule"), func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		transition, err := gcsEntityIncrement(ctx, view)
 		transition.AlarmAt = &at
@@ -107,10 +112,23 @@ func qualifyGCSEntityAlarm(t *testing.T, m *durableentity.Manager, id durableent
 	}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := m.ScanDueAlarms(t.Context(), "")
+	page, err := m.ScanIndexedDueAlarms(t.Context(), "")
 	if err != nil || page.Failed != 0 || len(page.Alarms) != 1 || page.Alarms[0].Entity != id {
-		t.Fatal("GCS delimiter listing lost the due alarm", page, err)
+		t.Fatal("GCS time-ordered index lost the due alarm", page, err)
 	}
+	if _, err := m.InvokeAlarm(t.Context(), page.Alarms[0], "failed-worker", func(context.Context, durableentity.View) (durableentity.Transition, error) {
+		return durableentity.Transition{}, errors.New("guest unavailable")
+	}); err == nil {
+		t.Fatal("GCS failed alarm acknowledged")
+	}
+	status, err := m.InspectAlarm(t.Context(), id)
+	if err != nil || status.Attempts != 1 || status.NextAttemptAt == nil || status.Exhausted {
+		t.Fatal("GCS retry reservation not persisted", status, err)
+	}
+	if _, err := m.InvokeAlarm(t.Context(), page.Alarms[0], "early-worker", gcsEntityIncrement); !errors.Is(err, durableentity.ErrAlarmBackoff) {
+		t.Fatal("GCS retry backoff ignored", err)
+	}
+	clock.Add(int64(api.DurableEntityAlarmRetryBase))
 	result, err := m.InvokeAlarm(t.Context(), page.Alarms[0], "alarm-worker", gcsEntityIncrement)
 	if err != nil || result.Version != 4 || string(result.Value) != `{"count":4}` {
 		t.Fatal("GCS alarm did not commit", result, err)

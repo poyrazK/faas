@@ -1,0 +1,40 @@
+<section class="app-cost-trend" aria-label="Six month app cost trend">
+  <h3>Six month attributed cost trend</h3>
+  <p class="cost-note">Each bar uses one shared scale across the complete months in this view. Months with incomplete, stale, or unpriced data show their known amounts as partial and omit the bars. Select a month to open its full cost breakdown.</p>
+  {{if .Data.Unavailable}}
+    <p class="cost-note" role="status">{{.Data.Unavailable}}</p>
+  {{else if .Data.Months}}
+    <div class="cost-trend-table-wrap">
+      <table class="cost-trend-table">
+        <thead><tr><th>Month</th><th>Compute</th><th>Interface egress</th><th>Total known cost</th><th>Source coverage</th></tr></thead>
+        <tbody>
+          {{range .Data.Months}}
+            <tr{{if .Selected}} class="selected"{{end}}>
+              <th scope="row"><a href="{{.MonthURL}}"{{if .Selected}} aria-current="date"{{end}}>{{.Month}}</a>{{if .Current}} <span class="cost-trend-current">month to date</span>{{end}}</th>
+              {{if .Unavailable}}
+                <td colspan="3" class="cost-trend-unavailable">{{.Unavailable}}</td>
+                <td><span class="badge dim">Unavailable</span></td>
+              {{else}}
+                <td>
+                  {{.ComputeCost}}
+                  {{if .Complete}}<div class="cost-trend-bar"><span class="cost-trend-fill compute{{if .ComputeNegative}} negative{{end}}" style="width:{{.ComputeBarWidth}}%"></span></div>{{end}}
+                </td>
+                <td>
+                  {{.EgressCost}}
+                  {{if .Complete}}<div class="cost-trend-bar"><span class="cost-trend-fill egress{{if .EgressNegative}} negative{{end}}" style="width:{{.EgressBarWidth}}%"></span></div>{{end}}
+                </td>
+                <td>{{.TotalCost}}</td>
+                <td>
+                  {{if .Complete}}<span class="badge running">{{.CoverageStatus}}</span>{{else}}<span class="badge cert-failed">{{.CoverageStatus}}</span>{{end}}
+                  <details><summary>Coverage details</summary><small>{{.CoverageDetails}}</small></details>
+                </td>
+              {{end}}
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  {{else}}
+    <p class="cost-note" role="status">Cost history is temporarily unavailable.</p>
+  {{end}}
+</section>

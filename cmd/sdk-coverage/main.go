@@ -439,6 +439,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/deployments/{id}/promote-with-application-ack":                          "PromoteDeploymentWithBindings",
 	"POST /v1/deployments/{id}/promote":                                               "PromoteDeploymentWithBindings",
 	"GET /v1/apps/{slug}/bindings":                                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/operational-summary":                                         "GetAppOperationalSummary",
 	"GET /v1/apps/{slug}/bindings/release-policy":                                     "GetBindingReleasePolicy",
 	"PUT /v1/apps/{slug}/bindings/release-policy":                                     "SetBindingReleasePolicy",
 	"GET /v1/apps/{slug}/alert-rollbacks":                                             "ListAlertRollbacks",
@@ -602,6 +603,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
+	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
+	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
 	"GET /v1/deployments/{id}/stages":                                                 "GetDeploymentStages",                  // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
 	"GET /v1/deployments/{id}/audit":                                                  "ListDeploymentAudit",                  // issue #976 / ADR-122 SAFE-RELEASES-E.2 + production-leveling Stream A; per-deployment audit timeline drill-down
 	"POST /v1/deployments/{id}/canary/advance":                                        "AdvanceCanary",                        // issue #976 / ADR-122; APID-owned atomic canary CAS + traffic + audit
@@ -699,6 +702,8 @@ var methodRouteMap = map[string]string{
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
 	"GET /v1/apps/{slug}/workflows/runs":                                     "ListWorkflowRuns",
+	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                     "PreviewUnstartedWorkflowRunCancellations",
+	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      "CancelUnstartedWorkflowRuns",
 	"GET /v1/apps/{slug}/automations":                                        "ListAutomations",
 	"GET /v1/apps/{slug}/automations/{name}":                                 "GetAutomation",
 	"GET /v1/apps/{slug}/automations/{name}/health":                          "GetAutomationHealth",
@@ -712,9 +717,14 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/automations/{name}/publish":                        "PublishAutomation",
 	"PUT /v1/apps/{slug}/automations/{name}/enabled":                         "SetAutomationEnabled",
 	"GET /v1/apps/{slug}/workflows/schedules":                                "ListWorkflowSchedules",
+	"GET /v1/apps/{slug}/workflows/schedules/{name}/preview":                 "GetWorkflowSchedulePreview",
+	"GET /v1/apps/{slug}/workflows/schedules/occurrences":                    "ListWorkflowScheduleOccurrences",
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay-preview":    "PreviewWorkflowScheduleReplays",
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay":            "ReplayWorkflowScheduleOccurrences",
 	"POST /v1/workflows/runs/{id}/resume":                                    "ResumeWorkflowRun",
 	"GET /v1/workflows/runs/{id}/resumes":                                    "ListWorkflowResumes",
 	"GET /v1/workflows/runs/{id}":                                            "GetWorkflowRun",
+	"GET /v1/workflows/runs/{id}/diagnostics":                                "GetWorkflowRunDiagnostics",
 	"GET /v1/workflows/runs/{id}/steps":                                      "ListWorkflowSteps",
 	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                      "ListWorkflowStepAttempts",
 	"POST /v1/workflows/runs/{id}/steps/{step}/retry":                        "RetryWorkflowStep",
@@ -867,6 +877,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/platform-tenant-self/apps/{slug}/events/receipts/{event_id}":                 "GetPlatformTenantSelfEventReceipt",
 	"GET /v1/platform-tenant-self/apps/{slug}/workflows/runs":                             "ListPlatformTenantSelfWorkflowRuns",
 	"GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules":                        "ListTenantWorkflowSchedules",
+	"GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview":         "GetPlatformTenantSelfWorkflowSchedulePreview",
 	"GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks":                          "ListPlatformTenantSelfWorkflowCallbacks",
 	"POST /v1/platform-tenant-self/apps/{slug}/events:publish":                            "PublishPlatformTenantSelfEvent",
 	"POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}":           "CompletePlatformTenantSelfWorkflowCallback",
@@ -874,6 +885,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}":                 "UpdateTenantWorkflowSchedule",
 	"POST /v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs":                     "CreatePlatformTenantSelfWorkflowRun",
 	"GET /v1/platform-tenant-self/workflows/runs/{id}":                                    "GetPlatformTenantSelfWorkflowRun",
+	"GET /v1/platform-tenant-self/workflows/runs/{id}/diagnostics":                        "GetPlatformTenantSelfWorkflowRunDiagnostics",
 	"POST /v1/platform-tenant-self/workflows/runs/{id}/cancel":                            "CancelPlatformTenantSelfWorkflowRun",
 	"POST /v1/platform-tenant-self/workflows/runs/{id}/resume":                            "ResumePlatformTenantSelfWorkflowRun",
 	"GET /v1/platform-tenant-self/invocations/{id}":                                       "GetPlatformTenantSelfInvocation",
@@ -1211,6 +1223,8 @@ var methodRouteMap = map[string]string{
 	// would produce GetAppsSlugMetrics (Swagger-style); the SDK
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
+	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
 	"GET /v1/apps/{slug}/debug/dependencies":    "GetAppDebugDependencyLatency",

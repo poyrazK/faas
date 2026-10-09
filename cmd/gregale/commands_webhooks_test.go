@@ -20,7 +20,7 @@ const webhookTestID = "0123456789abcdef0123456789abcdef"
 
 // ADR-076: only producer-backed webhook events may be selected locally.
 func TestWebhookEventVocab_RolloutOutcomes(t *testing.T) {
-	for _, event := range []string{"rollout.completed", "rollout.aborted", "job.finished"} {
+	for _, event := range []string{"rollout.completed", "rollout.aborted", "job.finished", "app.health.changed"} {
 		if !validAppWebhookEvent(event) {
 			t.Errorf("producer-backed event %q rejected by CLI", event)
 		}

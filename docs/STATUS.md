@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Local runtime update work — 2026-10-06
+
+[ADR-693](adr/693-private-runtime-routing-and-health-verification.md) adds private
+gateway cache-installation receipts, bounded lost-notification/restart repair,
+and account-scoped post-cutover verification using fresh candidate-only health
+and request evidence. Activation history stays immutable. Gateway confirmation
+is disabled by default; customer Apply remains unavailable. The reviewed gateway
+session set is explicit, and verification is a current observation rather than
+a durable completion or drain receipt. Authoritative gateway membership,
+durable verification orchestration, predecessor drain/cleanup and dedicated
+native Linux amd64 KVM acceptance remain open. Local fixtures provide no native
+runtime qualification; the dedicated acceptance project is suspended.
+
 ## Current snapshot — 2026-09-16
 
 - **Product surface:** the `gregale` CLI, API, GitHub integration, dashboard,
@@ -30,6 +43,14 @@ historical.
   error-budget metrics. Managed PostgreSQL dependency binding is available as
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
+
+Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
+an advisory time-ordered alarm index with bounded repair scans, fenced retry
+reservations with backoff and exhaustion, and exact-scope private operator
+inspection. Manifest schema 4 requires stopping older entity writers before
+upgrade. Native-host and live-provider qualification remain pending; this does
+not promote the preview to production availability
+([ADR-712](adr/712-object-storage-durable-entities.md)).
 
 Image readiness update (2026-10-07): newly assembled primary image deployments
 require a fresh successful effective OCI/Compose command healthcheck before

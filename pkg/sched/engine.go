@@ -3422,8 +3422,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_runtime_release_unavailable")
+		release()
+		return WakeResult{}, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
+		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
@@ -5277,9 +5283,13 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
+	}
 	return AppSpec{
 		migrationRuntime: migrationInputs,
-		BaseKey:          baseKey(app.Runtime),
+		BaseKey:          pinnedBase,
 		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:        int32(limits.VCPU),
 		MemSizeMiB:       int32(app.RAMMB),
@@ -5917,6 +5927,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 	primeLayer := layerKey(dep.RootfsKey, dep.ID)
+	upgradeTarget, err := e.runtimeUpgradePrimeTarget(ctx, app, dep)
+	if err != nil {
+		return err
+	}
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 			return err
@@ -6023,6 +6037,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 	runtimeInputs, spec := prepared.Inputs, prepared.Spec
+	if upgradeTarget != nil && (spec.BaseKey != upgradeTarget.BaseKey() || spec.LayerKey != dep.RootfsKey) {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_runtime_upgrade_artifact_mismatch")
+		return fmt.Errorf("sched: prime: runtime upgrade artifact mismatch: %w", state.ErrConflict)
+	}
 	primeDelivery := bootInput{
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
 		secretDeliveries: prepared.SecretDeliveries,
@@ -6061,11 +6079,18 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// longer (primeStartupExtension).
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
+	bootStartedAt := time.Now().UTC()
 	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
+	}
+	if out == nil || (upgradeTarget != nil && (out.Instance != ins.ID || out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT || out.RestoreFallbackReason != "")) {
+		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_identity_invalid")
+		return fmt.Errorf("sched: prime: cold boot response does not prove the admitted candidate: %w", state.ErrConflict)
 	}
 	if primeStartupCPU > primeConfiguredCPU {
 		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
@@ -6077,10 +6102,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	publication := state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: appID, InstanceID: ins.ID, NodeID: placement.NodeID, WakeID: primeWakeID,
 		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: prepared.SecretFence, ConfigFence: prepared.ConfigFence, Inputs: &runtimeInputs,
-	})
+	}
+	if upgradeTarget != nil {
+		publication.RuntimeUpgradeColdBoot = &state.RuntimeUpgradeColdBoot{
+			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
+		}
+	}
+	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, publication)
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the

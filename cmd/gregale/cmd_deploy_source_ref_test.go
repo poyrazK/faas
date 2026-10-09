@@ -211,7 +211,7 @@ func TestCmdDeployRepoTenantPolicy(t *testing.T) {
 //   - missing_ref: --repo without --ref exits 1 before any HTTP call.
 //   - invalid_slug: validateRepoSlug guard.
 //   - retry_after: 409 + Retry-After:30 → stderr surfaces
-//     "(Retry-After: 30s)".
+//     retry_after_seconds=30 in the stderr Problem.
 //   - not_found: 404 + code=github_install_not_found → stderr
 //     surfaces the bind hint.
 //   - no_install_token_env: §4 CI regression — happy path with
@@ -347,9 +347,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			},
 			invoke: cmdDeployRepoSourceRef,
 			expect: expect{
-				exitCode: 1, // non-zero
+				exitCode: 5, // non-zero
 				stderrContains: []string{
-					"Retry-After: 30s",
+					`"retry_after_seconds":30`,
 					"source_ref_unavailable",
 				},
 			},
@@ -367,7 +367,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			},
 			invoke: cmdDeployRepoSourceRef,
 			expect: expect{
-				exitCode: 1,
+				exitCode: 4,
 				stderrContains: []string{
 					"github_install_not_found",
 					"gregale connect",
@@ -420,6 +420,12 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			code := tc.invoke(slug, repo, ref, api.DeployAnnotations{})
 			if code != tc.expect.exitCode {
 				t.Errorf("exit = %d, want %d (stderr=%q)", code, tc.expect.exitCode, stderr.String())
+			}
+			if tc.name == "retry_after_409" {
+				problem := assertOneProblem(t, stderr.String())
+				if problem.Status != 409 || problem.Code != "source_ref_unavailable" || problem.RetryAfterSeconds == nil || *problem.RetryAfterSeconds != 30 {
+					t.Fatalf("lost server error or backoff: %+v", problem)
+				}
 			}
 			for _, want := range tc.expect.stderrContains {
 				if !strings.Contains(stderr.String(), want) {

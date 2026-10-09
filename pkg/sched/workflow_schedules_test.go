@@ -25,6 +25,10 @@ func (e *scheduleStepExecutor) ExecuteStep(_ context.Context, _ string, path, _ 
 	return 200, []byte(`{"report":"sent"}`), nil
 }
 
+func (e *scheduleStepExecutor) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, input []byte, timeout time.Duration, _ string, _ int64) (int, []byte, error) {
+	return e.ExecuteStep(ctx, appID, path, method, headers, input, timeout)
+}
+
 func TestWorkflowScheduleStartsAndExecutesWithoutAdapter(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

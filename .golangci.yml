@@ -3,9 +3,9 @@
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema v2 — required by golangci-lint >= v2.0. Action v8 pins v2.4.0
-# which is built with Go 1.25 and supports our go.mod's 'go 1.25.0'
-# directive (v1.x was built with Go 1.23 and rejected the bump — see
+# Schema v2 — required by golangci-lint >= v2.0. CI pins v2.14.0, built
+# with Go 1.26 to support the repository's 'go 1.26.0' directive (v1.x was
+# built with Go 1.23 and rejected newer go directives — see
 # golangci/golangci-lint#5873).
 version: "2"
 
@@ -126,11 +126,8 @@ linters:
     #     helper or carry a //nolint:forbidigo comment with a
     #     documented reason reviewed in the PR
     #
-    # NOTE on local noise: golangci-lint 2.12.x (Homebrew default)
-    # ships a default forbidigo rule banning fmt.Print*; the action
-    # pins v2.4.0 which does NOT include that default. Local `make
-    # lint` may report fmt.Print* findings that CI will not — these
-    # are pre-existing on main and unrelated to this PR.
+    # Keep the forbidigo policy explicit here so local and CI runs use
+    # the same repository-specific rules across linter releases.
     forbidigo:
       # Don't analyze godoc — stdlib only, no test fixtures in docs.
       exclude-godoc-examples: false
@@ -203,10 +200,8 @@ linters:
     # that DO matter here (hardcoded secrets, SQL injection, weak crypto, TLS
     # config, bind-all, etc.) stay active.
     #
-    # NOTE: only rule IDs present in the pinned golangci-lint v2.4.0 gosec ruleset
-    # are valid here — the action runs `config verify` (strict JSON-schema). The
-    # experimental taint rules (G118/G703/G704/G705) do not exist in v2.4.0, so
-    # they never fire and must not be listed. Revisit this list when the pin bumps.
+    # Keep exclusions aligned with the gosec ruleset bundled in the pinned
+    # golangci-lint release. Review new taint rules before adding exclusions.
     gosec:
       excludes:
         - G101 # hardcoded credentials: spec §11 names (CodePlanLimitSecrets, SecretKeyPattern, secretsEnvPath) are stable identifiers, not secrets
@@ -405,7 +400,7 @@ linters:
       # staticcheck's dataflow analyzer doesn't know t.Fatalf
       # terminates. Blanket-excluding the directory rather than
       # chasing individual files is the load-bearing choice here —
-      # the v2.4.0 linter ships enough false-positives in this
+      # the pinned linter ships enough false-positives in this
       # surface that path-by-path maintenance falls behind within
       # a week. If a real nil-deref is later introduced, the
       # unit tests under that file (not staticcheck) will catch

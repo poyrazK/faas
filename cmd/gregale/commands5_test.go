@@ -1480,8 +1480,8 @@ func TestCmdAppRename_ConflictRendersProblem(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	stderr, restore := captureStderr(t)
 	defer restore()
-	if code := cmdAppRename("hello", "taken"); code != 1 {
-		t.Errorf("cmdAppRename conflict = %d, want 1", code)
+	if code := cmdAppRename("hello", "taken"); code != 5 {
+		t.Errorf("cmdAppRename conflict = %d, want 5", code)
 	}
 	if !strings.Contains(stderr.String(), "Slug already in use") {
 		t.Errorf("conflict detail should surface on stderr: %q", stderr.String())

@@ -2870,6 +2870,8 @@ type Build struct {
 // nullable columns. sbom_storage_key is empty in this PR — Phase 3's
 // syft populator fills it.
 type BuildProvenance struct {
+	// RuntimeBaseRef is the host-resolved deploy base used by this build.
+	RuntimeBaseRef string
 	ID             string
 	BuildID        string
 	BuildkitVer    string
@@ -3171,6 +3173,11 @@ const (
 	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
 	AlertMetricRequestCount              AlertMetric = "request_count"
 	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
+	AlertMetricWorkflowFailures          AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips        AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge        AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge        AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge            AlertMetric = "workflow_due_age_seconds"
 	AlertMetricAPIUp                     AlertMetric = "api_up"
 	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
 	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
@@ -3464,7 +3471,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means all eligible events for that subscription scope;
+// An empty filter ([]) means standard eligible events for that subscription scope;
+// app.health.changed requires an explicit filter.
 // non-empty filters accept events whose name appears in the array. The delivery
 // ledger also stores bounded custom event names from explicitly addressed
 // application-outbox calls; those names never participate in subscription
@@ -3480,6 +3488,7 @@ const (
 	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
 	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
 	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventAppHealthChanged                 AppWebhookEvent = "app.health.changed"
 	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
 	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
@@ -3526,6 +3535,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppScaled,
 	AppWebhookEventAppParked,
 	AppWebhookEventAppWoken,
+	AppWebhookEventAppHealthChanged,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
 	AppWebhookEventDeploymentLive,
@@ -3991,6 +4001,12 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// WorkflowRunID is set only after authenticated durable workflow admission.
+	// It authorizes private code routing and is never guest-authored or persisted.
+	WorkflowRunID string `json:"-"`
+	// ResponseRetryAfter is transient gateway response metadata, never persisted
+	// or accepted from the customer invocation envelope.
+	ResponseRetryAfter string `json:"-"`
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
