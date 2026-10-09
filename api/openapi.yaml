@@ -39087,6 +39087,7 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
+        evidence_window: { type: string, enum: [pooled], description: "Present when the two windows are consecutive halves of up to the newest 30 minutes of the stage because one-minute windows lacked requests (ADR-846). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
     RouteCustomerHealthAttribution:
       type: object

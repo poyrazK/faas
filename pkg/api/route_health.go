@@ -53,17 +53,20 @@ type RouteHealthFinding struct {
 	WatchStatuses []int                         `json:"watch_statuses,omitempty"`
 	ClientErrors  *RouteHealthClientErrorReport `json:"client_errors,omitempty"`
 
-	Method        string                      `json:"method"`
-	Path          string                      `json:"path"`
-	CheckLatency  bool                        `json:"check_latency,omitempty"`
-	MaxP95MS      int64                       `json:"max_p95_ms,omitempty"`
-	Status        string                      `json:"status"`
-	Reason        string                      `json:"reason"`
-	ErrorStatus   string                      `json:"error_status,omitempty"`
-	ErrorReason   string                      `json:"error_reason,omitempty"`
-	LatencyStatus string                      `json:"latency_status,omitempty"`
-	LatencyReason string                      `json:"latency_reason,omitempty"`
-	Windows       []RouteHealthWindowEvidence `json:"windows"`
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	CheckLatency  bool   `json:"check_latency,omitempty"`
+	MaxP95MS      int64  `json:"max_p95_ms,omitempty"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason"`
+	ErrorStatus   string `json:"error_status,omitempty"`
+	ErrorReason   string `json:"error_reason,omitempty"`
+	LatencyStatus string `json:"latency_status,omitempty"`
+	LatencyReason string `json:"latency_reason,omitempty"`
+	// EvidenceWindow is "pooled" when the two windows are halves of the stage
+	// so far because one-minute windows lacked requests (ADR-846).
+	EvidenceWindow string                      `json:"evidence_window,omitempty"`
+	Windows        []RouteHealthWindowEvidence `json:"windows"`
 }
 
 // CanaryProfileSignal is a retained, advisory comparison for one canary stage.

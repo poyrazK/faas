@@ -255,6 +255,9 @@ func renderRouteHealthReport(r api.RouteHealthReport, appSlug string) {
 	_, _ = fmt.Fprintf(osStdout, "Route health: %s (%s, revision %d)\nCandidate: %s (%s)\nStable: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, r.Mode, r.Revision, r.DeploymentID, previewReportText(r.CandidateCommitSHA), r.StableDeploymentID, previewReportText(r.StableCommitSHA))
 	for _, f := range r.Routes {
 		_, _ = fmt.Fprintf(osStdout, "\n%s %s: %s\n", f.Method, previewReportText(f.Path), f.Status)
+		if f.EvidenceWindow == "pooled" && len(f.Windows) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  Low traffic: pooled over %s of this stage in two halves\n", f.Windows[len(f.Windows)-1].End.Sub(f.Windows[0].Start))
+		}
 		if routehealth.LatencyEnabled(f.CheckLatency, f.MaxP95MS) {
 			_, _ = fmt.Fprintf(osStdout, "  Latency: %s; minimum %d requests per deployment/window", f.LatencyStatus, r.MinimumLatencyRequests)
 			if f.MaxP95MS > 0 {
