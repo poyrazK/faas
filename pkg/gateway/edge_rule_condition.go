@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -42,6 +43,36 @@ type EdgeRuleHitRecorder interface {
 	RecordEdgeRuleHit(ruleID, appID string, logged bool)
 }
 
+// Bounds on a sampled event's free-text fields (ADR-834).
+const (
+	EdgeRuleEventMaxPathBytes      = 1024
+	EdgeRuleEventMaxUserAgentBytes = 256
+)
+
+// EdgeRuleEvent is one sampled rule match (ADR-834). Path carries no query
+// string; ClientIP and Country are empty when untrusted or unknown.
+type EdgeRuleEvent struct {
+	RuleID    string
+	AppID     string
+	Logged    bool
+	At        time.Time
+	RequestID string
+	Method    string
+	Host      string
+	Path      string
+	ClientIP  string
+	Country   string
+	UserAgent string
+}
+
+// EdgeRuleEventSampler is optionally implemented by an EdgeRuleHitRecorder
+// to keep sampled events (ADR-834). SampleEdgeRuleEvent is asked after each
+// counted hit and must be cheap; the event is built only when it says yes.
+type EdgeRuleEventSampler interface {
+	SampleEdgeRuleEvent(ruleID string) bool
+	RecordEdgeRuleEvent(ev EdgeRuleEvent)
+}
+
 type edgeRuleMatchContextKey struct{}
 
 // EdgeRuleMatchContext is the per-request data conditions read. Country is
@@ -51,6 +82,9 @@ type EdgeRuleMatchContext struct {
 	Headers  http.Header
 	Query    url.Values
 	ClientIP net.IP // nil unless the single trusted forwarded hop parsed
+	// Method / Path are the request as received, for sampled events.
+	Method string
+	Path   string
 
 	countryOnce sync.Once
 	lookup      func(net.IP) string
@@ -69,7 +103,7 @@ type EdgeRuleMatchContext struct {
 func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.IP) string, hits EdgeRuleHitRecorder) *EdgeRuleMatchContext {
 	return &EdgeRuleMatchContext{
 		Host: hostname(r.Host), Headers: r.Header, Query: r.URL.Query(),
-		ClientIP: clientIP, lookup: lookup, hits: hits,
+		ClientIP: clientIP, Method: r.Method, Path: r.URL.Path, lookup: lookup, hits: hits,
 	}
 }
 
@@ -84,9 +118,41 @@ func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged bool) {
 	_, seen := m.seenHits[ruleID]
 	m.seenHits[ruleID] = struct{}{}
 	m.seenMu.Unlock()
-	if !seen {
-		m.hits.RecordEdgeRuleHit(ruleID, appID, logged)
+	if seen {
+		return
 	}
+	m.hits.RecordEdgeRuleHit(ruleID, appID, logged)
+	if s, ok := m.hits.(EdgeRuleEventSampler); ok && s.SampleEdgeRuleEvent(ruleID) {
+		s.RecordEdgeRuleEvent(m.event(ruleID, appID, logged))
+	}
+}
+
+// event snapshots the request for a sampled match. The request ID header is
+// read now: the handler stamps it after building the match context.
+func (m *EdgeRuleMatchContext) event(ruleID, appID string, logged bool) EdgeRuleEvent {
+	ev := EdgeRuleEvent{
+		RuleID: ruleID, AppID: appID, Logged: logged, At: time.Now().UTC(),
+		RequestID: truncateBytes(m.Headers.Get(api.RequestIDHeader), 128),
+		Method:    truncateBytes(m.Method, 16), Host: m.Host,
+		Path:      truncateBytes(m.Path, EdgeRuleEventMaxPathBytes),
+		Country:   m.resolvedCountry(),
+		UserAgent: truncateBytes(m.Headers.Get("User-Agent"), EdgeRuleEventMaxUserAgentBytes),
+	}
+	if m.ClientIP != nil {
+		ev.ClientIP = m.ClientIP.String()
+	}
+	return ev
+}
+
+// truncateBytes cuts s to at most n bytes without splitting a UTF-8 rune.
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && n < len(s) && s[n]&0xC0 == 0x80 {
+		n--
+	}
+	return s[:n]
 }
 
 // ObserveEdgeRuleMatch counts the enforced rule a kind lookup selected and

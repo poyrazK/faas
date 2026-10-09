@@ -509,7 +509,9 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-831)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-833)
-	edgeRuleHitCounts         map[edgeRuleHitKey]int64        // ADR-830 hourly hit buckets
+	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-834)
+	edgeRuleEventSeq          int64
+	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-830 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation

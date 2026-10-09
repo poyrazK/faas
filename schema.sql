@@ -14881,6 +14881,47 @@ CREATE SEQUENCE public.edge_rule_generation_seq
 
 
 --
+-- Name: edge_rule_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_events (
+    id bigint NOT NULL,
+    rule_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    request_id text DEFAULT ''::text NOT NULL,
+    method text DEFAULT ''::text NOT NULL,
+    host text DEFAULT ''::text NOT NULL,
+    path text DEFAULT ''::text NOT NULL,
+    client_ip inet,
+    country text DEFAULT ''::text NOT NULL,
+    user_agent text DEFAULT ''::text NOT NULL,
+    CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
+    CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
+    CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text]))),
+    CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
+    CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
+    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256))
+);
+
+
+--
+-- Name: edge_rule_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_rule_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_rule_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: edge_rule_hit_counts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25842,6 +25883,14 @@ ALTER TABLE ONLY public.edge_rule_change_log
 
 
 --
+-- Name: edge_rule_events edge_rule_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_events
+    ADD CONSTRAINT edge_rule_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: edge_rule_hit_counts edge_rule_hit_counts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31960,6 +32009,27 @@ CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observ
 --
 
 CREATE INDEX edge_rule_change_log_created_idx ON public.edge_rule_change_log USING btree (created_at, id);
+
+
+--
+-- Name: edge_rule_events_app_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_app_time_idx ON public.edge_rule_events USING btree (app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: edge_rule_events_occurred_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_occurred_idx ON public.edge_rule_events USING btree (occurred_at);
+
+
+--
+-- Name: edge_rule_events_rule_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_events_rule_time_idx ON public.edge_rule_events USING btree (rule_id, occurred_at DESC, id DESC);
 
 
 --

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,12 +18,17 @@ const (
 	// rules, so this is only reached under extreme churn; past it new rules
 	// are not counted until the next flush (counts are telemetry, ADR-830).
 	edgeRuleHitMaxRules = 50_000
+	// ADR-834 sampling: the first matches of each rule per flush interval
+	// are kept as full events, bounded per gateway.
+	edgeRuleEventsPerRule  = 10
+	edgeRuleEventMaxQueued = 2_000
 )
 
 type edgeRuleHitCount struct {
 	appID   string
 	matched atomic.Int64
 	logged  atomic.Int64
+	sampled atomic.Int64 // events kept this interval (ADR-834)
 }
 
 // edgeRuleHitCounter implements gateway.EdgeRuleHitRecorder: per-rule
@@ -33,6 +39,10 @@ type edgeRuleHitCounter struct {
 	pending map[string]*edgeRuleHitCount
 	now     func() time.Time
 	dropped atomic.Int64
+
+	eventsMu      sync.Mutex
+	events        []gateway.EdgeRuleEvent
+	droppedEvents int64 // guarded by eventsMu
 }
 
 func newEdgeRuleHitCounter() *edgeRuleHitCounter {
@@ -60,6 +70,64 @@ func (c *edgeRuleHitCounter) RecordEdgeRuleHit(ruleID, appID string, logged bool
 		n.logged.Add(1)
 	} else {
 		n.matched.Add(1)
+	}
+}
+
+// SampleEdgeRuleEvent implements gateway.EdgeRuleEventSampler: it admits
+// the first edgeRuleEventsPerRule counted matches of a rule per interval.
+func (c *edgeRuleHitCounter) SampleEdgeRuleEvent(ruleID string) bool {
+	c.mu.RLock()
+	n := c.pending[ruleID]
+	c.mu.RUnlock()
+	return n != nil && n.sampled.Add(1) <= edgeRuleEventsPerRule
+}
+
+// RecordEdgeRuleEvent queues a sampled event for the next flush.
+func (c *edgeRuleHitCounter) RecordEdgeRuleEvent(ev gateway.EdgeRuleEvent) {
+	c.eventsMu.Lock()
+	defer c.eventsMu.Unlock()
+	if len(c.events) >= edgeRuleEventMaxQueued {
+		c.droppedEvents++
+		return
+	}
+	c.events = append(c.events, ev)
+}
+
+// drainEvents swaps out queued events as store rows.
+func (c *edgeRuleHitCounter) drainEvents() ([]state.EdgeRuleEvent, int64) {
+	c.eventsMu.Lock()
+	queued, dropped := c.events, c.droppedEvents
+	c.events, c.droppedEvents = nil, 0
+	c.eventsMu.Unlock()
+	out := make([]state.EdgeRuleEvent, 0, len(queued))
+	for _, ev := range queued {
+		outcome := state.EdgeRuleHitMatched
+		if ev.Logged {
+			outcome = state.EdgeRuleHitLogged
+		}
+		out = append(out, state.EdgeRuleEvent{
+			RuleID: ev.RuleID, AppID: ev.AppID, OccurredAt: ev.At, Outcome: outcome,
+			RequestID: ev.RequestID, Method: ev.Method, Host: ev.Host, Path: ev.Path,
+			ClientIP: ev.ClientIP, Country: ev.Country, UserAgent: ev.UserAgent,
+		})
+	}
+	return out, dropped
+}
+
+// flushEvents writes sampled events. Events are telemetry (ADR-834): a
+// failed write drops them rather than growing the queue.
+func (c *edgeRuleHitCounter) flushEvents(ctx context.Context, store state.EdgeRuleEventStore, log *slog.Logger) {
+	events, dropped := c.drainEvents()
+	if dropped > 0 && log != nil {
+		log.Warn("gatewayd: edge-rule events dropped at the queue bound", "events", dropped)
+	}
+	if len(events) == 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := store.RecordEdgeRuleEvents(writeCtx, events); err != nil && log != nil {
+		log.Warn("gatewayd: edge-rule event flush failed; events dropped", "events", len(events), "err", err)
 	}
 }
 
@@ -104,6 +172,9 @@ func (c *edgeRuleHitCounter) restore(hits []state.EdgeRuleHit) {
 }
 
 func (c *edgeRuleHitCounter) flush(ctx context.Context, store state.EdgeRuleHitStore, log *slog.Logger) {
+	if events, ok := store.(state.EdgeRuleEventStore); ok {
+		c.flushEvents(ctx, events, log)
+	}
 	hits := c.drain()
 	if len(hits) == 0 {
 		return
@@ -138,6 +209,11 @@ func (c *edgeRuleHitCounter) run(ctx context.Context, store state.EdgeRuleHitSto
 		case <-prune.C:
 			if _, err := store.PruneEdgeRuleHitCounts(ctx, c.now().Add(-state.EdgeRuleHitCountRetention)); err != nil && log != nil {
 				log.Warn("gatewayd: prune edge-rule hit counts failed", "err", err)
+			}
+			if events, ok := store.(state.EdgeRuleEventStore); ok {
+				if _, err := events.PruneEdgeRuleEvents(ctx, c.now().Add(-state.EdgeRuleEventRetention)); err != nil && log != nil {
+					log.Warn("gatewayd: prune edge-rule events failed", "err", err)
+				}
 			}
 		}
 	}
