@@ -11,8 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 )
 
-func promptJobSchedule(ctx context.Context, prompt *startPrompt) (string, string, error) {
+func promptJobSchedule(ctx context.Context, prompt *startPrompt, defaults ...string) (string, string, error) {
 	timezone := "UTC"
+	defaultExpression := "0 * * * *"
+	defaultChoice := 1
+	if len(defaults) == 2 {
+		if defaults[1] != "" {
+			timezone = defaults[1]
+		}
+		if defaults[0] != "" {
+			defaultExpression = defaults[0]
+			defaultChoice = 4
+		}
+	}
 	for {
 		value, err := prompt.text(ctx, "Timezone (UTC or IANA name, e.g. Europe/Istanbul)", timezone)
 		if err != nil {
@@ -28,11 +39,11 @@ func promptJobSchedule(ctx context.Context, prompt *startPrompt) (string, string
 		_, _ = fmt.Fprintln(prompt.writer, "Choose UTC or an explicit IANA timezone.")
 	}
 	presets := []string{"*/5 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"}
-	choice, err := prompt.choose(ctx, "Choose a schedule (times use "+timezone+").", []string{"Every 5 minutes", "Hourly at minute 0", "Daily at 09:00", "Weekdays at 09:00", "Custom five-field expression"}, 1)
+	choice, err := prompt.choose(ctx, "Choose a schedule (times use "+timezone+").", []string{"Every 5 minutes", "Hourly at minute 0", "Daily at 09:00", "Weekdays at 09:00", "Custom five-field expression"}, defaultChoice)
 	if err != nil {
 		return "", "", err
 	}
-	expression := "0 * * * *"
+	expression := defaultExpression
 	if choice < len(presets) {
 		expression = presets[choice]
 	}

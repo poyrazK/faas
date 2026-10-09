@@ -79,6 +79,24 @@ func cmdJobsUpdateInteractive() int {
 		return startInputExit(err)
 	}
 	status := []string{"active", "paused"}[state]
+	PrintProgress(osStdout, "Current schedule: %s; timezone: %s", oneLine(job.Schedule), oneLine(job.Timezone))
+	scheduleOptions := []string{"Keep current schedule", "Set or change schedule"}
+	if job.Schedule != "" {
+		scheduleOptions = append(scheduleOptions, "Remove schedule (convert to batch)")
+	}
+	scheduleChoice, err := prompt.choose(ctx, "Scheduling", scheduleOptions, 0)
+	if err != nil {
+		return startInputExit(err)
+	}
+	schedule, timezone := job.Schedule, job.Timezone
+	if scheduleChoice == 1 {
+		schedule, timezone, err = promptJobSchedule(ctx, prompt, job.Schedule, job.Timezone)
+		if err != nil {
+			return startInputExit(err)
+		}
+	} else if scheduleChoice == 2 {
+		schedule = ""
+	}
 	req := api.UpdateJobRequest{}
 	changes := 0
 	if ram != job.RAMMB {
@@ -106,9 +124,33 @@ func cmdJobsUpdateInteractive() int {
 		changes++
 		PrintProgress(osStdout, "Status: %s → %s", job.Status, status)
 	}
+	if schedule != job.Schedule {
+		req.Schedule = &schedule
+		changes++
+		PrintProgress(osStdout, "Schedule: %s → %s", oneLine(job.Schedule), schedule)
+	}
+	if schedule != "" && timezone != job.Timezone {
+		req.Timezone = &timezone
+		changes++
+		PrintProgress(osStdout, "Timezone: %s → %s", oneLine(job.Timezone), timezone)
+	}
 	if changes == 0 {
 		PrintProgress(osStdout, "No changes to save.")
 		return 0
+	}
+	if schedule != "" && (scheduleChoice == 1 || status != job.Status) {
+		if err := previewJobSchedule(schedule, timezone); err != nil {
+			return printErr("Could not preview schedule", err)
+		}
+		PrintProgress(osStdout, "Scheduled times are nominal; execution can be delayed or skipped under the Job's scheduling policy.")
+		if status == "paused" {
+			PrintProgress(osStdout, "The Job remains paused; no scheduled dispatches occur until resumed.")
+		} else {
+			PrintProgress(osStdout, "The active Job can dispatch runs on this schedule once its image is ready.")
+		}
+	}
+	if schedule == "" && job.Schedule != "" {
+		PrintProgress(osStdout, "Removing the schedule converts this Job to batch; existing runs continue independently.")
 	}
 	PrintProgress(osStdout, "Account plan limits are checked by the server. Pausing future dispatches does not cancel running tasks.")
 	confirmed, err := prompt.confirm(ctx, "Save these Job changes?")

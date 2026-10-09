@@ -1490,7 +1490,7 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Value: "DURATION", Short: "polling interval (default 2s)"},
 			}, Examples: []string{"gregale jobs info my-job --wait-ready --timeout 5m"}},
 			{Name: "update", Short: "Update one job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs update --interactive"}, Flags: []cliFlag{
-				{Name: "interactive", Bool: true, Short: "choose a Job, edit prefilled settings, and confirm changes"},
+				{Name: "interactive", Bool: true, Short: "choose a Job, edit resources and schedule, and confirm changes"},
 				{Name: "image", Value: "REF", Short: "new OCI image"},
 				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint"},
 				{Name: "ram", Value: "MB", Short: "new RAM (MB)"},

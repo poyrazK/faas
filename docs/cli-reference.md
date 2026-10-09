@@ -3688,7 +3688,7 @@ Update one job
 
 | Flag | Meaning | |
 |---|---|---|
-| `--interactive` | choose a Job, edit prefilled settings, and confirm changes |  |
+| `--interactive` | choose a Job, edit resources and schedule, and confirm changes |  |
 | `--image <REF>` | new OCI image |  |
 | `--command <ARGV>` | new comma-separated entrypoint |  |
 | `--ram <MB>` | new RAM (MB) |  |

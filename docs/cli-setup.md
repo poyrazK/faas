@@ -631,14 +631,20 @@ gregale jobs update --interactive
 ```
 
 Choose a Job and edit prefilled RAM, per-task timeout, maximum parallelism,
-retry maximum, and active/paused state. Review changed values and confirm before
+retry maximum, and active/paused state. Keep, set/change, or remove the recurring
+schedule. Schedule editing prefills the expression and timezone, offers presets,
+and previews three nominal times before saving. Removing the schedule converts
+the Job to batch without canceling existing runs. A batch Job can become recurring
+by setting a schedule. Review changed values and confirm before
 saving. Unchanged fields are omitted; keeping all values unchanged makes no
 update request. Account plan limits are enforced by the server.
 
 The CLI rereads configuration before saving and stops if it changed. Runtime
 schedule timestamps are ignored by this client-side check, which is not an
 atomic server lock. Pausing prevents future dispatches without canceling running
-tasks. For images, commands, environment variables, schedules, or scripts,
+tasks. Existing custom scheduling policy is retained; nominal times do not
+guarantee execution, which can be delayed or skipped. For images, commands,
+environment variables, custom scheduling policy, or scripts,
 use `jobs update NAME` with explicit flags.
 
 ## Create a Job interactively
