@@ -73,9 +73,9 @@ func (d *checkpointObjectVerificationTestDriver) ObserveCheckpointObjectVerifica
 	}
 	return o, nil
 }
-func checkpointObjectVerificationFixture(t *testing.T) (*cloneCoordinatorFixture, *checkpointObjectVerificationTestStore, *checkpointObjectVerificationTestDriver) {
+func checkpointObjectVerificationFixture(t *testing.T, setup ...func(*cloneCoordinatorFixture, state.ObjectBucket)) (*cloneCoordinatorFixture, *checkpointObjectVerificationTestStore, *checkpointObjectVerificationTestDriver) {
 	t.Helper()
-	f, base, target := checkpointTargetFixture(t)
+	f, base, target := checkpointTargetFixture(t, setup...)
 	var err error
 	f.lease, err = f.srv.prepareCheckpointObjectTargets(t.Context(), f.lease, target)
 	if err != nil {

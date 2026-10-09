@@ -48,7 +48,26 @@ func checkpointObjectInventoryPlanTx(ctx context.Context, tx pgx.Tx, op ProjectE
 		return p, mapErr(err)
 	}
 	if grants {
-		return p, ErrConflict
+		owned, err := checkpointObjectPublicationOwnedTx(ctx, tx, op)
+		if err != nil {
+			return p, err
+		}
+		if !owned {
+			return p, ErrConflict
+		}
+		publication, err := readCheckpointObjectPublicationTx(ctx, tx, op)
+		if err != nil {
+			return p, err
+		}
+		member := false
+		for _, b := range publication.Plan.Buckets {
+			if b.SourceBucketID == id && b.TargetBucketID == bucket.ID && b.AppID == creation.Plan.AppID {
+				member = true
+			}
+		}
+		if !member {
+			return p, ErrConflict
+		}
 	}
 	release, err := readCloneCheckpointReleaseTx(ctx, tx, op)
 	if err != nil {

@@ -5074,6 +5074,13 @@ type ProjectEnvironmentCloneCheckpointObjectCredentialID struct {
 	State       string
 }
 
+type ProjectEnvironmentCloneCheckpointObjectPublication struct {
+	OperationID pgtype.UUID
+	Plan        []byte
+	PlanSha256  string
+	State       string
+}
+
 type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	OperationID       pgtype.UUID
 	SourceBucketID    pgtype.UUID

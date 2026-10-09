@@ -7902,5 +7902,15 @@
       "state"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "state"
+    ],
+    "kind": "operational"
   }
 ]

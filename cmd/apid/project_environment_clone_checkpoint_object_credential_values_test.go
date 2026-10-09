@@ -239,6 +239,13 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	publicationMigration, err := os.ReadFile("../../migrations/20261009104520180_clone_checkpoint_object_publications.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), strings.Split(string(publicationMigration), "-- +goose Down")[1]); err != nil {
+		t.Fatal("dependent publication downgrade", err)
+	}
 	if _, err = tx.Exec(t.Context(), parts[1]); err != nil {
 		t.Fatal("empty downgrade", err)
 	}

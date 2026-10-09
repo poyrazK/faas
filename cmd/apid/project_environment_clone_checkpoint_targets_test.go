@@ -76,9 +76,9 @@ func (d *checkpointTargetTestDriver) ObserveCheckpointObjectTarget(_ context.Con
 	}
 	return observed, nil
 }
-func checkpointTargetFixture(t *testing.T) (*cloneCoordinatorFixture, *checkpointTargetLostReplyStore, *checkpointTargetTestDriver) {
+func checkpointTargetFixture(t *testing.T, setup ...func(*cloneCoordinatorFixture, state.ObjectBucket)) (*cloneCoordinatorFixture, *checkpointTargetLostReplyStore, *checkpointTargetTestDriver) {
 	t.Helper()
-	f, base, release, _ := checkpointReleaseFixture(t)
+	f, base, release, _ := checkpointReleaseFixture(t, setup...)
 	store := &checkpointTargetLostReplyStore{checkpointReleaseLostReplyStore: base}
 	f.srv.store = store
 	driver := &checkpointTargetTestDriver{checkpointReleaseTestDriver: release, f: &f, native: map[string]state.ProjectEnvironmentCloneCheckpointObjectTargetObservation{}}

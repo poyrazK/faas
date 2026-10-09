@@ -1,0 +1,12 @@
+package state
+
+import "context"
+
+type ProjectEnvironmentCloneCheckpointObjectPublication struct {
+	Plan  ProjectEnvironmentCloneCheckpointObjectPublicationPlan
+	State string
+}
+
+type ProjectEnvironmentCloneCheckpointObjectPublicationStore interface {
+	PublishProjectEnvironmentCloneCheckpointObjects(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectPublication, error)
+}

@@ -74,7 +74,7 @@ func (s *cloneCaptureBarrierFailureStore) ProjectEnvironmentClonePostgresWriteFe
 	return fences, err
 }
 
-func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCaptureBarrierFailureStore, *cloneCheckpointClosureProvider, []state.ObjectBucket) {
+func cloneCaptureBarrierFixture(t *testing.T, setup ...func(*cloneCoordinatorFixture, state.ObjectBucket)) (cloneCoordinatorFixture, *cloneCaptureBarrierFailureStore, *cloneCheckpointClosureProvider, []state.ObjectBucket) {
 	t.Helper()
 	f := newCloneCoordinatorFixture(t, true)
 	ctx := t.Context()
@@ -98,6 +98,9 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 	}
 	if err := f.store.FinishObjectBucket(ctx, b.ID, "source", "ready"); err != nil {
 		t.Fatal(err)
+	}
+	for _, prepare := range setup {
+		prepare(&f, b)
 	}
 	op, err = f.store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{
 		AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: "production", TargetEnvironment: "barriers", IdempotencyKey: "barriers"})

@@ -138,6 +138,13 @@ func TestPGCloneCheckpointObjectCredentialReservationMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
+	publicationMigration, err := os.ReadFile("../../migrations/20261009104520180_clone_checkpoint_object_publications.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), strings.Split(string(publicationMigration), "-- +goose Down")[1]); err != nil {
+		t.Fatal("dependent publication downgrade", err)
+	}
 	valuesMigration, err := os.ReadFile("../../migrations/20261008223000004_clone_checkpoint_object_credential_values.sql")
 	if err != nil {
 		t.Fatal(err)

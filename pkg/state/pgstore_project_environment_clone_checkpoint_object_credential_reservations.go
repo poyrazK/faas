@@ -69,14 +69,18 @@ func checkpointObjectCredentialReservationTx(ctx context.Context, tx pgx.Tx, op 
 	if err = validateCheckpointObjectCredentialReservation(out, inputs); err != nil {
 		return ProjectEnvironmentCloneCheckpointObjectCredentialReservation{}, err
 	}
-	// Existing credential rows are not ownership evidence for this reservation.
-	// Issuance will need a separate committed claim protocol before creating them.
+	// Only an authenticated publication of the entire matrix can own existing
+	// credential identities; an unrelated or revoked row still conflicts.
+	owned, err := checkpointObjectPublicationOwnedTx(ctx, tx, op)
+	if err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialReservation{}, err
+	}
 	for _, m := range out.Members {
 		exists, err := q.CloneCheckpointObjectCredentialIdentityExists(ctx, tx, mustPgUUID(m.TargetCredentialID))
 		if err != nil {
 			return ProjectEnvironmentCloneCheckpointObjectCredentialReservation{}, mapErr(err)
 		}
-		if exists {
+		if exists && !owned {
 			return ProjectEnvironmentCloneCheckpointObjectCredentialReservation{}, ErrConflict
 		}
 	}

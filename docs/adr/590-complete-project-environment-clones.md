@@ -8675,3 +8675,41 @@ sealed journals. Atomic object credential/binding/API-key grant publication and
 its exact-ownership replay remain the next implementation step. Native grant
 qualification/revocation, retirement and final stage publication remain required;
 live R2/OVH qualification remains deferred and public full-stage cloning gated.
+
+### Atomic private object metadata publication
+
+The private checkpoint coordinator now publishes the complete authenticated
+object publication plan in one database transaction. It inserts fresh Gregale
+S3 gateway credentials, the six managed runtime secrets, and frozen API-key
+access grants, together with an operation-owned publication journal. Standalone
+credentials gain no secret slots; grant-only buckets remain in the matrix.
+Native provider credential issuance is not implied by this local metadata step.
+
+Admission locks current account entitlement, project apps, secret slots, target
+buckets and account API keys. Current credential/secret quotas apply across the
+whole matrix, including existing secrets in every scope. Occupied secret slots
+are rejected rather than overwritten. Grants require same-account active/grace
+keys, the requested storage scopes and no admin scope. Grant insertion checks
+the exact capturing revision, worker token and live lease. Retained original
+checkpoints, copy and verification receipts, reserved IDs and target privacy
+are reauthenticated before publication; worker authorization is checked again
+before commit. Any failure rolls back credentials, secrets, grants and journal,
+and returns no sealed material.
+
+Recovery accepts existing normal rows only through the committed publication
+journal and its exact sealed plan. Every bucket's complete credential and grant
+roster is checked, including unexpected revoked/rotation rows. All secrets
+referencing a credential are checked across apps/scopes, with exact envelopes,
+owner fields, persistent version one and pending delivery. Verification and
+reservation replay permit only this proven whole-matrix ownership; a journal
+cannot authorize a different source/target bucket edge. Gateway resolution and
+API-key authorization continue to require final operation ready state, so this
+private transaction creates no customer-visible gateway access.
+
+Database tests cover managed/standalone credentials, grant-only buckets, lost
+commit replies and worker handoff, stale workers/expired retention, changed
+grants/secrets, revoked/under-scoped/admin keys, occupied slots, current quota
+failure, late worker expiry, complete rollback, and guarded migration round
+trips. Withdrawal/retirement and the final stage publication bridge remain
+separate implementation steps. Live R2/OVH qualification remains deferred at
+the user's request and public full-stage capture stays gated.

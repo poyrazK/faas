@@ -17104,6 +17104,111 @@ func (q *Queries) InsertCloneCheckpointObjectCredentialReservation(ctx context.C
 	return i, err
 }
 
+const insertCloneCheckpointObjectPublication = `-- name: InsertCloneCheckpointObjectPublication :one
+INSERT INTO project_environment_clone_checkpoint_object_publications(operation_id,plan,plan_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state
+`
+
+type InsertCloneCheckpointObjectPublicationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationParams) (ProjectEnvironmentCloneCheckpointObjectPublication, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectPublication,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectPublicationGrant = `-- name: InsertCloneCheckpointObjectPublicationGrant :execrows
+INSERT INTO object_storage_access_grants(account_id,bucket_id,api_key_id,permission)
+SELECT b.account_id,b.id,k.id,$1::text
+FROM object_buckets b JOIN api_keys k ON k.account_id=b.account_id
+JOIN project_environment_clone_operations o ON o.id=b.environment_clone_operation_id AND o.account_id=b.account_id
+WHERE b.account_id=$2::uuid AND b.id=$3::uuid AND b.state='ready'
+AND b.scope=o.target_environment AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$4::uuid AND o.status='capturing'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+AND k.id=$7::uuid AND k.status IN('active','grace') AND NOT('admin'=ANY(k.scopes))
+AND ($1::text<>'read' OR k.scopes @> ARRAY['storage:read']::text[])
+AND ($1::text<>'write' OR k.scopes @> ARRAY['storage:write']::text[])
+AND ($1::text<>'read_write' OR k.scopes @> ARRAY['storage:read','storage:write']::text[])
+`
+
+type InsertCloneCheckpointObjectPublicationGrantParams struct {
+	Permission       string
+	AccountID        pgtype.UUID
+	BucketID         pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+	ApiKeyID         pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, insertCloneCheckpointObjectPublicationGrant,
+		arg.Permission,
+		arg.AccountID,
+		arg.BucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+		arg.ApiKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertCloneCheckpointObjectPublicationSecret = `-- name: InsertCloneCheckpointObjectPublicationSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id,secret_class,secret_version)
+VALUES($1::uuid,$2::uuid,$3::text,$4::text,
+$5::bytea,$6::text,$7::text,$8::uuid,'persistent',1)
+`
+
+type InsertCloneCheckpointObjectPublicationSecretParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+	Ciphertext   []byte
+	Kid          string
+	ValueHash    string
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationSecretParams) error {
+	_, err := db.Exec(ctx, insertCloneCheckpointObjectPublicationSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.CredentialID,
+	)
+	return err
+}
+
 const insertCloneCheckpointObjectTarget = `-- name: InsertCloneCheckpointObjectTarget :one
 INSERT INTO project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id,target_bucket_id,plan)
 SELECT o.id,$1::uuid,$2::uuid,$3::jsonb
@@ -30797,6 +30902,30 @@ type LockCheckedRollbackScopeParams struct {
 
 func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg LockCheckedRollbackScopeParams) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, lockCheckedRollbackScope, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCloneCheckpointObjectPublicationKeys = `-- name: LockCloneCheckpointObjectPublicationKeys :many
+SELECT id FROM api_keys WHERE account_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCloneCheckpointObjectPublicationKeys, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -47354,6 +47483,156 @@ func (q *Queries) ReadCloneCheckpointObjectCredentialReservation(ctx context.Con
 		&i.State,
 	)
 	return i, err
+}
+
+const readCloneCheckpointObjectPublication = `-- name: ReadCloneCheckpointObjectPublication :one
+SELECT operation_id, plan, plan_sha256, state FROM project_environment_clone_checkpoint_object_publications WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectPublication, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectPublication, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectPublicationCredentials = `-- name: ReadCloneCheckpointObjectPublicationCredentials :many
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationCredentials(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectStorageS3Credential, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationCredentials, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageS3Credential{}
+	for rows.Next() {
+		var i ObjectStorageS3Credential
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BucketID,
+			&i.AccessKeyID,
+			&i.SecretSealed,
+			&i.Kid,
+			&i.Label,
+			&i.Permission,
+			&i.Status,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
+			&i.RotationParentID,
+			&i.RotationWakeID,
+			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointObjectPublicationGrants = `-- name: ReadCloneCheckpointObjectPublicationGrants :many
+SELECT account_id, bucket_id, api_key_id, permission, created_at, updated_at FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectStorageAccessGrant, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationGrants, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageAccessGrant{}
+	for rows.Next() {
+		var i ObjectStorageAccessGrant
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.BucketID,
+			&i.ApiKeyID,
+			&i.Permission,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointObjectPublicationSecrets = `-- name: ReadCloneCheckpointObjectPublicationSecrets :many
+SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation, managed_object_storage_credential_id, delivery_version, delivered_version, delivery_status, last_delivery_attempt_at, last_delivered_at, last_delivery_error_code, last_delivered_wake_id, last_delivered_instance_id, last_runtime_reload_version, last_runtime_reload_revision, last_runtime_reload_projection, last_runtime_reload_signal, last_runtime_reload_at, last_runtime_reload_error_code, last_runtime_reload_instance_id, secret_version, secret_class FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]AppSecret, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationSecrets, managedObjectStorageCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSecret{}
+	for rows.Next() {
+		var i AppSecret
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AppID,
+			&i.Key,
+			&i.Ciphertext,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Kid,
+			&i.Scope,
+			&i.ValueHash,
+			&i.ManagedPostgresBindingID,
+			&i.ManagedCredentialRef,
+			&i.ManagedCredentialGeneration,
+			&i.ManagedObjectStorageCredentialID,
+			&i.DeliveryVersion,
+			&i.DeliveredVersion,
+			&i.DeliveryStatus,
+			&i.LastDeliveryAttemptAt,
+			&i.LastDeliveredAt,
+			&i.LastDeliveryErrorCode,
+			&i.LastDeliveredWakeID,
+			&i.LastDeliveredInstanceID,
+			&i.LastRuntimeReloadVersion,
+			&i.LastRuntimeReloadRevision,
+			&i.LastRuntimeReloadProjection,
+			&i.LastRuntimeReloadSignal,
+			&i.LastRuntimeReloadAt,
+			&i.LastRuntimeReloadErrorCode,
+			&i.LastRuntimeReloadInstanceID,
+			&i.SecretVersion,
+			&i.SecretClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readCloneCheckpointObjectTarget = `-- name: ReadCloneCheckpointObjectTarget :one

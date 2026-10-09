@@ -90,9 +90,9 @@ func (s *checkpointReleaseLostReplyStore) FinishProjectEnvironmentCloneCheckpoin
 	return op, err
 }
 
-func checkpointReleaseFixture(t *testing.T) (cloneCoordinatorFixture, *checkpointReleaseLostReplyStore, *checkpointReleaseTestDriver, []state.ObjectBucket) {
+func checkpointReleaseFixture(t *testing.T, setup ...func(*cloneCoordinatorFixture, state.ObjectBucket)) (cloneCoordinatorFixture, *checkpointReleaseLostReplyStore, *checkpointReleaseTestDriver, []state.ObjectBucket) {
 	t.Helper()
-	f, base, provider, buckets := cloneCaptureBarrierFixture(t)
+	f, base, provider, buckets := cloneCaptureBarrierFixture(t, setup...)
 	provider.drained = true
 	store := &checkpointReleaseLostReplyStore{cloneCaptureBarrierFailureStore: base}
 	f.srv.store = store

@@ -42804,3 +42804,11 @@ CREATE TABLE project_environment_clone_checkpoint_object_values (
  payload_sha256 text NOT NULL CHECK(payload_sha256 ~ '^[a-f0-9]{64}$'),
  state text NOT NULL DEFAULT 'sealed' CHECK(state='sealed')
 );
+
+-- ADR-590: atomic private gateway metadata publication, still hidden until ready.
+CREATE TABLE project_environment_clone_checkpoint_object_publications (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_values(operation_id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'published' CHECK(state='published')
+);
