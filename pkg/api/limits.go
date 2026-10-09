@@ -279,6 +279,12 @@ const ServiceBindingCheckIntervalSeconds = 2
 
 // Queue binding intent ceilings are shared by the API and GitOps compiler.
 const QueueBindingMaxConcurrency = 10000
+
+// QueuePushDispatchSlotsPerNode bounds concurrent push-queue dispatch lanes
+// across every trigger one schedd serves (ADR-829). It also caps the lanes
+// one binding can run, so a binding allowed thousands of concurrent records
+// cannot flood the pool with lanes it would only drop.
+const QueuePushDispatchSlotsPerNode = 32
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
