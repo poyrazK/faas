@@ -37,6 +37,9 @@ type RestartQuarantineReport struct {
 	// ReclaimedDeadRecords counts instance records retired at startup
 	// because their process and kernel resources were gone (ADR-933).
 	ReclaimedDeadRecords int
+	// DeadRecordsSkipped is why dead-record retirement kept every record
+	// (an unreadable host inventory), or empty.
+	DeadRecordsSkipped string
 }
 
 // RecoverRestartQuarantine inventories surviving Firecracker/jailer processes,
@@ -65,9 +68,13 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	if err != nil {
 		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart prepared reservation retirement: %w", err)
 	}
-	dead, err := inv.reclaimRestartDead(ctx, m.resourceJournal, opts)
+	dead, deadSkipped, err := inv.reclaimRestartDead(ctx, m.resourceJournal, opts)
 	if err != nil {
 		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart dead record retirement: %w", err)
+	}
+	var deadSkippedReason string
+	if deadSkipped != nil {
+		deadSkippedReason = deadSkipped.Error()
 	}
 	records, matches, err := inv.reconcileJournal(ctx, m.resourceJournal, opts.procRoot)
 	if err != nil {
@@ -79,7 +86,7 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	m.alloc.quarantine(inv.slots)
 	m.restartQuarantine = inv.instances
 	m.restartInventoryDone = true
-	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed, ReclaimedDeadRecords: dead}, nil
+	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed, ReclaimedDeadRecords: dead, DeadRecordsSkipped: deadSkippedReason}, nil
 }
 
 func scanRestartInventory(ctx context.Context, opts restartInventoryOptions) (restartInventory, error) {

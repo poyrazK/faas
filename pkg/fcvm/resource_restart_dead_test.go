@@ -102,6 +102,14 @@ func TestResourceRestartDeadRetiresGoneInstanceAndItsFiles(t *testing.T) {
 func TestResourceRestartDeadLeavesReusedPathAlone(t *testing.T) {
 	opts := restartFixture(t)
 	r, materialised, _ := deadRecordFixture(t, opts)
+	// Keep the recorded inode allocated so the replacement gets another one;
+	// Linux otherwise hands the freed number straight back, which (device,
+	// inode) identity cannot distinguish (ADR-933).
+	recorded, err := os.Open(materialised)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recorded.Close()
 	if err := os.Remove(materialised); err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +218,9 @@ func TestResourceRestartDeadKeepsAmbiguousRecords(t *testing.T) {
 			_, _, rep := recoverDeadFixture(t, opts, r)
 			if rep.ReclaimedDeadRecords != 0 || rep.JournalRecords != 1 {
 				t.Fatalf("report = %+v; want the record kept in quarantine", rep)
+			}
+			if (rep.DeadRecordsSkipped != "") != (tc.name == "mountinfo_unreadable") {
+				t.Fatalf("DeadRecordsSkipped = %q; want a reason only when the inventory is unreadable", rep.DeadRecordsSkipped)
 			}
 			if !exists(materialised) || !exists(clone) {
 				t.Fatal("removed files of a record that stays quarantined")

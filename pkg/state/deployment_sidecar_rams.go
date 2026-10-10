@@ -95,6 +95,8 @@ func (s *MemStore) DeploymentSidecarRAMs(_ context.Context, deploymentID string)
 	if deploymentID == "" {
 		return nil, fmt.Errorf("state: DeploymentSidecarRAMs: empty deployment_id")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	d, ok := s.deployments[deploymentID]
 	if !ok {
 		return nil, nil // unknown deployment => no sidecars (legacy shape)

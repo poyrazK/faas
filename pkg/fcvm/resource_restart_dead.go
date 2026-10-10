@@ -21,20 +21,20 @@ import (
 // It runs before reconcileJournal so a retired record's slot is never
 // quarantined. Only identity-verified temporary files are removed; links,
 // namespaces, jails, mounts and processes are never touched. Any ambiguity
-// keeps the record quarantined.
-func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *ResourceJournal, opts restartInventoryOptions) (int, error) {
+// keeps the record quarantined. An unreadable host inventory keeps every
+// record; its error is returned as skipped, not as a startup failure.
+func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *ResourceJournal, opts restartInventoryOptions) (reclaimed int, skipped, err error) {
 	if j == nil {
-		return 0, nil
+		return 0, nil, nil
 	}
 	items, err := j.snapshot()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	var holders *restartHolders
-	reclaimed := 0
 	for _, r := range items {
 		if err := ctx.Err(); err != nil {
-			return reclaimed, err
+			return reclaimed, nil, err
 		}
 		if r.Prepared != nil || r.Process == nil {
 			continue
@@ -44,9 +44,8 @@ func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *Resource
 		}
 		if holders == nil {
 			if holders, err = scanRestartHolders(ctx, opts); err != nil {
-				// Unreadable inventory keeps every record; startup proceeds
-				// with the pre-ADR-933 quarantine.
-				return reclaimed, nil
+				// Startup proceeds with the pre-ADR-933 quarantine.
+				return reclaimed, err, nil
 			}
 		}
 		files, ok := inv.restartDeadEligible(r, opts, holders)
@@ -65,13 +64,13 @@ func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *Resource
 		}
 		retired, err := j.forgetRestartDead(r)
 		if err != nil {
-			return reclaimed, fmt.Errorf("retire dead instance record %s: %w", r.Lease.Instance, err)
+			return reclaimed, nil, fmt.Errorf("retire dead instance record %s: %w", r.Lease.Instance, err)
 		}
 		if retired {
 			reclaimed++
 		}
 	}
-	return reclaimed, nil
+	return reclaimed, nil, nil
 }
 
 // restartProcessGone reports whether the recorded guest process no longer

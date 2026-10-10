@@ -38,8 +38,10 @@ instance record only when all of the following are true:
    the record.
 
 A retirement removes the record's materialised and clone files only where the
-path still names the recorded inode. A path that names another file is left
-alone. After that, under the journal lock, vmmd checks that the record is
+path still names the recorded device and inode. A path that names another file
+is left alone. The check is as strong as the journal's file identity: a new
+file could carry a freed inode number only at the same randomly generated
+path (`rand.Text()` or `CreateTemp` names), which the check cannot tell apart. After that, under the journal lock, vmmd checks that the record is
 unchanged, unlinks it and fsyncs the journal directory. If files cannot be
 removed, the record stays. If the unlink fails, startup fails. If the host
 inventory cannot be read, every record is kept.
