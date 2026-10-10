@@ -945,12 +945,15 @@ type Querier interface {
 	GetCustomerOperationRecoveryDecision(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryDecisionParams) (GetCustomerOperationRecoveryDecisionRow, error)
 	GetCustomerOperationRelatedWorkflowStates(ctx context.Context, db DBTX, arg GetCustomerOperationRelatedWorkflowStatesParams) ([]GetCustomerOperationRelatedWorkflowStatesRow, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
+	GetCustomerOperationResolutionVerifications(ctx context.Context, db DBTX, arg GetCustomerOperationResolutionVerificationsParams) ([]byte, error)
+	GetCustomerOperationWorkflowBottleneckHistory(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowBottleneckHistoryParams) ([][]byte, error)
 	GetCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) (CustomerOperationWorkflowClaim, error)
 	GetCustomerOperationWorkflowDependencyImpact(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowDependencyImpactParams) ([]byte, error)
 	// One dispatch binding per native attempt; no upsert or replacement after a
 	// lost response. The parent run lock serializes binding and report mutations.
 	GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowGuestParams) (CustomerOperationWorkflowGuestClaim, error)
 	GetCustomerOperationWorkflowResolutionSource(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowResolutionSourceParams) ([]byte, error)
+	GetCustomerOperationWorkflowSLABudget(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowSLABudgetParams) (GetCustomerOperationWorkflowSLABudgetRow, error)
 	GetCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStateReportParams) (GetCustomerOperationWorkflowStateReportRow, error)
 	GetCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepParams) (WorkflowStep, error)
 	GetCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepAttemptParams) (WorkflowStepAttempt, error)
@@ -3253,6 +3256,7 @@ type Querier interface {
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
 	SummarizeCustomerOperationWorkflowAttention(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowAttentionParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowOutcomesParams) ([]byte, error)
+	SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error)
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)

@@ -12,7 +12,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
-    from ..models.create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+    from ..models.create_api_consumer_rate_card_request_route_weights import (
+        CreateAPIConsumerRateCardRequestRouteWeights,
+    )
 
 
 T = TypeVar("T", bound="CreateAPIConsumerRateCardRequest")
@@ -25,17 +27,20 @@ class CreateAPIConsumerRateCardRequest:
     price_millicents_per_unit: int
     currency: str | Unset = "EUR"
     included_units_per_month: int | Unset = 0
-    """Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order.
-    Once any card includes units, effective_from cannot be in the past."""
+    """Free request units per consumer per UTC calendar month while this card is effective, consumed in minute
+    order. Once any card includes units, effective_from cannot be in the past."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's
-    units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds
-    increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods
-    priced by a tiered card must cover exactly one UTC calendar month."""
+    """Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each
+    consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls
+    in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements
+    of periods priced by a tiered card must cover exactly one UTC calendar month."""
     route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset = UNSET
+    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes);
+    unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's
+    declared or discovered route templates."""
     plan_id: UUID | Unset = UNSET
-    """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be
-    backdated."""
+    """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot
+    be backdated."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -95,7 +100,9 @@ class CreateAPIConsumerRateCardRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
-        from ..models.create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+        from ..models.create_api_consumer_rate_card_request_route_weights import (
+            CreateAPIConsumerRateCardRequestRouteWeights,
+        )
 
         d = dict(src_dict)
         price_millicents_per_unit = d.pop("price_millicents_per_unit")

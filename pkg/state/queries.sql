@@ -16460,10 +16460,10 @@ ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT sqlc.arg(page_lim
 SELECT json_build_object(
  'app_id',s.app_id,'scope',s.scope,'platform_tenant_id',s.platform_tenant_id,
  'subject',json_build_object('type',s.subject_type,'id',s.subject_id),
- 'operation_id',o.id,'dependency_attention',dependencies.items,
+ 'operation_id',o.id,'resolution_verifications',verifications.items,'escalations',escalations.items,'dependency_attention',dependencies.items,
  'state',json_build_object(
   'workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
-  'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
+  'sla',sla.value,'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
   'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
@@ -16475,7 +16475,9 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s
 JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
 CROSS JOIN LATERAL (
  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
- COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+ COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_budget_seconds,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_warning_percent
  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS steps(step)
  WHERE step->>'workflow'=s.workflow
 ) config
@@ -16486,6 +16488,82 @@ CROSS JOIN LATERAL (
  CASE WHEN NOT config.terminal AND NULLIF(r.deadline_at,'')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz
  THEN GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-r.deadline_at::timestamptz)))::bigint) ELSE 0::bigint END AS overdue_seconds
 ) attention
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.value ORDER BY h.revision DESC,h.operation_id DESC,h.id DESC),'[]'::jsonb) AS items FROM (
+  SELECT hr.id,hr.operation_id,hr.revision,jsonb_build_object('id',hr.id,'operation_id',hr.operation_id,'revision',hr.revision,'state',hr.state,'from_state',hr.from_state,'contract_version',hr.contract_version,'occurred_at',hr.occurred_at,
+  'budget',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0),
+  'warning',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0)) value
+  FROM customer_operation_workflow_state_reports hr
+  JOIN customer_operations ho ON ho.id=hr.operation_id
+  JOIN customer_operation_definitions hd ON hd.id=ho.definition_id AND hd.account_id=ho.account_id AND hd.app_id=ho.app_id
+  WHERE config.sla_budget_seconds>0 AND NOT config.terminal
+  AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
+  AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
+  AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+  AND (ho.state IN ('accepted','running') OR ho.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT sqlc.arg(sla_history_limit)::integer
+ ) h
+) sla_history
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((value->>'revision')::bigint) FILTER (WHERE value->>'state'<>s.state OR (value->>'contract_version')::integer<>r.contract_version),0::bigint) AS revision
+ FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+ WHERE n<sqlc.arg(sla_history_limit)::integer
+) sla_boundary
+CROSS JOIN LATERAL (
+ SELECT min(revision) AS entry_revision,max(revision) AS latest_revision,min(occurred_at) AS entered_at,
+ count(*) AS reports,count(DISTINCT revision) AS unique_reports,
+ bool_and(state=s.state AND version=r.contract_version AND budget=config.sla_budget_seconds AND warning=config.sla_warning_percent AND occurred_at<>'0001-01-01T00:00:00Z'::timestamptz AND occurred_at<=sqlc.arg(evaluated_at)::timestamptz
+ AND (previous_time IS NULL OR occurred_at>=previous_time)
+ AND (previous_state IS NULL OR from_state='' OR from_state=previous_state)) AS timeline_valid,
+ bool_or(id=r.id::text AND operation_id=r.operation_id::text AND revision=s.revision) AS contains_current
+ FROM (
+  SELECT value->>'id' AS id,value->>'operation_id' AS operation_id,(value->>'revision')::bigint AS revision,value->>'state' AS state,COALESCE(value->>'from_state','') AS from_state,
+  (value->>'contract_version')::integer AS version,(value->>'budget')::bigint AS budget,(value->>'warning')::bigint AS warning,(value->>'occurred_at')::timestamptz AS occurred_at,
+  lag((value->>'occurred_at')::timestamptz) OVER (ORDER BY (value->>'revision')::bigint) AS previous_time,
+  lag(value->>'state') OVER (ORDER BY (value->>'revision')::bigint) AS previous_state
+  FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+  WHERE n<sqlc.arg(sla_history_limit)::integer AND (value->>'revision')::bigint>=sla_boundary.revision
+ ) ordered
+ WHERE revision>sla_boundary.revision
+) sla_suffix
+CROSS JOIN LATERAL (
+ SELECT count(*) AS reports,bool_and(value->>'state'<>s.state AND (value->>'contract_version')::integer=r.contract_version AND (value->>'occurred_at')::timestamptz<>'0001-01-01T00:00:00Z'::timestamptz
+ AND (value->>'occurred_at')::timestamptz<=sla_suffix.entered_at) AS valid
+ FROM jsonb_array_elements(sla_history.items) AS h(value)
+ WHERE (value->>'revision')::bigint=sla_boundary.revision
+) sla_border
+CROSS JOIN LATERAL (
+ SELECT COALESCE(sla_suffix.timeline_valid AND sla_suffix.contains_current AND sla_suffix.latest_revision=s.revision
+ AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(sla_history.items) AS h(value) WHERE (value->>'revision')::bigint>=sla_suffix.entry_revision GROUP BY (value->>'revision')::bigint HAVING count(*)>1)
+ AND sla_suffix.reports=sla_suffix.unique_reports AND sla_suffix.reports=s.revision-sla_suffix.entry_revision+1
+ AND (sla_suffix.entry_revision=1 AND sla_boundary.revision=0 OR sla_border.reports=1 AND sla_border.valid AND sla_boundary.revision=sla_suffix.entry_revision-1),false) AS known,
+ sla_suffix.entered_at + make_interval(secs=>config.sla_budget_seconds::double precision) AS due_at,
+ sla_suffix.entered_at + make_interval(secs=>(config.sla_budget_seconds*config.sla_warning_percent)::double precision/100) AS warning_at,
+ GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-sla_suffix.entered_at))))::bigint AS elapsed
+) sla_clock
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN config.sla_budget_seconds<1 OR config.terminal THEN NULL::jsonb ELSE
+ jsonb_build_object('evaluated_at',sqlc.arg(evaluated_at)::timestamptz,'budget_seconds',config.sla_budget_seconds,'history_complete',sla_clock.known,'status',CASE WHEN NOT sla_clock.known THEN 'unknown' WHEN sla_clock.due_at<=sqlc.arg(evaluated_at)::timestamptz THEN 'breached' WHEN config.sla_warning_percent>0 AND sla_clock.warning_at<=sqlc.arg(evaluated_at)::timestamptz THEN 'at_risk' ELSE 'within_budget' END)
+ || CASE WHEN config.sla_warning_percent>0 THEN jsonb_build_object('warning_percent',config.sla_warning_percent) ELSE '{}'::jsonb END
+ || CASE WHEN sla_clock.known AND config.sla_warning_percent>0 THEN jsonb_build_object('warning_at',sla_clock.warning_at) ELSE '{}'::jsonb END
+ || CASE WHEN NOT sla_clock.known THEN '{}'::jsonb ELSE jsonb_build_object('entered_at',sla_suffix.entered_at,'due_at',sla_clock.due_at,'elapsed_seconds',sla_clock.elapsed,'remaining_seconds',GREATEST(0,config.sla_budget_seconds-sla_clock.elapsed),'breached_seconds',GREATEST(0,sla_clock.elapsed-config.sla_budget_seconds)) END END AS value,
+ (config.sla_budget_seconds>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.due_at<=sqlc.arg(evaluated_at)::timestamptz) IS TRUE AS breached,
+ (config.sla_budget_seconds>0 AND config.sla_warning_percent>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.warning_at<=sqlc.arg(evaluated_at)::timestamptz AND sla_clock.due_at>sqlc.arg(evaluated_at)::timestamptz) IS TRUE AS at_risk
+) sla
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(jsonb_build_object('code',b->>'code','operation',b->>'operation','owner',policy.value->>'owner',
+ 'after_seconds',(policy.value->>'after_seconds')::bigint,
+ 'escalated_at',NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision))
+ ORDER BY b->>'operation',b->>'code'),'[]'::jsonb) AS items
+ FROM jsonb_array_elements(r.blockers) b
+ CROSS JOIN LATERAL (
+  SELECT step->'blocker_escalations'->(b->>'code') AS value
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) steps(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version LIMIT 1
+ ) policy
+ WHERE NOT config.terminal AND (policy.value->>'after_seconds')::bigint>0
+ AND NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision)<=sqlc.arg(evaluated_at)::timestamptz
+) escalations
 CROSS JOIN LATERAL (
  SELECT COALESCE(jsonb_agg(jsonb_build_object('dependency',link.value,'status',resolved.status) ORDER BY link.value->>'subject_type',link.value->>'subject_id',link.value->>'workflow',link.value->>'instance_id')
  FILTER (WHERE NOT config.terminal AND resolved.status IN ('unknown','waiting','outcome_mismatch')), '[]'::jsonb) AS items
@@ -16513,23 +16591,77 @@ CROSS JOIN LATERAL (
  ) resolved
 ) dependencies
 CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>sqlc.arg(now)::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+CROSS JOIN LATERAL (
  SELECT encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
 ) identity
 WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.scope=sqlc.arg(scope)::text
  AND (sqlc.arg(tenant_id)::text='' OR s.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
  AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
  AND (sqlc.arg(workflow_name)::text='' OR s.workflow=sqlc.arg(workflow_name)::text)
+ AND ((((sqlc.arg(owner)::text='' AND NOT sqlc.arg(unassigned)::boolean AND sqlc.arg(priority)::text='') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE (sqlc.arg(owner)::text='' OR COALESCE(b->>'owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(b->>'owner','')='')
+ AND (sqlc.arg(priority)::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text)
+ AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+ ))
  AND (sqlc.arg(blocker_code)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=sqlc.arg(blocker_code)::text))
- AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR jsonb_array_length(dependencies.items)>0)
- AND (sqlc.arg(reason)::text='' OR sqlc.arg(reason)::text='blocked' AND jsonb_array_length(r.blockers)>0 OR sqlc.arg(reason)::text='stale' AND attention.stale OR sqlc.arg(reason)::text='overdue' AND attention.overdue OR sqlc.arg(reason)::text='dependency' AND jsonb_array_length(dependencies.items)>0)
- AND ((sqlc.arg(dependency_status)::text='' AND sqlc.arg(required_outcome_code)::text='') OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
-   (sqlc.arg(dependency_status)::text='' OR dep->>'status'=sqlc.arg(dependency_status)::text)
-   AND (sqlc.arg(required_outcome_code)::text='' OR dep->'dependency'->>'required_outcome_code'=sqlc.arg(required_outcome_code)::text)
+ AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR sla.breached OR sla.at_risk OR jsonb_array_length(dependencies.items)>0)
+ AND (sqlc.arg(reason)::text NOT IN ('unacknowledged','follow_up_overdue') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE
+ (sqlc.arg(owner)::text='' OR COALESCE(b->>'owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(b->>'owner','')='')
+ AND (sqlc.arg(priority)::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text)
+ AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+ AND (sqlc.arg(reason)::text='unacknowledged' AND COALESCE(b->>'acknowledged_at','')='' OR sqlc.arg(reason)::text='follow_up_overdue' AND NULLIF(b->>'follow_up_at','')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz)))
+ AND (sqlc.arg(reason)::text IN ('','unacknowledged','follow_up_overdue') OR sqlc.arg(reason)::text='blocked' AND jsonb_array_length(r.blockers)>0 OR sqlc.arg(reason)::text='stale' AND attention.stale OR sqlc.arg(reason)::text='sla_breached' AND sla.breached OR sqlc.arg(reason)::text='sla_at_risk' AND sla.at_risk OR sqlc.arg(reason)::text='overdue' AND attention.overdue OR sqlc.arg(reason)::text='dependency' AND jsonb_array_length(dependencies.items)>0 OR sqlc.arg(reason)::text='escalated' AND jsonb_array_length(escalations.items)>0)
+ AND (sqlc.arg(reason)::text<>'escalated' OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE
+ (sqlc.arg(owner)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=sqlc.arg(owner)::text))
+ AND (NOT sqlc.arg(unassigned)::boolean OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=''))
+ AND (sqlc.arg(priority)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text))
+ AND (sqlc.arg(blocker_code)::text='' OR e->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR e->>'operation'=sqlc.arg(target_operation)::text)
  ))
  AND (sqlc.arg(target_operation)::text='' OR EXISTS (
   SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=sqlc.arg(target_operation)::text
- ) OR (attention.stale OR attention.overdue) AND EXISTS (
+ ) OR (attention.stale OR attention.overdue OR sla.breached OR sla.at_risk) AND EXISTS (
   SELECT 1 FROM customer_operation_definitions producer
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
@@ -16537,8 +16669,21 @@ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uui
    AND producer.spec->>'name'=sqlc.arg(target_operation)::text AND step->>'workflow'=s.workflow
    AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version AND edge->>'from'=s.state
  ))
- AND (sqlc.arg(after_key)::text='' OR (s.updated_at,identity.cursor_key)<(sqlc.arg(after_updated_at)::timestamptz,sqlc.arg(after_key)::text))
-ORDER BY s.updated_at DESC,identity.cursor_key DESC LIMIT sqlc.arg(page_limit)::integer;
+) OR EXISTS (SELECT 1 FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND sqlc.arg(priority)::text='' AND sqlc.arg(reason)::text IN ('','awaiting_verification')
+ AND (sqlc.arg(owner)::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND (sqlc.arg(blocker_code)::text='' OR v->'resolution'->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR v->'resolution'->>'operation'=sqlc.arg(target_operation)::text))) AND ((sqlc.arg(dependency_status)::text='' AND sqlc.arg(required_outcome_code)::text='') OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
+   (sqlc.arg(dependency_status)::text='' OR dep->>'status'=sqlc.arg(dependency_status)::text)
+   AND (sqlc.arg(required_outcome_code)::text='' OR dep->'dependency'->>'required_outcome_code'=sqlc.arg(required_outcome_code)::text)
+ ))
+ AND (sqlc.arg(after_key)::text='' OR sqlc.arg(sort_by)::text='updated_at' AND (s.updated_at,identity.cursor_key)<(sqlc.arg(after_updated_at)::timestamptz,sqlc.arg(after_key)::text)
+ OR sqlc.arg(sort_by)::text='deadline' AND (
+ COALESCE(NULLIF(r.deadline_at,'')::timestamptz,'infinity'::timestamptz)>COALESCE(NULLIF(sqlc.arg(after_deadline)::text,'')::timestamptz,'infinity'::timestamptz)
+ OR COALESCE(NULLIF(r.deadline_at,'')::timestamptz,'infinity'::timestamptz)=COALESCE(NULLIF(sqlc.arg(after_deadline)::text,'')::timestamptz,'infinity'::timestamptz)
+ AND (s.updated_at,identity.cursor_key)<(sqlc.arg(after_updated_at)::timestamptz,sqlc.arg(after_key)::text)))
+ORDER BY CASE WHEN sqlc.arg(sort_by)::text='deadline' THEN NULLIF(r.deadline_at,'')::timestamptz END ASC NULLS LAST,s.updated_at DESC,identity.cursor_key DESC LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: GetCustomerOperationWorkflowResolutionSource :one
 SELECT r.blockers
@@ -16557,13 +16702,24 @@ WITH eligible AS (
 SELECT jsonb_build_object(
  'app_id',s.app_id,'scope',s.scope,'platform_tenant_id',s.platform_tenant_id,
  'subject',jsonb_build_object('type',s.subject_type,'id',s.subject_id),
- 'operation_id',o.id,'dependency_attention',dependencies.items,
+ 'operation_id',o.id,'resolution_verifications',COALESCE((SELECT jsonb_agg(v) FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND sqlc.arg(priority)::text='' AND sqlc.arg(reason)::text IN ('','awaiting_verification')
+ AND (sqlc.arg(owner)::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND (sqlc.arg(blocker_code)::text='' OR v->'resolution'->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR v->'resolution'->>'operation'=sqlc.arg(target_operation)::text)),'[]'::jsonb),'escalations',escalations.items,'dependency_attention',dependencies.items,
  'state',jsonb_build_object(
   'workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
-  'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
+  'sla',sla.value,'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',CASE WHEN sqlc.arg(reason)::text='awaiting_verification' THEN '[]'::jsonb ELSE CASE WHEN sqlc.arg(owner)::text<>'' OR sqlc.arg(unassigned)::boolean OR sqlc.arg(group_by)::text='owner' OR sqlc.arg(priority)::text<>'' OR sqlc.arg(reason)::text IN ('escalated','unacknowledged','follow_up_overdue') THEN COALESCE((SELECT jsonb_agg(b) FROM jsonb_array_elements(r.blockers) b WHERE (sqlc.arg(owner)::text='' OR COALESCE(b->>'owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(b->>'owner','')='')
+ AND (sqlc.arg(priority)::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text)
+ AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+ AND (sqlc.arg(reason)::text<>'unacknowledged' OR COALESCE(b->>'acknowledged_at','')='')
+ AND (sqlc.arg(reason)::text<>'follow_up_overdue' OR NULLIF(b->>'follow_up_at','')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz)
+ AND (sqlc.arg(reason)::text<>'escalated' OR EXISTS (SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE e->>'code'=b->>'code' AND e->>'operation'=b->>'operation'))),'[]'::jsonb) ELSE r.blockers END END,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -16572,7 +16728,9 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s
 JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
 CROSS JOIN LATERAL (
  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
- COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+ COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_budget_seconds,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_warning_percent
  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS steps(step)
  WHERE step->>'workflow'=s.workflow
 ) config
@@ -16583,6 +16741,82 @@ CROSS JOIN LATERAL (
  CASE WHEN NOT config.terminal AND NULLIF(r.deadline_at,'')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz
  THEN GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-r.deadline_at::timestamptz)))::bigint) ELSE 0::bigint END AS overdue_seconds
 ) attention
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.value ORDER BY h.revision DESC,h.operation_id DESC,h.id DESC),'[]'::jsonb) AS items FROM (
+  SELECT hr.id,hr.operation_id,hr.revision,jsonb_build_object('id',hr.id,'operation_id',hr.operation_id,'revision',hr.revision,'state',hr.state,'from_state',hr.from_state,'contract_version',hr.contract_version,'occurred_at',hr.occurred_at,
+  'budget',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0),
+  'warning',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0)) value
+  FROM customer_operation_workflow_state_reports hr
+  JOIN customer_operations ho ON ho.id=hr.operation_id
+  JOIN customer_operation_definitions hd ON hd.id=ho.definition_id AND hd.account_id=ho.account_id AND hd.app_id=ho.app_id
+  WHERE config.sla_budget_seconds>0 AND NOT config.terminal
+  AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
+  AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
+  AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+  AND (ho.state IN ('accepted','running') OR ho.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT sqlc.arg(sla_history_limit)::integer
+ ) h
+) sla_history
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((value->>'revision')::bigint) FILTER (WHERE value->>'state'<>s.state OR (value->>'contract_version')::integer<>r.contract_version),0::bigint) AS revision
+ FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+ WHERE n<sqlc.arg(sla_history_limit)::integer
+) sla_boundary
+CROSS JOIN LATERAL (
+ SELECT min(revision) AS entry_revision,max(revision) AS latest_revision,min(occurred_at) AS entered_at,
+ count(*) AS reports,count(DISTINCT revision) AS unique_reports,
+ bool_and(state=s.state AND version=r.contract_version AND budget=config.sla_budget_seconds AND warning=config.sla_warning_percent AND occurred_at<>'0001-01-01T00:00:00Z'::timestamptz AND occurred_at<=sqlc.arg(evaluated_at)::timestamptz
+ AND (previous_time IS NULL OR occurred_at>=previous_time)
+ AND (previous_state IS NULL OR from_state='' OR from_state=previous_state)) AS timeline_valid,
+ bool_or(id=r.id::text AND operation_id=r.operation_id::text AND revision=s.revision) AS contains_current
+ FROM (
+  SELECT value->>'id' AS id,value->>'operation_id' AS operation_id,(value->>'revision')::bigint AS revision,value->>'state' AS state,COALESCE(value->>'from_state','') AS from_state,
+  (value->>'contract_version')::integer AS version,(value->>'budget')::bigint AS budget,(value->>'warning')::bigint AS warning,(value->>'occurred_at')::timestamptz AS occurred_at,
+  lag((value->>'occurred_at')::timestamptz) OVER (ORDER BY (value->>'revision')::bigint) AS previous_time,
+  lag(value->>'state') OVER (ORDER BY (value->>'revision')::bigint) AS previous_state
+  FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+  WHERE n<sqlc.arg(sla_history_limit)::integer AND (value->>'revision')::bigint>=sla_boundary.revision
+ ) ordered
+ WHERE revision>sla_boundary.revision
+) sla_suffix
+CROSS JOIN LATERAL (
+ SELECT count(*) AS reports,bool_and(value->>'state'<>s.state AND (value->>'contract_version')::integer=r.contract_version AND (value->>'occurred_at')::timestamptz<>'0001-01-01T00:00:00Z'::timestamptz
+ AND (value->>'occurred_at')::timestamptz<=sla_suffix.entered_at) AS valid
+ FROM jsonb_array_elements(sla_history.items) AS h(value)
+ WHERE (value->>'revision')::bigint=sla_boundary.revision
+) sla_border
+CROSS JOIN LATERAL (
+ SELECT COALESCE(sla_suffix.timeline_valid AND sla_suffix.contains_current AND sla_suffix.latest_revision=s.revision
+ AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(sla_history.items) AS h(value) WHERE (value->>'revision')::bigint>=sla_suffix.entry_revision GROUP BY (value->>'revision')::bigint HAVING count(*)>1)
+ AND sla_suffix.reports=sla_suffix.unique_reports AND sla_suffix.reports=s.revision-sla_suffix.entry_revision+1
+ AND (sla_suffix.entry_revision=1 AND sla_boundary.revision=0 OR sla_border.reports=1 AND sla_border.valid AND sla_boundary.revision=sla_suffix.entry_revision-1),false) AS known,
+ sla_suffix.entered_at + make_interval(secs=>config.sla_budget_seconds::double precision) AS due_at,
+ sla_suffix.entered_at + make_interval(secs=>(config.sla_budget_seconds*config.sla_warning_percent)::double precision/100) AS warning_at,
+ GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-sla_suffix.entered_at))))::bigint AS elapsed
+) sla_clock
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN config.sla_budget_seconds<1 OR config.terminal THEN NULL::jsonb ELSE
+ jsonb_build_object('evaluated_at',sqlc.arg(evaluated_at)::timestamptz,'budget_seconds',config.sla_budget_seconds,'history_complete',sla_clock.known,'status',CASE WHEN NOT sla_clock.known THEN 'unknown' WHEN sla_clock.due_at<=sqlc.arg(evaluated_at)::timestamptz THEN 'breached' WHEN config.sla_warning_percent>0 AND sla_clock.warning_at<=sqlc.arg(evaluated_at)::timestamptz THEN 'at_risk' ELSE 'within_budget' END)
+ || CASE WHEN config.sla_warning_percent>0 THEN jsonb_build_object('warning_percent',config.sla_warning_percent) ELSE '{}'::jsonb END
+ || CASE WHEN sla_clock.known AND config.sla_warning_percent>0 THEN jsonb_build_object('warning_at',sla_clock.warning_at) ELSE '{}'::jsonb END
+ || CASE WHEN NOT sla_clock.known THEN '{}'::jsonb ELSE jsonb_build_object('entered_at',sla_suffix.entered_at,'due_at',sla_clock.due_at,'elapsed_seconds',sla_clock.elapsed,'remaining_seconds',GREATEST(0,config.sla_budget_seconds-sla_clock.elapsed),'breached_seconds',GREATEST(0,sla_clock.elapsed-config.sla_budget_seconds)) END END AS value,
+ (config.sla_budget_seconds>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.due_at<=sqlc.arg(evaluated_at)::timestamptz) IS TRUE AS breached,
+ (config.sla_budget_seconds>0 AND config.sla_warning_percent>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.warning_at<=sqlc.arg(evaluated_at)::timestamptz AND sla_clock.due_at>sqlc.arg(evaluated_at)::timestamptz) IS TRUE AS at_risk
+) sla
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(jsonb_build_object('code',b->>'code','operation',b->>'operation','owner',policy.value->>'owner',
+ 'after_seconds',(policy.value->>'after_seconds')::bigint,
+ 'escalated_at',NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision))
+ ORDER BY b->>'operation',b->>'code'),'[]'::jsonb) AS items
+ FROM jsonb_array_elements(r.blockers) b
+ CROSS JOIN LATERAL (
+  SELECT step->'blocker_escalations'->(b->>'code') AS value
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) steps(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version LIMIT 1
+ ) policy
+ WHERE NOT config.terminal AND (policy.value->>'after_seconds')::bigint>0
+ AND NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision)<=sqlc.arg(evaluated_at)::timestamptz
+) escalations
 CROSS JOIN LATERAL (
  SELECT COALESCE(jsonb_agg(jsonb_build_object('dependency',link.value,'status',resolved.status) ORDER BY link.value->>'subject_type',link.value->>'subject_id',link.value->>'workflow',link.value->>'instance_id')
  FILTER (WHERE NOT config.terminal AND resolved.status IN ('unknown','waiting','outcome_mismatch')), '[]'::jsonb) AS items
@@ -16610,30 +16844,93 @@ CROSS JOIN LATERAL (
  ) resolved
 ) dependencies
 CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>sqlc.arg(now)::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+CROSS JOIN LATERAL (
  SELECT encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
 ) identity
 WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.scope=sqlc.arg(scope)::text
  AND (sqlc.arg(tenant_id)::text='' OR s.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
  AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
  AND (sqlc.arg(workflow_name)::text='' OR s.workflow=sqlc.arg(workflow_name)::text)
+ AND ((((sqlc.arg(owner)::text='' AND NOT sqlc.arg(unassigned)::boolean AND sqlc.arg(priority)::text='') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE (sqlc.arg(owner)::text='' OR COALESCE(b->>'owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(b->>'owner','')='')
+ AND (sqlc.arg(priority)::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text)
+ AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+ ))
  AND (sqlc.arg(blocker_code)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=sqlc.arg(blocker_code)::text))
- AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR jsonb_array_length(dependencies.items)>0)
- AND (sqlc.arg(reason)::text='' OR sqlc.arg(reason)::text='blocked' AND jsonb_array_length(r.blockers)>0 OR sqlc.arg(reason)::text='stale' AND attention.stale OR sqlc.arg(reason)::text='overdue' AND attention.overdue OR sqlc.arg(reason)::text='dependency' AND jsonb_array_length(dependencies.items)>0)
- AND ((sqlc.arg(dependency_status)::text='' AND sqlc.arg(required_outcome_code)::text='') OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
-   (sqlc.arg(dependency_status)::text='' OR dep->>'status'=sqlc.arg(dependency_status)::text)
-   AND (sqlc.arg(required_outcome_code)::text='' OR dep->'dependency'->>'required_outcome_code'=sqlc.arg(required_outcome_code)::text)
+ AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR sla.breached OR sla.at_risk OR jsonb_array_length(dependencies.items)>0)
+ AND (sqlc.arg(reason)::text NOT IN ('unacknowledged','follow_up_overdue') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE
+ (sqlc.arg(owner)::text='' OR COALESCE(b->>'owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(b->>'owner','')='')
+ AND (sqlc.arg(priority)::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text)
+ AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+ AND (sqlc.arg(reason)::text='unacknowledged' AND COALESCE(b->>'acknowledged_at','')='' OR sqlc.arg(reason)::text='follow_up_overdue' AND NULLIF(b->>'follow_up_at','')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz)))
+ AND (sqlc.arg(reason)::text IN ('','unacknowledged','follow_up_overdue') OR sqlc.arg(reason)::text='blocked' AND jsonb_array_length(r.blockers)>0 OR sqlc.arg(reason)::text='stale' AND attention.stale OR sqlc.arg(reason)::text='sla_breached' AND sla.breached OR sqlc.arg(reason)::text='sla_at_risk' AND sla.at_risk OR sqlc.arg(reason)::text='overdue' AND attention.overdue OR sqlc.arg(reason)::text='dependency' AND jsonb_array_length(dependencies.items)>0 OR sqlc.arg(reason)::text='escalated' AND jsonb_array_length(escalations.items)>0)
+ AND (sqlc.arg(reason)::text<>'escalated' OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE
+ (sqlc.arg(owner)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=sqlc.arg(owner)::text))
+ AND (NOT sqlc.arg(unassigned)::boolean OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=''))
+ AND (sqlc.arg(priority)::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(NULLIF(b->>'priority',''),'normal')=sqlc.arg(priority)::text))
+ AND (sqlc.arg(blocker_code)::text='' OR e->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR e->>'operation'=sqlc.arg(target_operation)::text)
  ))
  AND (sqlc.arg(target_operation)::text='' OR EXISTS (
   SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=sqlc.arg(target_operation)::text
- ) OR (attention.stale OR attention.overdue) AND EXISTS (
+ ) OR (attention.stale OR attention.overdue OR sla.breached OR sla.at_risk) AND EXISTS (
   SELECT 1 FROM customer_operation_definitions producer
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
   WHERE producer.account_id=s.account_id AND producer.app_id=s.app_id AND producer.scope=s.scope
    AND producer.spec->>'name'=sqlc.arg(target_operation)::text AND step->>'workflow'=s.workflow
    AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version AND edge->>'from'=s.state
+ ))) OR EXISTS (SELECT 1 FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND sqlc.arg(priority)::text='' AND sqlc.arg(reason)::text IN ('','awaiting_verification')
+ AND (sqlc.arg(owner)::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=sqlc.arg(owner)::text)
+ AND (NOT sqlc.arg(unassigned)::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND (sqlc.arg(blocker_code)::text='' OR v->'resolution'->>'code'=sqlc.arg(blocker_code)::text)
+ AND (sqlc.arg(target_operation)::text='' OR v->'resolution'->>'operation'=sqlc.arg(target_operation)::text))) AND ((sqlc.arg(dependency_status)::text='' AND sqlc.arg(required_outcome_code)::text='') OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
+   (sqlc.arg(dependency_status)::text='' OR dep->>'status'=sqlc.arg(dependency_status)::text)
+   AND (sqlc.arg(required_outcome_code)::text='' OR dep->'dependency'->>'required_outcome_code'=sqlc.arg(required_outcome_code)::text)
  ))
+
 
 ), members AS (
  SELECT CASE WHEN sqlc.arg(group_by)::text IN ('dependency_status','required_outcome_code') THEN
@@ -16651,16 +16948,19 @@ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uui
      AND (sqlc.arg(dependency_status)::text='' OR dep->>'status'=sqlc.arg(dependency_status)::text)
      AND (sqlc.arg(required_outcome_code)::text='' OR dep->'dependency'->>'required_outcome_code'=sqlc.arg(required_outcome_code)::text)
      AND CASE WHEN sqlc.arg(group_by)::text='dependency_status' THEN dep->>'status' ELSE COALESCE(dep->'dependency'->>'required_outcome_code','') END<>''
+   UNION SELECT COALESCE(b->>'owner','') FROM jsonb_array_elements(e.entry->'state'->'blockers') b WHERE sqlc.arg(group_by)::text='owner'
    UNION SELECT e.entry->>'platform_tenant_id' WHERE sqlc.arg(group_by)::text='customer'
    UNION SELECT b->>'code' FROM jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b
      WHERE sqlc.arg(group_by)::text='blocker_code' AND (sqlc.arg(blocker_code)::text='' OR b->>'code'=sqlc.arg(blocker_code)::text)
    UNION SELECT b->>'operation' FROM jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b
      WHERE sqlc.arg(group_by)::text='target_operation' AND (sqlc.arg(target_operation)::text='' OR b->>'operation'=sqlc.arg(target_operation)::text)
+   UNION SELECT CASE sqlc.arg(group_by)::text WHEN 'owner' THEN COALESCE(v->'resolution'->>'verification_owner','') WHEN 'blocker_code' THEN v->'resolution'->>'code' ELSE v->'resolution'->>'operation' END
+    FROM jsonb_array_elements(e.entry->'resolution_verifications') v WHERE sqlc.arg(group_by)::text IN ('owner','blocker_code','target_operation')
    UNION SELECT producer.spec->>'name'
      FROM customer_operation_definitions producer
      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
-     WHERE sqlc.arg(group_by)::text='target_operation' AND ((e.entry->'state'->>'stale')::boolean OR (e.entry->'state'->>'overdue')::boolean)
+     WHERE sqlc.arg(group_by)::text='target_operation' AND sqlc.arg(owner)::text='' AND NOT sqlc.arg(unassigned)::boolean AND sqlc.arg(priority)::text='' AND sqlc.arg(reason)::text NOT IN ('escalated','unacknowledged','follow_up_overdue','awaiting_verification') AND ((e.entry->'state'->>'stale')::boolean OR (e.entry->'state'->>'overdue')::boolean OR COALESCE(e.entry #>> '{state,sla,status}','') IN ('breached','at_risk'))
        AND producer.account_id=sqlc.arg(account_id)::uuid AND producer.app_id=sqlc.arg(app_id)::uuid AND producer.scope=sqlc.arg(scope)::text
        AND step->>'workflow'=e.entry->'state'->>'workflow'
        AND COALESCE(NULLIF((step->>'version')::integer,0),1)=(e.entry->'state'->>'contract_version')::integer
@@ -16668,42 +16968,66 @@ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uui
        AND (sqlc.arg(target_operation)::text='' OR producer.spec->>'name'=sqlc.arg(target_operation)::text)
  ) g
 ), facts AS (
- SELECT ''::text value,e.cursor_key,(e.entry->'state'->>'stale')::boolean stale,(e.entry->'state'->>'overdue')::boolean overdue,NULLIF(e.entry->'state'->>'deadline_at','')::timestamptz deadline_at,jsonb_array_length(e.entry->'dependency_attention') dependency_count,b.blocker
+ SELECT true is_total,''::text value,e.cursor_key,COALESCE(e.entry #>> '{state,sla,status}','') AS sla_status,(e.entry->'state'->>'stale')::boolean stale,(e.entry->'state'->>'overdue')::boolean overdue,NULLIF(e.entry->'state'->>'deadline_at','')::timestamptz deadline_at,jsonb_array_length(e.entry->'dependency_attention') dependency_count,b.blocker,EXISTS (SELECT 1 FROM jsonb_array_elements(e.entry->'escalations') escalation WHERE escalation->>'code'=b.blocker->>'code' AND escalation->>'operation'=b.blocker->>'operation') AS escalated
  FROM eligible e LEFT JOIN LATERAL jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b(blocker) ON true
  UNION ALL
- SELECT m.value,m.cursor_key,(m.entry->'state'->>'stale')::boolean,(m.entry->'state'->>'overdue')::boolean,NULLIF(m.entry->'state'->>'deadline_at','')::timestamptz,jsonb_array_length(m.entry->'dependency_attention'),b.blocker
+ SELECT false,m.value,m.cursor_key,COALESCE(m.entry #>> '{state,sla,status}',''),(m.entry->'state'->>'stale')::boolean,(m.entry->'state'->>'overdue')::boolean,NULLIF(m.entry->'state'->>'deadline_at','')::timestamptz,jsonb_array_length(m.entry->'dependency_attention'),b.blocker,EXISTS (SELECT 1 FROM jsonb_array_elements(m.entry->'escalations') escalation WHERE escalation->>'code'=b.blocker->>'code' AND escalation->>'operation'=b.blocker->>'operation')
  FROM members m LEFT JOIN LATERAL jsonb_array_elements((m.entry->'state'->'blockers')::jsonb) b(blocker)
- ON (sqlc.arg(group_by)::text NOT IN ('blocker_code','target_operation')
+ ON (sqlc.arg(group_by)::text NOT IN ('blocker_code','target_operation','owner')
      OR sqlc.arg(group_by)::text='blocker_code' AND b.blocker->>'code'=m.value
-     OR sqlc.arg(group_by)::text='target_operation' AND b.blocker->>'operation'=m.value)
+     OR sqlc.arg(group_by)::text='target_operation' AND b.blocker->>'operation'=m.value
+     OR sqlc.arg(group_by)::text='owner' AND COALESCE(b.blocker->>'owner','')=m.value)
+), verification_facts AS (
+ SELECT true is_total,''::text value,e.cursor_key,v.item
+ FROM eligible e CROSS JOIN LATERAL jsonb_array_elements(e.entry->'resolution_verifications') v(item)
+ UNION ALL
+ SELECT false,m.value,m.cursor_key,v.item
+ FROM members m CROSS JOIN LATERAL jsonb_array_elements(m.entry->'resolution_verifications') v(item)
+ WHERE sqlc.arg(group_by)::text NOT IN ('owner','blocker_code','target_operation')
+ OR sqlc.arg(group_by)::text='owner' AND COALESCE(v.item->'resolution'->>'verification_owner','')=m.value
+ OR sqlc.arg(group_by)::text='blocker_code' AND v.item->'resolution'->>'code'=m.value
+ OR sqlc.arg(group_by)::text='target_operation' AND v.item->'resolution'->>'operation'=m.value
+), verification_counts AS (
+ SELECT is_total,value,count(DISTINCT cursor_key) awaiting_workflows,count(*) awaiting_resolutions FROM verification_facts GROUP BY is_total,value
 ), dependency_counts AS (
- SELECT value,sum(dependency_count) dependency_count
- FROM (SELECT DISTINCT value,cursor_key,dependency_count FROM facts) unique_dependencies
- GROUP BY value
+ SELECT is_total,value,sum(dependency_count) dependency_count
+ FROM (SELECT DISTINCT is_total,value,cursor_key,dependency_count FROM facts) unique_dependencies
+ GROUP BY is_total,value
 ), counts AS (
- SELECT value,count(DISTINCT cursor_key) workflow_count,
+ SELECT is_total,value,count(DISTINCT cursor_key) workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='at_risk') sla_at_risk_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='breached') sla_breached_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='unknown') sla_unknown_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE escalated) escalated_workflow_count,
+ count(blocker) FILTER (WHERE escalated) escalated_blocker_count,
  count(DISTINCT cursor_key) FILTER (WHERE dependency_count>0) dependency_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE blocker IS NOT NULL) blocked_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE stale) stale_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE overdue) overdue_workflow_count,
  min(deadline_at) FILTER (WHERE overdue) earliest_overdue_deadline_at,
+ count(blocker) FILTER (WHERE COALESCE(blocker->>'acknowledged_at','')='') unacknowledged_blocker_count,
+ count(blocker) FILTER (WHERE NULLIF(blocker->>'follow_up_at','')::timestamptz<=sqlc.arg(evaluated_at)::timestamptz) follow_up_overdue_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='low') low_blocker_count,
+ count(blocker) FILTER (WHERE COALESCE(NULLIF(blocker->>'priority',''),'normal')='normal') normal_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='high') high_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='urgent') urgent_blocker_count,
  count(blocker) blocker_count,
  count(blocker) FILTER (WHERE COALESCE(blocker->>'first_observed_at','')='') unknown_age_blockers,
  min(NULLIF(blocker->>'first_observed_at','')::timestamptz) oldest_blocker_at
- FROM facts GROUP BY value
+ FROM facts GROUP BY is_total,value
 ), stats AS (
- SELECT counts.value AS value,jsonb_build_object('workflow_count',workflow_count,'blocked_workflow_count',blocked_workflow_count,
+ SELECT counts.is_total,counts.value AS value,jsonb_build_object('sla_at_risk_workflow_count',sla_at_risk_workflow_count,'sla_breached_workflow_count',sla_breached_workflow_count,'sla_unknown_workflow_count',sla_unknown_workflow_count,'awaiting_verification_workflow_count',COALESCE(verification_counts.awaiting_workflows,0),'awaiting_verification_resolution_count',COALESCE(verification_counts.awaiting_resolutions,0),'low_blocker_count',low_blocker_count,'normal_blocker_count',normal_blocker_count,'high_blocker_count',high_blocker_count,'urgent_blocker_count',urgent_blocker_count,'unacknowledged_blocker_count',unacknowledged_blocker_count,'follow_up_overdue_blocker_count',follow_up_overdue_blocker_count,'escalated_workflow_count',escalated_workflow_count,'escalated_blocker_count',escalated_blocker_count,'workflow_count',workflow_count,'blocked_workflow_count',blocked_workflow_count,
  'dependency_workflow_count',dependency_workflow_count,'dependency_count',dependency_counts.dependency_count,'stale_workflow_count',stale_workflow_count,'overdue_workflow_count',overdue_workflow_count,'blocker_count',blocker_count,'unknown_age_blockers',unknown_age_blockers)
  || CASE WHEN earliest_overdue_deadline_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('earliest_overdue_deadline_at',earliest_overdue_deadline_at,'longest_overdue_seconds',GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-earliest_overdue_deadline_at)))::bigint)) END
  || CASE WHEN oldest_blocker_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('oldest_blocker_at',oldest_blocker_at,
  'oldest_blocker_age_seconds',GREATEST(0,floor(extract(epoch FROM (sqlc.arg(evaluated_at)::timestamptz-oldest_blocker_at)))::bigint)) END data
- FROM counts JOIN dependency_counts ON dependency_counts.value=counts.value
+ FROM counts LEFT JOIN verification_counts ON verification_counts.is_total=counts.is_total AND verification_counts.value=counts.value JOIN dependency_counts ON dependency_counts.value=counts.value AND dependency_counts.is_total=counts.is_total
 ), page AS (
- SELECT value,data FROM stats WHERE value<>'' AND (sqlc.arg(after_group)::text='' OR value COLLATE "C">sqlc.arg(after_group)::text COLLATE "C")
+ SELECT value,data FROM stats WHERE NOT is_total AND (NOT sqlc.arg(has_after)::boolean OR value COLLATE "C">sqlc.arg(after_group)::text COLLATE "C")
  ORDER BY value COLLATE "C" LIMIT sqlc.arg(page_limit)::integer
 )
 SELECT jsonb_build_object('group_by',sqlc.arg(group_by)::text,'evaluated_at',sqlc.arg(evaluated_at)::timestamptz,
- 'totals',COALESCE((SELECT data FROM stats WHERE value=''),jsonb_build_object('dependency_workflow_count',0,'dependency_count',0,'workflow_count',0,'blocked_workflow_count',0,'stale_workflow_count',0,'overdue_workflow_count',0,'blocker_count',0,'unknown_age_blockers',0)),
+ 'totals',COALESCE((SELECT data FROM stats WHERE is_total),jsonb_build_object('sla_at_risk_workflow_count',0,'sla_breached_workflow_count',0,'sla_unknown_workflow_count',0,'awaiting_verification_workflow_count',0,'awaiting_verification_resolution_count',0,'low_blocker_count',0,'normal_blocker_count',0,'high_blocker_count',0,'urgent_blocker_count',0,'unacknowledged_blocker_count',0,'follow_up_overdue_blocker_count',0,'escalated_workflow_count',0,'escalated_blocker_count',0,'dependency_workflow_count',0,'dependency_count',0,'workflow_count',0,'blocked_workflow_count',0,'stale_workflow_count',0,'overdue_workflow_count',0,'blocker_count',0,'unknown_age_blockers',0)),
  'groups',COALESCE((SELECT jsonb_agg(jsonb_build_object('value',value,'stats',data) ORDER BY value COLLATE "C") FROM page),'[]'::jsonb)) AS summary;
 
 -- name: ListCustomerOperationWorkflowOutcomes :many
@@ -17290,6 +17614,183 @@ SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
 
+-- name: GetCustomerOperationResolutionVerifications :one
+SELECT verifications.items::jsonb AS items FROM (
+ SELECT sqlc.arg(account_id)::uuid account_id,sqlc.arg(app_id)::uuid app_id,sqlc.arg(tenant_id)::uuid platform_tenant_id,
+ sqlc.arg(scope)::text scope,sqlc.arg(subject_type)::text subject_type,sqlc.arg(subject_id)::text subject_id,
+ sqlc.arg(workflow_name)::text workflow,sqlc.arg(instance_id)::text instance_id
+) s
+CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>sqlc.arg(now)::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+;
+
+-- name: GetCustomerOperationWorkflowBottleneckHistory :many
+SELECT jsonb_build_object('history',jsonb_build_object(
+ 'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
+ 'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
+ 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),false)) AS observation
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.record #>> '{subject,type}'=sqlc.arg(subject_type)::text AND o.record #>> '{subject,id}'=sqlc.arg(subject_id)::text
+ AND r.workflow=sqlc.arg(workflow_name)::text AND r.instance_id=sqlc.arg(instance_id)::text
+ AND r.created_at<=sqlc.arg(evaluated_at)::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT sqlc.arg(window_limit)::integer;
+
+-- name: SummarizeCustomerOperationWorkflowPerformance :many
+WITH candidates AS (
+ SELECT s.*, config.terminal, config.sla_configured, config.sla_budget_seconds, config.sla_warning_percent,
+ jsonb_build_object('workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
+ 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
+ 'terminal',config.terminal,'stale_after_seconds',config.stale_after_seconds,'occurred_at',r.occurred_at,'updated_at',s.updated_at,
+ 'blockers',r.blockers,'blocker_resolutions',r.blocker_resolutions,'depends_on',r.depends_on,
+ 'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'deadline_at',r.deadline_at,
+ 'blockers_only',r.blockers_only,'dependencies_only',r.dependencies_only,'outcome_only',r.outcome_only,'deadline_only',r.deadline_only,
+ 'evidence_milestones',r.evidence_milestones) AS current_state,
+ encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
+ FROM customer_operation_workflow_states s
+ JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id AND o.platform_tenant_id=s.platform_tenant_id
+ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s.account_id AND d.app_id=s.app_id AND d.scope=s.scope
+ JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
+ CROSS JOIN LATERAL (
+  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
+  COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+  COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint),0::bigint) AS sla_budget_seconds,
+  COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint),0::bigint) AS sla_warning_percent,
+  COALESCE(bool_or(COALESCE(step->'state_sla_budget_seconds','{}'::jsonb)<>'{}'::jsonb),false) AS sla_configured
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ ) config
+ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(tenant_id)::text='' OR s.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND s.workflow=sqlc.arg(workflow_name)::text
+ AND s.updated_at<=sqlc.arg(evaluated_at)::timestamptz AND r.created_at<=sqlc.arg(evaluated_at)::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+), ranked AS (
+ SELECT candidates.*, count(*) OVER (PARTITION BY terminal) AS cohort_total,
+ row_number() OVER (PARTITION BY terminal ORDER BY updated_at DESC,cursor_key DESC) AS position
+ FROM candidates
+), selected AS (
+ SELECT * FROM ranked WHERE position<=sqlc.arg(cohort_limit)::integer
+)
+SELECT jsonb_build_object('current',s.current_state,'tenant',s.platform_tenant_id,
+ 'subject',jsonb_build_object('type',s.subject_type,'id',s.subject_id),'cohort_total',s.cohort_total,
+ 'observations',history.items,'verifications',verifications.items,'sla_configured',s.sla_configured,'current_sla_budget_seconds',s.sla_budget_seconds,'current_sla_warning_percent',s.sla_warning_percent)::jsonb AS instance
+FROM selected s
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.observation),'[]'::jsonb) AS items FROM (
+SELECT jsonb_build_object('history',jsonb_build_object(
+ 'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
+ 'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
+ 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),false)) AS observation
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=s.account_id AND o.app_id=s.app_id
+ AND o.platform_tenant_id=s.platform_tenant_id AND d.scope=s.scope
+ AND o.record #>> '{subject,type}'=s.subject_type AND o.record #>> '{subject,id}'=s.subject_id
+ AND r.workflow=s.workflow AND r.instance_id=s.instance_id
+ AND r.created_at<=sqlc.arg(evaluated_at)::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT sqlc.arg(window_limit)::integer
+ ) h
+) history
+CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND jsonb_array_length(history.items)<sqlc.arg(window_limit)::integer
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>sqlc.arg(now)::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=sqlc.arg(evaluated_at)::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>sqlc.arg(now)::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+ORDER BY s.terminal,s.updated_at DESC,s.cursor_key DESC;
+
+-- name: GetCustomerOperationWorkflowSLABudget :one
+SELECT COALESCE(MAX((step->'state_sla_budget_seconds'->>sqlc.arg(state_name)::text)::bigint),0::bigint)::bigint AS budget,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>sqlc.arg(state_name)::text)::bigint),0::bigint)::bigint AS warning_percent
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND step->>'workflow'=sqlc.arg(workflow_name)::text AND COALESCE(NULLIF((step->>'version')::integer,0),1)=sqlc.arg(contract_version)::integer
+AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz);
+
 -- name: GetAutomationPublishPolicy :one
 SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
 FROM apps a LEFT JOIN workflow_automation_publish_policies p ON p.app_id=a.id
@@ -17426,4 +17927,3 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 
 -- name: PruneRouteProbeRounds :exec
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
-

@@ -8244,6 +8244,194 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/workflow-performance/instances:
+    get:
+      tags: [operations]
+      operationId: listAccountWorkflowPerformanceInstances
+      summary: List ranked contributors to a workflow performance group.
+      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Declared business workflow to investigate.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      - name: cohort
+        in: query
+        description: Completed or ongoing cohort.
+        required: true
+        schema: {type: string, enum: [completed, ongoing]}
+      - name: dimension
+        in: query
+        description: Overall measure or exact breakdown dimension.
+        required: true
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+      - name: contract_version
+        in: query
+        description: Required for state and blocker dimensions.
+        schema: {type: integer, minimum: 1, maximum: 1000000}
+      - name: state
+        in: query
+        description: Exact contributing state. Required for the state dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: operation
+        in: query
+        description: Exact blocker target Operation. Required for the blocker dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: code
+        in: query
+        description: Exact blocker code. Required for the blocker dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: Exact public owner. Mutually exclusive with unassigned.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Select the empty owner group. Mutually exclusive with owner.
+        schema: {type: boolean, enum: [true]}
+      - name: cohort_token
+        in: query
+        description: Opaque selector-bound cohort token from the summary or a previous contributor response.
+        schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        '200':
+          description: Ranked complete-history contributors and exact selected group distribution.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstancesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The retained cohort changed. Refresh the summary and use its new cohort_token.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/workflow-performance/instances:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfWorkflowPerformanceInstances
+      summary: List ranked performance contributors for the authenticated customer.
+      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: "Declared workflow to investigate for the authenticated customer."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: cohort
+        in: query
+        description: "Completed or ongoing customer workflow cohort."
+        required: true
+        schema: {type: string, enum: [completed, ongoing]}
+      - name: dimension
+        in: query
+        description: "Customer cohort duration measure or exact breakdown dimension."
+        required: true
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+      - name: contract_version
+        in: query
+        description: "Contract version required when selecting a customer state or blocker group."
+        schema: {type: integer, minimum: 1, maximum: 1000000}
+      - name: state
+        in: query
+        description: "Contributing state in the customer's state dimension."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: operation
+        in: query
+        description: "Blocker target Operation in the authenticated customer's blocker dimension."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: code
+        in: query
+        description: "Blocker code selecting the customer's exact blocker group."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: "Public owner of the customer's selected group; mutually exclusive with unassigned."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Select an empty-owner customer group; mutually exclusive with owner."
+        schema: {type: boolean, enum: [true]}
+      - name: cohort_token
+        in: query
+        description: "Customer selector-bound cohort token from a prior summary or contributor response."
+        schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        '200':
+          description: Ranked complete-history contributors within the authenticated customer's selected group.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstancesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The customer's retained cohort changed; refresh its performance summary for a new cohort_token.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/workflow-performance/summary:
+    get:
+      tags: [operations]
+      operationId: summarizeAccountWorkflowPerformance
+      summary: Summarize business workflow performance across retained instances.
+      description: Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Declared workflow name to compare across instances.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      responses:
+        '200':
+          description: Separate completed and ongoing cohorts with coverage and ranked durations.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceSummary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/workflow-performance/summary:
+    get:
+      tags: [operations]
+      operationId: summarizePlatformTenantSelfWorkflowPerformance
+      summary: Summarize retained business workflow performance for the authenticated customer.
+      description: Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Business workflow to compare within the authenticated customer app and environment.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      responses:
+        '200':
+          description: Authenticated customer performance cohorts with observed durations and retained-history coverage.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceSummary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/workflow-outcomes/summary:
     get:
       tags: [operations]
@@ -8488,6 +8676,22 @@ paths:
         description: "For the account attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the account attention queue, restrict attention to this application-reported blocker code."
         in: query
@@ -8495,7 +8699,7 @@ paths:
       - name: reason
         description: "For the account attention queue, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
@@ -8522,7 +8726,7 @@ paths:
       - name: group_by
         description: "For the account attention summary, dimension used to aggregate matching workflow instances."
         in: query
-        schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
+        schema: {type: string, default: workflow, enum: [owner, workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
       - name: workflow
         description: "For the account attention summary, restrict results to this declared workflow name."
         in: query
@@ -8539,6 +8743,22 @@ paths:
         description: "For the account attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Account attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Account attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Account attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Account attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the account attention summary, restrict attention to this application-reported blocker code."
         in: query
@@ -8546,7 +8766,7 @@ paths:
       - name: reason
         description: "For the account attention summary, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
@@ -8586,6 +8806,22 @@ paths:
         description: "For the customer attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Customer attention queue. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Customer attention queue. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Customer attention queue. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Customer attention queue. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the customer attention queue, restrict attention to this application-reported blocker code."
         in: query
@@ -8593,7 +8829,7 @@ paths:
       - name: reason
         description: "For the customer attention queue, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
@@ -8619,7 +8855,7 @@ paths:
       - name: group_by
         description: "For the customer attention summary, dimension used to aggregate matching workflow instances."
         in: query
-        schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, dependency_status, required_outcome_code]}
+        schema: {type: string, default: workflow, enum: [owner, workflow, blocker_code, target_operation, dependency_status, required_outcome_code]}
       - name: workflow
         description: "For the customer attention summary, restrict results to this declared workflow name."
         in: query
@@ -8636,6 +8872,22 @@ paths:
         description: "For the customer attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Customer attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Customer attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Customer attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Customer attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the customer attention summary, restrict attention to this application-reported blocker code."
         in: query
@@ -8643,7 +8895,7 @@ paths:
       - name: reason
         description: "For the customer attention summary, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
@@ -38320,6 +38572,12 @@ components:
       additionalProperties: false
       required: [workflow, title, step, label, milestone, position]
       properties:
+        blocker_escalations:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {$ref: '#/components/schemas/OperationWorkflowBlockerEscalationPolicy'}
+          description: Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend escalation for active workflows with known blocker age.
         allow_reconciliation: {type: boolean, description: Explicit permission for evidence-backed state reconciliation snapshots.}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         title: {type: string, minLength: 1, maxLength: 128}
@@ -38336,6 +38594,18 @@ components:
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           description: App-declared terminal states, which must be in states and cannot have outgoing transitions.
+        state_sla_warning_percent:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, format: int64, minimum: 1, maximum: 99}
+          description: Optional whole-percent warning thresholds for states with SLA budgets. At the threshold a known current visit becomes at_risk until its budget is breached. Omitted states have no early warning. All steps must agree; publish a new workflow contract version when changing thresholds.
+        state_sla_budget_seconds:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+          description: Optional observed state visit budgets. Keys must be declared nonterminal states. All workflow steps in one definition must agree; publish a new workflow contract version for budget changes. Metadata updates do not reset a visit clock. Unknown retained entry times do not imply a breach.
         state_stale_after_seconds:
           type: object
           maxProperties: 32
@@ -38442,12 +38712,35 @@ components:
         workflow_count: {type: integer, format: int64, minimum: 0}
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowOutcomeGroup'}}
         next_cursor: {type: string, maxLength: 512}
+    OperationWorkflowBlockerEscalationPolicy:
+      type: object
+      additionalProperties: false
+      required: [after_seconds, owner]
+      description: Application-declared recommendation to escalate a blocker once its known age reaches a threshold. Does not assign work or execute actions.
+      properties:
+        after_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000, description: "Whole seconds from first_observed_at, bounded to ten years."}
+        owner: {type: string, minLength: 1, maxLength: 128, description: "Public recommended escalation team or person identifier, limited to 128 UTF-8 bytes without control characters."}
+    OperationWorkflowBlockerEscalation:
+      type: object
+      additionalProperties: false
+      required: [code, operation, owner, after_seconds, escalated_at]
+      description: Read-only threshold finding evaluated at the attention cursor time against the current retained report and its pinned definition. Owner is the recommended escalation recipient, not the blocker assignee.
+      properties:
+        code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        operation: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        owner: {type: string, minLength: 1, maxLength: 128}
+        after_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+        escalated_at: {type: string, format: date-time, description: Time when the reported blocker first reached its declared threshold.}
     OperationWorkflowAttentionEntry:
       description: "One active workflow instance requiring attention, including its reasons and unresolved prerequisites."
       type: object
       additionalProperties: false
       required: [app_id, scope, subject, operation_id, state, reasons]
       properties:
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Bounded preview with pending obligations first. Exact counts cover all retained distinct obligations.}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
+        escalations: {type: array, maxItems: 16, description: Passed blocker escalation thresholds; missing observation times do not produce findings., items: {$ref: "#/components/schemas/OperationWorkflowBlockerEscalation"}}
         dependency_attention: {type: array, maxItems: 16, description: Unresolved direct references on an active source. These entries carry dependency and status; target state is available in the workflow instance detail., items: {$ref: '#/components/schemas/OperationWorkflowRelatedInstance'}}
         app_id: {type: string, format: uuid}
         scope: {type: string}
@@ -38455,13 +38748,26 @@ components:
         subject: {$ref: '#/components/schemas/OperationSubject'}
         operation_id: {type: string, format: uuid, description: "For this attention entry, operation that published the current state report."}
         state: {$ref: '#/components/schemas/OperationWorkflowState'}
-        reasons: {type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: {type: string, enum: [blocked, stale, overdue, dependency]}}
+        reasons: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}}
     OperationWorkflowAttentionStats:
       description: "Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."
       type: object
       additionalProperties: false
-      required: [dependency_workflow_count, dependency_count, overdue_workflow_count, workflow_count, blocked_workflow_count, stale_workflow_count, blocker_count, unknown_age_blockers]
+      required: [sla_at_risk_workflow_count, sla_breached_workflow_count, sla_unknown_workflow_count, awaiting_verification_workflow_count, awaiting_verification_resolution_count, low_blocker_count, normal_blocker_count, high_blocker_count, urgent_blocker_count, unacknowledged_blocker_count, follow_up_overdue_blocker_count, escalated_workflow_count, escalated_blocker_count, dependency_workflow_count, dependency_count, overdue_workflow_count, workflow_count, blocked_workflow_count, stale_workflow_count, blocker_count, unknown_age_blockers]
       properties:
+        sla_at_risk_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_unknown_workflow_count: {type: integer, format: int64, minimum: 0}
+        escalated_workflow_count: {type: integer, format: int64, minimum: 0}
+        awaiting_verification_workflow_count: {type: integer, format: int64, minimum: 0}
+        awaiting_verification_resolution_count: {type: integer, format: int64, minimum: 0}
+        low_blocker_count: {type: integer, format: int64, minimum: 0}
+        normal_blocker_count: {type: integer, format: int64, minimum: 0}
+        high_blocker_count: {type: integer, format: int64, minimum: 0}
+        urgent_blocker_count: {type: integer, format: int64, minimum: 0}
+        unacknowledged_blocker_count: {type: integer, format: int64, minimum: 0}
+        follow_up_overdue_blocker_count: {type: integer, format: int64, minimum: 0}
+        escalated_blocker_count: {type: integer, format: int64, minimum: 0}
         dependency_workflow_count: {type: integer, format: int64, minimum: 0}
         dependency_count: {type: integer, format: int64, minimum: 0}
         overdue_workflow_count: {type: integer, format: int64, minimum: 0}
@@ -38475,7 +38781,7 @@ components:
         oldest_blocker_at: {type: string, format: date-time}
         oldest_blocker_age_seconds: {type: integer, format: int64, minimum: 0}
     OperationWorkflowAttentionGroup:
-      description: "Attention statistics for one value of the selected grouping dimension."
+      description: "Attention statistics for one value of the selected grouping dimension. Owner grouping uses an empty value for unassigned blockers; owner counts and ages cover that owner only."
       type: object
       additionalProperties: false
       required: [value, stats]
@@ -38488,7 +38794,7 @@ components:
       additionalProperties: false
       required: [group_by, evaluated_at, totals, groups]
       properties:
-        group_by: {type: string, enum: [workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
+        group_by: {type: string, enum: [owner, workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
         evaluated_at: {type: string, format: date-time}
         totals: {$ref: '#/components/schemas/OperationWorkflowAttentionStats'}
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionGroup'}}
@@ -38502,12 +38808,237 @@ components:
         items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionEntry'}}
         evaluated_at: {type: string, format: date-time, description: Staleness evaluation time retained across cursor pages.}
         next_cursor: {type: string, description: Opaque continuation bound to account/customer role and every queue filter.}
+    OperationWorkflowPerformanceGroup:
+      description: Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads.
+      type: object
+      additionalProperties: false
+      required: [dimension]
+      properties:
+        dimension: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        state: {type: string, maxLength: 64}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128}
+        unassigned: {type: boolean}
+    OperationWorkflowPerformanceInstance:
+      type: object
+      additionalProperties: false
+      description: Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
+      required: [subject, operation_id, state, observed_seconds, resolution_verifications, awaiting_verification_count, resolution_verification_count]
+      properties:
+        platform_tenant_id: {type: string, format: uuid}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        operation_id: {type: string, format: uuid}
+        state: {$ref: '#/components/schemas/OperationWorkflowState'}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceInstancesResponse:
+      type: object
+      additionalProperties: false
+      description: Coverage counts cover the selected cohort before dimension selection. Duration statistics and ranked items include only complete-history instances contributing to the exact dimension. Overall dimensions include eligible zero values. The token binds both sampled cohorts and evidence at evaluated_at; it does not store a database snapshot.
+      required: [evaluated_at, cohort_token, workflow, cohort, group, matching_workflow_count, sampled_workflow_count, complete_history_workflow_count, excluded_incomplete_workflow_count, cohort_truncated, exclusions, duration, items]
+      properties:
+        evaluated_at: {type: string, format: date-time}
+        cohort_token: {type: string, maxLength: 512}
+        workflow: {type: string, maxLength: 63}
+        cohort: {type: string, enum: [completed, ongoing]}
+        group: {$ref: '#/components/schemas/OperationWorkflowPerformanceGroup'}
+        matching_workflow_count: {type: integer, format: int64, minimum: 0}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        complete_history_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        cohort_truncated: {type: boolean}
+        exclusions: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceCoverageReason'}}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstance'}}
+    OperationWorkflowPerformanceSummary:
+      description: Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
+      type: object
+      additionalProperties: false
+      required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
+      properties:
+        cohort_token: {type: string, maxLength: 512, description: Opaque selector-bound token for opening consistent contributor views.}
+        evaluated_at: {type: string, format: date-time}
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        cohort_limit: {type: integer, minimum: 1, maximum: 100}
+        completed: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+        ongoing: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+    OperationWorkflowDurationDistribution:
+      type: object
+      additionalProperties: false
+      description: One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is zero.
+      required: [workflow_count, total_seconds, p50_seconds, p95_seconds]
+      properties:
+        workflow_count: {type: integer, format: int64, minimum: 0}
+        total_seconds: {type: integer, format: int64, minimum: 0}
+        p50_seconds: {type: integer, format: int64, minimum: 0}
+        p95_seconds: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceCoverageReason:
+      description: Count of sampled workflows excluded for one retained-history coverage reason.
+      type: object
+      additionalProperties: false
+      required: [reason, workflow_count]
+      properties:
+        reason: {type: string, enum: [missing_start, missing_latest, revision_gap, duplicate_revision, out_of_order_time, future_observation, contract_changed, state_discontinuity, history_window_truncated, verification_start_missing]}
+        workflow_count: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceCohort:
+      type: object
+      additionalProperties: false
+      description: Counts distinguish all matches from the latest retained sample and complete eligible histories. Every duration excludes incomplete histories. Groups are ranked by total duration descending with stable identity ties. Overall distributions include eligible zero-duration instances; group distributions include only instances that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
+      required: [sla_configured_workflow_count, sla_evaluated_workflow_count, sla_breached_workflow_count, sla_unknown_workflow_count, matching_workflow_count, sampled_workflow_count, complete_history_workflow_count, excluded_incomplete_workflow_count, cohort_truncated, exclusions, state_time, blocked_time, verification_wait, states, blockers, verification_owners, states_truncated, blockers_truncated, verification_owners_truncated]
+      properties:
+        sla_configured_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_evaluated_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_unknown_workflow_count: {type: integer, format: int64, minimum: 0}
+        matching_workflow_count: {type: integer, format: int64, minimum: 0}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        complete_history_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        cohort_truncated: {type: boolean}
+        exclusions: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceCoverageReason'}}
+        state_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        blocked_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        verification_wait: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        states: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowStatePerformance'}}
+        blockers: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowBlockerPerformance'}}
+        verification_owners: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowVerificationPerformance'}}
+        states_truncated: {type: boolean}
+        blockers_truncated: {type: boolean}
+        verification_owners_truncated: {type: boolean}
+    OperationWorkflowStatePerformance:
+      description: Cohort duration distribution and evaluated SLA visits for one state and contract version.
+      type: object
+      additionalProperties: false
+      required: [sla_evaluated_visit_count, sla_breached_visit_count, contract_version, state, duration]
+      properties:
+        sla_evaluated_visit_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_visit_count: {type: integer, format: int64, minimum: 0}
+        contract_version: {type: integer, minimum: 1}
+        state: {type: string, maxLength: 64}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowBlockerPerformance:
+      description: Cohort duration distribution for one blocker target, code, contract version and observed owner.
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, code, owner, duration]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128, description: Application-reported blocker owner for this cohort group; empty means unassigned.}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowVerificationPerformance:
+      description: Cohort verification-wait distribution and pending obligations for one verification owner.
+      type: object
+      additionalProperties: false
+      required: [owner, pending_resolution_count, duration]
+      properties:
+        owner: {type: string, maxLength: 128, description: Verification recipient for this cohort group; empty means unassigned.}
+        pending_resolution_count: {type: integer, format: int64, minimum: 0}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowStateSLA:
+      type: object
+      additionalProperties: false
+      description: Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state metadata reports preserve entry time. Known history establishes the current visit from revision 1 or a contiguous prior different state. Gaps or inconsistent times/versions/budgets yield unknown status and omit inferred timestamps/durations. Breached at due_at or later. Terminal states have no current SLA.
+      required: [evaluated_at, budget_seconds, status, history_complete]
+      properties:
+        warning_percent: {type: integer, format: int64, minimum: 1, maximum: 99, description: Pinned warning percentage when configured.}
+        warning_at: {type: string, format: date-time, description: Warning time for a known state visit with a configured threshold.}
+        evaluated_at: {type: string, format: date-time}
+        budget_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+        status: {type: string, enum: [within_budget, at_risk, breached, unknown]}
+        history_complete: {type: boolean, description: Retained evidence establishes the current state visit entry. Earlier workflow history can still be incomplete.}
+        entered_at: {type: string, format: date-time}
+        due_at: {type: string, format: date-time}
+        elapsed_seconds: {type: integer, format: int64, minimum: 0}
+        remaining_seconds: {type: integer, format: int64, minimum: 0, description: Ceiling of remaining elapsed time. Zero at or after the due time.}
+        breached_seconds: {type: integer, format: int64, minimum: 0, description: Whole seconds elapsed beyond the budget.}
+    OperationWorkflowBottlenecks:
+      type: object
+      additionalProperties: false
+      description: Observed durations for one retained workflow instance. State/blocker intervals use application occurrence time. Verification waits use platform publication time. Gaps are excluded and incomplete histories are marked. Groups are sorted by observed duration and bounded independently of exact window totals.
+      required: [evaluated_at, history_complete, incomplete_reasons, reports_in_window, history_truncated, ongoing, state_seconds, blocked_seconds, verification_unknown_start_count, verification_wait_seconds, states, blockers, verification_owners, states_truncated, blockers_truncated, verification_owners_truncated]
+      properties:
+        evaluated_at: {type: string, format: date-time}
+        history_complete: {type: boolean, description: True only when the retained window starts at revision 1 and reaches the current report without gaps or invalid interval boundaries.}
+        incomplete_reasons: {type: array, maxItems: 10, uniqueItems: true, items: {type: string, enum: [missing_start, missing_latest, revision_gap, duplicate_revision, out_of_order_time, future_observation, contract_changed, state_discontinuity, history_window_truncated, verification_start_missing]}}
+        observed_from: {type: string, format: date-time}
+        observed_through: {type: string, format: date-time}
+        reports_in_window: {type: integer, minimum: 0, maximum: 1024}
+        history_truncated: {type: boolean}
+        ongoing: {type: boolean, description: Current workflow state is nonterminal. Ongoing duration is evaluated as of evaluated_at.}
+        state_seconds: {type: integer, format: int64, minimum: 0}
+        blocked_seconds: {type: integer, format: int64, minimum: 0, description: Union of measured intervals with at least one active blocker. Overlapping blocker groups can sum to more than this total.}
+        verification_unknown_start_count: {type: integer, format: int64, minimum: 0}
+        verification_wait_seconds: {type: integer, format: int64, minimum: 0, description: Sum of whole observed wait seconds across obligations with known publication starts in the history window. Overlapping waits are counted separately.}
+        states: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowStateDuration'}}
+        blockers: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowBlockerDuration'}}
+        verification_owners: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowVerificationDuration'}}
+        states_truncated: {type: boolean}
+        blockers_truncated: {type: boolean}
+        verification_owners_truncated: {type: boolean}
+    OperationWorkflowStateDuration:
+      description: Observed time and interval count for one state and contract version within a selected workflow instance.
+      type: object
+      additionalProperties: false
+      required: [contract_version, state, observed_seconds, observation_count, ongoing]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        state: {type: string, maxLength: 64}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        observation_count: {type: integer, format: int64, minimum: 0}
+        ongoing: {type: boolean}
+    OperationWorkflowBlockerDuration:
+      description: Observed blocked time and interval count for one target, code, contract version and owner within an instance.
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, code, owner, observed_seconds, observation_count, ongoing]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128, description: Blocker owner observed in this instance interval; empty means unassigned.}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        observation_count: {type: integer, format: int64, minimum: 0}
+        ongoing: {type: boolean}
+    OperationWorkflowVerificationDuration:
+      description: Publication-based proof waiting time and coverage counts for one verification owner within an instance.
+      type: object
+      additionalProperties: false
+      required: [owner, observed_seconds, resolution_count, pending_count, unknown_start_count]
+      properties:
+        owner: {type: string, maxLength: 128, description: Application-assigned verification owner. Empty means unassigned.}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        resolution_count: {type: integer, format: int64, minimum: 0}
+        pending_count: {type: integer, format: int64, minimum: 0}
+        unknown_start_count: {type: integer, format: int64, minimum: 0, description: Retained obligations whose start report is outside the history window. No wait duration is inferred for these obligations.}
+    OperationWorkflowResolutionVerification:
+      description: Retained resolution claim and its exact proof-verification status under the original scoped workflow contract.
+      type: object
+      additionalProperties: false
+      required: [resolution, resolution_operation_id, resolution_report_id, resolution_revision, status]
+      properties:
+        resolution: {$ref: '#/components/schemas/OperationWorkflowBlockerResolution'}
+        resolution_operation_id: {type: string, format: uuid}
+        resolution_report_id: {type: string, format: uuid}
+        resolution_revision: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [awaiting_verification, verified]}
+        verified_at: {type: string, format: date-time, description: Retained proof publication time.}
     OperationWorkflowBlockerResolution:
       type: object
       additionalProperties: false
       required: [code, operation, description, blocker_operation_id, blocker_report_id, blocker_revision]
       description: Explicit application explanation for clearing one prior blocker occurrence. The source must be a retained report in the same owner/business-reference/workflow-instance/contract-version boundary and must contain this target/code. The containing state report supplies the resolution identity and timestamps. A cleared list alone does not imply a resolution fact.
       properties:
+        verification_milestone_id: {type: string, format: uuid, description: Exact expected milestone ID paired with verification_milestone_name. Missing retained evidence leaves verification pending.}
+        verification_milestone_name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Expected milestone name paired with its exact ID.}
+        verification_operation_id: {type: string, format: uuid, description: Optional evidence Operation ID. Defaults to the Operation containing this resolution. Evidence must match the same account/customer/app/scope/subject/workflow-instance/contract boundary.}
+        verification_owner: {type: string, maxLength: 128, description: Public application-assigned verification owner limited to 128 UTF-8 bytes without control characters. Requires a verification milestone. Omitted means unassigned.}
+        resolved_by: {type: string, maxLength: 128, description: "Optional public application-reported resolver identifier or team, limited to 128 UTF-8 bytes without control characters. This is not verified platform identity."}
         code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         operation: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 explanation limited to 512 bytes without control characters.}
@@ -38520,6 +39051,13 @@ components:
       required: [code, description, operation]
       description: Public application-reported reason a named target Operation must wait. Reports replace the entire prior blocker list at their state revision; these observations do not grant or enforce execution authority.
       properties:
+        priority: {type: string, enum: [low, normal, high, urgent], description: Application-assigned urgency. Omitted means normal for queue filtering and counts.}
+        business_impact: {type: string, maxLength: 512, description: Public application-reported impact limited to 512 UTF-8 bytes without control characters.}
+        acknowledged_at: {type: string, format: date-time, description: Application acknowledgement time paired with acknowledged_by. Must be at or after known first observation and at or before report time.}
+        acknowledged_by: {type: string, maxLength: 128, description: Public application actor identifier paired with acknowledged_at. Limited to 128 UTF-8 bytes without control characters.}
+        follow_up_at: {type: string, format: date-time, description: Optional follow-up deadline at or after acknowledgement. Does not resolve the blocker or reset its age.}
+        owner: {type: string, maxLength: 128, description: "Optional public application-assigned person or team identifier, limited to 128 UTF-8 bytes without control characters. Empty or omitted means unassigned; this grants no execution authority."}
+        next_action: {type: string, maxLength: 512, description: "Optional public application-suggested resolution step, limited to 512 UTF-8 bytes without control characters. This is guidance rather than an executable command."}
         first_observed_at: {type: string, format: date-time, description: "Optional application observation time at or before the containing report. Upgraded transactional SDKs preserve it across repeats of the same target/code until cleared. Omitted means unknown."}
         code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 text limited to 512 bytes without control characters.}
@@ -38778,6 +39316,10 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, contract_version, steps, transitions, has_more]
       properties:
+        bottlenecks: {$ref: '#/components/schemas/OperationWorkflowBottlenecks'}
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Selected instance proof preview with pending obligations first; exact counts include all distinct retained claims.}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
         readiness: {$ref: '#/components/schemas/OperationWorkflowReadinessOverview'}
         dependency_trace: {$ref: '#/components/schemas/OperationWorkflowDependencyTrace'}
         dependency_impact: {$ref: '#/components/schemas/OperationWorkflowDependencyImpact'}
@@ -38922,6 +39464,7 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, overdue, occurred_at, revision, contract_version, updated_at]
       properties:
+        sla: {$ref: '#/components/schemas/OperationWorkflowStateSLA'}
         depends_on: {type: array, maxItems: 16, description: "In the latest retained state, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "In the latest retained state, explicit application-defined business result for a declared terminal state."}
@@ -38957,6 +39500,7 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Current retained-evidence status for verification obligations in this history report.}
         depends_on: {type: array, maxItems: 16, description: "At this retained historical revision, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only flags."}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "At this retained historical revision, explicit application-defined business result for a declared terminal state."}

@@ -1,14 +1,31 @@
 from typing import Literal
 
-SummarizePlatformTenantSelfWorkflowAttentionReason = Literal["blocked", "dependency", "overdue", "stale"]
+SummarizePlatformTenantSelfWorkflowAttentionReason = Literal[
+    "awaiting_verification",
+    "blocked",
+    "dependency",
+    "escalated",
+    "follow_up_overdue",
+    "overdue",
+    "sla_at_risk",
+    "sla_breached",
+    "stale",
+    "unacknowledged",
+]
 
 SUMMARIZE_PLATFORM_TENANT_SELF_WORKFLOW_ATTENTION_REASON_VALUES: set[
     SummarizePlatformTenantSelfWorkflowAttentionReason
 ] = {
+    "awaiting_verification",
     "blocked",
     "dependency",
+    "escalated",
+    "follow_up_overdue",
     "overdue",
+    "sla_at_risk",
+    "sla_breached",
     "stale",
+    "unacknowledged",
 }
 
 

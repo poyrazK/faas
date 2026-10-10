@@ -8,7 +8,7 @@ import type { OperationWorkflowAttentionStats } from './OperationWorkflowAttenti
  * Attention totals across all matches and a paginated collection of grouped statistics.
  */
 export type OperationWorkflowAttentionSummary = {
-  group_by: 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code';
+  group_by: 'owner' | 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code';
   evaluated_at: string;
   totals: OperationWorkflowAttentionStats;
   groups: Array<OperationWorkflowAttentionGroup>;

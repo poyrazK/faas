@@ -11,6 +11,7 @@ export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
@@ -1074,7 +1075,12 @@ export type { OperationWorkflowAttentionResponse } from './OperationWorkflowAtte
 export type { OperationWorkflowAttentionStats } from './OperationWorkflowAttentionStats.js';
 export type { OperationWorkflowAttentionSummary } from './OperationWorkflowAttentionSummary.js';
 export type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
+export type { OperationWorkflowBlockerDuration } from './OperationWorkflowBlockerDuration.js';
+export type { OperationWorkflowBlockerEscalation } from './OperationWorkflowBlockerEscalation.js';
+export type { OperationWorkflowBlockerEscalationPolicy } from './OperationWorkflowBlockerEscalationPolicy.js';
+export type { OperationWorkflowBlockerPerformance } from './OperationWorkflowBlockerPerformance.js';
 export type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+export type { OperationWorkflowBottlenecks } from './OperationWorkflowBottlenecks.js';
 export type { OperationWorkflowControlResponse } from './OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
 export type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
@@ -1082,6 +1088,7 @@ export type { OperationWorkflowDependencyFinding } from './OperationWorkflowDepe
 export type { OperationWorkflowDependencyImpact } from './OperationWorkflowDependencyImpact.js';
 export type { OperationWorkflowDependencyTrace } from './OperationWorkflowDependencyTrace.js';
 export type { OperationWorkflowDependentInstance } from './OperationWorkflowDependentInstance.js';
+export type { OperationWorkflowDurationDistribution } from './OperationWorkflowDurationDistribution.js';
 export type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffectRequirement.js';
 export type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 export type { OperationWorkflowInstanceMilestoneRef } from './OperationWorkflowInstanceMilestoneRef.js';
@@ -1093,6 +1100,12 @@ export type { OperationWorkflowOutcomeEntry } from './OperationWorkflowOutcomeEn
 export type { OperationWorkflowOutcomeGroup } from './OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeSummary } from './OperationWorkflowOutcomeSummary.js';
 export type { OperationWorkflowOutcomesResponse } from './OperationWorkflowOutcomesResponse.js';
+export type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
+export type { OperationWorkflowPerformanceCoverageReason } from './OperationWorkflowPerformanceCoverageReason.js';
+export type { OperationWorkflowPerformanceGroup } from './OperationWorkflowPerformanceGroup.js';
+export type { OperationWorkflowPerformanceInstance } from './OperationWorkflowPerformanceInstance.js';
+export type { OperationWorkflowPerformanceInstancesResponse } from './OperationWorkflowPerformanceInstancesResponse.js';
+export type { OperationWorkflowPerformanceSummary } from './OperationWorkflowPerformanceSummary.js';
 export type { OperationWorkflowPlannedDecision } from './OperationWorkflowPlannedDecision.js';
 export type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedEffect.js';
 export type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
@@ -1103,12 +1116,16 @@ export type { OperationWorkflowReadinessResponse } from './OperationWorkflowRead
 export type { OperationWorkflowReconciliation } from './OperationWorkflowReconciliation.js';
 export type { OperationWorkflowReconciliationPayload } from './OperationWorkflowReconciliationPayload.js';
 export type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';
+export type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './OperationWorkflowStateCursor.js';
+export type { OperationWorkflowStateDuration } from './OperationWorkflowStateDuration.js';
 export type { OperationWorkflowStateHistoryEntry } from './OperationWorkflowStateHistoryEntry.js';
+export type { OperationWorkflowStatePerformance } from './OperationWorkflowStatePerformance.js';
 export type { OperationWorkflowStateReport } from './OperationWorkflowStateReport.js';
 export type { OperationWorkflowStateReportResponse } from './OperationWorkflowStateReportResponse.js';
+export type { OperationWorkflowStateSLA } from './OperationWorkflowStateSLA.js';
 export type { OperationWorkflowStateValidationRequest } from './OperationWorkflowStateValidationRequest.js';
 export type { OperationWorkflowStateValidationResponse } from './OperationWorkflowStateValidationResponse.js';
 export type { OperationWorkflowStep } from './OperationWorkflowStep.js';
@@ -1116,6 +1133,8 @@ export type { OperationWorkflowTransition } from './OperationWorkflowTransition.
 export type { OperationWorkflowTransitionReadiness } from './OperationWorkflowTransitionReadiness.js';
 export type { OperationWorkflowUnmetEffect } from './OperationWorkflowUnmetEffect.js';
 export type { OperationWorkflowUnmetInvariant } from './OperationWorkflowUnmetInvariant.js';
+export type { OperationWorkflowVerificationDuration } from './OperationWorkflowVerificationDuration.js';
+export type { OperationWorkflowVerificationPerformance } from './OperationWorkflowVerificationPerformance.js';
 export type { OperationXFaasInvocationId } from './OperationXFaasInvocationId.js';
 export type { OperationXGregaleOperationAttempt } from './OperationXGregaleOperationAttempt.js';
 export type { OperationXGregaleOperationCapability } from './OperationXGregaleOperationCapability.js';
