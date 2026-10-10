@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
 
 type envelope struct {
@@ -84,6 +85,15 @@ func main() {
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("go124 runner: handler not found at %s: %v", *handlerPath, err)
 	}
+	// Handlers built on the persistent protocol stay alive between
+	// requests. Starting one here puts the initialized process into the
+	// init snapshot, so a restored VM skips process start and the
+	// handler's own setup on its first request.
+	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
+	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, handlerSpec(*handlerPath)); err != nil {
+		log.Printf("go124 runner: handler prewarm unavailable: %v", err)
+	}
+	cancelPrewarm()
 
 	// Issue #667 / ADR-078 (PR 3): read the per-request tail
 	// primitive knobs from env vars stamped by imaged at build time.
@@ -192,15 +202,33 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	}
 }
 
-// invokeHandler spawns the customer's static Go binary at handlerPath
-// and pipes the request envelope over stdin; reads the response
-// envelope from stdout.
+// handlerSpec describes the customer's binary to the worker pool. The
+// binary is executed directly; its persistent-protocol marker sits in
+// the compiled data section, so the pool scans the whole file.
+func handlerSpec(handlerPath string) workerpool.Spec {
+	return workerpool.Spec{
+		Executable:     handlerPath,
+		Env:            append(os.Environ(), "FAAS_RUNTIME=go124"),
+		HandlerPath:    handlerPath,
+		MarkerAnywhere: true,
+	}
+}
+
+// invokeHandler sends the request envelope to the customer's static Go
+// binary at handlerPath. Binaries that speak the persistent protocol are
+// served by a reused worker; others are spawned once per request with
+// the envelope on stdin and the response envelope read from stdout.
 func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, internal.GuestProcessUsage, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	spec := handlerSpec(handlerPath)
+	var pooled response
+	if handled, err := workerpool.InvokeIfSupported(timeoutCtx, spec, env, &pooled); handled {
+		return pooled, internal.GuestProcessUsage{}, err
+	}
 
 	cmd := exec.CommandContext(timeoutCtx, handlerPath)
-	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=go124")
+	cmd.Env = spec.Env
 
 	var stdin bytes.Buffer
 	if err := json.NewEncoder(&stdin).Encode(env); err != nil {

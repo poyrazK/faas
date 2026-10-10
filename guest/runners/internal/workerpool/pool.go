@@ -5,6 +5,7 @@ package workerpool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,10 @@ type Spec struct {
 	Args        []string
 	Env         []string
 	HandlerPath string
+	// MarkerAnywhere scans the whole handler file for the protocol marker.
+	// Compiled handlers (Go) carry it in their data section rather than on a
+	// leading comment line, so the 4 KiB source prefix check cannot see it.
+	MarkerAnywhere bool
 }
 
 var (
@@ -40,7 +45,7 @@ var (
 // InvokeIfSupported invokes a marked, newline-framed adapter through a reused
 // worker. handled=false asks the caller to retain the legacy one-shot path.
 func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (handled bool, err error) {
-	if !supportsPersistentProtocol(spec.HandlerPath) {
+	if !supportsPersistentProtocol(spec) {
 		return false, nil
 	}
 	return true, poolFor(spec).invoke(ctx, request, response)
@@ -51,7 +56,7 @@ func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (h
 // init snapshot, so a restored VM does not pay interpreter and module-import
 // startup on its first request.
 func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error) {
-	if !supportsPersistentProtocol(spec.HandlerPath) {
+	if !supportsPersistentProtocol(spec) {
 		return false, nil
 	}
 	p := poolFor(spec)
@@ -69,20 +74,50 @@ func poolFor(spec Spec) *pool {
 	return value.(*pool)
 }
 
-func supportsPersistentProtocol(path string) bool {
+func supportsPersistentProtocol(spec Spec) bool {
+	path := spec.HandlerPath
 	if cached, ok := supportCache.Load(path); ok {
 		return cached.(bool)
 	}
-	f, err := os.Open(path) //nolint:forbidigo // HandlerPath is the runner-owned generated adapter path; this reads only its protocol marker.
+	f, err := os.Open(path) //nolint:forbidigo // HandlerPath is the runner-owned handler path; this reads only its protocol marker.
 	if err != nil {
 		supportCache.Store(path, false)
 		return false
 	}
 	defer func() { _ = f.Close() }()
-	prefix, err := io.ReadAll(io.LimitReader(f, 4096))
-	supported := err == nil && strings.Contains(string(prefix), protocolMarker)
+	var supported bool
+	if spec.MarkerAnywhere {
+		supported, err = containsMarker(f)
+		supported = err == nil && supported
+	} else {
+		prefix, readErr := io.ReadAll(io.LimitReader(f, 4096))
+		supported = readErr == nil && strings.Contains(string(prefix), protocolMarker)
+	}
 	supportCache.Store(path, supported)
 	return supported
+}
+
+// containsMarker streams r looking for protocolMarker, carrying a marker-sized
+// overlap between chunks so a match split across a read boundary is found.
+func containsMarker(r io.Reader) (bool, error) {
+	marker := []byte(protocolMarker)
+	buf := make([]byte, 64*1024)
+	carry := 0
+	for {
+		n, err := r.Read(buf[carry:])
+		window := buf[:carry+n]
+		if bytes.Contains(window, marker) {
+			return true, nil
+		}
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		carry = min(len(marker)-1, len(window))
+		copy(buf, window[len(window)-carry:])
+	}
 }
 
 type pool struct {
