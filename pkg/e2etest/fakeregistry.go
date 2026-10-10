@@ -75,6 +75,12 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 
 // DurableCounterImageAboveBase runs a pure entity counter in a real guest.
 // Its optimized base prefix matches BaseLayerImage, as in HelloImageAboveBase.
+// IdentityProbeImageAboveBase is HelloImageAboveBase whose /identity route
+// fetches a workload identity token from guest-init's loopback endpoint.
+func IdentityProbeImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, []string{"/hello-server", "-identity-probe"})
+}
+
 func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
 }
