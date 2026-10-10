@@ -33,9 +33,9 @@ die() {
 
 # debugfs + mkfs.ext4 back imaged's ext4 assembly, tc the per-instance rate
 # limits, nft/iptables the tenant egress policy, gcc the race detector
-# (-race needs cgo), and pg_isready/psql the Postgres pre-flight below.
+# (-race needs cgo), and libpq (installed with psql) the read-only Postgres probe.
 for tool in debugfs e2fsck firecracker flock gcc ip iptables jailer make \
-  mkfs.ext4 nft pg_isready psql readlink systemctl systemd-run tar tc \
+  mkfs.ext4 nft psql python3 readlink systemctl systemd-run tar tc \
   truncate; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
@@ -183,6 +183,23 @@ ip link show "${FAAS_PUBLIC_IFACE}" >/dev/null 2>&1 ||
 export FAAS_PUBLIC_IFACE
 echo "native e2e: tenant egress NIC: ${FAAS_PUBLIC_IFACE}"
 
+evidence="${transfer_root:-/var/tmp}/acceptance-e2e-${FAAS_E2E_SOURCE_SHA}-${run_id}-${FAAS_E2E_PHASE:-all}.json"
+acceptance_logs=()
+# Pass credentials only through the environment. No schema or host state is
+# changed by this check, which precedes compilation and service quiescing.
+if [[ -n "${FAAS_E2E_PHASE:-}" ]]; then
+  native_e2e_is_selector "${FAAS_E2E_PHASE}" || die "unknown phase ${FAAS_E2E_PHASE}"
+fi
+if [[ -n "${FAAS_SKIP_PG_TESTS:-}" ]]; then
+  die "FAAS_SKIP_PG_TESTS is set; this gate must not run with Postgres tests disabled"
+fi
+unset FAAS_SKIP_PG_TESTS
+FAAS_STORAGE_BACKEND="${FAAS_STORAGE_BACKEND:-local}" FAAS_E2E_DATABASE_URL="${database_url}" \
+  python3 "${repo_root}/scripts/ci/native-acceptance-preflight.py" check \
+  --mode e2e --lane "${FAAS_E2E_PHASE:-all}" --repo-root "${repo_root}" \
+  --source-sha "${FAAS_E2E_SOURCE_SHA}" --go "${FAAS_E2E_GO}" \
+  --kernel "${kernel}" --fc-version "${fc_version}" --report "${evidence}"
+
 mkdir -p /var/lock
 # Same lock as the builder and metal gates: all three stop services on this
 # node, so they must never overlap.
@@ -198,6 +215,7 @@ mkdir -p "${stage_root}" "${cache_root}/go-build" "${cache_root}/go-mod" \
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local cleanup_status=passed
   trap - EXIT HUP INT TERM
   set +e
 
@@ -207,6 +225,7 @@ cleanup() {
 
   if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
     echo "native e2e: final leak check failed" >&2
+    cleanup_status=failed
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
@@ -218,6 +237,15 @@ cleanup() {
     fi
   done < "${active_services}" 2>/dev/null || true
   if [[ "${restore_failed}" -ne 0 ]]; then
+    cleanup_status=failed
+    [[ "${rc}" -ne 0 ]] || rc=1
+  fi
+
+  local log_args=() log
+  for log in "${acceptance_logs[@]}"; do log_args+=(--log "${log}"); done
+  if ! python3 "${repo_root}/scripts/ci/native-acceptance-preflight.py" finish \
+    --report "${evidence}" --exit-code "${rc}" --cleanup "${cleanup_status}" "${log_args[@]}"; then
+    echo "native e2e: could not finalize acceptance evidence" >&2
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
@@ -275,55 +303,14 @@ bash "${repo_root}/deploy/scripts/leakcheck.sh"
 # a green check. A missing fixture is a broken gate, not a smaller gate.
 # ---------------------------------------------------------------------------
 [[ -r "${kernel}" ]] || die "kernel is unreadable: ${kernel} (stage it, or set FAAS_TEST_KERNEL)"
-# The builder base is only a local FILE on a local-backend node. With an OCI
-# backend, builderd resolves it through storage.LocalPathResolver into the
-# read-through cache (see resolveBuilderBasePath in cmd/builderd/main.go) and
-# nothing is required to exist under /srv/fc/base at all — demanding a file
-# there would fail a correctly pre-staged node. Note also that the legacy
-# builder-base.ext4 spelling below is deliberately NOT the canonical key:
-# builderd rewrites it to runner-builder-<arch>.ext4, so this path is an
-# identity hint, never the drive vmmd attaches.
-if [[ "${FAAS_STORAGE_BACKEND:-local}" == "local" ]]; then
-  [[ -r "${builder_base}" ]] ||
-    die "builder base is unreadable: ${builder_base}; start faas-imaged once so EnsureBaseExt4 stages it, or set FAAS_BUILDER_BASE_PATH"
-fi
+# The Python preflight checks the canonical local builder key, rather than
+# builder_base's legacy identity hint. OCI storage remains resolved by E2E;
+# a remote backend never implies a local builder-base file requirement.
 ip link show br-tenants >/dev/null 2>&1 || die "tenant bridge br-tenants is unavailable"
 [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ]] || die "IPv4 forwarding is disabled"
 
-# FAAS_SKIP_PG_TESTS is pgtest's opt-out. On this gate it is a way to make the
-# suite vacuous, so refuse to run with it set rather than honour it.
-if [[ -n "${FAAS_SKIP_PG_TESTS:-}" ]]; then
-  die "FAAS_SKIP_PG_TESTS is set; this gate must not run with Postgres tests disabled"
-fi
-unset FAAS_SKIP_PG_TESTS
-
-echo "native e2e: probe Postgres"
-if ! pg_isready -d "${database_url}" >/dev/null 2>&1; then
-  die "Postgres is not reachable at the configured DSN.
-  cmd/e2e is database-backed and pgtest SKIPS rather than fails when the
-  cluster is unreachable, so this gate refuses to run without one.
-  Provision a cluster on this node and record the DSN:
-    sudo -u postgres createuser --createdb faas
-    sudo -u postgres createdb -O faas faas_e2e
-    printf 'FAAS_E2E_DATABASE_URL=%s\\n' 'postgres:///faas_e2e?host=/run/postgresql&user=faas' \\
-      | sudo install -m 0600 -o root -g root /dev/stdin ${e2e_env_file}"
-fi
-# Reachable is not the same as usable: pgtest creates a schema per test and
-# installs citext into public. Prove both privileges now, with the same DSN
-# the tests will use, so a permission error surfaces here and not as 400
-# individually skipped tests.
-probe_schema="faas_e2e_probe_${run_id//[^A-Za-z0-9]/_}"
-if ! psql -v ON_ERROR_STOP=1 -q -d "${database_url}" \
-  -c "create schema \"${probe_schema}\"" \
-  -c "create extension if not exists citext with schema public" \
-  -c "drop schema \"${probe_schema}\" cascade" >/dev/null 2>&1; then
-  # pg_isready only proves the server accepts connections — it says nothing
-  # about the database in the DSN existing or the role's rights, so both
-  # failures land here.
-  die "the DSN connects but cannot be used by pgtest: the database may not exist,
-  or the role may lack CREATE on it. Verify with:
-    psql -d '${database_url}' -c 'create schema probe' -c 'drop schema probe'"
-fi
+# PostgreSQL connectivity and pgtest's privileges were checked read-only before
+# acquiring the lock. The tests themselves own their disposable schemas.
 
 echo "native e2e: build exact-commit guest init"
 export HOME="${cache_root}/home"
@@ -459,13 +446,16 @@ else
   phase_timeout=75m
 fi
 export RUN_REGEX
+acceptance_logs+=("${e2e_log}")
 
 # The container lane also requires real Linux credential and cgroup syscall
 # contracts. Keep this before the VM suite and retain its verdict in the unit
 # log. A failed placement or skipped contract cannot qualify the lane.
 if [[ "${phase}" == containers ]]; then
+  guest_contract_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/container-guest-contract.log"
+  acceptance_logs+=("${guest_contract_log}")
   FAAS_TEST_CGROUP_PARENT=/sys/fs/cgroup \
-    make GO="${FAAS_E2E_GO}" test-container-guest-contract
+    make GO="${FAAS_E2E_GO}" test-container-guest-contract 2>&1 | tee "${guest_contract_log}"
 fi
 
 # Compile the daemons once into a stage-owned directory and let every phase

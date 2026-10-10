@@ -322,6 +322,10 @@ jobs:
           log="$RUNNER_TEMP/native-metal-smoke.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/metal-smoke.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          mkdir -p "$RUNNER_TEMP/native-metal-evidence"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/acceptance-metal-*.json" \
+            "$RUNNER_TEMP/native-metal-evidence/" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
           if [[ -f "$log" ]]; then
             cat "$log"
           fi
@@ -334,7 +338,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: native-metal-smoke-${{ github.sha }}
-          path: ${{ runner.temp }}/native-metal-smoke.log
+          path: |
+            ${{ runner.temp }}/native-metal-smoke.log
+            ${{ runner.temp }}/native-metal-evidence/*.json
           if-no-files-found: warn
           retention-days: 14
 
