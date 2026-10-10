@@ -59,6 +59,35 @@ wake. `GET /v1/apps/{slug}/synthetics/{id}` returns the same figures in
 Checks run from Gregale's control plane. Requests carry the user agent
 `Gregale-Synthetics/1`, so you can recognise them in your logs.
 
+## Alert on a check
+
+Two alert metrics watch one check, named with `synthetic_check_id`
+(`--synthetic-check` in the CLI):
+
+```sh
+# Two failed runs in a row, ignoring a single blip.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health failing" \
+  --metric synthetic_check_consecutive_failures --synthetic-check CHECK_ID \
+  --comparison gte --threshold 2 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+# p95 latency of successful runs above 2 s over an hour.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health slow" \
+  --metric synthetic_check_latency_p95_ms --synthetic-check CHECK_ID \
+  --comparison gt --threshold 2000 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+- `synthetic_check_consecutive_failures` counts failed runs since the last
+  success; the rule's `window_spec` is required but ignored.
+- `synthetic_check_latency_p95_ms` covers successful runs in the window and
+  includes wakes, so set the threshold above your app's wake time.
+- A check with no runs yet leaves the rule `unknown`. Deleting the check
+  deletes its rules.
+
+The dashboard's app page lists every check with its uptime, p95 latency and
+last result under **Synthetic checks**.
+
 ## What checks cost
 
 A probe is an ordinary request and is billed like one. If your app is

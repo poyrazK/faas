@@ -60,6 +60,8 @@ class AlertRuleResponse:
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -105,6 +107,10 @@ class AlertRuleResponse:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
+
         last_fired_at: str | Unset = UNSET
         if not isinstance(self.last_fired_at, Unset):
             last_fired_at = self.last_fired_at.isoformat()
@@ -140,6 +146,8 @@ class AlertRuleResponse:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
         if last_evaluated_at is not UNSET:
@@ -196,6 +204,13 @@ class AlertRuleResponse:
         else:
             failure_source = check_alert_rule_response_failure_source(_failure_source)
 
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
         _last_fired_at = d.pop("last_fired_at", UNSET)
         last_fired_at: datetime.datetime | Unset
         if isinstance(_last_fired_at, Unset):
@@ -229,6 +244,7 @@ class AlertRuleResponse:
             event_subscription_id=event_subscription_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
+            synthetic_check_id=synthetic_check_id,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,
         )

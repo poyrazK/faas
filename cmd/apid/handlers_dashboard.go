@@ -938,7 +938,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// / "7d" closed set; invalid → default). The stamp echoes the
 		// active window so the template's window-selector tab strip
 		// can mark the current tab.
-		SLOApp: s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		SLOApp:          s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		SyntheticChecks: s.fetchDashboardSyntheticChecks(ctx, app, acct),
 		SLODuration: views.SLOStamp{
 			Window: resolveSLOWindow(r),
 			AsOf:   time.Now().UTC().Format(time.RFC3339Nano),

@@ -48,6 +48,12 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Synthetic check alerts
+
+`synthetic_check_consecutive_failures` and `synthetic_check_latency_p95_ms`
+watch one of the app's synthetic checks, named with `synthetic_check_id`. See
+[synthetic checks](synthetic-checks.md#alert-on-a-check).
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable

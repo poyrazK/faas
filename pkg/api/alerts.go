@@ -143,6 +143,9 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
 	"slo_burn_rate",
+	// ADR-748: one synthetic check, named by synthetic_check_id.
+	AlertRuleMetricSyntheticConsecutiveFailures,
+	AlertRuleMetricSyntheticLatencyP95,
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
@@ -154,6 +157,19 @@ var AllowedAlertRuleMetrics = []string{
 	"safedeploy_audit_emit_failing",
 	"deployment_audit_gc_failing",
 	"canary_fleet_in_flight_high",
+}
+
+// ADR-748 synthetic check alert metrics. Both are app-scoped and name one
+// check by synthetic_check_id: the count of failed runs since the last
+// success, and the p95 latency of successful runs in the rule window.
+const (
+	AlertRuleMetricSyntheticConsecutiveFailures = "synthetic_check_consecutive_failures"
+	AlertRuleMetricSyntheticLatencyP95          = "synthetic_check_latency_p95_ms"
+)
+
+// IsSyntheticCheckAlertMetric reports whether a metric names a check via synthetic_check_id.
+func IsSyntheticCheckAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSyntheticConsecutiveFailures || metric == AlertRuleMetricSyntheticLatencyP95
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -216,6 +232,7 @@ type CreateAlertRuleRequest struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	SyntheticCheckID                string  `json:"synthetic_check_id,omitempty"`
 	Action                          *string `json:"action,omitempty"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecret                   string  `json:"webhook_secret"`
@@ -276,6 +293,7 @@ type AlertRuleResponse struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	SyntheticCheckID                string  `json:"synthetic_check_id,omitempty"`
 	Action                          string  `json:"action"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
@@ -305,6 +323,7 @@ type AlertRuleRow struct {
 	Threshold                       float64
 	WindowSpec                      string
 	FailureSource                   string
+	SyntheticCheckID                string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -337,6 +356,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
+		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,

@@ -3208,6 +3208,9 @@ const (
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
 	AlertMetricSLOBurnRate AlertMetric = "slo_burn_rate"
+	// ADR-748: rules on one synthetic check, named by AlertRule.SyntheticCheckID.
+	AlertMetricSyntheticConsecutiveFailures AlertMetric = "synthetic_check_consecutive_failures"
+	AlertMetricSyntheticLatencyP95          AlertMetric = "synthetic_check_latency_p95_ms"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -3396,6 +3399,7 @@ type AlertRule struct {
 	Threshold                       float64
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL                      string
 	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged

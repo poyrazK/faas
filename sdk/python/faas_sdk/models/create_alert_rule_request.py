@@ -53,6 +53,9 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored)
+    and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app's checks."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
@@ -86,6 +89,10 @@ class CreateAlertRuleRequest:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
+
         cooldown_minutes = self.cooldown_minutes
 
         action: str | Unset = UNSET
@@ -113,6 +120,8 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if action is not UNSET:
@@ -155,6 +164,13 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         _action = d.pop("action", UNSET)
@@ -176,6 +192,7 @@ class CreateAlertRuleRequest:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            synthetic_check_id=synthetic_check_id,
             cooldown_minutes=cooldown_minutes,
             action=action,
         )

@@ -34,6 +34,8 @@ UpdateAlertRuleRequestMetric = Literal[
     "queue_depth",
     "request_count",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 ]
 
 UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
@@ -70,6 +72,8 @@ UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
     "queue_depth",
     "request_count",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 }
 
 

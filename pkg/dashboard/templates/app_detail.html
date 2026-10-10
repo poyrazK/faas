@@ -707,6 +707,30 @@
         </section>
       {{end}}
 
+      {{/* ADR-748: scheduled HTTP checks against the app's own hostname.
+           Defined with `gregale synthetics create`. */}}
+      {{if .Data.SyntheticChecks}}
+        <section id="synthetics" aria-label="Synthetic checks">
+          <h2>Synthetic checks</h2>
+          <table>
+            <thead><tr><th>Check</th><th>Request</th><th>Every</th><th>Uptime (24h)</th><th>p95 (24h)</th><th>Last run</th></tr></thead>
+            <tbody>
+              {{range .Data.SyntheticChecks}}
+                <tr>
+                  <td>{{.Name}}{{if .Paused}} <span class="badge dim">paused</span>{{end}}</td>
+                  <td><code>{{.Request}}</code></td>
+                  <td>{{.Every}}</td>
+                  <td>{{.Uptime24h}}</td>
+                  <td>{{.P95}}</td>
+                  <td><span class="badge {{.LastClass}}">{{.LastResult}}</span></td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+          <p><small>Latency includes any wake of a parked app. Alert on <code>synthetic_check_consecutive_failures</code> at 2 or more to ignore single blips.</small></p>
+        </section>
+      {{end}}
+
       {{/* Customer request analytics is the durable, weighted rollup
            behind GET /v1/apps/{slug}/analytics. It complements the live
            Prometheus snapshot above with a retention-window view and a
