@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -29,6 +30,34 @@ func withTestSidecarRecipient(t *testing.T) {
 // regex) so the test rows don't trip the per-element image
 // gate before reaching the cap check.
 const goodSidecarImage = "ghcr.io/me/x@sha256:" + "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+func TestSealSidecarsForDeployMissingRecipient(t *testing.T) {
+	previous := setSidecarRecipient
+	t.Cleanup(func() { setSidecarRecipient = previous })
+	for _, tc := range []struct {
+		name   string
+		getter func() *age.X25519Recipient
+	}{
+		{"getter not configured", nil},
+		{"recipient not loaded", func() *age.X25519Recipient { return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setSidecarRecipient = tc.getter
+			limits := testSidecarLimits()
+			raw, problem := sealSidecarsForDeploy(nil, limits)
+			if problem != nil || string(raw) != "[]" {
+				t.Fatalf("deployment without companions = %s, %v; want [] and no problem", raw, problem)
+			}
+			raw, problem = sealSidecarsForDeploy(api.Sidecars{{
+				Name: "helper", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+				Env: map[string]string{"TOKEN": "must-not-persist"},
+			}}, limits)
+			if raw != nil || problem == nil || problem.Status != http.StatusServiceUnavailable || problem.Code != api.CodeCapacity {
+				t.Fatalf("companion without recipient = %s, %v; want no persisted envelope and 503 capacity", raw, problem)
+			}
+		})
+	}
+}
 
 func TestSealSidecarsPreservesExplicitSecretReferencesAndSealsDirectEnv(t *testing.T) {
 	identity, err := age.GenerateX25519Identity()
