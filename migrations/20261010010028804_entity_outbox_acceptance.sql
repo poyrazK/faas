@@ -1,6 +1,6 @@
 -- ADR-843: transport acceptance only. Entity state/pending work stay in the bucket.
 -- +goose Up
-CREATE TABLE entity_outbox_acceptances (
+CREATE TABLE IF NOT EXISTS entity_outbox_acceptances (
     message_id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -11,4 +11,4 @@ CREATE TABLE entity_outbox_acceptances (
 -- deleting a destination must not re-enable a delayed acceptance retry.
 
 -- +goose Down
-DROP TABLE entity_outbox_acceptances;
+DROP TABLE IF EXISTS entity_outbox_acceptances;
