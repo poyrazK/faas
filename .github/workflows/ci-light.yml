@@ -341,7 +341,7 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Cold bounded-memory race compilation can take 12 minutes. Leave the
+    # Cold bounded-memory race compilation can take 14 minutes. Leave the
     # existing 16-minute test timeout its full budget, plus setup and cleanup.
     timeout-minutes: 35
     strategy:

@@ -63,9 +63,9 @@ import (
 //     same goroutine)
 //   - the ledger.Concurrency(appID) returns exactly 3 (the cap)
 //
-// The fakeVMM is configured with sleepFor=10ms so each successful boot
-// holds the per-app lock long enough for the contention to be real
-// without making the test slow. We do NOT use bootStarted/bootRelease
+// Admitted boots are held on a gate (fakeVMM coldBootHook/restoreHook)
+// until the over-cap wakes have been refused, so the contention is real
+// and independent of scheduling. We do NOT use bootStarted/bootRelease
 // fencing — those channels are capacity 1 (engine_test.go:52-53) and
 // would deadlock the second concurrent Wake.
 func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
@@ -78,7 +78,13 @@ func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 	// via limits.MaxConcurrency; Hobby caps at 2; Pro at 5. Use Pro
 	// with maxConc=3 → effective cap = 3.
 	_, app, _ := seedApp(t, store, api.PlanPro, 128, maxConc)
-	vmm := &fakeVMM{sleepFor: 10 * time.Millisecond}
+	// Admitted boots block until every over-cap wake has been refused. A
+	// timed sleep let a goroutine scheduled late on a loaded CI runner
+	// arrive after an instance was RUNNING and take Wake's Phase-1
+	// fast path (reuse, not a new admission): the release gate saw
+	// ok=6, denied=0 with 3 instances, which is not a cap breach.
+	gate := make(chan struct{})
+	vmm := &fakeVMM{coldBootHook: func() { <-gate }, restoreHook: func() { <-gate }}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	const goroutines = 6 // 2x the cap
@@ -91,18 +97,37 @@ func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 	}
 
 	var ok, denied int
-	for i := 0; i < goroutines; i++ {
-		err := <-results
+	collect := func(err error) {
 		if err == nil {
 			ok++
-			continue
+			return
 		}
 		var p *api.Problem
 		if errors.As(err, &p) && p.Code == api.CodePlanLimitConcur {
 			denied++
-			continue
+			return
 		}
 		t.Errorf("Wake error = %v; want *api.Problem{Code:CodePlanLimitConcur} or nil", err)
+	}
+	timeout := time.After(10 * time.Second)
+	for received := 0; received < goroutines-maxConc; received++ {
+		select {
+		case err := <-results:
+			collect(err)
+		case <-timeout:
+			close(gate)
+			t.Fatalf("only %d of %d over-cap wakes returned while %d boots were held", received, goroutines-maxConc, maxConc)
+		}
+	}
+	close(gate)
+	for received := goroutines - maxConc; received < goroutines; received++ {
+		collect(<-results)
+	}
+	vmm.mu.Lock()
+	boots := vmm.coldBoots + vmm.restores
+	vmm.mu.Unlock()
+	if boots != maxConc {
+		t.Errorf("boots through the held vmmd path = %d, want %d", boots, maxConc)
 	}
 
 	if ok != maxConc {
