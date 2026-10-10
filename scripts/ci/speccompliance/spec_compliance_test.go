@@ -1160,6 +1160,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
+		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-847 consumer plan DTOs
+		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-848 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
