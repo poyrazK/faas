@@ -52,6 +52,11 @@ done
 native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
   fail "platform wake benchmark is missing from the wake phase"
 
+# The developer live-patch scenario starts from the native deploy path.
+# Keep all test names from its file in the deploy phase.
+native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestDevLoopMetal ||
+  fail "developer loop is missing from the deploy phase"
+
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
 probe="$(mktemp -d)"

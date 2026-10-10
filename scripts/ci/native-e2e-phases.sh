@@ -52,6 +52,7 @@ native_e2e_phase_files() {
     # Deploy paths: image, source tarball, healthcheck, port override, secrets.
     deploy) printf '%s\n' \
       deploy_healthcheck_metal_test.go \
+      dev_loop_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       direct_oci_autoscale_metal_test.go \
