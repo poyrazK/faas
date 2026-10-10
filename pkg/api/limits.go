@@ -23,6 +23,8 @@ import (
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
+	MCPTaskDefaultMaxRunning             = 16
+	MCPTaskDefaultMaxRunningPerOwner     = 4
 	MCPTaskDefaultMaxOutstanding         = 1000
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256

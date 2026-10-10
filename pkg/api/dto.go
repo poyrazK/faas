@@ -3769,9 +3769,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped response from
 // GET /v1/capabilities. Enabled is fail-closed for unknown plans.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.

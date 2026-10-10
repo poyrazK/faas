@@ -478,6 +478,8 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-go",
+	"mcp-python",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",

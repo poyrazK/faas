@@ -2204,6 +2204,7 @@ func (s *server) handler() http.Handler {
 	// lives in cmd/apid/handlers_rollouts.go.
 	mux.HandleFunc("POST /v1/apps/{slug}/rollouts/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverRollout)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/park/conditional", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkAppIfDeployment))))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.wakeApp))))
 	// Scheduled/predicted demand-window capacity restore. The intent is
 	// durable, so schedd can claim it after a restart and the API never has to

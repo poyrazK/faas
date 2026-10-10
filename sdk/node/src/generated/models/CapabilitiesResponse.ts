@@ -8,6 +8,10 @@ import type { CapabilityStatus } from './CapabilityStatus.js';
  */
 export type CapabilitiesResponse = {
   /**
+   * The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use the conditional parking endpoint, including in mixed-version fleets.
+   */
+  conditional_parking?: boolean;
+  /**
    * Version of the embedded product capability catalog.
    */
   registry_version: number;

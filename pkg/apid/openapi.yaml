@@ -15807,10 +15807,59 @@ paths:
       parameters:
         - name: fresh
           in: query
+          description: For isolated previews, invalidate snapshots after drain so the next request cold-boots from the artifact. Production apps reject fresh parking.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expected_deployment_id:
+                  type: string
+                  format: uuid
+                  description: The deployment UUID to compare atomically before parking. A stale or absent current deployment returns 409 without parking; reuse this UUID on drain retries.
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '204': { description: All matching instances were parked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/park/conditional:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: parkAppIfDeployment
+      summary: Park instances only if the latest deployment matches.
+      description: Unsupported control planes reject this route without parking. Clients must never fall back to unconditional parking.
+      parameters:
+        - name: fresh
+          in: query
           description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
           schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_deployment_id]
+              properties:
+                expected_deployment_id:
+                  type: string
+                  format: uuid
+                  description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
       responses:
-        '204': { description: Parked. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '204': { description: Parked only when the deployment UUID matched. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -46009,6 +46058,10 @@ components:
       type: object
       required: [registry_version, plan, capabilities]
       properties:
+        conditional_parking:
+          type: boolean
+          default: false
+          description: The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use the conditional parking endpoint, including in mixed-version fleets.
         registry_version: { type: integer, minimum: 1, description: Version of the embedded product capability catalog. }
         plan: { type: string, enum: [free, hobby, pro, scale] }
         capabilities:

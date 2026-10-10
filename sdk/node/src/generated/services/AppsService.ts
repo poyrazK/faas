@@ -5404,6 +5404,7 @@ export class AppsService {
   public static parkApp({
     slug,
     fresh = false,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -5413,6 +5414,12 @@ export class AppsService {
      * For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
      */
     fresh?: boolean,
+    requestBody?: {
+      /**
+       * Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
+       */
+      expected_deployment_id?: string;
+    },
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -5423,7 +5430,64 @@ export class AppsService {
       query: {
         'fresh': fresh,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Park instances only if the latest deployment matches.
+   * Unsupported control planes reject this route without parking. Clients must never fall back to unconditional parking.
+   * @returns void
+   * @throws ApiError
+   */
+  public static parkAppIfDeployment({
+    slug,
+    requestBody,
+    fresh = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: {
+      /**
+       * Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
+       */
+      expected_deployment_id: string;
+    },
+    /**
+     * For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+     */
+    fresh?: boolean,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/park/conditional',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'fresh': fresh,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,

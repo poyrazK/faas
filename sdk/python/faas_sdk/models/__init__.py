@@ -2176,6 +2176,8 @@ from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
 from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
 from .outbound_request_policy import OutboundRequestPolicy
+from .park_app_body import ParkAppBody
+from .park_app_if_deployment_body import ParkAppIfDeploymentBody
 from .parked_deployment_ref import ParkedDeploymentRef
 from .parked_deployment_ref_parked_reason import ParkedDeploymentRefParkedReason
 from .password_forgot_response_200 import PasswordForgotResponse200
@@ -5588,6 +5590,8 @@ __all__ = (
     "OutboundIntegrationOfferOwnerKind",
     "OutboundIntegrationUsageResponse",
     "OutboundRequestPolicy",
+    "ParkAppBody",
+    "ParkAppIfDeploymentBody",
     "ParkedDeploymentRef",
     "ParkedDeploymentRefParkedReason",
     "PasswordForgotResponse200",
