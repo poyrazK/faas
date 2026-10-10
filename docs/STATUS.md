@@ -59,6 +59,13 @@ first failed there because guest-init dialed vsock through `net.FileConn`,
 which does not support AF_VSOCK; after that fix it passes (refused without
 opt-in, the app captures itself mid-request, and a fork of the capture
 resumes inside the same call with `in_fork`), with no new leaks.
+Since 2026-10-10 vmmd seals every crash capture at the source (ADR-733
+amendment): only encrypted twins are stored, so captures work on the
+remote (GCS) backend production uses, and a fork decrypts into its own
+staging. On the test node `TestCrashSnapshotMetal` (no plaintext on
+storage at any point), `TestCrashSnapshotSDKMetal`, `TestLiveForkMetal`,
+`TestForkMetal` and the PgStore fork/capture tests pass on sealed
+captures, with no new leaks.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures
