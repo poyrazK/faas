@@ -933,7 +933,8 @@ func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) 
 	if h.gatewayControlAddr != "" {
 		metricsURL = "http://" + h.gatewayControlAddr + "/metrics/gateway-requests"
 	}
-	scheddMetricsAddr := metricsAddrFor(t, "schedd")
+	// A concrete port, unlike metricsAddrFor's :0, so a test can scrape it.
+	scheddMetricsAddr := freeTCPAddr(t)
 	h.ScheddMetricsURL = "http://" + scheddMetricsAddr + "/metrics"
 	cfg := fmt.Sprintf(
 		`socket_path = %q
