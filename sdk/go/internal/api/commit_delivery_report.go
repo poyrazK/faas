@@ -11,11 +11,82 @@ import (
 
 // CommitDeliveryReportItem keeps acceptance separate from sampled delivery evidence.
 type CommitDeliveryReportItem struct {
-	Acceptance     CommitPublicationHistoryItem `json:"acceptance"`
-	EvidenceStatus string                       `json:"evidence_status"`
-	Subscribers    []CommitSubscriberWaitResult `json:"subscribers"`
-	ObservedAt     *time.Time                   `json:"observed_at,omitempty"`
-	NextAfter      string                       `json:"next_after,omitempty"`
+	Acceptance     CommitPublicationHistoryItem     `json:"acceptance"`
+	EvidenceStatus string                           `json:"evidence_status"`
+	Subscribers    []CommitDeliveryReportSubscriber `json:"subscribers"`
+	ObservedAt     *time.Time                       `json:"observed_at,omitempty"`
+	NextAfter      string                           `json:"next_after,omitempty"`
+}
+
+// CommitDeliveryReportSubscriber keeps original execution and retained replay evidence separate.
+type CommitDeliveryReportSubscriber struct {
+	CommitSubscriberWaitResult
+	Recovery *CommitDeliveryReportRecovery `json:"recovery,omitempty"`
+}
+
+// CommitDeliveryReportRecovery summarizes only the latest retained generic replay.
+// Missing evidence never proves that no replay occurred.
+type CommitDeliveryReportRecovery struct {
+	Status              string `json:"status"`
+	InvocationID        string `json:"invocation_id,omitempty"`
+	State               string `json:"state,omitempty"`
+	HistoryURL          string `json:"history_url,omitempty"`
+	RetainedReplayCount int64  `json:"retained_replay_count,omitempty"`
+}
+
+func commitReportRecovery(raw json.RawMessage) (*CommitDeliveryReportRecovery, error) {
+	var row struct {
+		WorkflowName string `json:"workflow_name"`
+		Recovery     *struct {
+			RetainedReplayCount int64  `json:"retained_replay_count"`
+			HistoryURL          string `json:"history_url"`
+			LatestReplay        *struct {
+				InvocationID string `json:"invocation_id"`
+				State        string `json:"state"`
+			} `json:"latest_replay"`
+		} `json:"recovery"`
+	}
+	if err := json.Unmarshal(raw, &row); err != nil {
+		return nil, err
+	}
+	out := &CommitDeliveryReportRecovery{Status: "unavailable"}
+	if row.WorkflowName != "" {
+		return out, nil
+	}
+	if r := row.Recovery; r != nil {
+		out.HistoryURL = r.HistoryURL
+		out.RetainedReplayCount = r.RetainedReplayCount
+		if r.LatestReplay != nil {
+			out.InvocationID, out.State = r.LatestReplay.InvocationID, r.LatestReplay.State
+			switch out.State {
+			case "completed":
+				out.Status = "recovered"
+			case "pending", "dispatching":
+				out.Status = "pending"
+			case "failed", "dead_letter", "cancelled", "expired", "superseded":
+				out.Status = "failed"
+			}
+		}
+	}
+	return out, nil
+}
+
+func commitRecoveryStatus(row CommitDeliveryReportSubscriber) string {
+	if row.Recovery == nil {
+		return "unobserved"
+	}
+	return row.Recovery.Status
+}
+
+func recountCommitRecovery(out *CommitDeliveryReport) {
+	out.RecoveryCounts = map[string]int{}
+	for _, item := range out.Items {
+		for _, row := range item.Subscribers {
+			if row.Recovery != nil {
+				out.RecoveryCounts[row.Recovery.Status]++
+			}
+		}
+	}
 }
 
 // CommitDeliveryReport is a bounded live read, never an aggregate delivery acknowledgement.
@@ -23,6 +94,7 @@ type CommitDeliveryReport struct {
 	SourceID       string                       `json:"source_id"`
 	SubscriptionID string                       `json:"subscription_id,omitempty"`
 	Items          []CommitDeliveryReportItem   `json:"items"`
+	RecoveryCounts map[string]int               `json:"recovery_counts"`
 	Counts         map[string]int               `json:"counts"`
 	NextBefore     string                       `json:"next_before,omitempty"`
 	Changes        []CommitDeliveryReportChange `json:"changes,omitempty"`
@@ -57,6 +129,7 @@ func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDe
 	}
 	out.ReadComplete = false
 	out.Counts = map[string]int{}
+	out.RecoveryCounts = map[string]int{}
 	validationErr := error(nil)
 	if pages < 1 || pages > CommitDeliveryReportPagesMax || len(out.Items) > CommitPublicationHistoryPageMax {
 		validationErr = ErrValidation("invalid recipient page budget or saved report")
@@ -65,7 +138,7 @@ func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDe
 	}
 	for i := range out.Items {
 		item := &out.Items[i]
-		item.Subscribers = []CommitSubscriberWaitResult{}
+		item.Subscribers = []CommitDeliveryReportSubscriber{}
 		item.EvidenceStatus = "not_read"
 		item.NextAfter = ""
 		item.ObservedAt = nil
@@ -90,13 +163,24 @@ func compareCommitDeliveryReports(saved, current CommitDeliveryReport) []CommitD
 			changes = append(changes, CommitDeliveryReportChange{EventID: item.Acceptance.EventID, Kind: "evidence", PreviousStatus: previous.EvidenceStatus, Status: item.EvidenceStatus, PreviousObservedAt: previous.ObservedAt, ObservedAt: item.ObservedAt})
 		}
 		before := map[string]string{}
+		recoveryBefore := map[string]string{}
 		for _, row := range previous.Subscribers {
 			before[strings.ToLower(row.SubscriptionID)] = row.Status
+			recoveryBefore[strings.ToLower(row.SubscriptionID)] = commitRecoveryStatus(row)
 		}
 		for _, row := range item.Subscribers {
 			old, ok := before[strings.ToLower(row.SubscriptionID)]
 			if !ok {
 				old = "unobserved"
+			}
+			if row.Recovery != nil {
+				prior, ok := recoveryBefore[strings.ToLower(row.SubscriptionID)]
+				if !ok {
+					prior = "unobserved"
+				}
+				if prior != row.Recovery.Status {
+					changes = append(changes, CommitDeliveryReportChange{EventID: item.Acceptance.EventID, SubscriptionID: row.SubscriptionID, Kind: "recovery", PreviousStatus: prior, Status: row.Recovery.Status, PreviousObservedAt: previous.ObservedAt, ObservedAt: item.ObservedAt})
+				}
 			}
 			if old != row.Status {
 				changes = append(changes, CommitDeliveryReportChange{EventID: item.Acceptance.EventID, SubscriptionID: row.SubscriptionID, Kind: "subscriber", PreviousStatus: old, Status: row.Status, PreviousObservedAt: previous.ObservedAt, ObservedAt: item.ObservedAt})
@@ -119,7 +203,7 @@ func (c *Client) GetCommitDeliveryReport(ctx context.Context, source, before, su
 	}
 	out.NextBefore = history.NextBefore
 	for _, acceptance := range history.Items {
-		out.Items = append(out.Items, CommitDeliveryReportItem{Acceptance: acceptance, EvidenceStatus: "not_read", Subscribers: []CommitSubscriberWaitResult{}})
+		out.Items = append(out.Items, CommitDeliveryReportItem{Acceptance: acceptance, EvidenceStatus: "not_read", Subscribers: []CommitDeliveryReportSubscriber{}})
 	}
 	return c.continueCommitDeliveryReport(ctx, out, 1, false)
 }
@@ -140,7 +224,7 @@ func (c *Client) GetCommitDeliveryReportWithPages(ctx context.Context, source, b
 	}
 	out.NextBefore = history.NextBefore
 	for _, acceptance := range history.Items {
-		out.Items = append(out.Items, CommitDeliveryReportItem{Acceptance: acceptance, EvidenceStatus: "not_read", Subscribers: []CommitSubscriberWaitResult{}})
+		out.Items = append(out.Items, CommitDeliveryReportItem{Acceptance: acceptance, EvidenceStatus: "not_read", Subscribers: []CommitDeliveryReportSubscriber{}})
 	}
 	return c.continueCommitDeliveryReport(ctx, out, pages, false)
 }
@@ -169,7 +253,8 @@ func recountCommitReport(out *CommitDeliveryReport) {
 	}
 }
 
-func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDeliveryReport, pages int, resume bool) (CommitDeliveryReport, error) {
+func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDeliveryReport, pages int, resume bool) (result CommitDeliveryReport, resultErr error) {
+	defer func() { recountCommitRecovery(&result) }()
 	out.ReadComplete = false
 	recountCommitReport(&out)
 	if pages < 1 || pages > CommitDeliveryReportPagesMax || len(out.Items) > CommitPublicationHistoryPageMax {
@@ -220,7 +305,7 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 				item.EvidenceStatus = "read_error"
 				return out, fmt.Errorf("publication identity or pagination mismatch")
 			}
-			additions := []CommitSubscriberWaitResult{}
+			additions := []CommitDeliveryReportSubscriber{}
 			for _, recipient := range page.Recipients {
 				raw, err := json.Marshal(recipient)
 				if err != nil {
@@ -243,7 +328,12 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 					item.EvidenceStatus = "read_error"
 					return out, err
 				}
-				additions = append(additions, CommitSubscriberWaitResult{Publication: *publication, SubscriptionID: strings.ToLower(identity.SubscriptionID), Status: status, Recipient: raw})
+				recovery, err := commitReportRecovery(raw)
+				if err != nil {
+					item.EvidenceStatus = "read_error"
+					return out, err
+				}
+				additions = append(additions, CommitDeliveryReportSubscriber{CommitSubscriberWaitResult: CommitSubscriberWaitResult{Publication: *publication, SubscriptionID: strings.ToLower(identity.SubscriptionID), Status: status, Recipient: raw}, Recovery: recovery})
 			}
 			// Merge only a fully decoded page; retries replace each subscriber's observation.
 			for _, row := range additions {
@@ -273,7 +363,7 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 				item.EvidenceStatus = "partial"
 			}
 			if out.SubscriptionID != "" && len(item.Subscribers) == 0 && item.EvidenceStatus == "available" {
-				item.Subscribers = append(item.Subscribers, CommitSubscriberWaitResult{Publication: *publication, SubscriptionID: out.SubscriptionID, Status: "not_targeted"})
+				item.Subscribers = append(item.Subscribers, CommitDeliveryReportSubscriber{CommitSubscriberWaitResult: CommitSubscriberWaitResult{Publication: *publication, SubscriptionID: out.SubscriptionID, Status: "not_targeted"}})
 				out.Counts["not_targeted"]++
 			}
 			if item.NextAfter == "" {

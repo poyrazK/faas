@@ -776,7 +776,8 @@ shared by all subscribers. Earlier reports without this field remain valid.
 
 Refresh includes `changes` for differences between saved and newly observed
 statuses. `kind: evidence` describes changes in coverage/availability;
-`kind: subscriber` describes an observed subscriber outcome. Each change has
+`kind: subscriber` describes an observed original subscriber outcome;
+`kind: recovery` describes a change in the latest retained replay outcome. Each change has
 `event_id`, optional `subscription_id`, `previous_status`, `status`, and available
 previous/current observation timestamps. A newly observed subscriber has
 `previous_status: unobserved`; that is new evidence, not proof of a new delivery.
@@ -800,3 +801,36 @@ SDK equivalents:
 
 All helpers copy the saved report. Existing resume behavior preserves earlier
 observations; refresh gives an explicit way to inspect the same selection again.
+
+
+### Recovery visibility in delivery reports
+
+Report subscriber rows keep `status` as the original delivery outcome and add
+`recovery` for the latest retained generic replay. For example, an original
+`failed` row can have `recovery.status: recovered` after its latest replay
+completes. This does not change original completion waits or prove external
+business effects.
+
+Recovery status is `recovered` for a completed latest replay, `pending` for
+pending/dispatching, `failed` for failed/dead-letter/cancelled/expired/superseded,
+and `unavailable` when replay evidence is missing or its state is unknown.
+Workflow recipients remain unsupported. Missing evidence does not mean no replay
+occurred: replay records expire independently. An older successful replay does
+not override a newer failed or pending replay.
+
+Each recovery summary includes the retained replay count and history URL when
+available, plus the latest replay invocation ID and state. Reports reuse the
+same guarded receipt pages; no additional history requests or recovery actions
+are issued. Backfill recipients remain excluded. `recovery_counts` counts only
+summarized sampled rows, separately from original-outcome `counts`. A complete
+snapshot's `not_targeted` row has no recovery summary.
+
+Refresh recomputes these summaries and emits `kind: recovery` status changes;
+older saved rows without a summary compare as `unobserved`. Resume retains saved
+summaries until a row is reread, rebuilds recovery counts, and clears prior change
+summaries. As with original outcomes, missing rows on a partial read do not imply
+recovery. Use refresh to inspect completed coverage again.
+
+Go exposes `CommitDeliveryReportSubscriber` and `CommitDeliveryReportRecovery`;
+Node exports the corresponding interfaces. Python reports expose the same JSON
+fields. CLI JSON includes these fields with the existing delivery-report modes.

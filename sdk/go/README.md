@@ -768,3 +768,7 @@ counting an observation twice; saved completed coverage is not refreshed.
 returning fresh counts, observation timestamps, and changes against the baseline.
 Missing evidence does not carry forward saved successes. Resume and refresh
 have separate coverage semantics; see the Commit documentation.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.

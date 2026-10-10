@@ -4,10 +4,38 @@ import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 import type { CommitPublicationHistoryItem } from './generated/models/CommitPublicationHistoryItem.js';
 import { commitSubscriberStatus, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
 
+export interface CommitDeliveryReportRecovery {
+  status: 'recovered' | 'pending' | 'failed' | 'unavailable';
+  invocation_id?: string; state?: string; history_url?: string; retained_replay_count?: number;
+}
+export interface CommitDeliveryReportSubscriber extends CommitSubscriberWaitResult {
+  recovery?: CommitDeliveryReportRecovery;
+}
+function reportRecovery(row: NonNullable<CommitSubscriberWaitResult['recipient']>): CommitDeliveryReportRecovery {
+  const out: CommitDeliveryReportRecovery = { status: 'unavailable' };
+  if (row.workflow_name || !row.recovery) return out;
+  out.history_url = row.recovery.history_url;
+  out.retained_replay_count = row.recovery.retained_replay_count;
+  const latest = row.recovery.latest_replay;
+  if (latest) {
+    out.invocation_id = latest.invocation_id; out.state = latest.state;
+    if (latest.state === 'completed') out.status = 'recovered';
+    else if (['pending', 'dispatching'].includes(latest.state)) out.status = 'pending';
+    else if (['failed', 'dead_letter', 'cancelled', 'expired', 'superseded'].includes(latest.state)) out.status = 'failed';
+  }
+  return out;
+}
+function recountRecovery(report: CommitDeliveryReport): void {
+  const counts: Record<string, number> = Object.create(null);
+  report.recovery_counts = counts;
+  for (const item of report.items) for (const row of item.subscribers) {
+    if (row.recovery) counts[row.recovery.status] = (counts[row.recovery.status] ?? 0) + 1;
+  }
+}
 export interface CommitDeliveryReportItem {
   acceptance: CommitPublicationHistoryItem;
   evidence_status: string;
-  subscribers: CommitSubscriberWaitResult[];
+  subscribers: CommitDeliveryReportSubscriber[];
   observed_at?: string;
   next_after?: string;
 }
@@ -16,12 +44,13 @@ export interface CommitDeliveryReport {
   subscription_id?: string;
   items: CommitDeliveryReportItem[];
   counts: Record<string, number>;
+  recovery_counts?: Record<string, number>;
   next_before?: string;
   changes?: CommitDeliveryReportChange[];
   read_complete: boolean;
 }
 export interface CommitDeliveryReportChange {
-  event_id: string; subscription_id?: string; kind: 'evidence' | 'subscriber';
+  event_id: string; subscription_id?: string; kind: 'evidence' | 'subscriber' | 'recovery';
   previous_status: string; status: string; previous_observed_at?: string; observed_at?: string;
 }
 function compareReports(previous: CommitDeliveryReport, current: CommitDeliveryReport): CommitDeliveryReportChange[] {
@@ -31,9 +60,12 @@ function compareReports(previous: CommitDeliveryReport, current: CommitDeliveryR
     if (!old || !item.observed_at) return;
     const common = { event_id: item.acceptance.event_id, previous_observed_at: old.observed_at, observed_at: item.observed_at };
     if (old.evidence_status !== item.evidence_status && !['not_read', 'read_error'].includes(item.evidence_status)) changes.push({ ...common, kind: 'evidence', previous_status: old.evidence_status, status: item.evidence_status });
+    const recoveries = new Map(old.subscribers.map(row => [row.subscription_id.toLowerCase(), row.recovery?.status ?? 'unobserved']));
     const statuses = new Map(old.subscribers.map(row => [row.subscription_id.toLowerCase(), row.status]));
     for (const row of item.subscribers) {
       const before = statuses.get(row.subscription_id.toLowerCase()) ?? 'unobserved';
+      const previousRecovery = recoveries.get(row.subscription_id.toLowerCase()) ?? 'unobserved';
+      if (row.recovery && previousRecovery !== row.recovery.status) changes.push({ ...common, kind: 'recovery', subscription_id: row.subscription_id, previous_status: previousRecovery, status: row.recovery.status });
       if (before !== row.status) changes.push({ ...common, kind: 'subscriber', subscription_id: row.subscription_id, previous_status: before, status: row.status });
     }
   });
@@ -120,12 +152,12 @@ export async function getCommitDeliveryReport(source: string, options: {
             expectedAcceptedAt: publication.accepted_at, after, limit: 200
           }));
           if (page.event_source !== publication.source || page.event_id !== publication.id || (page.next_after && (page.next_after === after || seen.has(page.next_after)))) throw new Error('publication evidence identity mismatch');
-          const additions: CommitSubscriberWaitResult[] = [];
+          const additions: CommitDeliveryReportSubscriber[] = [];
           item.evidence_status = page.next_after || !page.snapshot_captured ? 'partial' : 'available';
           for (const row of page.recipients) {
             if ((row.origin && row.origin !== 'acceptance') || (report.subscription_id && row.subscription_id.toLowerCase() !== report.subscription_id)) continue;
             const status = commitSubscriberStatus(row);
-            additions.push({ publication, subscription_id: row.subscription_id.toLowerCase(), status, recipient: row });
+            additions.push({ publication, subscription_id: row.subscription_id.toLowerCase(), status, recipient: row, recovery: reportRecovery(row) });
           }
           for (const row of additions) {
             const index = item.subscribers.findIndex(saved => saved.subscription_id.toLowerCase() === row.subscription_id);
@@ -160,5 +192,5 @@ export async function getCommitDeliveryReport(source: string, options: {
     report.read_complete = true;
     return report;
   } catch (error) { if (baseline) report.changes = compareReports(baseline, report); throw new CommitDeliveryReportError(report, error); }
-  finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+  finally { recountRecovery(report); clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }

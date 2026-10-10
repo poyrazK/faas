@@ -384,3 +384,7 @@ type CommitDeliveryReport = api.CommitDeliveryReport
 type CommitDeliveryReportItem = api.CommitDeliveryReportItem
 
 type CommitDeliveryReportChange = api.CommitDeliveryReportChange
+
+// Commit delivery report recovery evidence aliases.
+type CommitDeliveryReportSubscriber = api.CommitDeliveryReportSubscriber
+type CommitDeliveryReportRecovery = api.CommitDeliveryReportRecovery

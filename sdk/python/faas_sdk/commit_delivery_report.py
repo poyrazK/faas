@@ -201,6 +201,7 @@ async def aget_commit_delivery_report(
                                 "subscription_id": row["subscription_id"],
                                 "status": status,
                                 "recipient": row,
+                                "recovery": _recovery(row),
                             }
                         )
 
@@ -242,6 +243,34 @@ async def aget_commit_delivery_report(
         if baseline is not None:
             report["changes"] = _compare_reports(baseline, report)
         raise CommitDeliveryReportError(report) from error
+    finally:
+        report["recovery_counts"] = {}
+        for item in report["items"]:
+            for row in item["subscribers"]:
+                if row.get("recovery"):
+                    status = row["recovery"]["status"]
+                    report["recovery_counts"][status] = report["recovery_counts"].get(status, 0) + 1
+
+
+def _recovery(row: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"status": "unavailable"}
+    evidence = row.get("recovery")
+    if row.get("workflow_name") or not evidence:
+        return result
+    result["history_url"] = evidence.get("history_url", "")
+    result["retained_replay_count"] = evidence.get("retained_replay_count", 0)
+    latest = evidence.get("latest_replay")
+    if latest:
+        result["invocation_id"] = latest.get("invocation_id", "")
+        result["state"] = latest.get("state", "")
+        state = result["state"]
+        if state == "completed":
+            result["status"] = "recovered"
+        elif state in {"pending", "dispatching"}:
+            result["status"] = "pending"
+        elif state in {"failed", "dead_letter", "cancelled", "expired", "superseded"}:
+            result["status"] = "failed"
+    return result
 
 
 def _compare_reports(previous: dict[str, Any], current: dict[str, Any]) -> list[dict[str, Any]]:
@@ -264,9 +293,24 @@ def _compare_reports(previous: dict[str, Any], current: dict[str, Any]) -> list[
                     "status": item["evidence_status"],
                 }
             )
+        recoveries = {
+            row["subscription_id"].lower(): row.get("recovery", {}).get("status", "unobserved")
+            for row in old["subscribers"]
+        }
         statuses = {row["subscription_id"].lower(): row["status"] for row in old["subscribers"]}
         for row in item["subscribers"]:
             before = statuses.get(row["subscription_id"].lower(), "unobserved")
+            prior = recoveries.get(row["subscription_id"].lower(), "unobserved")
+            if row.get("recovery") and prior != row["recovery"]["status"]:
+                changes.append(
+                    {
+                        **common,
+                        "kind": "recovery",
+                        "subscription_id": row["subscription_id"],
+                        "previous_status": prior,
+                        "status": row["recovery"]["status"],
+                    }
+                )
             if before != row["status"]:
                 changes.append(
                     {

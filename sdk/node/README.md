@@ -2373,3 +2373,7 @@ when resuming; saved completed coverage is not refreshed.
 Use `getCommitDeliveryReport(source, { refresh: savedReport, recipientPages: 5 })`
 to reread a fixed selection. Fresh counts, `observed_at`, and `changes` describe
 new observations; omit resume and selection/filter options. The baseline is copied.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.

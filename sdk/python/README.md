@@ -789,3 +789,7 @@ refreshed. The saved dictionary is copied before reads.
 Use `aget_commit_delivery_report(client, source, refresh=saved_report,
 recipient_pages=5)` to reread a fixed selection. Fresh counts, observation times,
 and changes describe new evidence. Omit resume and selection/filter arguments.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.
