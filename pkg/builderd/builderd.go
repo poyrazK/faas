@@ -823,6 +823,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
+	watchCommand, watchErr := devWatchCommand(ctx, b.store, app)
+	if watchErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "load developer watch mode: "+watchErr.Error(), buildStart)
+		return BuildResult{}, watchErr
+	}
+	if watchCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watchCommand+"\n")
+	}
 
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
@@ -834,7 +842,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
-		Function: app.Type == state.AppTypeFunction,
+		Function:        app.Type == state.AppTypeFunction,
+		DevWatchCommand: watchCommand,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -934,6 +943,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
 		Function:           app.Type == state.AppTypeFunction,
+		DevWatchCommand:    watchCommand,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,

@@ -1487,6 +1487,9 @@ type DevConfig struct {
 	// Debug starts the Node.js inspector in the developer environment and
 	// exposes it on a local port (`gregale dev --debug`, ADR-741).
 	Debug *bool `yaml:"debug,omitempty"`
+	// Watch runs a development server instead of the production build
+	// (`gregale dev --watch`, ADR-970).
+	Watch *DevWatchConfig `yaml:"watch,omitempty"`
 }
 
 // ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It
@@ -1538,7 +1541,7 @@ func (c *DevConfig) Validate() error {
 			return fmt.Errorf("dev: postgres_seed: %s", problem.Detail)
 		}
 	}
-	return nil
+	return c.Watch.Validate()
 }
 
 func validateDevConfigPath(field, raw string) error {

@@ -379,6 +379,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
+	devWatchCommands     map[string]string
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string

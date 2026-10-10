@@ -302,6 +302,51 @@ debugger; with `"restart": true` VS Code reconnects on its own. Running
 workloads are supported so far; `--debug` cannot be combined with `--once`,
 `--stop`, or `--all`.
 
+## Watch mode for apps with a build step
+
+Live patches (above) only apply to apps that run their source files directly.
+For an app with a build step, such as TypeScript, Next.js or Vite, every save
+otherwise waits for a full build. `gregale dev --watch` instead runs the app's
+own development server in the developer environment, so edits hot-reload in
+seconds:
+
+```bash
+gregale dev --watch                              # runs `npm run dev`
+gregale dev --watch-command "next dev"           # or an explicit command
+```
+
+or in `gregale.yaml`:
+
+```yaml
+dev:
+  watch: true          # or: watch: { command: "next dev" }
+```
+
+The developer build then installs your dependencies (development dependencies
+included) as usual, skips the production build, ships your source unchanged
+and starts the development command with `NODE_ENV=development`. Source edits
+reach the running server as live patches without restarting it, and the
+server's own watcher recompiles and reloads them. Changing `package.json`, a
+lockfile, `railpack.json` or `gregale.yaml` still triggers a full developer
+build, which reinstalls dependencies.
+
+Watch mode needs:
+
+- a Node.js app built without a Dockerfile (a Dockerfile owner can write a
+  development stage instead);
+- a `dev` script in `package.json`, or `--watch-command`. Bind the server to
+  all interfaces if it defaults to `localhost` only (for example
+  `vite --host`);
+- at least 512 MB of RAM for the developer environment;
+- authentication on the developer environment, because development servers
+  serve source maps and error overlays.
+
+Otherwise the session is refused with `dev_watch_unsupported`. A watch-mode
+environment runs your development server, not your production build, so check
+production behaviour with `gregale deploy` or a pull-request preview. Run
+`gregale dev` without `--watch` to go back to production-shaped developer
+builds; the change applies from the next build.
+
 ## Run every app in a workspace
 
 `gregale dev --all` starts one developer loop per deployable workspace or

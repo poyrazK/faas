@@ -993,7 +993,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Error = fmt.Sprintf("detect app shape: %v", err)
 		return
 	}
-	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0))
+	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
 		return
@@ -1071,7 +1071,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		projectName := scenario.Project + "-" + serviceName
-		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0))
+		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
 			return

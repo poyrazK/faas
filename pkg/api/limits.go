@@ -829,6 +829,10 @@ const (
 	// using the normal developer build.
 	DevPatchMaxEntries       = 200
 	DevPatchMaxBytes   int64 = 8 << 20
+	// DevWatchMinRAMMB is the smallest developer app RAM that may run watch
+	// mode (ADR-970): development servers need far more memory than the
+	// production server of the same app.
+	DevWatchMinRAMMB = 512
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a

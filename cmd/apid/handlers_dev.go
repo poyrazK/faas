@@ -93,6 +93,11 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	watch, prob := validateDevWatch(req.Watch)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	lease, prob := devSessionLease(req.LeaseSeconds, limits)
 	if prob != nil {
@@ -122,6 +127,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				"Developer session shape changed", "run 'gregale dev --stop' once, then start the session again"))
 			return
 		}
+		if prob := devWatchUnsupported(existing, watch); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), existing.ID, expiresAt)
 		if refreshErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
@@ -135,8 +144,12 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			managedPostgresProblem(w, postgresErr)
 			return
 		}
+		if err := s.saveDevWatch(r.Context(), refreshed.ID, watch); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
+			return
+		}
 		writeJSON(w, http.StatusOK, api.DevSessionResponse{
-			App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+			App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Watch: watch,
 		})
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
@@ -144,6 +157,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	if prob := devWatchUnsupported(app, watch); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
@@ -178,8 +195,12 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				managedPostgresProblem(w, postgresErr)
 				return
 			}
+			if err := s.saveDevWatch(r.Context(), refreshed.ID, watch); err != nil {
+				api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
+				return
+			}
 			writeJSON(w, http.StatusOK, api.DevSessionResponse{
-				App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+				App: s.appResponseWithContext(r.Context(), refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Watch: watch,
 			})
 			return
 		default:
@@ -198,8 +219,12 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		managedPostgresProblem(w, postgresErr)
 		return
 	}
+	if err := s.saveDevWatch(r.Context(), created.ID, watch); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
+		return
+	}
 	writeJSON(w, http.StatusCreated, api.DevSessionResponse{
-		App: s.appResponseWithContext(r.Context(), created, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+		App: s.appResponseWithContext(r.Context(), created, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Watch: watch,
 	})
 }
 
@@ -255,6 +280,7 @@ func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	writeJSON(w, http.StatusOK, api.DevSessionResponse{
 		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+		Watch: s.loadDevWatch(r.Context(), app.ID),
 	})
 }
 

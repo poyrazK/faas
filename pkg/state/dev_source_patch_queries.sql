@@ -71,3 +71,15 @@ FROM dev_source_patches
 WHERE app_id = sqlc.arg(app_id)::uuid AND generation = sqlc.arg(generation)::bigint
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: UpsertDevWatchSetting :exec
+-- ADR-970: a developer environment's watch-mode command.
+INSERT INTO dev_watch_settings (app_id, command)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(command)::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, updated_at = now();
+
+-- name: DeleteDevWatchSetting :exec
+DELETE FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;
+
+-- name: GetDevWatchSetting :one
+SELECT command FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;

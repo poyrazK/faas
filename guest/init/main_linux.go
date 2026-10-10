@@ -514,6 +514,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 	}
 	env = StampDevDebugEnv(env, preload)
+	// ADR-970: a watch-mode developer image runs a development server that
+	// reloads patched files itself.
+	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -1130,6 +1133,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("buildkit-ready")
 
+	if m.DevWatchCommand != "" && m.Framework == api.FrameworkDockerfile {
+		return finish(errDevWatchUnsupported("watch mode needs an app Gregale builds without a Dockerfile; write a development stage in your Dockerfile instead"), "")
+	}
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
@@ -1524,6 +1530,9 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			}
 			deploy["startCommand"] = "/bin/true"
 		}
+	}
+	if err := devWatchRailpackConfig(config, m); err != nil {
+		return nil, err
 	}
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
@@ -1971,7 +1980,12 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
-		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
+		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
+		done.DevPatch = sourceMap
+		if watchErr != nil {
+			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
+			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
+		}
 	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {

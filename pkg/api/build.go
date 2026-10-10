@@ -71,9 +71,13 @@ type BuildManifest struct {
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
-	KeepWarm     bool `json:"keep_warm,omitempty"`
-	TimeoutSec   int  `json:"timeout_sec"`
-	LogTailBytes int  `json:"log_tail_bytes"` // default 64 KiB
+	KeepWarm bool `json:"keep_warm,omitempty"`
+	// DevWatchCommand, when set, builds a watch-mode developer image
+	// (ADR-970): no build step, source shipped unchanged, this command as the
+	// start command. Only builderd sets it, and only for developer apps.
+	DevWatchCommand string `json:"dev_watch_command,omitempty"`
+	TimeoutSec      int    `json:"timeout_sec"`
+	LogTailBytes    int    `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init

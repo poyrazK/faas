@@ -209,6 +209,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DEV_DEBUG", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector"},
 	{Name: "FAAS_DEV_PATCH_DELIVERY", Owners: []string{"apid", "vmmd"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-740 operator gate for developer live source patches; explicit 1 on both apid and vmmd"},
 	{Name: "FAAS_DEV_TOKEN", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
+	{Name: "FAAS_DEV_WATCH", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "ADR-970 watch-mode developer image marker; set in the image by the watch-mode build and read by guest-init, which then applies live patches without restarting the development server"},
 	{Name: "FAAS_DNS_API_URL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_BLOCKLIST_FILE", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-373 optional operator threat feed added to the built-in guest DNS blocklist; unset uses the built-in list only, an unreadable file fails startup"},
 	{Name: "FAAS_DNS_PROVIDER", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDefault},

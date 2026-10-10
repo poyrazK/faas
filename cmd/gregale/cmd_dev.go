@@ -38,8 +38,8 @@ func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
 // sessionRequest builds the idempotent session upsert. A zero lease leaves
 // lease_seconds unset so the API applies its default; every refresh resends
 // the chosen lease because each sync renews it from scratch.
-func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string, lease time.Duration) api.UpsertDevSessionRequest {
-	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID, LeaseSeconds: int64(lease / time.Second)}
+func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string, lease time.Duration, watch *api.DevWatch) api.UpsertDevSessionRequest {
+	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID, LeaseSeconds: int64(lease / time.Second), Watch: watch}
 	if c.shape == shapeFunction {
 		req.Type = devSessionFunction
 		req.Runtime = c.runtime
@@ -273,7 +273,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]] [--watch [--watch-command CMD]]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -319,6 +319,8 @@ func cmdDev(args []string) int {
 	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
 	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
+	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-970)")
+	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: npm run dev)")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
@@ -348,6 +350,12 @@ func cmdDev(args []string) int {
 	}
 	if *stop && (*debug || explicitFlags["debug-port"]) {
 		return printErr("Invalid flags", fmt.Errorf("--debug cannot be combined with --stop"))
+	}
+	if *stop && (*watch || *watchCommand != "") {
+		return printErr("Invalid flags", fmt.Errorf("--watch cannot be combined with --stop"))
+	}
+	if *all && (*watch || *watchCommand != "") {
+		return printErr("Invalid flags", fmt.Errorf("--watch cannot be combined with --all yet; run gregale dev --watch in the app's directory"))
 	}
 	if *debugPort < 1 || *debugPort > 65535 {
 		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
@@ -381,6 +389,7 @@ func cmdDev(args []string) int {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
 		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
+		applyDevWatchManifestDefault(manifest, explicitFlags, watch, watchCommand)
 	}
 	if *debug && *once {
 		// --once exits after one sync, which would close the local
@@ -480,7 +489,11 @@ func cmdDev(args []string) int {
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
 	}
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
+	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
+	if err != nil {
+		return printErr("Invalid --watch", err)
+	}
+	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
@@ -492,6 +505,9 @@ func cmdDev(args []string) int {
 		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
+		}
+		if session.Watch != nil {
+			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
 		}
 	}
 
@@ -684,7 +700,7 @@ func cmdDev(args []string) int {
 		waitForChange: waitForChange,
 		resolve:       resolveDevSourceConfigWithManifest,
 		refresh: func(config devSourceConfig) error {
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch))
 			if refreshErr == nil {
 				session = refreshed
 			}

@@ -2511,6 +2511,15 @@
     "kind": "operational"
   },
   {
+    "table": "dev_watch_settings",
+    "columns": [
+      "app_id",
+      "command",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "developer_sync_history",
     "columns": [
       "app_id",

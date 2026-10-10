@@ -776,6 +776,11 @@ const (
 	// instance that was served a developer live patch. The VM is destroyed
 	// instead, and the next wake restores the unpatched artifact.
 	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevWatchUnsupported (ADR-970) refuses watch mode for an
+	// environment or build it cannot serve: too little RAM, an
+	// unauthenticated developer app, a Dockerfile build, or a build plan the
+	// watch overlay does not understand.
+	CodeDevWatchUnsupported = "dev_watch_unsupported"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -2411,6 +2416,16 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrDevWatchRAM refuses watch mode (ADR-970) for a developer app whose RAM
+// is below DevWatchMinRAMMB. Limit and observed are MB.
+func ErrDevWatchRAM(ramMB int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
+		"Watch mode needs more memory",
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/gregale-dev#watch-mode")
 }
 
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a

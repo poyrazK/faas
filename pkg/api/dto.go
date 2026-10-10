@@ -800,6 +800,17 @@ type UpsertDevSessionRequest struct {
 	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
 	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
 	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
+	// Watch opts the environment into watch mode (ADR-970): it runs Command,
+	// the app's development server, instead of the production build. Omitted
+	// turns watch mode off. Takes effect from the next developer build.
+	Watch *DevWatch `json:"watch,omitempty"`
+}
+
+// DevWatch is a developer environment's watch-mode setting (ADR-970).
+type DevWatch struct {
+	// Command starts the development server, for example "npm run dev".
+	// At most DevWatchCommandMaxBytes, one line.
+	Command string `json:"command"`
 }
 
 // DevPatchPreview reports whether one developer sync could have been applied
@@ -852,6 +863,8 @@ type DevSessionResponse struct {
 	App       AppResponse          `json:"app"`
 	ExpiresAt time.Time            `json:"expires_at"`
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
+	// Watch is the stored watch-mode setting (ADR-970); omitted when off.
+	Watch *DevWatch `json:"watch,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.

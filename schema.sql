@@ -16191,6 +16191,18 @@ CREATE TABLE public.dev_source_patches (
 
 
 --
+-- Name: dev_watch_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_watch_settings (
+    app_id uuid NOT NULL,
+    command text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dev_watch_settings_command_check CHECK ((((octet_length(command) >= 1) AND (octet_length(command) <= 512)) AND (command !~ '[\n\r]'::text)))
+);
+
+
+--
 -- Name: developer_sync_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28302,6 +28314,14 @@ ALTER TABLE ONLY public.dev_source_patches
 
 ALTER TABLE ONLY public.dev_source_patches
     ADD CONSTRAINT dev_source_patches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dev_watch_settings dev_watch_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_watch_settings
+    ADD CONSTRAINT dev_watch_settings_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -45189,6 +45209,14 @@ ALTER TABLE ONLY public.dev_source_patches
 
 ALTER TABLE ONLY public.dev_source_patches
     ADD CONSTRAINT dev_source_patches_base_deployment_id_fkey FOREIGN KEY (base_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_watch_settings dev_watch_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_watch_settings
+    ADD CONSTRAINT dev_watch_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

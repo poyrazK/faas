@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteDevWatchSetting = `-- name: DeleteDevWatchSetting :exec
+DELETE FROM dev_watch_settings WHERE app_id = $1::uuid
+`
+
+func (q *Queries) DeleteDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteDevWatchSetting, appID)
+	return err
+}
+
 const getDevSourceManifest = `-- name: GetDevSourceManifest :one
 SELECT deployment_id, app_id, source_root, manifest, created_at
 FROM dev_source_manifests
@@ -62,6 +71,17 @@ func (q *Queries) GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetD
 		&i.ApplyError,
 	)
 	return i, err
+}
+
+const getDevWatchSetting = `-- name: GetDevWatchSetting :one
+SELECT command FROM dev_watch_settings WHERE app_id = $1::uuid
+`
+
+func (q *Queries) GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, getDevWatchSetting, appID)
+	var command string
+	err := row.Scan(&command)
+	return command, err
 }
 
 const insertDevSourcePatch = `-- name: InsertDevSourcePatch :one
@@ -262,5 +282,22 @@ func (q *Queries) UpsertDevSourceManifest(ctx context.Context, db DBTX, arg Upse
 		arg.SourceRoot,
 		arg.Manifest,
 	)
+	return err
+}
+
+const upsertDevWatchSetting = `-- name: UpsertDevWatchSetting :exec
+INSERT INTO dev_watch_settings (app_id, command)
+VALUES ($1::uuid, $2::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, updated_at = now()
+`
+
+type UpsertDevWatchSettingParams struct {
+	AppID   pgtype.UUID
+	Command string
+}
+
+// ADR-970: a developer environment's watch-mode command.
+func (q *Queries) UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error {
+	_, err := db.Exec(ctx, upsertDevWatchSetting, arg.AppID, arg.Command)
 	return err
 }

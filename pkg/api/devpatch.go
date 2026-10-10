@@ -16,6 +16,16 @@ const (
 	DevDebugNodePortString = "9229"
 )
 
+// Developer watch mode (ADR-970). A watch-mode developer build ships the
+// source unchanged and starts the app's development server; DevWatchEnv=1 is
+// set in that image so guest-init applies live patches without restarting
+// the workload and lets the server's own watcher reload them.
+const (
+	DevWatchEnv = "FAAS_DEV_WATCH"
+	// DevWatchCommandMaxBytes bounds the development command.
+	DevWatchCommandMaxBytes = 512
+)
+
 // DevPatchStatusResponse states.
 const (
 	DevPatchStatePending = "pending"
@@ -58,4 +68,6 @@ type DevPatchSourceMap struct {
 	Reason       string   `json:"reason,omitempty"`
 	ImageDir     string   `json:"image_dir,omitempty"`
 	RebuildPaths []string `json:"rebuild_paths,omitempty"`
+	// Watch marks a watch-mode developer build (ADR-970).
+	Watch bool `json:"watch,omitempty"`
 }

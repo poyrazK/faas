@@ -31,6 +31,11 @@ type BuildCacheRecipe struct {
 	Function            bool      `json:"function"`
 	BuilderBaseIdentity string    `json:"builder_base_identity"`
 	TargetPlatform      string    `json:"target_platform"`
+
+	// DevWatchCommand separates watch-mode developer images (ADR-970) from
+	// production-shaped builds of the same source. Omitted when empty, so
+	// every existing recipe key is unchanged.
+	DevWatchCommand string `json:"dev_watch_command,omitempty"`
 }
 
 const (
