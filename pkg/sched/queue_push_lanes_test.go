@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,7 +143,7 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 	}
 
 	// A fresh trigger starts at one lane however large the backlog is.
-	l.scheduleQueuePushLanes(ctx, trigger, &fakeDeadLetterStore{})
+	l.scheduleQueuePushLanes(ctx, trigger, &lockedDeadLetterStore{fakeDeadLetterStore: &fakeDeadLetterStore{}})
 	l.workPool().drain()
 	if got := poller.polls.Load(); got != 1 {
 		t.Fatalf("first tick ran %d lanes, want 1", got)
@@ -154,7 +155,7 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 		l.queuePushLanes.observe(trigger.ID.String(), 4, false)
 	}
 	poller.polls.Store(0)
-	l.scheduleQueuePushLanes(ctx, trigger, &fakeDeadLetterStore{})
+	l.scheduleQueuePushLanes(ctx, trigger, &lockedDeadLetterStore{fakeDeadLetterStore: &fakeDeadLetterStore{}})
 	l.workPool().drain()
 	if got := poller.polls.Load(); got != 4 {
 		t.Fatalf("ramped tick ran %d lanes, want binding max_concurrency 4", got)
@@ -177,3 +178,16 @@ func (s undashedIDStore) QueueStateForBinding(ctx context.Context, appID, bindin
 }
 
 func undash(id string) string { return strings.ReplaceAll(id, "-", "") }
+
+// lockedDeadLetterStore serializes the health writes concurrent lanes make;
+// the shared fake is single-goroutine and PgStore needs no such guard.
+type lockedDeadLetterStore struct {
+	mu sync.Mutex
+	*fakeDeadLetterStore
+}
+
+func (s *lockedDeadLetterStore) RecordTriggerConsumerHealth(ctx context.Context, triggerID string, observation state.TriggerConsumerHealthObservation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fakeDeadLetterStore.RecordTriggerConsumerHealth(ctx, triggerID, observation)
+}
