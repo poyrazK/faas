@@ -216,7 +216,8 @@ func entityAPIFixture(t *testing.T, project bool) (entityHTTPEnv, state.App, *en
 		if !project && scope == "staging" {
 			continue
 		}
-		dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage})
+		// Exercise the canonical deployment UUIDs used by PgStore and the restore protocol.
+		dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage})
 		if err != nil {
 			t.Fatal(err)
 		}
