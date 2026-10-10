@@ -155,3 +155,31 @@ Callbacks may be synchronous or asynchronous. Exceptions and rejected promises
 are ignored, and asynchronous completion is not awaited. Keep synchronous work
 short; the request does not wait for asynchronous telemetry to finish. The hook
 does not change retries, data, errors, counts or generated schema inference.
+
+### Runtime JSON validation
+
+Use `validateJson` after checking the query error to validate selected fields.
+It accepts synchronous objects with a `parse(unknown)` method, including Zod
+schemas, and infers each field's result from the parser output. Validators are
+application-owned; PostgreSQL JSON columns do not describe their internal shape.
+
+```ts
+import { validateJson } from '@gregale/data'
+import { z } from 'zod' // install in your application
+
+const { data, error } = await query
+if (error) throw error
+const rows = validateJson(data, {
+  details: z.object({ count: z.number() }).nullable(),
+})
+```
+
+Arrays and single rows are supported. A null single-row result stays null; field
+nulls go through the parser, so accept them explicitly with a nullable schema.
+The helper copies rows and preserves unvalidated fields. Nested JSON validation
+belongs inside your parser. Async parsers are unsupported.
+
+Failures throw `JsonValidationError` with code `JSON_VALIDATION_FAILED`, the
+selected `field`, and a zero-based `rowIndex` (null for a single row). Original
+parser messages, causes and payloads are omitted. Validation runs locally after
+the request and does not change PostgREST errors or database authorization.
