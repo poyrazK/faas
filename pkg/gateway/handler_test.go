@@ -1238,6 +1238,22 @@ func TestHostname(t *testing.T) {
 func TestMetricsSpec12(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	h.SetWakeGateHook()
+	var firstByteLatency time.Duration
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			firstByteAt, ok := FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	// Cold path: +requests_total{200} +cold_wake_total +wake_latency_count.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
@@ -1252,8 +1268,13 @@ func TestMetricsSpec12(t *testing.T) {
 	if got := histogramObservationCount(t, h.metrics.wakeLatency); got != 1 {
 		t.Errorf("wake_latency _count = %v, want 1 (one observation)", got)
 	}
-	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
-		t.Errorf("wake_latency observation = %v, want (0, 100ms] for localhost stub", got)
+	if firstByteLatency <= 0 {
+		t.Fatalf("first upstream byte latency = %v, want > 0", firstByteLatency)
+	}
+	// The metric includes real scheduler/transport delay, even on localhost.
+	// One nanosecond allows conversion through the histogram's float seconds.
+	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got-firstByteLatency < -time.Nanosecond || got-firstByteLatency > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 
 	// Unknown host: +requests_total{404}.

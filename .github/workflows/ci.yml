@@ -1061,7 +1061,7 @@ jobs:
         run: >-
           go test -race -cover -covermode=atomic -count=30 -shuffle=on
           -timeout=5m
-          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12_FirstByteNotFullBody|TestRedisResponseCache.*)$'
+          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12|TestMetricsSpec12_FirstByteNotFullBody|TestRedisResponseCache.*)$'
           ./pkg/sched ./pkg/gateway
 
       - name: coverage floor (ship-blocking packages)
