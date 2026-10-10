@@ -5316,6 +5316,14 @@ type ProjectEnvironmentCloneConfigurationGuard struct {
 	HeldAt             pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneConfigurationOwnership struct {
+	OperationID    pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Manifest       []byte
+	ManifestSha256 string
+	CreatedAt      pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneLayerPin struct {
 	OperationID pgtype.UUID
 	AppID       pgtype.UUID

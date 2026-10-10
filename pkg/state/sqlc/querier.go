@@ -224,6 +224,7 @@ type Querier interface {
 	CloneCheckpointPostgresCredentialPublished(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
+	CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
 	CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
 	CloneObjectGrantRevocationObserve(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationObserveParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -929,6 +930,7 @@ type Querier interface {
 	InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	InsertCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error)
 	InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
+	InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	InsertClonePostgresWriteFence(ctx context.Context, db DBTX, arg InsertClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
@@ -2286,6 +2288,8 @@ type Querier interface {
 	ReadCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg ReadCloneCheckpointUnusedObjectReservationParams) (ProjectEnvironmentCloneCheckpointUnusedObjectReservation, error)
 	ReadCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
 	ReadCloneCheckpointWorkloadRetirementMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error)
+	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
+	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
 	// ADR-531: private original selection precedes a coordinated capture point.
 	ReadClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg ReadClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	// ADR-531: resource ownership is separate from an operation's writer barrier.

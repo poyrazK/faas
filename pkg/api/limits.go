@@ -8842,3 +8842,6 @@ const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
 
 // Non-secret original workload ownership and native retirement observations.
 const CheckpointWorkloadRetirementMaxBytes = 2 << 20
+
+// CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
+const CloneConfigurationOwnershipMaxBytes = 32 << 10

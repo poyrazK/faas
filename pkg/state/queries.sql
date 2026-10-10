@@ -15684,3 +15684,34 @@ SELECT * FROM project_environment_clone_materializations WHERE operation_id=$1 F
 -- name: CloneCheckpointWorkloadRetirementHasOrphanDeployments :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.reason='environment-clone:'||sqlc.arg(operation_id)::uuid::text
  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=sqlc.arg(operation_id)::uuid AND w.target_deployment_id=d.id))::boolean;
+
+-- name: ReadCloneConfigurationOwnershipSnapshot :one
+SELECT jsonb_build_object(
+ 'app_environment_secret_ref_suppressions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text),
+ 'app_environment_secret_refs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text),
+ 'app_envs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text),
+ 'app_secrets', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text),
+ 'feature_flag_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM feature_flag_versions t WHERE t.environment_id=sqlc.arg(environment_id)::uuid),
+ 'project_environment_config_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_config_versions t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text),
+ 'project_environment_edge_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_edge_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text),
+ 'project_environment_route_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_route_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text),
+ 'project_environment_workload_heads', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_heads t WHERE t.environment_id=sqlc.arg(environment_id)::uuid),
+ 'project_environment_workload_specs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_specs t WHERE t.environment_id=sqlc.arg(environment_id)::uuid),
+ 'project_environments', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environments t WHERE t.id=sqlc.arg(environment_id)::uuid)
+)::jsonb AS manifest;
+
+-- name: ReadCloneConfigurationOwnership :one
+SELECT * FROM project_environment_clone_configuration_ownership WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneConfigurationOwnership :exec
+INSERT INTO project_environment_clone_configuration_ownership(operation_id,environment_id,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4);
+
+-- name: CloneConfigurationOwnershipScopeIsForeign :one
+SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND t.scope=sqlc.arg(environment)::text AND NOT (sqlc.arg(managed_prepared)::boolean AND t.account_id=(SELECT o.account_id FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid) AND t.app_id IN (SELECT w.app_id FROM project_environment_clone_workloads w WHERE w.operation_id=sqlc.arg(operation_id)::uuid)))
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_edge_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_route_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text) AS foreign_scope;

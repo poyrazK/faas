@@ -5270,6 +5270,35 @@ func (q *Queries) CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx cont
 	return column_1, err
 }
 
+const cloneConfigurationOwnershipScopeIsForeign = `-- name: CloneConfigurationOwnershipScopeIsForeign :one
+SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text AND NOT ($3::boolean AND t.account_id=(SELECT o.account_id FROM project_environment_clone_operations o WHERE o.id=$4::uuid) AND t.app_id IN (SELECT w.app_id FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid)))
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text)
+ OR EXISTS(SELECT 1 FROM project_environment_edge_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text)
+ OR EXISTS(SELECT 1 FROM project_environment_route_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text) AS foreign_scope
+`
+
+type CloneConfigurationOwnershipScopeIsForeignParams struct {
+	ProjectID       pgtype.UUID
+	Environment     string
+	ManagedPrepared bool
+	OperationID     pgtype.UUID
+}
+
+func (q *Queries) CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneConfigurationOwnershipScopeIsForeign,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ManagedPrepared,
+		arg.OperationID,
+	)
+	var foreign_scope pgtype.Bool
+	err := row.Scan(&foreign_scope)
+	return foreign_scope, err
+}
+
 const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
 UPDATE project_environment_clone_object_grant_revocations
 SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
@@ -18777,6 +18806,28 @@ func (q *Queries) InsertCloneCheckpointWorkloadRetirement(ctx context.Context, d
 		&i.RetiredAt,
 	)
 	return i, err
+}
+
+const insertCloneConfigurationOwnership = `-- name: InsertCloneConfigurationOwnership :exec
+INSERT INTO project_environment_clone_configuration_ownership(operation_id,environment_id,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4)
+`
+
+type InsertCloneConfigurationOwnershipParams struct {
+	OperationID    pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Manifest       []byte
+	ManifestSha256 string
+}
+
+func (q *Queries) InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error {
+	_, err := db.Exec(ctx, insertCloneConfigurationOwnership,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
 }
 
 const insertClonePostgresCheckpointSelection = `-- name: InsertClonePostgresCheckpointSelection :one
@@ -49301,6 +49352,52 @@ func (q *Queries) ReadCloneCheckpointWorkloadRetirementMaterialization(ctx conte
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const readCloneConfigurationOwnership = `-- name: ReadCloneConfigurationOwnership :one
+SELECT operation_id, environment_id, manifest, manifest_sha256, created_at FROM project_environment_clone_configuration_ownership WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationOwnership, operationID)
+	var i ProjectEnvironmentCloneConfigurationOwnership
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readCloneConfigurationOwnershipSnapshot = `-- name: ReadCloneConfigurationOwnershipSnapshot :one
+SELECT jsonb_build_object(
+ 'app_environment_secret_ref_suppressions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_environment_secret_refs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_envs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_secrets', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'feature_flag_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM feature_flag_versions t WHERE t.environment_id=$3::uuid),
+ 'project_environment_config_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_config_versions t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_edge_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_edge_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_route_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_route_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_workload_heads', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_heads t WHERE t.environment_id=$3::uuid),
+ 'project_environment_workload_specs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_specs t WHERE t.environment_id=$3::uuid),
+ 'project_environments', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environments t WHERE t.id=$3::uuid)
+)::jsonb AS manifest
+`
+
+type ReadCloneConfigurationOwnershipSnapshotParams struct {
+	ProjectID     pgtype.UUID
+	Environment   string
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationOwnershipSnapshot, arg.ProjectID, arg.Environment, arg.EnvironmentID)
+	var manifest []byte
+	err := row.Scan(&manifest)
+	return manifest, err
 }
 
 const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one

@@ -9326,3 +9326,35 @@ and runtime closure, changed source/digest, and adapter mutation. They do not
 qualify a scheduler/VM adapter. No built-in native adapter or public full-stage
 admission is enabled; configuration cleanup and terminal compensation remain
 outstanding, and live provider qualification stays deferred.
+
+### Original materialized configuration ownership
+
+Leased materialization now saves a non-secret original ownership receipt in the
+same transaction as the environment, desired settings and copied configuration.
+It hashes the complete original rows of eleven explicit tables: environment
+identity, desired specs and heads, project configuration versions, feature flag
+versions, variables, sealed secrets, secret references and suppressions, and
+scoped route and edge policies. Full row identities and timestamps participate
+in the hashes; values and sealed content are not persisted in the receipt.
+`CloneConfigurationOwnershipMaxBytes` bounds the manifest to 32 KiB.
+
+Before copying, the transaction rejects existing scoped configuration, including
+rows on deleted or preview Apps. Previously prepared managed secrets remain
+eligible only through the existing original preparation checks and frozen App
+membership. The configuration clock is acquired before project/operation/App
+locks, and the materialization context is bounded by the worker lease.
+
+A lost materialization reply replays the original receipt without recapturing or
+backfilling ownership. Changed or additional rows, or a changed manifest digest,
+block replay. Workload retirement pins the receipt's original environment,
+manifest digest and creation time in its materialization hash. Legacy receipts
+remain readable without gaining configuration-deletion authority. Migration
+rollback refuses every retained ownership receipt.
+
+This receipt is a prerequisite for atomic configuration retirement, not a cleanup
+receipt. It does not delete configuration, authorize whole-environment cascades,
+clear compensation blockers or enable public full-stage admission. A later
+transaction must authenticate this original evidence together with native
+closure, account for separately proven managed-secret retirement, reject foreign
+borrowers and persist exact catalogue removal atomically. Native qualification
+remains deferred.

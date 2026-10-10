@@ -6104,6 +6104,17 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_configuration_ownership",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "manifest",
+      "manifest_sha256",
+      "operation_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_layer_pins",
     "columns": [
       "app_id",

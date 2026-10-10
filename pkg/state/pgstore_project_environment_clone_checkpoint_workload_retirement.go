@@ -77,12 +77,17 @@ func checkpointWorkloadRetirementMaterializationTx(ctx context.Context, tx pgx.T
 	if err = json.Unmarshal(row.WorkloadSettings, &heads); err != nil {
 		return nil, ErrConflict
 	}
+	ownership, err := verifyCloneConfigurationOwnershipTx(ctx, tx, op, env.ID)
+	if err != nil {
+		return nil, err
+	}
 	p.EnvironmentID = env.ID
 	p.MaterializationSHA256 = cloneCheckpointSHA(struct {
-		EnvironmentID    string
-		WorkloadSettings json.RawMessage
-		CreatedAt        time.Time
-	}{env.ID, row.WorkloadSettings, row.CreatedAt.Time.UTC()})
+		EnvironmentID          string
+		WorkloadSettings       json.RawMessage
+		CreatedAt              time.Time
+		ConfigurationOwnership string `json:",omitempty"`
+	}{env.ID, row.WorkloadSettings, row.CreatedAt.Time.UTC(), ownership})
 	return heads, nil
 }
 
