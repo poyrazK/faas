@@ -14,9 +14,9 @@ const maxInt64 = int64(1<<63 - 1)
 var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate cards use multiple currencies")
 
 // ErrAPIConsumerAllowanceInTenantStatement rejects a cross-app statement that
-// would fall back to an app rate card with a monthly allowance (ADR-935), a
-// graduated ladder (ADR-936), route weights (ADR-937), or that belong to a
-// consumer plan (ADR-938).
+// would fall back to an app rate card with a monthly allowance (ADR-971), a
+// graduated ladder (ADR-972), route weights (ADR-973), or that belong to a
+// consumer plan (ADR-974).
 var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, or consumer plans cannot price platform tenant statements")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
@@ -29,10 +29,10 @@ type APIConsumerUsageChargeBucket struct {
 	Currency                 string
 	PriceMillicentsPerUnit   int64
 	// ChargedUnits is how many units are billed at the price; the rest were
-	// covered by the card's monthly allowance (ADR-935).
+	// covered by the card's monthly allowance (ADR-971).
 	ChargedUnits int64
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-936); nil for flat and allowance cards.
+	// (ADR-972); nil for flat and allowance cards.
 	TierUnits        []int64
 	AmountMillicents int64
 }
@@ -176,7 +176,7 @@ type APIConsumerUsageQuote struct {
 // QuoteAPIConsumerUsageFrom applies the latest rate card effective at each
 // UTC usage minute. Rate cards are append-only and callers may pass them in
 // any order; the function sorts a copy and never mutates caller-owned slices.
-// usage must be ascending by minute. A card's monthly allowance (ADR-935) is
+// usage must be ascending by minute. A card's monthly allowance (ADR-971) is
 // consumed in minute order from the first bucket of each UTC calendar month,
 // so callers pass usage from the start of from's month; buckets before from
 // only consume allowance and are not reported.
@@ -257,8 +257,8 @@ func QuoteAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIC
 }
 
 // priceMinute prices one minute's units given the units the consumer's month
-// already used. A tiered card (ADR-936) splits them across its ladder by
-// position; other cards charge the units beyond the allowance (ADR-935) at
+// already used. A tiered card (ADR-972) splits them across its ladder by
+// position; other cards charge the units beyond the allowance (ADR-971) at
 // the flat price.
 func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBucket, usedBefore int64) (APIConsumerUsageChargeBucket, error) {
 	bucket.RateCardID, bucket.Currency = card.ID, card.Currency
@@ -296,7 +296,7 @@ func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBu
 }
 
 // TieredCardEffectiveIn reports whether a tiered card prices any minute of
-// [start, end). Such periods must be whole UTC months (ADR-936).
+// [start, end). Such periods must be whole UTC months (ADR-972).
 func TieredCardEffectiveIn(cards []state.APIConsumerRateCard, start, end time.Time) bool {
 	ordered := append([]state.APIConsumerRateCard(nil), cards...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
@@ -334,7 +334,7 @@ func (q *APIConsumerUsageQuote) add(bucket APIConsumerUsageChargeBucket) error {
 		}
 		q.UnpricedUnits += bucket.BillableUnits
 	} else {
-		// A re-rated tiered adjustment bucket may be negative (ADR-936).
+		// A re-rated tiered adjustment bucket may be negative (ADR-972).
 		if (bucket.AmountMillicents > 0 && q.AmountMillicents > maxInt64-bucket.AmountMillicents) ||
 			(bucket.AmountMillicents < 0 && q.AmountMillicents < -maxInt64-bucket.AmountMillicents) {
 			return fmt.Errorf("billing: API consumer charge total overflow")

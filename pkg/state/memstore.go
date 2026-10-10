@@ -819,7 +819,7 @@ type MemStore struct {
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
 	platformTenantUsage   map[string]APIConsumerUsageBucket
-	// Consumer plans (ADR-938): plans by ID, assignments by ID, and admission
+	// Consumer plans (ADR-974): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan
 	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment

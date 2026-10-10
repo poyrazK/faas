@@ -9,10 +9,10 @@
   - otherwise `verified`.
 
   The check is read-only and stores nothing. `gregale consumers completeness` shows it. `statement-draft` and `statement-finalize` warn on stderr when it reports `gaps_detected`.
-- **Why:** The usage ledger can silently lose a request if the gateway crashes after the response but before the outbox write (ADR-934 limits). Operators had no way to see that before invoicing. Request telemetry is written by a separate path from the same requests, so it is independent evidence.
+- **Why:** The usage ledger can silently lose a request if the gateway crashes after the response but before the outbox write (ADR-970 limits). Operators had no way to see that before invoicing. Request telemetry is written by a separate path from the same requests, so it is independent evidence.
 - **Consequences:**
   - **What a gap means.** Telemetry is sampled under pressure, can be turned off per app, has no event IDs and is kept for 14 days. It can therefore prove a lower bound of missing usage, but never that every request was billed. A positive gap is real evidence, since telemetry saw more successful requests in that hour than were billed. Fewer telemetry requests than billed is expected and reported as `partial`, not as an error.
-  - **Unbilled requests.** Admission denials (ADR-938) and platform failures (ADR-934) are errors, so excluding errors on both sides keeps them from looking like gaps. A guest 4xx is billed but excluded from both sides alike.
+  - **Unbilled requests.** Admission denials (ADR-974) and platform failures (ADR-970) are errors, so excluding errors on both sides keeps them from looking like gaps. A guest 4xx is billed but excluded from both sides alike.
   - **Window.** Only whole UTC hours are checked: hours that ended at least 10 minutes ago, since telemetry publishes asynchronously, and that fall within the 14-day retention. A window entirely outside them returns `unverifiable` with an empty checked range. The request window is capped at 90 days, like usage reads.
   - **Advisory only.** The check never blocks finalization. Blocking on a lossy signal would stop invoices for apps that disable telemetry. The warning is best effort: if the check fails, the CLI command still succeeds.
   - **Cost.** The Postgres query uses the existing `(app_id, consumer_id, received_at)` telemetry index and aggregates per hour. The in-memory store keeps a seedable table for tests.

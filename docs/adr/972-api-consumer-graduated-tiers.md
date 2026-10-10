@@ -1,9 +1,9 @@
-# ADR-936: Graduated tiers on app consumer rate cards
+# ADR-972: Graduated tiers on app consumer rate cards
 
 - **Status:** accepted
 - **Date:** 2026-10-09
 - **Decision:** An app rate card can carry a graduated ladder of 2 to 10 `{up_to, price_millicents_per_unit}` steps.
-  - A consumer's units are counted per UTC calendar month in minute order (ADR-935), and each unit costs the price of the step its monthly position falls in.
+  - A consumer's units are counted per UTC calendar month in minute order (ADR-971), and each unit costs the price of the step its monthly position falls in.
   - The ladder replaces the flat price and the allowance. A free first step expresses "the first N requests are free".
   - Volume (all-units) pricing is not supported.
 - **Why:** A single price plus an allowance cannot express volume discounts. Graduated tiers are the common shape for API pricing, and they reuse the minute-order counting that allowances introduced.

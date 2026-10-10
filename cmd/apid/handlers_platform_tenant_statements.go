@@ -157,7 +157,7 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 }
 
 // quotePlatformTenantMonth re-prices a whole month for tenant allowances
-// and tiers (ADR-939) and bills the difference from finalized revisions.
+// and tiers (ADR-975) and bills the difference from finalized revisions.
 func (s *server) quotePlatformTenantMonth(r *http.Request, accountID, tenantID string, start, end time.Time,
 	revision int, priorStatus state.APIConsumerUsageStatementStatus, usageDelta []state.APIConsumerUsageBucket,
 	tenantCards []state.PlatformTenantRateCard) (state.PlatformTenantStatementInput, error) {

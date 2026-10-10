@@ -131,7 +131,7 @@ type PlatformTenantStatementInput struct {
 	Coverage         []PlatformTenantStatementCoverage `json:"-"`
 	AsOf             time.Time
 	// Repriced marks a revision that re-prices a whole UTC month for tenant
-	// allowances or tiers (ADR-939). Its lines are the difference from the
+	// allowances or tiers (ADR-975). Its lines are the difference from the
 	// finalized revisions' lines, so a line can be negative and a subject can
 	// carry offsetting lines without new usage. Totals, per-subject units,
 	// and units × price per line still hold, and the amount is never negative.
@@ -308,7 +308,7 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 }
 
 // addsWithin reports whether total + delta stays within the statement's
-// int64 bounds; re-priced lines (ADR-939) may subtract.
+// int64 bounds; re-priced lines (ADR-975) may subtract.
 func addsWithin(total, delta int64) bool {
 	if delta >= 0 {
 		return total <= maxAPIConsumerUsageStatementInt64-delta

@@ -9,7 +9,7 @@ import (
 )
 
 // consumerPlanStore adapts the Postgres plan store to the gateway's plan
-// admission gate (ADR-938).
+// admission gate (ADR-974).
 type consumerPlanStore struct{ store *state.PgStore }
 
 func newConsumerPlanStore(store *state.PgStore) gateway.ConsumerPlanStore {

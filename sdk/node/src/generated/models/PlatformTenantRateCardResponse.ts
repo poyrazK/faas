@@ -13,11 +13,11 @@ export type PlatformTenantRateCardResponse = {
   unit: 'request';
   price_millicents_per_unit: number;
   /**
-   * Free units per tenant per UTC calendar month (ADR-939).
+   * Free units per tenant per UTC calendar month (ADR-975).
    */
   included_units_per_month: number;
   /**
-   * Graduated ladder counted per tenant per UTC calendar month (ADR-939); absent for flat cards.
+   * Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards.
    */
   tiers?: Array<APIConsumerRateCardTier>;
   effective_from: string;

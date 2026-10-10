@@ -16,7 +16,7 @@ const PlatformTenantRateCardUnitRequest = "request"
 type PlatformTenantRateCardStore interface {
 	CreatePlatformTenantRateCard(context.Context, string, string, string, int64, time.Time) (PlatformTenantRateCard, error)
 	// CreatePlatformTenantRateCardVersion creates a card with an optional
-	// tenant-wide monthly allowance or graduated ladder (ADR-939).
+	// tenant-wide monthly allowance or graduated ladder (ADR-975).
 	CreatePlatformTenantRateCardVersion(context.Context, PlatformTenantRateCardInput) (PlatformTenantRateCard, error)
 	ListPlatformTenantRateCards(context.Context, string, string) ([]PlatformTenantRateCard, error)
 }

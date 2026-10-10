@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 939 — a tenant allowance prices a calendar month across apps, and
+// adr: 975 — a tenant allowance prices a calendar month across apps, and
 // late usage re-prices the month as a non-negative adjustment.
 func TestPlatformTenantMonthStatementAllowanceAndAdjustment(t *testing.T) {
 	e := setup(t, api.PlanHobby)
@@ -83,7 +83,7 @@ func TestPlatformTenantMonthStatementAllowanceAndAdjustment(t *testing.T) {
 	}
 }
 
-// adr: 939
+// adr: 975
 func TestPlatformTenantRateCardAllowanceAndTiersAPI(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "tiered-customer", "Tiered Customer", 250)

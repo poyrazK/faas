@@ -11,7 +11,7 @@ import (
 
 // ErrTenantMonthPeriodRequired reports a statement whose period a tenant
 // card with a monthly allowance or tiers prices but that is not exactly one
-// UTC calendar month (ADR-939).
+// UTC calendar month (ADR-975).
 var ErrTenantMonthPeriodRequired = errors.New("platform tenant statements priced by a monthly allowance or tiers must cover one UTC calendar month")
 
 // ErrTenantChargeDecreased reports that re-pricing a month would bill less
@@ -202,7 +202,7 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	return lines, currency, nil
 }
 
-// BuildPlatformTenantMonthStatement re-prices a whole UTC month (ADR-939)
+// BuildPlatformTenantMonthStatement re-prices a whole UTC month (ADR-975)
 // and bills the difference from every finalized revision's lines. Coverage
 // still records the minute units not yet finalized, so regression checks are
 // unchanged; the lines carry re-rated amounts, which may be negative per line

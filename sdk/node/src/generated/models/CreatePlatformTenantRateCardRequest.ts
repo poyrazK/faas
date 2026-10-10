@@ -10,11 +10,11 @@ export type CreatePlatformTenantRateCardRequest = {
   currency?: string;
   price_millicents_per_unit: number;
   /**
-   * Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order (ADR-939). Statements for periods it prices must cover one calendar month.
+   * Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order (ADR-975). Statements for periods it prices must cover one calendar month.
    */
   included_units_per_month?: number;
   /**
-   * Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-939). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null.
+   * Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null.
    */
   tiers?: Array<APIConsumerRateCardTier>;
   /**

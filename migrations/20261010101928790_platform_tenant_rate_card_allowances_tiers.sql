@@ -1,6 +1,6 @@
 -- filename: 20261010101928790_platform_tenant_rate_card_allowances_tiers.sql
 
--- ADR-939: a platform tenant rate card can carry a monthly allowance or a
+-- ADR-975: a platform tenant rate card can carry a monthly allowance or a
 -- graduated tier ladder, counted across all of the tenant's attributed usage
 -- per UTC month. Zero and empty keep the single flat price, so existing cards
 -- and statements are unchanged.

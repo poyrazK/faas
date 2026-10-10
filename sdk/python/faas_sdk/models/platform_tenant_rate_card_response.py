@@ -31,11 +31,11 @@ class PlatformTenantRateCardResponse:
     unit: PlatformTenantRateCardResponseUnit
     price_millicents_per_unit: int
     included_units_per_month: int
-    """Free units per tenant per UTC calendar month (ADR-939)."""
+    """Free units per tenant per UTC calendar month (ADR-975)."""
     effective_from: datetime.datetime
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Graduated ladder counted per tenant per UTC calendar month (ADR-939); absent for flat cards."""
+    """Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

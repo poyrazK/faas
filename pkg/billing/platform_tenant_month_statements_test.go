@@ -31,7 +31,7 @@ func linesBy(t *testing.T, in state.PlatformTenantStatementInput) map[string]lin
 	return out
 }
 
-// adr: 939 — a tenant allowance counts across apps and late usage re-prices
+// adr: 975 — a tenant allowance counts across apps and late usage re-prices
 // the month: free units move to the earlier minute and the adjustment bills
 // only the difference, with a negative line but a positive total.
 func TestBuildPlatformTenantMonthStatementAllowanceAdjustment(t *testing.T) {
@@ -74,7 +74,7 @@ func TestBuildPlatformTenantMonthStatementAllowanceAdjustment(t *testing.T) {
 	}
 }
 
-// adr: 939
+// adr: 975
 func TestBuildPlatformTenantMonthStatementTiersAndRules(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -119,7 +119,7 @@ func TestBuildPlatformTenantMonthStatementTiersAndRules(t *testing.T) {
 	}
 }
 
-// adr: 939 — an app card's allowance blocks a cross-app statement only for
+// adr: 975 — an app card's allowance blocks a cross-app statement only for
 // minutes no tenant card prices.
 func TestQuotePlatformTenantUsageAppAllowanceOnlyOnFallback(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

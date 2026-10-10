@@ -1,4 +1,4 @@
-# ADR-934: App consumer statement revisions and unbilled platform failures
+# ADR-970: App consumer statement revisions and unbilled platform failures
 
 - **Status:** accepted
 - **Date:** 2026-10-09

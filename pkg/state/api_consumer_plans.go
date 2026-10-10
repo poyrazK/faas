@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// APIConsumerPlan is a named consumer plan (ADR-938): enforcement limits
+// APIConsumerPlan is a named consumer plan (ADR-974): enforcement limits
 // plus its own rate-card history (APIConsumerRateCard.PlanID). App-wide
 // cards are the default plan. Zero limits mean unlimited.
 type APIConsumerPlan struct {

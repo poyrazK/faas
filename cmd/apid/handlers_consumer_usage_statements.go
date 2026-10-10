@@ -72,7 +72,7 @@ func (s *server) listAPIConsumerUsageStatements(w http.ResponseWriter, r *http.R
 }
 
 // createAPIConsumerUsageStatement plans the period against its existing
-// revisions (ADR-934). Unchanged usage replays the latest revision. A changed
+// revisions (ADR-970). Unchanged usage replays the latest revision. A changed
 // draft is superseded by a new draft, and usage that arrives after
 // finalization becomes a new revision holding only the uncovered units.
 func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -154,7 +154,7 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 	if !ok {
 		return state.APIConsumerUsageStatementInput{}, false, errors.New("API consumer pricing is unavailable")
 	}
-	// Monthly allowances count from the start of start's month (ADR-935).
+	// Monthly allowances count from the start of start's month (ADR-971).
 	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, billing.MonthStart(start), end)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
@@ -217,7 +217,7 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 
 // errTieredStatementPeriod rejects a non-month period priced by a tiered
 // card: re-rating across statements of one month would need credits
-// (ADR-936).
+// (ADR-972).
 var errTieredStatementPeriod = errors.New("tiered rate cards require calendar-month statement periods")
 
 func (s *server) persistAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account,

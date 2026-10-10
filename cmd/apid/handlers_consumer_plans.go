@@ -236,7 +236,7 @@ func (s *server) writePlanAssignment(w http.ResponseWriter, r *http.Request, acc
 
 // consumerPriceHistory returns the cards that priced one consumer: the app
 // default cards and plan cards, resolved through the consumer's plan
-// assignments (ADR-938).
+// assignments (ADR-974).
 func (s *server) consumerPriceHistory(r *http.Request, cards []state.APIConsumerRateCard, accountID, appID, consumerID string) ([]state.APIConsumerRateCard, error) {
 	store, ok := s.store.(state.APIConsumerPlanStore)
 	if !ok {

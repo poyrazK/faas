@@ -27,9 +27,9 @@ class CreatePlatformTenantRateCardRequest:
     currency: str | Unset = "EUR"
     included_units_per_month: int | Unset = UNSET
     """Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order
-    (ADR-939). Statements for periods it prices must cover one calendar month."""
+    (ADR-975). Statements for periods it prices must cover one calendar month."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-939).
+    """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975).
     Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant

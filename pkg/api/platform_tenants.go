@@ -336,10 +336,10 @@ type CreatePlatformTenantRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth are free units per tenant per UTC calendar month
-	// across every attributed app (ADR-939).
+	// across every attributed app (ADR-975).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
 	// Tiers is an optional graduated ladder counted per tenant per UTC month
-	// (ADR-939); it replaces the price and the allowance.
+	// (ADR-975); it replaces the price and the allowance.
 	Tiers         []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	EffectiveFrom *time.Time                `json:"effective_from,omitempty"`
 }
@@ -351,7 +351,7 @@ type PlatformTenantRateCardResponse struct {
 	Currency               string `json:"currency"`
 	Unit                   string `json:"unit"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
-	// IncludedUnitsPerMonth are free units per tenant per UTC month (ADR-939).
+	// IncludedUnitsPerMonth are free units per tenant per UTC month (ADR-975).
 	IncludedUnitsPerMonth int64                     `json:"included_units_per_month"`
 	Tiers                 []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	EffectiveFrom         time.Time                 `json:"effective_from"`

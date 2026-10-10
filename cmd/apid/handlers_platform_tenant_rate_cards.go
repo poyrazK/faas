@@ -85,7 +85,7 @@ func (s *server) createPlatformTenantRateCard(w http.ResponseWriter, r *http.Req
 }
 
 // platformTenantRateCardInput validates a tenant price version. Once any
-// tenant card counts units by month position (ADR-939), a backdated card
+// tenant card counts units by month position (ADR-975), a backdated card
 // could re-split units that statements already billed, so effective_from
 // cannot be in the past.
 func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, accountID, tenantID string,
