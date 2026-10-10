@@ -98,6 +98,10 @@ message ConsumerUsageEvent {
   int64 discovered_at_unix_ms = 12;
   string platform_tenant_surface_id = 13; // anonymous traffic on a verified surface only
   string platform_tenant_jwt_authorization_rule_id = 14; // anonymous traffic attributed by this verified JWT rule
+  // Bounded "METHOD /template" label for consumer-attributed traffic. apid
+  // keeps route-level billable minutes so rate cards can weight routes
+  // (ADR-846). Empty for anonymous traffic and from older gateways.
+  string billing_route = 15;
 }
 
 message ConsumerUsageReceipt {

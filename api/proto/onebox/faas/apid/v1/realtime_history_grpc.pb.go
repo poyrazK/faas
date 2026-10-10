@@ -17,8 +17,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RealtimeHistory_ReadChannelHistory_FullMethodName = "/onebox.faas.apid.v1.RealtimeHistory/ReadChannelHistory"
-	RealtimeHistory_ReportChannelRoute_FullMethodName = "/onebox.faas.apid.v1.RealtimeHistory/ReportChannelRoute"
+	RealtimeHistory_ReadChannelHistory_FullMethodName   = "/onebox.faas.apid.v1.RealtimeHistory/ReadChannelHistory"
+	RealtimeHistory_GetDurableCursor_FullMethodName     = "/onebox.faas.apid.v1.RealtimeHistory/GetDurableCursor"
+	RealtimeHistory_AdvanceDurableCursor_FullMethodName = "/onebox.faas.apid.v1.RealtimeHistory/AdvanceDurableCursor"
+	RealtimeHistory_ResetDurableCursor_FullMethodName   = "/onebox.faas.apid.v1.RealtimeHistory/ResetDurableCursor"
+	RealtimeHistory_ReportChannelRoute_FullMethodName   = "/onebox.faas.apid.v1.RealtimeHistory/ReportChannelRoute"
 )
 
 // RealtimeHistoryClient is the client API for RealtimeHistory service.
@@ -31,6 +34,9 @@ const (
 // HTTP route.
 type RealtimeHistoryClient interface {
 	ReadChannelHistory(ctx context.Context, in *ReadChannelHistoryRequest, opts ...grpc.CallOption) (*ReadChannelHistoryResponse, error)
+	GetDurableCursor(ctx context.Context, in *DurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error)
+	AdvanceDurableCursor(ctx context.Context, in *AdvanceDurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error)
+	ResetDurableCursor(ctx context.Context, in *AdvanceDurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error)
 	ReportChannelRoute(ctx context.Context, in *ReportChannelRouteRequest, opts ...grpc.CallOption) (*ReportChannelRouteResponse, error)
 }
 
@@ -46,6 +52,36 @@ func (c *realtimeHistoryClient) ReadChannelHistory(ctx context.Context, in *Read
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadChannelHistoryResponse)
 	err := c.cc.Invoke(ctx, RealtimeHistory_ReadChannelHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *realtimeHistoryClient) GetDurableCursor(ctx context.Context, in *DurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DurableCursorResponse)
+	err := c.cc.Invoke(ctx, RealtimeHistory_GetDurableCursor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *realtimeHistoryClient) AdvanceDurableCursor(ctx context.Context, in *AdvanceDurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DurableCursorResponse)
+	err := c.cc.Invoke(ctx, RealtimeHistory_AdvanceDurableCursor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *realtimeHistoryClient) ResetDurableCursor(ctx context.Context, in *AdvanceDurableCursorRequest, opts ...grpc.CallOption) (*DurableCursorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DurableCursorResponse)
+	err := c.cc.Invoke(ctx, RealtimeHistory_ResetDurableCursor_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +108,9 @@ func (c *realtimeHistoryClient) ReportChannelRoute(ctx context.Context, in *Repo
 // HTTP route.
 type RealtimeHistoryServer interface {
 	ReadChannelHistory(context.Context, *ReadChannelHistoryRequest) (*ReadChannelHistoryResponse, error)
+	GetDurableCursor(context.Context, *DurableCursorRequest) (*DurableCursorResponse, error)
+	AdvanceDurableCursor(context.Context, *AdvanceDurableCursorRequest) (*DurableCursorResponse, error)
+	ResetDurableCursor(context.Context, *AdvanceDurableCursorRequest) (*DurableCursorResponse, error)
 	ReportChannelRoute(context.Context, *ReportChannelRouteRequest) (*ReportChannelRouteResponse, error)
 	mustEmbedUnimplementedRealtimeHistoryServer()
 }
@@ -85,6 +124,15 @@ type UnimplementedRealtimeHistoryServer struct{}
 
 func (UnimplementedRealtimeHistoryServer) ReadChannelHistory(context.Context, *ReadChannelHistoryRequest) (*ReadChannelHistoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadChannelHistory not implemented")
+}
+func (UnimplementedRealtimeHistoryServer) GetDurableCursor(context.Context, *DurableCursorRequest) (*DurableCursorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDurableCursor not implemented")
+}
+func (UnimplementedRealtimeHistoryServer) AdvanceDurableCursor(context.Context, *AdvanceDurableCursorRequest) (*DurableCursorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdvanceDurableCursor not implemented")
+}
+func (UnimplementedRealtimeHistoryServer) ResetDurableCursor(context.Context, *AdvanceDurableCursorRequest) (*DurableCursorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetDurableCursor not implemented")
 }
 func (UnimplementedRealtimeHistoryServer) ReportChannelRoute(context.Context, *ReportChannelRouteRequest) (*ReportChannelRouteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportChannelRoute not implemented")
@@ -128,6 +176,60 @@ func _RealtimeHistory_ReadChannelHistory_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RealtimeHistory_GetDurableCursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DurableCursorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RealtimeHistoryServer).GetDurableCursor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_GetDurableCursor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RealtimeHistoryServer).GetDurableCursor(ctx, req.(*DurableCursorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RealtimeHistory_AdvanceDurableCursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdvanceDurableCursorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RealtimeHistoryServer).AdvanceDurableCursor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_AdvanceDurableCursor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RealtimeHistoryServer).AdvanceDurableCursor(ctx, req.(*AdvanceDurableCursorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RealtimeHistory_ResetDurableCursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdvanceDurableCursorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RealtimeHistoryServer).ResetDurableCursor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_ResetDurableCursor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RealtimeHistoryServer).ResetDurableCursor(ctx, req.(*AdvanceDurableCursorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RealtimeHistory_ReportChannelRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportChannelRouteRequest)
 	if err := dec(in); err != nil {
@@ -156,6 +258,18 @@ var RealtimeHistory_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadChannelHistory",
 			Handler:    _RealtimeHistory_ReadChannelHistory_Handler,
+		},
+		{
+			MethodName: "GetDurableCursor",
+			Handler:    _RealtimeHistory_GetDurableCursor_Handler,
+		},
+		{
+			MethodName: "AdvanceDurableCursor",
+			Handler:    _RealtimeHistory_AdvanceDurableCursor_Handler,
+		},
+		{
+			MethodName: "ResetDurableCursor",
+			Handler:    _RealtimeHistory_ResetDurableCursor_Handler,
 		},
 		{
 			MethodName: "ReportChannelRoute",

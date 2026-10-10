@@ -8,8 +8,9 @@ import (
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 )
 
-func StartRuntimeConfigReceiver(context.Context, *slog.Logger, *fcvm.Manager, runtimeConfigStore, *fcvm.JailerVMM) (*runtimeConfigReceiver, error) {
+func StartRuntimeConfigReceiver(context.Context, *slog.Logger, *fcvm.Manager, runtimeConfigStore, *fcvm.JailerVMM, *vmmdgrpc.DivergedInstances) (*runtimeConfigReceiver, error) {
 	return nil, fmt.Errorf("runtime config vsock requires Linux")
 }

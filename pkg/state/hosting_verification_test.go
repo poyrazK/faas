@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,10 +27,19 @@ func TestHostingVerificationProgressSurvivesReplayAndStageChanges(t *testing.T) 
 			t.Fatalf("begin=%+v err=%v", p, err)
 		}
 		next := at.Add(5 * time.Second)
-		retry := state.HostingVerificationUpdate{Action: state.HostingVerificationRetry, Attempt: p.Attempts, At: at, RetryNotBefore: next}
+		routeChecks := &apihostingreceipt.RouteCheckSet{
+			Source: apihostingreceipt.RouteCheckSourceOpenAPI, DocumentSHA256: strings.Repeat("a", 64),
+			Status: apihostingreceipt.RouteCheckSetUnavailable,
+			Checks: []apihostingreceipt.RouteCheckResult{{Method: "GET", Path: "/v1/health", Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorTransportUnavailable}},
+		}
+		retry := state.HostingVerificationUpdate{Action: state.HostingVerificationRetry, Attempt: p.Attempts, At: at, ErrorCode: apihostingreceipt.SmokeErrorGatewayUnavailable, RouteChecks: routeChecks, RetryNotBefore: next}
 		p, err = progressStore.UpdateDeploymentHostingVerification(ctx, dep.ID, retry)
-		if err != nil || p.LastErrorCode != apihostingreceipt.SmokeErrorAuthorizationUnavailable || p.RetryNotBefore == nil || !p.RetryNotBefore.Equal(next) {
+		if err != nil || p.LastErrorCode != apihostingreceipt.SmokeErrorGatewayUnavailable || p.RetryNotBefore == nil || !p.RetryNotBefore.Equal(next) || p.LastRouteChecks == nil || p.LastRouteChecks.Checks[0].Path != "/v1/health" {
 			t.Fatalf("retry=%+v err=%v", p, err)
+		}
+		routeChecks.Checks[0].Path = "/mutated"
+		if p.LastRouteChecks.Checks[0].Path != "/v1/health" {
+			t.Fatal("durable route check evidence aliases the caller's slice")
 		}
 		before, _ := store.DeploymentByID(ctx, dep.ID)
 		begin.At = next.Add(-time.Nanosecond)
@@ -46,19 +56,19 @@ func TestHostingVerificationProgressSurvivesReplayAndStageChanges(t *testing.T) 
 			t.Fatal(err)
 		}
 		var stages state.StageState
-		if err := json.Unmarshal(staged.StageState, &stages); err != nil || stages.HostingVerification == nil || !stages.HostingVerification.DeadlineAt.Equal(p.DeadlineAt) {
+		if err := json.Unmarshal(staged.StageState, &stages); err != nil || stages.HostingVerification == nil || !stages.HostingVerification.DeadlineAt.Equal(p.DeadlineAt) || stages.HostingVerification.LastRouteChecks == nil || stages.HostingVerification.LastRouteChecks.Checks[0].Path != "/v1/health" {
 			t.Fatalf("stage update lost recovery: %+v err=%v", stages, err)
 		}
 		begin.At = next
 		p, err = progressStore.UpdateDeploymentHostingVerification(ctx, dep.ID, begin)
-		if err != nil || p.Attempts != 2 || !p.StartedAt.Equal(at) || !p.DeadlineAt.Equal(at.Add(api.HostingVerificationRecoveryWindow)) || p.RetryNotBefore != nil {
+		if err != nil || p.Attempts != 2 || !p.StartedAt.Equal(at) || !p.DeadlineAt.Equal(at.Add(api.HostingVerificationRecoveryWindow)) || p.RetryNotBefore != nil || p.LastRouteChecks == nil || p.LastRouteChecks.Checks[0].Path != "/v1/health" {
 			t.Fatalf("replay renewed deadline: %+v err=%v", p, err)
 		}
 		if _, err := progressStore.UpdateDeploymentHostingVerification(ctx, dep.ID, retry); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("stale attempt accepted: %v", err)
 		}
 		p, err = progressStore.UpdateDeploymentHostingVerification(ctx, dep.ID, state.HostingVerificationUpdate{Action: state.HostingVerificationComplete, Attempt: p.Attempts, At: next})
-		if err != nil || p.LastErrorCode != "" || p.RetryNotBefore != nil || p.CompletedAt == nil || !p.CompletedAt.Equal(next) {
+		if err != nil || p.LastErrorCode != "" || p.LastRouteChecks != nil || p.RetryNotBefore != nil || p.CompletedAt == nil || !p.CompletedAt.Equal(next) {
 			t.Fatalf("completion=%+v err=%v", p, err)
 		}
 		after, _ = store.DeploymentByID(ctx, dep.ID)
@@ -113,7 +123,7 @@ func TestHostingVerificationRecoveryReasonsShareDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		deadline := p.DeadlineAt
-		codes := []string{apihostingreceipt.SmokeErrorAuthorizationUnavailable, apihostingreceipt.SmokeErrorGatewayUnavailable, apihostingreceipt.SmokeErrorTransportUnavailable, apihostingreceipt.SmokeErrorResponseUnproven, apihostingreceipt.SmokeErrorDeploymentMismatch}
+		codes := []string{apihostingreceipt.SmokeErrorAuthorizationUnavailable, apihostingreceipt.SmokeErrorGatewayUnavailable, apihostingreceipt.SmokeErrorTransportUnavailable, apihostingreceipt.SmokeErrorResponseUnproven, apihostingreceipt.SmokeErrorDeploymentMismatch, apihostingreceipt.SmokeErrorContractUnavailable}
 		for i, code := range codes {
 			next := at.Add(time.Second)
 			p, err = progressStore.UpdateDeploymentHostingVerification(ctx, dep.ID, state.HostingVerificationUpdate{Action: state.HostingVerificationRetry, Attempt: p.Attempts, ErrorCode: code, At: at, RetryNotBefore: next})

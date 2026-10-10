@@ -25,13 +25,17 @@ export type AutomationSimulationStep = {
    */
   output?: any;
   /**
-   * Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+   * Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure context.
    */
   attempts?: Array<AutomationSimulationAttempt>;
   run?: string;
   path?: string;
   method?: string;
   integration_id?: string;
+  /**
+   * Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when empty or unresolved.
+   */
+  raw_query?: string;
   wait_for?: string;
   parent_step?: string;
   item_index?: number;

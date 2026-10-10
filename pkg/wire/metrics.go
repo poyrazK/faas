@@ -2168,9 +2168,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 				InitSnapshotOutcomeReuseCleanupFailed,
 				InitSnapshotOutcomeBeforeCheckpointFailed,
 				InitSnapshotOutcomeSnapshotFailed,
+				InitSnapshotOutcomeSourceDiverged,
 			} {
 				initSnapshotAttempts.WithLabelValues(site, outcome)
-				if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+				if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed && outcome != InitSnapshotOutcomeSourceDiverged {
 					initSnapshotCaptureDuration.WithLabelValues(site, outcome)
 				}
 			}
@@ -5926,6 +5927,9 @@ const (
 	InitSnapshotOutcomeReuseCleanupFailed     = "reuse_cleanup_failed"
 	InitSnapshotOutcomeBeforeCheckpointFailed = "before_checkpoint_failed"
 	InitSnapshotOutcomeSnapshotFailed         = "snapshot_failed"
+	// InitSnapshotOutcomeSourceDiverged (ADR-740): vmmd refused to snapshot
+	// an instance that was served a developer live patch and destroyed it.
+	InitSnapshotOutcomeSourceDiverged = "source_diverged"
 )
 
 // RecordInitSnapshotAttempt counts one terminal init snapshot path. A reused
@@ -5940,12 +5944,13 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	switch outcome {
 	case InitSnapshotOutcomeCaptured, InitSnapshotOutcomeReused,
 		InitSnapshotOutcomeReuseCleanupFailed,
-		InitSnapshotOutcomeBeforeCheckpointFailed, InitSnapshotOutcomeSnapshotFailed:
+		InitSnapshotOutcomeBeforeCheckpointFailed, InitSnapshotOutcomeSnapshotFailed,
+		InitSnapshotOutcomeSourceDiverged:
 	default:
 		return
 	}
 	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
-	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed && outcome != InitSnapshotOutcomeSourceDiverged {
 		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
 	}
 }

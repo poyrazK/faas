@@ -9,6 +9,10 @@ from ..models.set_route_monitor_request_customer_group_by import (
     SetRouteMonitorRequestCustomerGroupBy,
     check_set_route_monitor_request_customer_group_by,
 )
+from ..models.set_route_monitor_request_on_violation import (
+    SetRouteMonitorRequestOnViolation,
+    check_set_route_monitor_request_on_violation,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -27,6 +31,9 @@ class SetRouteMonitorRequest:
     routes: list[RouteMonitorRoute]
     customer_group_by: SetRouteMonitorRequestCustomerGroupBy | Unset = UNSET
     """Optional request-time identity dimension. Omission disables per-cohort evaluation."""
+    on_violation: SetRouteMonitorRequestOnViolation | Unset = UNSET
+    """report (default) only records incidents. rollback requests one checked rollback per early error-budget
+    incident and requires at least one route with max_5xx_rate_bps."""
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
@@ -42,6 +49,10 @@ class SetRouteMonitorRequest:
         if not isinstance(self.customer_group_by, Unset):
             customer_group_by = self.customer_group_by
 
+        on_violation: str | Unset = UNSET
+        if not isinstance(self.on_violation, Unset):
+            on_violation = self.on_violation
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -53,6 +64,8 @@ class SetRouteMonitorRequest:
         )
         if customer_group_by is not UNSET:
             field_dict["customer_group_by"] = customer_group_by
+        if on_violation is not UNSET:
+            field_dict["on_violation"] = on_violation
 
         return field_dict
 
@@ -79,11 +92,19 @@ class SetRouteMonitorRequest:
         else:
             customer_group_by = check_set_route_monitor_request_customer_group_by(_customer_group_by)
 
+        _on_violation = d.pop("on_violation", UNSET)
+        on_violation: SetRouteMonitorRequestOnViolation | Unset
+        if isinstance(_on_violation, Unset):
+            on_violation = UNSET
+        else:
+            on_violation = check_set_route_monitor_request_on_violation(_on_violation)
+
         set_route_monitor_request = cls(
             enabled=enabled,
             expected_revision=expected_revision,
             routes=routes,
             customer_group_by=customer_group_by,
+            on_violation=on_violation,
         )
 
         return set_route_monitor_request

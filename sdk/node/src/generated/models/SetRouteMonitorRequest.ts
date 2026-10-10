@@ -12,6 +12,10 @@ export type SetRouteMonitorRequest = {
    * Optional request-time identity dimension. Omission disables per-cohort evaluation.
    */
   customer_group_by?: 'tenant' | 'consumer';
+  /**
+   * report (default) only records incidents. rollback requests one checked rollback per early error-budget incident and requires at least one route with max_5xx_rate_bps.
+   */
+  on_violation?: 'report' | 'rollback';
   expected_revision: number;
   routes: Array<RouteMonitorRoute>;
 };

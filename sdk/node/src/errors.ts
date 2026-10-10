@@ -23,6 +23,17 @@
  * (the Node SDK sets `noUncheckedIndexedAccess:true` in tsconfig).
  */
 export interface Problem {
+  /** Channel head returned by realtime_sequence_conflict. */
+  current_sequence?: number;
+  condition_field?: string;
+  condition_index?: number;
+  field_exists?: boolean;
+  entity_key?: string;
+  expected_version?: number;
+  current_version?: number;
+  entity_exists?: boolean;
+  message_index?: number;
+  expected_sequence?: number;
   type?: string;
   /** URI reference identifying the specific problem occurrence. */
   instance?: string;

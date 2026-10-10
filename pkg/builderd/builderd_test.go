@@ -1741,7 +1741,8 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	fvm := &fakeVM{
 		// fakeVM.WaitForCompletion returns f.out; pre-set it so the
 		// spawn path produces the canned layer path.
-		out: BuildOutcome{OCIImage: layerPath, ExitCode: 0, LogTailBytes: 0, BuildkitVer: "0.32.2", RailpackVer: "0.38.0"},
+		out: BuildOutcome{OCIImage: layerPath, ExitCode: 0, LogTailBytes: 0, BuildkitVer: "0.32.2", RailpackVer: "0.38.0",
+			DevPatch: &api.DevPatchSourceMap{Version: 1, Verbatim: true, ImageDir: "/app", RebuildPaths: []string{"package.json"}}},
 	}
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -1752,6 +1753,9 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	prov, err := store.BuildProvenanceByBuildID(context.Background(), buildID)
 	if err != nil {
 		t.Fatalf("BuildProvenanceByBuildID: %v (fresh-build path must populate)", err)
+	}
+	if prov.DevPatch == nil || !prov.DevPatch.Verbatim || prov.DevPatch.ImageDir != "/app" {
+		t.Errorf("DevPatch = %+v, want the VM-reported verbatim source map", prov.DevPatch)
 	}
 	if prov.SourceSHA256 == "" {
 		t.Errorf("SourceSHA256 = empty, want non-empty (hashFile at line ~318)")
@@ -1771,6 +1775,10 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	}
 	if cached.Toolchain.BuildkitVer != prov.BuildkitVer || cached.Toolchain.RailpackVer != prov.RailpackVer {
 		t.Errorf("cached toolchain = (%q, %q), want (%q, %q)", cached.Toolchain.BuildkitVer, cached.Toolchain.RailpackVer, prov.BuildkitVer, prov.RailpackVer)
+	}
+	// A later cache hit must report the same source map as the build it reuses.
+	if cached.Toolchain.DevPatch == nil || !cached.Toolchain.DevPatch.Verbatim {
+		t.Errorf("cached DevPatch = %+v, want the producing build's source map", cached.Toolchain.DevPatch)
 	}
 }
 

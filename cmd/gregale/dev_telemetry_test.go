@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDevPhaseTrackerRendersMappedTimings(t *testing.T) {
@@ -75,6 +77,23 @@ func TestFormatDevPhaseDurationRoundsToReadableUnits(t *testing.T) {
 		if got := formatDevPhaseDuration(durationMS); got != want {
 			t.Errorf("formatDevPhaseDuration(%d) = %q, want %q", durationMS, got, want)
 		}
+	}
+}
+
+func TestDevPhaseTrackerReceiptCarriesDevPatchPreview(t *testing.T) {
+	tracker := newDevPhaseTracker()
+	if receipt := tracker.receipt("live"); receipt.DevPatch != nil {
+		t.Fatalf("receipt without a server preview = %+v, want no dev_patch", receipt.DevPatch)
+	}
+	preview := &api.DevPatchPreview{Eligible: true, ChangedPaths: 2, PatchBytes: 90}
+	tracker.setDevPatch(preview)
+	preview.ChangedPaths = 99 // the tracker keeps its own copy
+	body, err := json.Marshal(tracker.receipt("live"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"dev_patch":{"eligible":true,"changed_paths":2,"patch_bytes":90}`) {
+		t.Fatalf("receipt = %s, want the recorded dev_patch preview", body)
 	}
 }
 

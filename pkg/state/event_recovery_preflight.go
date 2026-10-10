@@ -20,6 +20,10 @@ type EventRecoveryPreflightStore interface {
 
 func newRecoveryPreflight(job api.EventRecoveryJob, now, next, window time.Time, spent int) api.EventRecoveryPreflight {
 	out := api.EventRecoveryPreflight{JobID: job.ID, ObservedAt: now, State: job.State, Active: eventRecoveryActive(job.State) && job.ExpiresAt.After(now), RatePerSecond: job.RatePerSecond, RemainingLifetimeSeconds: max(0, job.ExpiresAt.Sub(now).Seconds()), ReasonCounts: map[string]int64{}, CapacityScopes: map[string]int64{}, Sample: []api.EventRecoveryPreflightItem{}}
+	if job.Selection.ProtectReceipts && out.Active {
+		until := job.ExpiresAt
+		out.ReceiptProtectionUntil = &until
+	}
 	out.AssumesImmediateResume = job.State == "paused" && out.Active
 	pending := job.PendingCount
 	finish := now
@@ -88,7 +92,7 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 		return api.EventRecoveryPreflight{}, err
 	}
 	out := newRecoveryPreflight(job, now, timeFromPgtype(row.NextAttemptAt), timeFromPgtype(row.WindowStartedAt), int(row.WindowCount))
-	items, err := q.EventRecoveryPreflight(ctx, tx, sqlc.EventRecoveryPreflightParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(id), NowAt: pgtypeFromTime(now), PageLimit: api.EventRecoveryRecipientsMax + 1})
+	items, err := q.EventRecoveryPreflight(ctx, tx, sqlc.EventRecoveryPreflightParams{RetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), AccountID: mustPgUUID(account), JobID: mustPgUUID(id), NowAt: pgtypeFromTime(now), PageLimit: api.EventRecoveryRecipientsMax + 1})
 	if err != nil {
 		return out, err
 	}
@@ -109,6 +113,7 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 			}
 		}
 		addRecoveryPreflight(&out, item.Position, reason, scope)
+		addRecoveryReceiptRetention(&out, item.Position, timestamptzToTimePtr(item.ReceiptRetainUntil), item.ReceiptRetentionHeld)
 	}
 	return out, tx.Commit(ctx)
 }
@@ -258,6 +263,7 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 	for _, work := range m.eventFanout {
 		receipts[work.ID] = work
 	}
+	holds := m.eventRecoveryReceiptHoldsLocked(account, now)
 	capacity := m.preflightCapacityLocked(job)
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
@@ -268,6 +274,41 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 			return out, err
 		}
 		addRecoveryPreflight(&out, item.Position, reason, scope)
+		var until *time.Time
+		if work := receipts[item.OutboxID]; work != nil && work.Delivered && !work.DeliveredAt.IsZero() {
+			at := work.DeliveredAt.Add(PublishedEventIdentityRetention)
+			until = &at
+		}
+		_, held := holds[item.OutboxID]
+		addRecoveryReceiptRetention(&out, item.Position, until, held)
 	}
 	return out, nil
+}
+
+// Holds are current observations. Recovery protection is bounded by job expiry
+// and pending-item state; other jobs and backfills can release their holds.
+func addRecoveryReceiptRetention(out *api.EventRecoveryPreflight, position int64, until *time.Time, held bool) {
+	if until == nil {
+		return
+	}
+	if held {
+		out.ReceiptRetentionHeldCount++
+	} else {
+		boundary := maxRecoveryTime(out.ObservedAt.Add(api.EventRetentionDefaultWindow), out.EarliestDrainAt)
+		if !until.After(boundary) {
+			out.ReceiptRetentionWarningCount++
+		}
+		if out.EarliestUnheldRetainUntil == nil || until.Before(*out.EarliestUnheldRetainUntil) {
+			at := *until
+			out.EarliestUnheldRetainUntil = &at
+		}
+		out.MinimumDrainCrossesReceiptRetention = out.EarliestUnheldRetainUntil != nil && !out.EarliestDrainAt.Before(*out.EarliestUnheldRetainUntil)
+	}
+	for i := range out.Sample {
+		if out.Sample[i].Position == position {
+			out.Sample[i].ReceiptRetainUntil = until
+			out.Sample[i].ReceiptRetentionHeld = held
+			break
+		}
+	}
 }

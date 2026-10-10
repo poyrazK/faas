@@ -90,6 +90,56 @@ func TestDataAPIDiffCompatibility(t *testing.T) {
 	}
 }
 
+func TestDataAPIDiffOfflineUsesValidatedContractsAndNeverInspectsAnApp(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	var output bytes.Buffer
+	previous := osStdout
+	osStdout = &output
+	t.Cleanup(func() { osStdout = previous })
+	f := authedFakeAPI(t, `{}`, http.StatusInternalServerError)
+	root := t.TempDir()
+	baseline, currentPath := filepath.Join(root, "before.json"), filepath.Join(root, "after.json")
+	before := dataAPIDiffFixture()
+	after := dataAPIDiffFixture()
+	after.Tables[0].Columns[0].Type = "number"
+	if err := os.WriteFile(baseline, dataAPIContractFixture(t, before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentPath, dataAPIContractFixture(t, after), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []bool{false, true} {
+		output.Reset()
+		args := []string{"diff", "--baseline", baseline, "--current", currentPath}
+		if check {
+			args = append(args, "--check")
+		}
+		if code := cmdDataAPI(args); (code != 0) != check {
+			t.Fatalf("check=%v exit=%d", check, code)
+		}
+		var report struct {
+			Breaking int             `json:"breaking"`
+			Changes  []dataAPIChange `json:"changes"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Breaking != 1 || len(report.Changes) != 1 {
+			t.Fatalf("report: %s, %v", output.String(), err)
+		}
+	}
+	if err := os.WriteFile(currentPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdDataAPI([]string{"diff", "--baseline", baseline, "--current", currentPath}); code == 0 {
+		t.Fatal("accepted an invalid current contract")
+	}
+	if code := cmdDataAPI([]string{"diff", "notes", "--baseline", baseline, "--current", currentPath}); code == 0 {
+		t.Fatal("accepted an ambiguous local/remote target")
+	}
+	if f.sawMethod != "" {
+		t.Fatal("offline comparison contacted the API")
+	}
+}
+
 func TestDataAPIContractRefusesIncompleteOrUnsupportedSnapshots(t *testing.T) {
 	valid := dataAPIContractFixture(t, dataAPIDiffFixture())
 	if _, err := parseDataAPIContract(valid); err != nil {

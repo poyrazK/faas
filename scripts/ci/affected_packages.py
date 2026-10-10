@@ -50,7 +50,7 @@ INVARIANT_PACKAGES = ("tests/property",)
 # assigned whole, each one's tests are split by name across every shard
 # (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
 # the ones a change selects.
-SPLIT_PACKAGES = ("pkg/state",)
+SPLIT_PACKAGES = ("cmd/apid", "pkg/state")
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.

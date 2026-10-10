@@ -7,6 +7,7 @@ import type { CreateDevBridgeResponse } from '../models/CreateDevBridgeResponse.
 import type { DevBridgeActivity } from '../models/DevBridgeActivity.js';
 import type { DevBridgeSession } from '../models/DevBridgeSession.js';
 import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js';
+import type { DevPatchStatusResponse } from '../models/DevPatchStatusResponse.js';
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
@@ -211,6 +212,52 @@ export class DevService {
     });
   }
   /**
+   * Inspect delivery of a developer live patch.
+   * Reports whether a published developer live patch (ADR-740) reached the running developer environment. The state is pending until an instance acknowledges it, then applied, or failed with a bounded error code. Never renews the developer lease.
+   * @returns DevPatchStatusResponse Live patch delivery state.
+   * @throws ApiError
+   */
+  public static getDevPatchStatus({
+    project,
+    generation,
+    workspaceId,
+  }: {
+    /**
+     * Project label of the developer session that published the patch.
+     */
+    project: string,
+    /**
+     * Patch generation returned in the upload response's dev_patch.generation.
+     */
+    generation: number,
+    /**
+     * Opaque local workspace identity returned by the CLI derivation.
+     */
+    workspaceId?: string,
+  }): CancelablePromise<DevPatchStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions/{project}/patches/{generation}',
+      path: {
+        'project': project,
+        'generation': generation,
+      },
+      query: {
+        'workspace_id': workspaceId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Create or refresh a remote developer environment.
    * Creates one stable preview app per account, project, and developer workspace, or renews its 24-hour lease. Omitting workspace_id retains the legacy account-and-project identity.
    * @returns DevSessionResponse Existing developer environment refreshed.
@@ -239,6 +286,46 @@ export class DevService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a remote developer environment.
+   * Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+   * @returns DevSessionResponse Developer environment.
+   * @throws ApiError
+   */
+  public static getDevSession({
+    project,
+    workspaceId,
+  }: {
+    /**
+     * Stable local project label used to derive the developer URL.
+     */
+    project: string,
+    /**
+     * Opaque local workspace identity of the environment to read, as derived by the CLI. Omit only to read a legacy session.
+     */
+    workspaceId?: string,
+  }): CancelablePromise<DevSessionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions/{project}',
+      path: {
+        'project': project,
+      },
+      query: {
+        'workspace_id': workspaceId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

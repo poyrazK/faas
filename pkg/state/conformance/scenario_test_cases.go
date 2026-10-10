@@ -77,6 +77,18 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 			t.Fatalf("TCP rule roundtrip: %+v %v", got, err)
 		}
 	}
+	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, runID); err != nil {
+		t.Fatalf("ClearScenarioTestChaosPlan: %v", err)
+	}
+	if got, err := s.ScenarioTestChaosForCall(ctx, runID, app.ID, "worker"); err != nil || len(got.Rules) != 0 {
+		t.Fatalf("ScenarioTestChaosForCall after clear = (%+v, %v), want no rules", got, err)
+	}
+	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, "invalid"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("clear with invalid run ID = %v, want ErrConflict", err)
+	}
+	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, strings.Repeat("d", 32)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("clear missing namespace = %v, want ErrNotFound", err)
+	}
 	if lease, err := s.ScenarioTestChaosForCall(ctx, strings.Repeat("b", 32), app.ID, "worker"); err != nil || len(lease.Rules) != 0 {
 		t.Fatalf("cross-run chaos lookup = (%+v, %v), want empty", lease, err)
 	}

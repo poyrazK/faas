@@ -19,7 +19,7 @@ func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
 		t.Fatalf("init exit=%d: %s", code, stderr.String())
 	}
 	for _, file := range []string{
-		"README.md", "Procfile", "package-lock.json", "data-api.json", ".gitignore", ".gregaleignore",
+		"README.md", "Procfile", "package-lock.json", "data-api.json", "data-api.requests.json", ".gitignore", ".gregaleignore",
 		"client/package-lock.json", "client/src/database.types.ts", "client/test/authorization.mjs",
 		"tools/artifacts.mjs", "tools/artifact-lib.mjs",
 		".github/workflows/data-api-client.yml", ".github/workflows/data-api-preview.yml",
@@ -44,7 +44,7 @@ func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
 	if err := json.Unmarshal(configFile, &config); err != nil || config.Output != "client/src/database.types.ts" || strings.Join(config.Check.Command, " ") != "npm run typecheck" {
 		t.Fatalf("scaffold cannot use the sync workflow: %+v, %v", config, err)
 	}
-	if !strings.Contains(out.String(), "data-api sync") || !strings.Contains(out.String(), "tools/artifacts.mjs pin") || docsURLForTemplate("data-api-starter") != "https://gregale.dev/docs/data-api" {
+	if !strings.Contains(out.String(), "--replay data-api.requests.json") || !strings.Contains(out.String(), "data-api sync") || !strings.Contains(out.String(), "tools/artifacts.mjs pin") || docsURLForTemplate("data-api-starter") != "https://gregale.dev/docs/data-api" {
 		t.Fatal("scaffold did not explain the Data API next steps")
 	}
 }
@@ -57,7 +57,13 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 	if err := os.Mkdir(filepath.Join(dest, ".gregale-tools"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{".gregale-tools/gregale", "data-api-artifacts.json"} {
+	if err := os.Mkdir(filepath.Join(dest, ".gregale"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, ".gregale", "data-api-dev-local.json"), []byte("private test identity"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{".gregale-tools/gregale", "data-api-artifacts.json", "data-api.requests.json", "data-api.requests.json.test.tmp"} {
 		if err := os.WriteFile(filepath.Join(dest, file), []byte("owner tooling"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +79,7 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 		}
 	}
 	for name := range entries {
-		for _, excluded := range []string{"notes/client/", "notes/tools/", "notes/ci/", "notes/test/", "notes/.github/", "notes/.gregale-tools/", "notes/data-api-artifacts.json"} {
+		for _, excluded := range []string{"notes/client/", "notes/tools/", "notes/ci/", "notes/test/", "notes/.github/", "notes/.gregale-tools/", "notes/.gregale/", "notes/data-api-artifacts.json", "notes/data-api.requests.json"} {
 			if strings.HasPrefix(name, excluded) {
 				t.Errorf("migration upload included application-only file %s", name)
 			}

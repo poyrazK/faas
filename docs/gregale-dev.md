@@ -37,6 +37,7 @@ live.
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
+gregale dev --all              # run every deployable workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
 gregale dev status             # show developer-environment quota usage
@@ -44,13 +45,20 @@ gregale dev history            # inspect recent edit-to-live timings and SLO gui
 gregale dev setup              # preflight a project and print the exact next command
 gregale dev setup --start      # preflight, provision, and start the developer loop
 gregale dev history --limit 50 # show a larger bounded history
+gregale dev info               # show the URL, app slug, lease, and database without renewing
+gregale dev trigger invoke --path /orders  # call the developer app through the invoke API
+gregale dev trigger cron /jobs/nightly     # fire a cron route declared in gregale.yaml
+gregale dev trigger delayed-task --delay 5m --path /reminders # schedule a delayed task
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
 gregale dev --service-override-file .env.services.local # opt in to service URL overrides
 gregale dev --postgres         # provision an isolated database and inject DATABASE_URL
 gregale dev --postgres --postgres-region eu-central-1 # choose database placement
+gregale dev --postgres --postgres-seed "npm run seed" # seed a new database once
+gregale dev --postgres --postgres-seed "npm run seed" --reseed # run the seed again
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
+gregale dev --ttl 72h          # keep the environment 72h after the latest sync
 ```
 
 For a repeatable team setup, put non-secret developer defaults in the
@@ -62,6 +70,8 @@ dev:
   service_override_file: .env.services.local
   postgres: true
   postgres_region: eu-central-1
+  ttl: 72h
+  postgres_seed: npm run seed
 ```
 
 These paths are relative to the selected source root. The files must still be
@@ -82,6 +92,32 @@ edit-to-live timing, and a phase-level hint when the latest sync regresses.
 `--path` or `--name` to select a workspace and `--json` for the summary and
 receipt list as one stable object. History is keyed by deployment ID, so a
 retry cannot double-count a sync.
+
+`gregale dev info` shows the selected environment's stable URL, the backing
+`dev-*` app slug that every other `gregale` command accepts, the lease expiry,
+and the safe managed PostgreSQL state. It reads
+`GET /v1/dev/sessions/{project}` and, unlike starting `gregale dev`, never
+renews the lease or provisions anything. `--json` emits the session object.
+
+`gregale dev trigger` exercises request-driven and async paths against the
+developer app without copying its slug. Put `--path` and `--name` (source
+selection) before the verb; everything after the verb belongs to the
+delegated command, so `invoke --path` still means the URL path:
+
+- `gregale dev trigger invoke [invoke flags]` runs `gregale invoke` against
+  the developer app, including `--async`.
+- `gregale dev trigger cron [ROUTE]` fires a cron trigger declared for this
+  app in `gregale.yaml`. Manifest crons are keyed to the production app slug,
+  so they never run on a schedule in a developer environment. The trigger
+  sends the request a scheduled cron would send: a body-less `POST` to the
+  route, synchronously through the invoke API. `ROUTE` is optional when the
+  app declares exactly one cron route.
+- `gregale dev trigger delayed-task [delayed-task add flags]` runs
+  `gregale delayed-task add` against the developer app.
+
+A stray app slug or `--app` is rejected rather than silently retargeting
+another app. If no environment exists for the source directory (or its lease
+expired), the commands say so and point to `gregale dev`.
 
 `gregale dev setup` is the first-run preflight. It is local and read-only: it
 uses the same source-shape detector as `gregale dev`, validates
@@ -122,8 +158,29 @@ database for this local workspace and binds its sealed credential to the
 developer app as `DATABASE_URL`. The database is reused on later starts, and
 the binding is refreshed asynchronously if the provider is still provisioning.
 The safe database and binding states appear in human output and `--json`
-receipts; credentials and connection URLs never do. `--stop` and the 24-hour
-developer lease clean up the binding and database together.
+receipts; credentials and connection URLs never do. `--stop` and the developer
+lease clean up the binding and database together.
+
+`--postgres-seed` (or `dev.postgres_seed`) loads development data into that
+database. The CLI never receives database credentials, so the command runs
+inside the developer app instead, as a one-off
+[app task](adr/230-deployment-attached-app-tasks.md) against the live
+deployment with the app's secrets and `DATABASE_URL` binding. After the first
+live sync, the CLI waits for the binding to become ready, runs the command
+through the app shell, and prints its bounded output prefixed with `seed |`.
+
+The seed runs once per provisioned database. Completion is recorded in the
+Gregale config directory, keyed by the database ID, so a database recreated
+after `--stop` or lease expiry is seeded again while later `gregale dev` runs
+against the same database skip it. `--reseed` runs it again unconditionally.
+The marker is local to this machine, so write seeds that are safe to repeat.
+
+A failed seed does not fail the live sync: the diagnostic
+(`developer_seed_failed`, phase `seed`) explains what happened, and the seed is
+retried after the next successful sync. With `--once`, a failed seed makes the
+command exit non-zero. With `--json`, the result is emitted as a
+`{"event":"developer_seed",...}` object containing the database, task ID,
+status and exit code — never the command output or credentials.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with
@@ -144,6 +201,35 @@ cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
 NDJSON so a long-running watcher can be consumed incrementally; no source,
 secret, or runtime-log content is included.
 
+Receipts also carry a `dev_patch` object. It reports whether the edit could
+be applied to the running environment as a live source patch instead of a
+rebuild ([ADR-740](adr/740-developer-live-source-patch.md)), comparing the
+newest source with the source of the build that is live. `eligible` is true
+when that build copied its source into the image unchanged (for example a Node
+app without a `build` script, or Python with `requirements.txt`) and the
+changes touch no build input such as `package.json`, a lockfile,
+`requirements.txt`, `railpack.json`, or `gregale.yaml`. Otherwise `reason`
+says why, for example `build_command`, `rebuild_input_changed`,
+`no_base_manifest` (the live build predates this feature), or
+`no_live_build`. `changed_paths` and `patch_bytes` describe the changes.
+
+Applying eligible patches to the running environment is operator-gated while
+it completes native acceptance. Until it is enabled, `dev_patch` is a
+measurement only and the normal developer build always runs; when enabled, the
+build still runs and replaces the patched environment once it is live.
+
+When a sync publishes a live patch, `dev_patch.generation` is set and the
+watcher follows its delivery while the build continues. As soon as the
+running environment applies it, the terminal prints
+`Live patch applied in 0.8s; the app is restarting with your edit while the full build continues.`
+The phase summary then includes `patch=0.8s` (edit-to-patch, measured on your
+machine), and `gregale dev history` shows `(live patch 0.8s)` beside the sync.
+A patch that fails to apply is reported with its reason, and the build still
+delivers the edit. With `--json`, the watcher emits a
+`{"event":"developer_patch",...}` NDJSON record with the generation, `state`
+(`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
+`developer_sync` receipt includes the same `patch` phase.
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also
@@ -160,12 +246,104 @@ same one. The non-secret local identity lives in the Gregale config directory;
 `FAAS_DEVELOPER_ID` can override it with 32 lowercase hexadecimal characters
 for reproducible automation.
 
-Each sync renews a 24-hour lease; the existing preview janitor tears down an
-expired environment. Stopping the watcher with Ctrl-C leaves the environment
-available—use `--stop` from the same source directory when it should be removed
-immediately.
+Each sync renews the environment's lease; the existing preview janitor tears
+down an expired environment. The lease is 24 hours unless `--ttl` (or `dev.ttl`
+in `gregale.yaml`) chooses another Go duration such as `8h` or `72h`. A lease
+must be at least one hour and at most the plan's developer lease maximum (see
+[Plans](plans.md#developer-environments)); a longer request fails with
+`plan_limit_developer_lease` before the environment is created or refreshed.
+The CLI validates the value locally and prints the effective lease when the
+environment starts; `gregale dev setup` includes it in the start command.
+Because every sync renews the lease with the requested value, the most recent
+start wins: running without `--ttl` returns the environment to 24 hours.
+Stopping the watcher with Ctrl-C leaves the environment available—use `--stop`
+from the same source directory when it should be removed immediately.
+
+## Debug the remote environment
+
+`gregale dev --debug` (or `debug: true` in the `dev:` block of
+`gregale.yaml`) starts the Node.js inspector inside the developer environment
+and exposes it on your machine
+([ADR-741](adr/741-developer-debugger-attach.md)):
+
+```sh
+gregale dev --debug                    # inspector on 127.0.0.1:9229
+gregale dev --debug --debug-port 9339  # pick another local port
+```
+
+After the first live sync the CLI prints
+`Debugger listening on 127.0.0.1:9229`. Attach any Node.js debugger to that
+address, for example a VS Code configuration:
+
+```json
+{
+  "type": "node",
+  "request": "attach",
+  "name": "Attach to gregale dev",
+  "address": "127.0.0.1",
+  "port": 9229,
+  "remoteRoot": "/app",
+  "localRoot": "${workspaceFolder}",
+  "restart": true
+}
+```
+
+or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
+is its own tunnel through the API, authenticated with your CLI credentials;
+the inspector port is never published on the app's URL. Only `gregale dev`
+environments accept a debugger, and up to four connections per environment.
+
+While a debugger is attached the environment does not park, and a process
+paused at a breakpoint is not restarted for failing its liveness probe. A
+request held at a breakpoint is still subject to the edge request deadline,
+so resume within it. A live patch restarts the process and drops the
+debugger; with `"restart": true` VS Code reconnects on its own. Running
+`gregale dev` without `--debug` turns the inspector off again. Only Node.js
+workloads are supported so far; `--debug` cannot be combined with `--once`,
+`--stop`, or `--all`.
+
+## Run every app in a workspace
+
+`gregale dev --all` starts one developer loop per deployable workspace or
+convention member below `--path` (default: the current directory), using the
+same detection as `gregale start` and `gregale scan`. Each app gets its own
+developer environment, stable URL, and lease, named after its workload
+(`apps/api` becomes `api`). When the root has deployable members it is treated
+as the workspace container and not started; a root with no members is the
+single app.
+
+```sh
+gregale dev --all              # watch every app
+gregale dev --all --once       # sync every app once
+gregale dev --all --stop       # tear down every app's environment
+gregale dev --all --once --json
+```
+
+Each app runs as its own `gregale dev --path DIR --name PROJECT` loop. Its
+output is prefixed with the project name (`[api] build | …`), one app's failed
+build or crash never stops the others, and Ctrl-C stops every loop. With
+`--json`, every receipt and diagnostic is emitted as one NDJSON line carrying
+`dev_project` and `dev_path`. The command exits 0 only when every loop exits 0.
+
+`--once`, `--stop`, `--no-logs`, `--open`, `--postgres`, `--postgres-region`,
+and `--ttl` apply to every app. `--name`, `--env-file`,
+`--service-override-file`, `--postgres-seed`, and `--reseed` are rejected with
+`--all`; put per-app values in each app's own `gregale.yaml` `dev:` block, which
+its loop reads from its source root. Before creating anything, the CLI checks the account's developer
+environment budget: an app whose environment already exists reuses its slot,
+and the command fails with the shortfall when the new environments would not
+fit.
+
+Developer environments are not wired to each other. A call to
+`<service>.svc.gregale` from a developer environment targets the account's
+deployed app of that name (subject to its preview service-call policy), not the
+sibling developer environment, because developer sessions are not part of a
+project preview scope. Point an app at a
+sibling with that sibling's printed developer URL through your app's own
+configuration, or use [Dev Bridge](dev-bridge.md) against a named development
+environment.
 
 Developer environments have a separate per-plan quota from production apps and
 pull-request previews. They are still backed by the same preview lifecycle and
-24-hour lease; `gregale dev status` reports the account-wide budget so a local
+lease; `gregale dev status` reports the account-wide budget so a local
 workspace cannot unexpectedly block a deploy or PR preview.
