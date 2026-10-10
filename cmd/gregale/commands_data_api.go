@@ -17,10 +17,12 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|refresh|sync>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|refresh|sync|dev>", "data-api")
 		return 1
 	}
 	switch args[0] {
+	case "dev":
+		return cmdDataAPIDev(args[1:])
 	case "create":
 		return cmdDataAPICreate(args[1:])
 	case "types":
@@ -32,7 +34,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh or sync"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync or dev"))
 	}
 }
 

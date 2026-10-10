@@ -39,8 +39,23 @@ permissions:
   packages: read
 
 jobs:
+  # Release gate: the complete mega-tier suite (ci.yml) must pass on the
+  # tagged commit before anything is built, signed or published. Pull
+  # requests only run the light tier (ci-light.yml), so this is where e2e,
+  # the full migration history and the cross-package suites gate a release.
+  full-ci:
+    name: Full CI (release gate)
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
   resolve-action-pin:
     name: Resolve deploy Action pin
+    needs: [full-ci]
     runs-on: ubuntu-22.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -477,6 +492,7 @@ jobs:
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
+    needs: [full-ci]
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room

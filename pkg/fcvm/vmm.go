@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -2648,6 +2649,62 @@ func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error 
 	return nil
 }
 
+// guestMemoryStats asks guest-init for its /proc/meminfo summary just before
+// a capture, so the capture log can say what the snapshot's non-zero content
+// is made of. It is diagnostic: callers log the error and capture anyway, and
+// a guest that predates guestmemproto answers with a single non-zero byte.
+func (v *JailerVMM) guestMemoryStats(ctx context.Context, l Lease) (guestmemproto.Stats, error) {
+	var stats guestmemproto.Stats
+	if v == nil || v.chrootBase == "" || l.Instance == "" {
+		return stats, fmt.Errorf("vmm: memory stats: invalid VMM or instance")
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(callCtx, "unix", v.vsockUDSSock(l.Instance))
+	if err != nil {
+		return stats, fmt.Errorf("vmm: memory stats dial: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(callCtx, func() { _ = conn.Close() })
+	defer stop()
+	if deadline, ok := callCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", resumeHookGuestPort); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats CONNECT: %w", err)
+	}
+	if ack, err := readConnectAck(conn); err != nil || ack != "OK" {
+		return stats, fmt.Errorf("vmm: memory stats CONNECT reply %q: %w", ack, err)
+	}
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[:4], guestmemproto.MessageType)
+	if _, err := conn.Write(msg[:]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats send: %w", err)
+	}
+	var hdr [5]byte
+	if _, err := io.ReadFull(conn, hdr[:1]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats ack: %w", err)
+	}
+	if hdr[0] != 0 {
+		return stats, fmt.Errorf("vmm: memory stats unsupported by guest (ack=%d)", hdr[0])
+	}
+	if _, err := io.ReadFull(conn, hdr[1:]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats length: %w", err)
+	}
+	n := binary.BigEndian.Uint32(hdr[1:])
+	if n == 0 || n > guestmemproto.MaxBodyBytes {
+		return stats, fmt.Errorf("vmm: memory stats body length %d out of range", n)
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats body: %w", err)
+	}
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats decode: %w", err)
+	}
+	return stats, nil
+}
+
 // TriggerExtensionHook delivers one bounded lifecycle notification to the
 // guest extension endpoint. Unlike TriggerResumeHook this is best-effort at
 // its call sites: the method reports transport/protocol errors so callers can
@@ -2943,6 +3000,8 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, err
 		}
 	}
+	// Read after the app's before_checkpoint hook, which may free memory.
+	guestMem, guestMemErr := v.guestMemoryStats(ctx, l)
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
@@ -3026,6 +3085,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	var memTmpPath string
 	var memPublishedPath string
 	var memBytes int64
+	memContent := int64(-1)
 	var err error
 	memPublishedLocally := false
 	// In OCI mode, never rename into a cache path returned by LocalPath:
@@ -3042,7 +3102,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
 				}
 				var moveErr error
-				memBytes, moveErr = publishLocalSnapshotMemory(filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
+				memBytes, memContent, moveErr = publishLocalSnapshotMemory(ctx, filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
@@ -3061,7 +3121,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		_ = memTmp.Close()
 		defer func() { _ = os.Remove(memTmpPath) }()
 
-		memBytes, err = moveOut(filepath.Join(root, memName), memTmpPath)
+		memBytes, memContent, err = moveOutSparse(ctx, filepath.Join(root, memName), memTmpPath)
 		if err != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 		}
@@ -3150,6 +3210,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if driveKey != "" {
 		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
 	}
+	logSnapshotMemory(l.Instance, memBytes, memContent, storedBytes, guestMem, guestMemErr)
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
