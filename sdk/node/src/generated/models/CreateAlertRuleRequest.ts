@@ -24,11 +24,18 @@ export type CreateAlertRuleRequest = {
    * Required when metric == failed_invocations; omit otherwise (xor_chk).
    */
   failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook';
-  webhook_url: string;
+  /**
+   * Signed webhook destination. Required with webhook_secret unless channel_ids is set.
+   */
+  webhook_url?: string;
+  /**
+   * Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and webhook_secret may be omitted.
+   */
+  channel_ids?: Array<string>;
   /**
    * Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed.
    */
-  webhook_secret: string;
+  webhook_secret?: string;
   cooldown_minutes?: number;
   /**
    * What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow metrics support webhook only.

@@ -59885,7 +59885,14 @@ components:
           type: string
           description: 'Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
-        webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
+        webhook_url:
+          type: string
+          example: "https://example.com/hook"
+          description: 'Signed webhook destination; empty for a rule that delivers only to notification channels.'
+        channel_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) the rule delivers fires and resolves to.'
         webhook_secret_sealed_masked:
           type: string
           description: 'Literal "***" — the plaintext is never returned.'
@@ -59913,7 +59920,7 @@ components:
     CreateAlertRuleRequest:
       description: 'Create an alert rule on an app.'
       type: object
-      required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
+      required: [name, metric, comparison, threshold, window_spec]
       properties:
         event_subscription_id:
           type: string
@@ -59936,7 +59943,16 @@ components:
           type: string
           description: 'Required when metric == failed_invocations; omit otherwise (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
-        webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
+        webhook_url:
+          type: string
+          format: uri
+          example: "https://example.com/hook"
+          description: 'Signed webhook destination. Required with webhook_secret unless channel_ids is set.'
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and webhook_secret may be omitted.'
         webhook_secret:
           type: string
           description: 'Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed.'
@@ -59973,6 +59989,12 @@ components:
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
         webhook_url: { type: string, format: uri }
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Replaces the rule''s notification channels; an empty list clears them, which a rule without a webhook cannot do.'
+
         webhook_secret:
           type: string
           description: 'New plaintext HMAC secret. Omit to keep the existing secret.'

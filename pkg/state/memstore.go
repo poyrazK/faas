@@ -224,6 +224,7 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
+	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectWriteFences           map[string]ObjectBucketWriteFence

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -43,6 +44,9 @@ class UpdateAlertRuleRequest:
     threshold: float | Unset = UNSET
     window_spec: UpdateAlertRuleRequestWindowSpec | Unset = UNSET
     webhook_url: str | Unset = UNSET
+    channel_ids: list[UUID] | Unset = UNSET
+    """Replaces the rule's notification channels; an empty list clears them, which a rule without a webhook cannot
+    do."""
     webhook_secret: str | Unset = UNSET
     """New plaintext HMAC secret. Omit to keep the existing secret."""
     cooldown_minutes: int | Unset = UNSET
@@ -74,6 +78,13 @@ class UpdateAlertRuleRequest:
 
         webhook_url = self.webhook_url
 
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
         webhook_secret = self.webhook_secret
 
         cooldown_minutes = self.cooldown_minutes
@@ -101,6 +112,8 @@ class UpdateAlertRuleRequest:
             field_dict["window_spec"] = window_spec
         if webhook_url is not UNSET:
             field_dict["webhook_url"] = webhook_url
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
         if webhook_secret is not UNSET:
             field_dict["webhook_secret"] = webhook_secret
         if cooldown_minutes is not UNSET:
@@ -144,6 +157,15 @@ class UpdateAlertRuleRequest:
 
         webhook_url = d.pop("webhook_url", UNSET)
 
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
+
         webhook_secret = d.pop("webhook_secret", UNSET)
 
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
@@ -164,6 +186,7 @@ class UpdateAlertRuleRequest:
             threshold=threshold,
             window_spec=window_spec,
             webhook_url=webhook_url,
+            channel_ids=channel_ids,
             webhook_secret=webhook_secret,
             cooldown_minutes=cooldown_minutes,
             action=action,

@@ -12648,6 +12648,16 @@ CREATE TABLE public.alert_rollback_actions (
 
 
 --
+-- Name: alert_rule_channels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_rule_channels (
+    rule_id uuid NOT NULL,
+    channel_id uuid NOT NULL
+);
+
+
+--
 -- Name: alert_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26895,6 +26905,14 @@ ALTER TABLE ONLY public.alert_rollback_actions
 
 
 --
+-- Name: alert_rule_channels alert_rule_channels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rule_channels
+    ADD CONSTRAINT alert_rule_channels_pkey PRIMARY KEY (rule_id, channel_id);
+
+
+--
 -- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33011,6 +33029,13 @@ CREATE INDEX alert_rollback_app ON public.alert_rollback_actions USING btree (ap
 --
 
 CREATE INDEX alert_rollback_pending ON public.alert_rollback_actions USING btree (updated_at, fire_id) WHERE (status = ANY (ARRAY['pending'::text, 'blocked'::text]));
+
+
+--
+-- Name: alert_rule_channels_channel_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rule_channels_channel_idx ON public.alert_rule_channels USING btree (channel_id);
 
 
 --
@@ -43004,6 +43029,22 @@ ALTER TABLE ONLY public.alert_rollback_actions
 
 ALTER TABLE ONLY public.alert_rollback_actions
     ADD CONSTRAINT alert_rollback_actions_fire_id_fkey FOREIGN KEY (fire_id) REFERENCES public.alert_deliveries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rule_channels alert_rule_channels_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rule_channels
+    ADD CONSTRAINT alert_rule_channels_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rule_channels alert_rule_channels_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rule_channels
+    ADD CONSTRAINT alert_rule_channels_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --

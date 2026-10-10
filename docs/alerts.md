@@ -73,8 +73,21 @@ gregale channels list
 - `list` shows each channel's last successful delivery or last error, so a
   revoked Slack webhook shows up before an incident does.
 
-Binding channels to alert rules arrives in the next release; until then a
-channel can be tested but receives no alerts.
+Point a rule at channels with `--channel` (repeatable, up to five). A rule
+with at least one channel needs no webhook:
+
+```bash
+gregale alerts add --app shop --name "checkout errors" --metric error_rate_pct \
+  --comparison gt --threshold 5 --window-spec 5m --channel OPS_SLACK_ID --channel ONCALL_PD_ID
+```
+
+Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
+closes the incident the fire opened, and Slack and email get a "Resolved"
+message. Each channel is delivered to independently, so a broken Slack
+webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+Deleting a channel removes it from every rule; a rule left with no webhook
+and no channel stops notifying, so check `gregale alerts info` after
+cleaning up channels.
 
 ## Event consumer routing alerts
 

@@ -21,6 +21,10 @@ export type UpdateAlertRuleRequest = {
   window_spec?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
   webhook_url?: string;
   /**
+   * Replaces the rule's notification channels; an empty list clears them, which a rule without a webhook cannot do.
+   */
+  channel_ids?: Array<string>;
+  /**
    * New plaintext HMAC secret. Omit to keep the existing secret.
    */
   webhook_secret?: string;

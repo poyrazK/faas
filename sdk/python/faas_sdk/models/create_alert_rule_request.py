@@ -41,9 +41,6 @@ class CreateAlertRuleRequest:
     comparison: CreateAlertRuleRequestComparison
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
-    webhook_url: str
-    webhook_secret: str
-    """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     event_subscription_id: UUID | Unset = UNSET
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
@@ -53,6 +50,13 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    webhook_url: str | Unset = UNSET
+    """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
+    channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and
+    webhook_secret may be omitted."""
+    webhook_secret: str | Unset = UNSET
+    """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
@@ -70,10 +74,6 @@ class CreateAlertRuleRequest:
 
         window_spec: str = self.window_spec
 
-        webhook_url = self.webhook_url
-
-        webhook_secret = self.webhook_secret
-
         event_subscription_id: str | Unset = UNSET
         if not isinstance(self.event_subscription_id, Unset):
             event_subscription_id = str(self.event_subscription_id)
@@ -85,6 +85,17 @@ class CreateAlertRuleRequest:
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
+
+        webhook_url = self.webhook_url
+
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
+        webhook_secret = self.webhook_secret
 
         cooldown_minutes = self.cooldown_minutes
 
@@ -101,8 +112,6 @@ class CreateAlertRuleRequest:
                 "comparison": comparison,
                 "threshold": threshold,
                 "window_spec": window_spec,
-                "webhook_url": webhook_url,
-                "webhook_secret": webhook_secret,
             }
         )
         if event_subscription_id is not UNSET:
@@ -113,6 +122,12 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if webhook_url is not UNSET:
+            field_dict["webhook_url"] = webhook_url
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
+        if webhook_secret is not UNSET:
+            field_dict["webhook_secret"] = webhook_secret
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if action is not UNSET:
@@ -133,10 +148,6 @@ class CreateAlertRuleRequest:
 
         window_spec = check_create_alert_rule_request_window_spec(d.pop("window_spec"))
 
-        webhook_url = d.pop("webhook_url")
-
-        webhook_secret = d.pop("webhook_secret")
-
         _event_subscription_id = d.pop("event_subscription_id", UNSET)
         event_subscription_id: UUID | Unset
         if isinstance(_event_subscription_id, Unset):
@@ -155,6 +166,19 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        webhook_url = d.pop("webhook_url", UNSET)
+
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
+
+        webhook_secret = d.pop("webhook_secret", UNSET)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         _action = d.pop("action", UNSET)
@@ -170,12 +194,13 @@ class CreateAlertRuleRequest:
             comparison=comparison,
             threshold=threshold,
             window_spec=window_spec,
-            webhook_url=webhook_url,
-            webhook_secret=webhook_secret,
             event_subscription_id=event_subscription_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            webhook_url=webhook_url,
+            channel_ids=channel_ids,
+            webhook_secret=webhook_secret,
             cooldown_minutes=cooldown_minutes,
             action=action,
         )

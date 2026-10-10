@@ -248,6 +248,11 @@ type AlertRule struct {
 	EventSubscriptionID             pgtype.UUID
 }
 
+type AlertRuleChannel struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID

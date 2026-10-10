@@ -9290,6 +9290,17 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
+
+DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
+`
+
+// ADR-749 slice 2: alert rule -> notification channel bindings.
+func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertRuleChannels, ruleID)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -18566,6 +18577,25 @@ func (q *Queries) InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAl
 	return err
 }
 
+const insertAlertRuleChannels = `-- name: InsertAlertRuleChannels :exec
+INSERT INTO alert_rule_channels (rule_id, channel_id)
+SELECT r.id, c.id FROM alert_rules r
+JOIN notification_channels c ON c.account_id = r.account_id AND c.id = ANY ($1::uuid[])
+WHERE r.id = $2::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertAlertRuleChannelsParams struct {
+	ChannelIds []pgtype.UUID
+	RuleID     pgtype.UUID
+}
+
+// Only channels owned by the rule's account are bound.
+func (q *Queries) InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error {
+	_, err := db.Exec(ctx, insertAlertRuleChannels, arg.ChannelIds, arg.RuleID)
+	return err
+}
+
 const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
@@ -26603,6 +26633,45 @@ func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlert
 			return nil, err
 		}
 		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAlertRuleChannels = `-- name: ListAlertRuleChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.rule_id = $1::uuid ORDER BY c.name
+`
+
+func (q *Queries) ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listAlertRuleChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

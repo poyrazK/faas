@@ -115,7 +115,7 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 		if row.AppID != "" && row.AppID != app.ID {
 			continue
 		}
-		out = append(out, alertRuleResponse(row))
+		out = append(out, s.alertRuleResponseWithChannels(r.Context(), row))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -176,22 +176,14 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if !s.checkEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
-	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
+	channelIDs, prob := s.validateRuleChannels(r.Context(), acct.ID, req.ChannelIDs)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
-	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
+	sealed, prob := sealCreateWebhook(r.Context(), req)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{
@@ -258,7 +250,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"cooldown_minutes":                    row.CooldownMinutes,
 		"post_deploy_rollback_window_seconds": row.PostDeployRollbackWindowSeconds,
 	})
-	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
+	if prob := s.bindRuleChannels(r.Context(), row, channelIDs); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.alertRuleResponseWithChannels(r.Context(), row))
 }
 
 // --- get --------------------------------------------------------------------
@@ -288,7 +284,7 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, alertRuleResponse(row))
+	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), row))
 }
 
 // --- list deliveries -------------------------------------------------------
@@ -416,11 +412,16 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	// Optional URL re-guard.
-	if req.WebhookURL != nil {
+	if req.WebhookURL != nil && *req.WebhookURL != "" {
 		if prob := resolveAndCheckEgress(r.Context(), *req.WebhookURL); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
+	}
+	newChannels, prob := s.updatedRuleChannels(r.Context(), acct.ID, row, merged, req.ChannelIDs)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
@@ -523,7 +524,13 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"old":     oldMap,
 		"new":     newMap,
 	})
-	writeJSON(w, http.StatusOK, alertRuleResponse(updated))
+	if newChannels != nil {
+		if prob := s.bindRuleChannels(r.Context(), updated, *newChannels); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), updated))
 }
 
 // --- delete -----------------------------------------------------------------
@@ -815,6 +822,12 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 			return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 		}
 	}
+	if req.WebhookURL == "" && req.WebhookSecret == "" {
+		if len(req.ChannelIDs) == 0 {
+			return api.ErrAlertRuleInvalid("set webhook_url and webhook_secret, or deliver to notification channels with channel_ids")
+		}
+		return nil // channel-only rule (ADR-749)
+	}
 	if len(req.WebhookSecret) == 0 {
 		return api.ErrAlertRuleInvalid("webhook_secret must be non-empty")
 	}
@@ -879,6 +892,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	}
 	if merged.CooldownMinutes < api.AlertRuleCooldownMinMinutes || merged.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
+	}
+	if merged.WebhookURL == "" {
+		return nil // channel-only rule (ADR-749); the handler checks it keeps a channel
 	}
 	if _, err := url.ParseRequestURI(merged.WebhookURL); err != nil {
 		return api.ErrAlertRuleInvalid("webhook_url is not a valid URL")

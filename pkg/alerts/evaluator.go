@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -38,6 +39,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -179,6 +181,11 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+	// channels and its companions deliver to ADR-749 notification
+	// channels; nil disables channel delivery.
+	channels         ChannelSender
+	channelOutcome   func(kind, outcome string)
+	dashboardBaseURL string
 }
 
 // SetActionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) swaps
@@ -239,6 +246,16 @@ type EvaluatorOptions struct {
 	Now        func() time.Time
 	Log        *slog.Logger
 	Ops        Ops
+	// Channels delivers to ADR-749 notification channels (Slack,
+	// PagerDuty, email); nil disables channel delivery.
+	Channels ChannelSender
+	// ChannelOutcome observes each channel delivery (kind, outcome) for
+	// the meterd_alert_channel_deliveries_total counter. Optional; called
+	// concurrently, so it must be safe for concurrent use.
+	ChannelOutcome func(kind, outcome string)
+	// DashboardBaseURL ("https://gregale.dev") links notifications to the
+	// app dashboard; empty omits the link.
+	DashboardBaseURL string
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -270,6 +287,10 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		now:        o.Now,
 		log:        o.Log,
 		ops:        o.Ops,
+
+		channels:         o.Channels,
+		channelOutcome:   o.ChannelOutcome,
+		dashboardBaseURL: o.DashboardBaseURL,
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -399,11 +420,16 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil {
-				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
-					"rule_id": rule.ID,
-					"rule":    rule.Name,
-				})
+			} else if changed && rule.State == state.AlertStateFiring {
+				if e.audit != nil {
+					e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
+						"rule_id": rule.ID,
+						"rule":    rule.Name,
+					})
+				}
+				// ADR-749: channels hear the recovery so PagerDuty can
+				// close the incident the fire opened.
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
 			}
 		}
 		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
@@ -512,6 +538,23 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// emission pattern — we only audit terminal transitions).
 	if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
+	}
+
+	// ADR-749: notification channels receive the fire independently of
+	// the webhook. A channel-only rule (no webhook URL) records its
+	// delivery from the channel outcome and skips the webhook path.
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now)
+	if rule.WebhookURL == "" {
+		result := webhookout.Result{Attempts: 1, StatusCode: http.StatusOK}
+		if delivered == 0 {
+			result.StatusCode = 0
+			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
+		}
+		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		e.dispatchMu.Lock()
+		e.runAction(ctx, rule, deliveryID, observed, now, stats)
+		e.dispatchMu.Unlock()
+		return
 	}
 
 	// Unseal the webhook secret. A nil identity or a namespace

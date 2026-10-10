@@ -17454,3 +17454,20 @@ UPDATE notification_channels SET
  last_error = CASE WHEN sqlc.narg(err)::text IS NULL THEN last_error ELSE left(sqlc.narg(err)::text, 256) END,
  last_error_at = CASE WHEN sqlc.narg(err)::text IS NULL THEN last_error_at ELSE sqlc.arg(at)::timestamptz END
 WHERE id = sqlc.arg(id)::uuid;
+
+-- ADR-749 slice 2: alert rule -> notification channel bindings.
+
+-- name: DeleteAlertRuleChannels :exec
+DELETE FROM alert_rule_channels WHERE rule_id = sqlc.arg(rule_id)::uuid;
+
+-- name: InsertAlertRuleChannels :exec
+-- Only channels owned by the rule's account are bound.
+INSERT INTO alert_rule_channels (rule_id, channel_id)
+SELECT r.id, c.id FROM alert_rules r
+JOIN notification_channels c ON c.account_id = r.account_id AND c.id = ANY (sqlc.arg(channel_ids)::uuid[])
+WHERE r.id = sqlc.arg(rule_id)::uuid
+ON CONFLICT DO NOTHING;
+
+-- name: ListAlertRuleChannels :many
+SELECT c.* FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.rule_id = sqlc.arg(rule_id)::uuid ORDER BY c.name;

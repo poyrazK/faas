@@ -231,10 +231,13 @@ type CreateAlertRuleRequest struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
-	Action                          *string `json:"action,omitempty"`
-	WebhookURL                      string  `json:"webhook_url"`
-	WebhookSecret                   string  `json:"webhook_secret"`
-	CooldownMinutes                 *int    `json:"cooldown_minutes,omitempty"`
+	// ChannelIDs are ADR-749 notification channels the rule delivers to.
+	// With at least one channel, webhook_url and webhook_secret may be omitted.
+	ChannelIDs      []string `json:"channel_ids,omitempty"`
+	Action          *string  `json:"action,omitempty"`
+	WebhookURL      string   `json:"webhook_url"`
+	WebhookSecret   string   `json:"webhook_secret"`
+	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
 }
 
 // UpdateAlertRuleRequest is the PATCH body. Every editable field is
@@ -256,10 +259,13 @@ type UpdateAlertRuleRequest struct {
 	Comparison                      *string  `json:"comparison,omitempty"`
 	Threshold                       *float64 `json:"threshold,omitempty"`
 	WindowSpec                      *string  `json:"window_spec,omitempty"`
-	Action                          *string  `json:"action,omitempty"`
-	WebhookURL                      *string  `json:"webhook_url,omitempty"`
-	WebhookSecret                   *string  `json:"webhook_secret,omitempty"`
-	CooldownMinutes                 *int     `json:"cooldown_minutes,omitempty"`
+	// ChannelIDs replaces the rule's notification channels; an empty list
+	// clears them (allowed only while the rule has a webhook).
+	ChannelIDs      *[]string `json:"channel_ids,omitempty"`
+	Action          *string   `json:"action,omitempty"`
+	WebhookURL      *string   `json:"webhook_url,omitempty"`
+	WebhookSecret   *string   `json:"webhook_secret,omitempty"`
+	CooldownMinutes *int      `json:"cooldown_minutes,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -280,26 +286,27 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
-	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
-	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
-	ID                              string  `json:"id"`
-	AppID                           string  `json:"app_id"`
-	Name                            string  `json:"name"`
-	Enabled                         bool    `json:"enabled"`
-	Metric                          string  `json:"metric"`
-	Comparison                      string  `json:"comparison"`
-	Threshold                       float64 `json:"threshold"`
-	WindowSpec                      string  `json:"window_spec"`
-	FailureSource                   string  `json:"failure_source,omitempty"`
-	Action                          string  `json:"action"`
-	WebhookURL                      string  `json:"webhook_url"`
-	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
-	CooldownMinutes                 int     `json:"cooldown_minutes"`
-	State                           string  `json:"state"`
-	LastFiredAt                     string  `json:"last_fired_at,omitempty"`
-	LastEvaluatedAt                 string  `json:"last_evaluated_at,omitempty"`
-	CreatedAt                       string  `json:"created_at"`
-	UpdatedAt                       string  `json:"updated_at"`
+	EventSubscriptionID             string   `json:"event_subscription_id,omitempty"`
+	PostDeployRollbackWindowSeconds int      `json:"post_deploy_rollback_window_seconds,omitempty"`
+	ID                              string   `json:"id"`
+	AppID                           string   `json:"app_id"`
+	Name                            string   `json:"name"`
+	Enabled                         bool     `json:"enabled"`
+	Metric                          string   `json:"metric"`
+	Comparison                      string   `json:"comparison"`
+	Threshold                       float64  `json:"threshold"`
+	WindowSpec                      string   `json:"window_spec"`
+	FailureSource                   string   `json:"failure_source,omitempty"`
+	ChannelIDs                      []string `json:"channel_ids,omitempty"`
+	Action                          string   `json:"action"`
+	WebhookURL                      string   `json:"webhook_url"`
+	WebhookSecretSealedMasked       string   `json:"webhook_secret_sealed_masked"`
+	CooldownMinutes                 int      `json:"cooldown_minutes"`
+	State                           string   `json:"state"`
+	LastFiredAt                     string   `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt                 string   `json:"last_evaluated_at,omitempty"`
+	CreatedAt                       string   `json:"created_at"`
+	UpdatedAt                       string   `json:"updated_at"`
 }
 
 // AlertRuleRow is the closed-set-typed counterpart of AlertRuleResponse,

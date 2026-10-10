@@ -31,7 +31,14 @@ export type AlertRuleResponse = {
    * Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).
    */
   failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook';
+  /**
+   * Signed webhook destination; empty for a rule that delivers only to notification channels.
+   */
   webhook_url: string;
+  /**
+   * Notification channels (ADR-749) the rule delivers fires and resolves to.
+   */
+  channel_ids?: Array<string>;
   /**
    * Literal "***" — the plaintext is never returned.
    */
