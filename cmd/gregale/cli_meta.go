@@ -3852,12 +3852,12 @@ var cliCommands = []cliCommand{
 				{Name: "older-than", Short: "required threshold based on when Gregale last updated the value, not provider rotation time (for example 90d or 2160h)", Value: "DURATION", Req: true},
 				{Name: "fail-on-stale", Short: "exit non-zero when any secret exceeds the age threshold"},
 			}},
-			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Examples: []string{"printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --restart", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets rotate --app my-api --from-stdin --scope production --wait-for-ack --timeout 5m"}, Positionals: []string{"[<KEY=VALUE>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "from-stdin", Short: "read one KEY=VALUE pair from stdin"},
 				{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "restart", Short: "restart the app and apply the rotated secret now"},
-				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"},
+				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart"},
 				{Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"},
 			}},
 		},

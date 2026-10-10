@@ -9820,14 +9820,14 @@ Rotate a secret and optionally wait for runtime application
 | `--from-stdin` | read one KEY=VALUE pair from stdin |  |
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
-| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart |  |
 | `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
 
 Examples:
 
 ```sh
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --wait-for-ack --timeout 5m
 ```
 
 
