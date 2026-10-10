@@ -27,7 +27,7 @@ class ManagedOperationResult:
 
     gregale_operation_result: ManagedOperationResultGregaleOperationResult
     result: Any
-    """Business result persisted atomically with effect enqueue; any JSON value"""
+    """Business result persisted atomically with effect enqueue; any JSON value, including null."""
     effects: list[ManagedOperationEffect]
 
     def to_dict(self) -> dict[str, Any]:

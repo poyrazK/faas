@@ -341,9 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # Cold compilation, standard packages and the isolated PostgreSQL
-    # partitions have separate bounded deadlines within this job budget.
+    timeout-minutes: 70
+    # Cold compilation and standard/API/state tests retain separate bounded
+    # deadlines; match current main's 25-minute commands and 70-minute job.
     strategy:
       fail-fast: false
       matrix:
@@ -444,7 +444,7 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -json -race -count=1 -p 4 -timeout=16m $PKGS || status=1
+            go test -json -race -count=1 -p 4 -timeout=25m $PKGS || status=1
           fi
           # Private databases share PostgreSQL's cluster-wide catalogues.
           # Finish the standard packages before these partitions: API fixture
@@ -458,9 +458,9 @@ jobs:
             go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -check -list-file="$inventory"
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            # Large PostgreSQL partitions use the mega tier's process
-            # budget; standard package tests use main's 16-minute deadline.
-            go test -json -race -count=1 -timeout=20m -run "$run" "$pkg" || status=1
+            # API/state partitions retain current main's 25-minute process
+            # budget along with the complete registered-name inventory check.
+            go test -json -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

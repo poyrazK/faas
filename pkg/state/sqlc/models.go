@@ -4017,6 +4017,16 @@ type ManagedPostgresUsageImport struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+type ManagedRealtimeChannelBatch struct {
+	EndpointID    pgtype.UUID
+	Channel       string
+	BatchID       string
+	PayloadHash   []byte
+	FirstSequence int64
+	MessageCount  int32
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ManagedRealtimeChannelHead struct {
 	EndpointID     pgtype.UUID
 	Channel        string
@@ -4025,13 +4035,29 @@ type ManagedRealtimeChannelHead struct {
 }
 
 type ManagedRealtimeChannelMessage struct {
-	EndpointID     pgtype.UUID
-	Channel        string
-	Sequence       int64
-	Data           []byte
-	IsBinary       bool
-	IdempotencyKey pgtype.Text
-	CreatedAt      pgtype.Timestamptz
+	EndpointID      pgtype.UUID
+	Channel         string
+	Sequence        int64
+	Data            []byte
+	IsBinary        bool
+	IdempotencyKey  pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	TargetMessageID string
+	Version         int64
+	MessageEvent    string
+	Deleted         bool
+	Metadata        []byte
+}
+
+type ManagedRealtimeChannelReducer struct {
+	EndpointID        pgtype.UUID
+	Channel           string
+	Sequence          int64
+	Entities          []byte
+	UpdatedAt         pgtype.Timestamptz
+	EntityVersions    []byte
+	EntityExpirations []byte
+	NextExpiry        pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelRoute struct {
@@ -4069,6 +4095,16 @@ type ManagedRealtimeChannelRouteOverflowChannel struct {
 	NextRebuildAt pgtype.Timestamptz
 }
 
+type ManagedRealtimeChannelSnapshot struct {
+	EndpointID pgtype.UUID
+	Channel    string
+	Sequence   int64
+	Data       []byte
+	IsBinary   bool
+	UpdatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type ManagedRealtimeConnectionOwner struct {
 	ConnectionID   string
 	EndpointID     pgtype.UUID
@@ -4076,6 +4112,29 @@ type ManagedRealtimeConnectionOwner struct {
 	LeaseToken     string
 	LeaseExpiresAt pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type ManagedRealtimeDirectMessageDelivery struct {
+	EndpointID     pgtype.UUID
+	MessageID      string
+	ConnectionID   string
+	NodeID         pgtype.UUID
+	AckSupported   bool
+	QueueStatus    string
+	CreatedAt      pgtype.Timestamptz
+	QueuedAt       pgtype.Timestamptz
+	AcknowledgedAt pgtype.Timestamptz
+}
+
+type ManagedRealtimeDirectMessageReceipt struct {
+	EndpointID         pgtype.UUID
+	MessageID          string
+	PayloadFingerprint []byte
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	DispatchLeaseUntil pgtype.Timestamptz
+	DispatchComplete   bool
+	Summary            []byte
 }
 
 type ManagedRealtimeDrainOperation struct {
@@ -4107,6 +4166,15 @@ type ManagedRealtimeDrainOperation struct {
 	SelectAll        bool
 }
 
+type ManagedRealtimeDurableCursor struct {
+	EndpointID   pgtype.UUID
+	Principal    string
+	Subscription string
+	Channel      string
+	Sequence     int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ManagedRealtimeEndpoint struct {
 	ID                         pgtype.UUID
 	AppID                      pgtype.UUID
@@ -4132,6 +4200,226 @@ type ManagedRealtimeEndpoint struct {
 	MaxConnectionAgeSeconds    int64
 	AuthTokenPreviousSealed    []byte
 	AuthTokenPreviousExpiresAt pgtype.Timestamptz
+}
+
+type ManagedRealtimeEventSchema struct {
+	EndpointID pgtype.UUID
+	Channel    string
+	EventType  string
+	Version    int32
+	Schema     []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimeInboxCursor struct {
+	EndpointID   pgtype.UUID
+	Principal    string
+	Subscription string
+	Channel      string
+	Sequence     int64
+	UpdatedAt    pgtype.Timestamptz
+	GapReported  bool
+}
+
+type ManagedRealtimeInboxFallback struct {
+	EndpointID  pgtype.UUID
+	Principal   string
+	Sequence    int64
+	MessageID   string
+	Deadline    pgtype.Timestamptz
+	Category    string
+	GroupKey    string
+	GroupLabel  string
+	Priority    string
+	ExpiresAt   pgtype.Timestamptz
+	CollapseKey string
+	NotBefore   pgtype.Timestamptz
+}
+
+type ManagedRealtimeInboxHead struct {
+	EndpointID     pgtype.UUID
+	Channel        string
+	NextSequence   int64
+	OldestSequence int64
+}
+
+type ManagedRealtimeInboxMessage struct {
+	EndpointID              pgtype.UUID
+	Channel                 string
+	Sequence                int64
+	Data                    []byte
+	IsBinary                bool
+	IdempotencyKey          pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	FallbackAfterSeconds    int32
+	TargetMessageID         string
+	Version                 int64
+	MessageEvent            string
+	Deleted                 bool
+	NotificationCategory    string
+	NotificationGroupKey    string
+	NotificationGroupLabel  string
+	NotificationPriority    string
+	NotificationTtlSeconds  int32
+	NotificationCollapseKey string
+	NotificationNotBefore   string
+	Metadata                []byte
+}
+
+type ManagedRealtimeNotificationTimeline struct {
+	ID          int64
+	EndpointID  pgtype.UUID
+	Principal   string
+	MessageID   string
+	Device      string
+	DeliveryID  string
+	Event       string
+	Reason      string
+	Attempts    int32
+	StatusCode  int32
+	OccurredAt  pgtype.Timestamptz
+	NotBefore   pgtype.Timestamptz
+	NextAttempt pgtype.Timestamptz
+}
+
+type ManagedRealtimePresenceLease struct {
+	EndpointID     pgtype.UUID
+	Channel        string
+	NodeID         pgtype.UUID
+	ConnectionID   string
+	MemberID       string
+	Principal      string
+	State          []byte
+	ExpiresAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	StateUpdatedAt pgtype.Timestamptz
+}
+
+type ManagedRealtimePushDelivery struct {
+	ID            pgtype.UUID
+	EndpointID    pgtype.UUID
+	Principal     string
+	Device        string
+	Provider      string
+	Version       int64
+	MessageID     string
+	Sequence      int64
+	Status        string
+	Attempts      int32
+	StatusCode    int32
+	Code          string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	NextAttempt   pgtype.Timestamptz
+	Lease         pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	Category      string
+	ExpiresAt     pgtype.Timestamptz
+	GroupKey      string
+	GroupLabel    string
+	DigestID      pgtype.UUID
+	DigestCount   int32
+	DigestAt      pgtype.Timestamptz
+	Priority      string
+	HardExpiresAt pgtype.Timestamptz
+	CollapseKey   string
+	NotBefore     pgtype.Timestamptz
+}
+
+type ManagedRealtimePushDevice struct {
+	EndpointID  pgtype.UUID
+	Principal   string
+	Device      string
+	Provider    string
+	Enabled     bool
+	Version     int64
+	Fingerprint string
+	Sealed      []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ManagedRealtimePushPreference struct {
+	EndpointID  pgtype.UUID
+	Principal   string
+	Preferences []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ManagedRealtimePushProvider struct {
+	EndpointID pgtype.UUID
+	Provider   string
+	Enabled    bool
+	Sealed     []byte
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimePushRateReservation struct {
+	EndpointID pgtype.UUID
+	Principal  string
+	DigestID   pgtype.UUID
+	ReservedAt pgtype.Timestamptz
+}
+
+type ManagedRealtimeReadProgress struct {
+	EndpointID pgtype.UUID
+	Principal  string
+	Stream     string
+	Inbox      bool
+	Sequence   int64
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimeSchedule struct {
+	EndpointID           pgtype.UUID
+	Channel              string
+	ScheduleID           string
+	Data                 []byte
+	IsBinary             bool
+	Metadata             []byte
+	DeliverAt            pgtype.Timestamptz
+	Version              int64
+	Status               string
+	Sequence             int64
+	LastError            string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	MaxAttempts          int32
+	BackoffSeconds       int32
+	Attempts             int64
+	CycleAttempts        int32
+	NextAttemptAt        pgtype.Timestamptz
+	LastAttemptAt        pgtype.Timestamptz
+	IntervalSeconds      int32
+	MaxOccurrences       int64
+	EndAt                pgtype.Timestamptz
+	InitialDeliverAt     pgtype.Timestamptz
+	Occurrence           int64
+	CompletedOccurrences int64
+	Conditions           []byte
+	OnConditionFailure   string
+	SkippedOccurrences   int64
+	SkipReason           string
+	ScheduleGroup        string
+}
+
+type ManagedRealtimeScheduleHistory struct {
+	EndpointID           pgtype.UUID
+	Channel              string
+	ScheduleID           string
+	Version              int64
+	Event                string
+	Status               string
+	Attempts             int64
+	CycleAttempts        int32
+	DeliverAt            pgtype.Timestamptz
+	NextAttemptAt        pgtype.Timestamptz
+	FailureCode          string
+	Sequence             int64
+	OccurredAt           pgtype.Timestamptz
+	Occurrence           int64
+	CompletedOccurrences int64
+	SkippedOccurrences   int64
+	SkipReason           string
 }
 
 type MeterGatewayUsageEvent struct {

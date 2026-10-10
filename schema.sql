@@ -3682,6 +3682,80 @@ $$;
 
 
 --
+-- Name: faas_advance_realtime_inbox_cursor(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint;
+BEGIN
+ SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+ WHERE endpoint_id=ep AND principal=pk AND subscription=device AND channel=pk FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ current_seq:=faas_advance_realtime_inbox_cursor_before_push(ep,pk,device,requested);
+ UPDATE managed_realtime_push_deliveries SET status='cancelled',code='acknowledged',updated_at=clock_timestamp(),lease=NULL,lease_until=NULL
+ WHERE endpoint_id=ep AND principal=pk AND sequence>previous AND sequence<=current_seq AND status IN ('pending','sending');
+ RETURN current_seq;
+END $$;
+
+
+--
+-- Name: faas_advance_realtime_inbox_cursor_before_fallback(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor_before_fallback(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint; mid text; floor_seq bigint;
+BEGIN
+  SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+    WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk FOR UPDATE;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  current_seq := greatest(previous, requested);
+  SELECT greatest(h.oldest_sequence, coalesce((SELECT max(m.sequence) + 1
+    FROM managed_realtime_inbox_messages m WHERE m.endpoint_id = ep AND m.channel = pk
+      AND m.created_at < clock_timestamp() - interval '24 hours'), 1))
+    INTO floor_seq FROM managed_realtime_inbox_heads h WHERE h.endpoint_id = ep AND h.channel = pk;
+  UPDATE managed_realtime_inbox_cursors SET sequence = current_seq, updated_at = clock_timestamp(),
+    gap_reported = CASE WHEN current_seq >= floor_seq - 1 THEN false ELSE gap_reported END
+    WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk;
+  IF current_seq > previous THEN
+    SELECT target_message_id INTO mid FROM managed_realtime_inbox_messages
+      WHERE endpoint_id = ep AND channel = pk AND sequence = current_seq;
+    PERFORM faas_capture_realtime_inbox_webhook(ep, pk, device, 'realtime.inbox.acknowledged',
+      jsonb_build_object('previous_sequence', previous, 'sequence', current_seq, 'message_id', mid));
+  END IF;
+  RETURN current_seq;
+END $$;
+
+
+--
+-- Name: faas_advance_realtime_inbox_cursor_before_push(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor_before_push(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint; pending record;
+BEGIN
+ SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+   WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ current_seq := faas_advance_realtime_inbox_cursor_before_fallback(ep,pk,device,requested);
+ IF current_seq > previous THEN
+   FOR pending IN SELECT sequence FROM managed_realtime_inbox_fallbacks
+     WHERE endpoint_id = ep AND principal = pk AND sequence > previous AND sequence <= current_seq
+     ORDER BY deadline, sequence FOR UPDATE
+   LOOP
+     DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id = ep AND principal = pk AND sequence = pending.sequence;
+   END LOOP;
+ END IF;
+ RETURN current_seq;
+END $$;
+
+
+--
 -- Name: faas_capture_app_webhook_dead_letter_event(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3809,6 +3883,27 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: faas_capture_realtime_inbox_webhook(uuid, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_capture_realtime_inbox_webhook(ep uuid, principal_key text, consumer text, event_name text, details jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a uuid; account uuid; recipients uuid[]; eid uuid := gen_random_uuid();
+BEGIN
+  SELECT app_id, account_id INTO a, account FROM managed_realtime_endpoints WHERE id = ep;
+  SELECT array_agg(id ORDER BY id) INTO recipients FROM app_webhooks
+    WHERE app_id = a AND account_id = account AND scope = 'app' AND enabled
+      AND (cardinality(event_filter) = 0 OR event_name = ANY(event_filter));
+  IF coalesce(cardinality(recipients), 0) = 0 THEN RETURN; END IF;
+  INSERT INTO app_webhook_event_outbox(id, account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+    VALUES(eid, account, a, event_name, eid,
+      details || jsonb_build_object('event_id', eid, 'app_id', a, 'endpoint_id', ep,
+        'principal_key', principal_key, 'consumer', consumer, 'occurred_at', clock_timestamp()), recipients);
+END $$;
 
 
 --
@@ -3956,6 +4051,468 @@ $$;
 
 
 --
+-- Name: faas_drain_realtime_inbox_fallbacks(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at,collapse_key,not_before,next_attempt,code)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,greatest(clock_timestamp()+interval '24 hours',f.not_before+interval '1 hour')),f.expires_at,f.collapse_key,f.not_before,greatest(clock_timestamp(),f.not_before),case when f.not_before>clock_timestamp() then 'scheduled' else '' end FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   -- Endpoint queue advisory lock serializes collapse decisions with insertion.
+   -- Sequence defines freshness even when fallback timers drain out of order.
+   IF f.collapse_key<>'' AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     UPDATE managed_realtime_push_deliveries older
+       SET status='cancelled',code='superseded',lease=NULL,lease_until=NULL,updated_at=clock_timestamp()
+       WHERE older.endpoint_id=f.endpoint_id AND older.principal=f.principal
+         AND older.collapse_key=f.collapse_key AND older.category=f.category AND older.priority=f.priority
+         AND older.status IN ('pending','sending')
+         AND EXISTS(SELECT 1 FROM managed_realtime_push_deliveries newer
+           WHERE newer.endpoint_id=older.endpoint_id AND newer.principal=older.principal
+             AND newer.device=older.device AND newer.collapse_key=older.collapse_key
+             AND newer.category=older.category AND newer.priority=older.priority
+             AND newer.sequence>older.sequence);
+   END IF;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline,'notification_not_before',f.not_before),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_collapse(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_collapse(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,clock_timestamp()+interval '24 hours'),f.expires_at FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_digests(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_digests(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_preferences(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_preferences(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_priority(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_priority(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_push(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_push(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; processed integer := 0; eid uuid;
+BEGIN
+ FOR f IN
+   SELECT pending.*, ep.app_id, ep.account_id, hooks.recipients FROM managed_realtime_inbox_fallbacks pending
+   JOIN managed_realtime_endpoints ep ON ep.id = pending.endpoint_id
+   CROSS JOIN LATERAL (
+     SELECT array_agg(h.id ORDER BY h.id) AS recipients FROM app_webhooks h
+     WHERE h.app_id = ep.app_id AND h.account_id = ep.account_id
+       AND h.scope = 'app' AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR 'realtime.inbox.fallback_required' = ANY(h.event_filter))
+   ) hooks
+   WHERE pending.deadline <= clock_timestamp() AND cardinality(hooks.recipients) > 0
+   ORDER BY pending.deadline, pending.endpoint_id, pending.principal, pending.sequence
+   LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   eid := gen_random_uuid();
+   INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+   VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+     jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,
+       'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),
+       'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),f.recipients);
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id = f.endpoint_id AND principal = f.principal AND sequence = f.sequence;
+   processed := processed + 1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_schedule(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_schedule(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at,collapse_key)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,clock_timestamp()+interval '24 hours'),f.expires_at,f.collapse_key FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   -- Endpoint queue advisory lock serializes collapse decisions with insertion.
+   -- Sequence defines freshness even when fallback timers drain out of order.
+   IF f.collapse_key<>'' AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     UPDATE managed_realtime_push_deliveries older
+       SET status='cancelled',code='superseded',lease=NULL,lease_until=NULL,updated_at=clock_timestamp()
+       WHERE older.endpoint_id=f.endpoint_id AND older.principal=f.principal
+         AND older.collapse_key=f.collapse_key AND older.category=f.category AND older.priority=f.priority
+         AND older.status IN ('pending','sending')
+         AND EXISTS(SELECT 1 FROM managed_realtime_push_deliveries newer
+           WHERE newer.endpoint_id=older.endpoint_id AND newer.principal=older.principal
+             AND newer.device=older.device AND newer.collapse_key=older.collapse_key
+             AND newer.category=older.category AND newer.priority=older.priority
+             AND newer.sequence>older.sequence);
+   END IF;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_ttl(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_ttl(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_emit_notification_outcome(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_emit_notification_outcome() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE event_name text; recipients uuid[]; eid uuid; app uuid; account uuid;
+BEGIN
+ IF NEW.status NOT IN ('sent','failed','cancelled') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND OLD.status=NEW.status THEN RETURN NEW; END IF;
+ event_name:=CASE WHEN NEW.status='sent' THEN 'realtime.notification.sent'
+  WHEN NEW.status='failed' THEN 'realtime.notification.failed'
+  WHEN NEW.code IN ('expired','quiet_hours_expired') THEN 'realtime.notification.expired'
+  WHEN NEW.code='superseded' THEN 'realtime.notification.superseded'
+  ELSE 'realtime.notification.cancelled' END;
+ SELECT app_id,account_id INTO app,account FROM managed_realtime_endpoints WHERE id=NEW.endpoint_id;
+ IF app IS NULL THEN RETURN NEW; END IF;
+ SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+  WHERE h.app_id=app AND h.account_id=account AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR event_name=ANY(h.event_filter));
+ IF coalesce(cardinality(recipients),0)=0 THEN RETURN NEW; END IF;
+ eid:=gen_random_uuid();
+ INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+ VALUES(eid,account,app,event_name,eid,jsonb_build_object('event_id',eid,'app_id',app,'endpoint_id',NEW.endpoint_id,'principal_key',NEW.principal,'consumer','','occurred_at',clock_timestamp(),'delivery_id',NEW.id,'message_id',NEW.message_id,'sequence',NEW.sequence,'device',NEW.device,'provider',NEW.provider,'status',NEW.status,'reason',NEW.code,'attempts',NEW.attempts,'status_code',NEW.status_code,'category',NEW.category,'priority',NEW.priority,'digest_id',coalesce(NEW.digest_id::text,'')),recipients);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3976,6 +4533,56 @@ $$;
 
 
 --
+-- Name: faas_realtime_message_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_realtime_message_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.message_event = 'created' THEN NEW.target_message_id := coalesce(NEW.idempotency_key,''); END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: faas_record_notification_timeline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_record_notification_timeline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE eid uuid; pk text; mid text; event_name text;
+BEGIN
+ eid:=CASE WHEN TG_OP='DELETE' THEN OLD.endpoint_id ELSE NEW.endpoint_id END;
+ IF NOT EXISTS(SELECT 1 FROM managed_realtime_endpoints WHERE id=eid) THEN
+   IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+ END IF;
+ IF TG_TABLE_NAME='managed_realtime_push_deliveries' THEN
+   IF TG_OP='UPDATE' AND ROW(OLD.status,OLD.code,OLD.attempts,OLD.status_code,OLD.not_before,OLD.next_attempt)
+       IS NOT DISTINCT FROM ROW(NEW.status,NEW.code,NEW.attempts,NEW.status_code,NEW.not_before,NEW.next_attempt) THEN RETURN NEW; END IF;
+   eid:=NEW.endpoint_id; pk:=NEW.principal; mid:=NEW.message_id;
+   INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,device,delivery_id,event,reason,attempts,status_code,not_before,next_attempt)
+    VALUES(eid,pk,mid,NEW.device,NEW.id::text,NEW.status,NEW.code,NEW.attempts,NEW.status_code,NEW.not_before,NEW.next_attempt);
+ ELSE
+   IF TG_OP='DELETE' THEN
+    eid:=OLD.endpoint_id; pk:=OLD.principal; mid:=OLD.message_id;event_name:='fallback_removed';
+    INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,event,not_before,next_attempt) VALUES(eid,pk,mid,event_name,OLD.not_before,OLD.deadline);
+   ELSE
+    IF TG_OP='UPDATE' AND OLD.not_before IS NOT DISTINCT FROM NEW.not_before THEN RETURN NEW; END IF;
+    eid:=NEW.endpoint_id;pk:=NEW.principal;mid:=NEW.message_id;
+    event_name:=CASE WHEN TG_OP='INSERT' THEN 'fallback_scheduled' ELSE 'fallback_rescheduled' END;
+    INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,event,not_before,next_attempt) VALUES(eid,pk,mid,event_name,NEW.not_before,NEW.deadline);
+   END IF;
+ END IF;
+ -- Bounded diagnostic history; no payloads or credential columns are copied.
+ DELETE FROM managed_realtime_notification_timeline WHERE endpoint_id=eid AND (occurred_at<clock_timestamp()-interval '7 days' OR id<=coalesce((SELECT id FROM managed_realtime_notification_timeline WHERE endpoint_id=eid ORDER BY id DESC OFFSET 8192 LIMIT 1),0));
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3990,6 +4597,40 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: faas_scan_realtime_inbox_gaps(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_scan_realtime_inbox_gaps(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c record; processed integer := 0;
+BEGIN
+  FOR c IN
+    SELECT cur.*, h.next_sequence - 1 AS latest,
+      greatest(h.oldest_sequence, coalesce(expired.floor, 1)) AS oldest
+    FROM managed_realtime_inbox_cursors cur
+    JOIN managed_realtime_inbox_heads h ON h.endpoint_id = cur.endpoint_id AND h.channel = cur.channel
+    LEFT JOIN LATERAL (
+      SELECT max(sequence) + 1 AS floor FROM managed_realtime_inbox_messages m
+      WHERE m.endpoint_id = cur.endpoint_id AND m.channel = cur.channel
+        AND m.created_at < clock_timestamp() - interval '24 hours'
+    ) expired ON true
+    WHERE NOT cur.gap_reported AND cur.updated_at >= clock_timestamp() - interval '30 days'
+      AND cur.sequence < greatest(h.oldest_sequence, coalesce(expired.floor, 1)) - 1
+    ORDER BY cur.updated_at, cur.endpoint_id, cur.principal, cur.subscription
+    LIMIT batch_size FOR UPDATE OF cur SKIP LOCKED
+  LOOP
+    PERFORM faas_capture_realtime_inbox_webhook(c.endpoint_id, c.principal, c.subscription, 'realtime.inbox.gap',
+      jsonb_build_object('sequence', c.sequence, 'oldest_sequence', c.oldest, 'latest_sequence', c.latest));
+    UPDATE managed_realtime_inbox_cursors SET gap_reported = true
+      WHERE endpoint_id = c.endpoint_id AND principal = c.principal AND subscription = c.subscription AND channel = c.channel;
+    processed := processed + 1;
+  END LOOP;
+  RETURN processed;
+END $$;
 
 
 --
@@ -19015,6 +19656,25 @@ CREATE TABLE public.managed_postgres_usage_imports (
 
 
 --
+-- Name: managed_realtime_channel_batches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_batches (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    batch_id text NOT NULL,
+    payload_hash bytea NOT NULL,
+    first_sequence bigint NOT NULL,
+    message_count integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_channel_batches_batch_id_check CHECK (((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 128))),
+    CONSTRAINT managed_realtime_channel_batches_first_sequence_check CHECK ((first_sequence >= 1)),
+    CONSTRAINT managed_realtime_channel_batches_message_count_check CHECK (((message_count >= 1) AND (message_count <= 32))),
+    CONSTRAINT managed_realtime_channel_batches_payload_hash_check CHECK ((octet_length(payload_hash) = 32))
+);
+
+
+--
 -- Name: managed_realtime_channel_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19041,9 +19701,37 @@ CREATE TABLE public.managed_realtime_channel_messages (
     is_binary boolean DEFAULT false NOT NULL,
     idempotency_key text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    target_message_id text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    message_event text DEFAULT 'created'::text NOT NULL,
+    deleted boolean DEFAULT false NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT managed_realtime_channel_messages_data_check CHECK ((octet_length(data) <= 4096)),
     CONSTRAINT managed_realtime_channel_messages_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128)))),
-    CONSTRAINT managed_realtime_channel_messages_sequence_check CHECK ((sequence > 0))
+    CONSTRAINT managed_realtime_channel_messages_message_event_check CHECK ((message_event = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT managed_realtime_channel_messages_metadata_check CHECK (((jsonb_typeof(metadata) = 'object'::text) AND (octet_length((metadata)::text) <= 4096))),
+    CONSTRAINT managed_realtime_channel_messages_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT managed_realtime_channel_messages_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: managed_realtime_channel_reducers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_reducers (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    entities json NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    entity_versions json DEFAULT '{}'::json NOT NULL,
+    entity_expirations json DEFAULT '{}'::json NOT NULL,
+    next_expiry timestamp with time zone,
+    CONSTRAINT managed_realtime_channel_reducers_entities_check CHECK (((json_typeof(entities) = 'object'::text) AND (octet_length((entities)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_entity_expirations_check CHECK (((json_typeof(entity_expirations) = 'object'::text) AND (octet_length((entity_expirations)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_entity_versions_check CHECK (((json_typeof(entity_versions) = 'object'::text) AND (octet_length((entity_versions)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_sequence_check CHECK ((sequence >= 0))
 );
 
 
@@ -19113,6 +19801,23 @@ CREATE TABLE public.managed_realtime_channel_routes (
 
 
 --
+-- Name: managed_realtime_channel_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_snapshots (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (clock_timestamp() + '24:00:00'::interval) NOT NULL,
+    CONSTRAINT managed_realtime_channel_snapshots_data_check CHECK ((octet_length(data) <= 65536)),
+    CONSTRAINT managed_realtime_channel_snapshots_sequence_check CHECK ((sequence >= 0))
+);
+
+
+--
 -- Name: managed_realtime_connection_owners; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19125,6 +19830,45 @@ CREATE TABLE public.managed_realtime_connection_owners (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT managed_realtime_owner_connection_id_chk CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 256))),
     CONSTRAINT managed_realtime_owner_token_chk CHECK (((length(lease_token) >= 1) AND (length(lease_token) <= 128)))
+);
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_direct_message_deliveries (
+    endpoint_id uuid NOT NULL,
+    message_id text NOT NULL,
+    connection_id text NOT NULL,
+    node_id uuid NOT NULL,
+    ack_supported boolean NOT NULL,
+    queue_status text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    queued_at timestamp with time zone,
+    acknowledged_at timestamp with time zone,
+    CONSTRAINT managed_realtime_direct_message_deliveries_check CHECK (((acknowledged_at IS NULL) OR ack_supported)),
+    CONSTRAINT managed_realtime_direct_message_deliveries_connection_id_check CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 128))),
+    CONSTRAINT managed_realtime_direct_message_deliveries_queue_status_check CHECK ((queue_status = ANY (ARRAY['pending'::text, 'queued'::text, 'unsupported'::text, 'queue_full'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_direct_message_receipts (
+    endpoint_id uuid NOT NULL,
+    message_id text NOT NULL,
+    payload_fingerprint bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    dispatch_lease_until timestamp with time zone NOT NULL,
+    dispatch_complete boolean DEFAULT false NOT NULL,
+    summary jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT managed_realtime_direct_message_recei_payload_fingerprint_check CHECK ((octet_length(payload_fingerprint) = 32)),
+    CONSTRAINT managed_realtime_direct_message_receipts_message_id_check CHECK (((length(message_id) >= 1) AND (length(message_id) <= 128))),
+    CONSTRAINT managed_realtime_direct_message_receipts_summary_check CHECK ((jsonb_typeof(summary) = 'object'::text))
 );
 
 
@@ -19169,6 +19913,24 @@ CREATE TABLE public.managed_realtime_drain_operations (
 
 
 --
+-- Name: managed_realtime_durable_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_durable_cursors (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    subscription text NOT NULL,
+    channel text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_durable_cursors_channel_check CHECK (((length(channel) >= 1) AND (length(channel) <= 256))),
+    CONSTRAINT managed_realtime_durable_cursors_principal_check CHECK (((length(principal) >= 1) AND (length(principal) <= 256))),
+    CONSTRAINT managed_realtime_durable_cursors_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_durable_cursors_subscription_check CHECK (((length(subscription) >= 1) AND (length(subscription) <= 128)))
+);
+
+
+--
 -- Name: managed_realtime_endpoints; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19203,6 +19965,395 @@ CREATE TABLE public.managed_realtime_endpoints (
     CONSTRAINT managed_realtime_paths_len_chk CHECK ((((length(connect_path) >= 1) AND (length(connect_path) <= 256)) AND ((length(message_path) >= 1) AND (length(message_path) <= 256)) AND ((length(disconnect_path) >= 1) AND (length(disconnect_path) <= 256)))),
     CONSTRAINT managed_realtime_paths_shape_chk CHECK ((("left"(connect_path, 1) = '/'::text) AND ("left"(message_path, 1) = '/'::text) AND ("left"(disconnect_path, 1) = '/'::text))),
     CONSTRAINT managed_realtime_tokens_len_chk CHECK (((octet_length(callback_auth_token_sealed) <= 4096) AND (octet_length(auth_token_sealed) <= 4096) AND (octet_length(auth_token_previous_sealed) <= 4096)))
+);
+
+
+--
+-- Name: managed_realtime_event_schemas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_event_schemas (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    event_type text NOT NULL,
+    version integer NOT NULL,
+    schema json NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_event_schemas_channel_check CHECK (((octet_length(channel) >= 1) AND (octet_length(channel) <= 256))),
+    CONSTRAINT managed_realtime_event_schemas_event_type_check CHECK ((event_type ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_event_schemas_schema_check CHECK ((octet_length((schema)::text) <= 16384)),
+    CONSTRAINT managed_realtime_event_schemas_version_check CHECK (((version >= 1) AND (version <= 1000000)))
+);
+
+
+--
+-- Name: managed_realtime_inbox_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_cursors (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    subscription text NOT NULL,
+    channel text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    gap_reported boolean DEFAULT false NOT NULL,
+    CONSTRAINT managed_realtime_inbox_cursors_channel_check CHECK ((channel ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_cursors_check CHECK ((principal = channel)),
+    CONSTRAINT managed_realtime_inbox_cursors_principal_check CHECK (((length(principal) >= 1) AND (length(principal) <= 256))),
+    CONSTRAINT managed_realtime_inbox_cursors_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_inbox_cursors_subscription_check CHECK (((length(subscription) >= 1) AND (length(subscription) <= 128)))
+);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_fallbacks (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    sequence bigint NOT NULL,
+    message_id text NOT NULL,
+    deadline timestamp with time zone NOT NULL,
+    category text DEFAULT 'notifications'::text NOT NULL,
+    group_key text DEFAULT ''::text NOT NULL,
+    group_label text DEFAULT ''::text NOT NULL,
+    priority text DEFAULT 'normal'::text NOT NULL,
+    expires_at timestamp with time zone,
+    collapse_key text DEFAULT ''::text NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_inbox_fallbacks_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_message_id_check CHECK (((length(message_id) >= 1) AND (length(message_id) <= 128))),
+    CONSTRAINT managed_realtime_inbox_fallbacks_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_inbox_fallbacks_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: managed_realtime_inbox_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_heads (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    next_sequence bigint DEFAULT 1 NOT NULL,
+    oldest_sequence bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT managed_realtime_inbox_heads_channel_check CHECK ((channel ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_heads_check CHECK (((oldest_sequence > 0) AND (oldest_sequence <= next_sequence))),
+    CONSTRAINT managed_realtime_inbox_heads_next_sequence_check CHECK ((next_sequence > 0))
+);
+
+
+--
+-- Name: managed_realtime_inbox_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_messages (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    idempotency_key text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    fallback_after_seconds integer DEFAULT 0 NOT NULL,
+    target_message_id text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    message_event text DEFAULT 'created'::text NOT NULL,
+    deleted boolean DEFAULT false NOT NULL,
+    notification_category text DEFAULT 'notifications'::text NOT NULL,
+    notification_group_key text DEFAULT ''::text NOT NULL,
+    notification_group_label text DEFAULT ''::text NOT NULL,
+    notification_priority text DEFAULT 'normal'::text NOT NULL,
+    notification_ttl_seconds integer DEFAULT 0 NOT NULL,
+    notification_collapse_key text DEFAULT ''::text NOT NULL,
+    notification_not_before text DEFAULT ''::text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT managed_realtime_inbox_messages_data_check CHECK ((octet_length(data) <= 4096)),
+    CONSTRAINT managed_realtime_inbox_messages_fallback_after_seconds_check CHECK (((fallback_after_seconds >= 0) AND (fallback_after_seconds <= 86400))),
+    CONSTRAINT managed_realtime_inbox_messages_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128))),
+    CONSTRAINT managed_realtime_inbox_messages_message_event_check CHECK ((message_event = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT managed_realtime_inbox_messages_metadata_check CHECK (((jsonb_typeof(metadata) = 'object'::text) AND (octet_length((metadata)::text) <= 4096))),
+    CONSTRAINT managed_realtime_inbox_messages_notification_category_check CHECK ((notification_category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_collapse_key_check CHECK ((octet_length(notification_collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_group_key_check CHECK ((octet_length(notification_group_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_group_label_check CHECK ((octet_length(notification_group_label) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_priority_check CHECK ((notification_priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_inbox_messages_notification_ttl_seconds_check CHECK (((notification_ttl_seconds >= 0) AND (notification_ttl_seconds <= 259200))),
+    CONSTRAINT managed_realtime_inbox_messages_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT managed_realtime_inbox_messages_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: managed_realtime_notification_timeline; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_notification_timeline (
+    id bigint NOT NULL,
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    message_id text NOT NULL,
+    device text DEFAULT ''::text NOT NULL,
+    delivery_id text DEFAULT ''::text NOT NULL,
+    event text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    status_code integer DEFAULT 0 NOT NULL,
+    occurred_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    next_attempt timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: managed_realtime_notification_timeline_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_realtime_notification_timeline ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.managed_realtime_notification_timeline_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: managed_realtime_presence_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_presence_leases (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    node_id uuid NOT NULL,
+    connection_id text NOT NULL,
+    member_id text NOT NULL,
+    principal text DEFAULT ''::text NOT NULL,
+    state jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    state_updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_presence_leases_channel_check CHECK (((length(channel) >= 1) AND (length(channel) <= 256))),
+    CONSTRAINT managed_realtime_presence_leases_connection_id_check CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 128))),
+    CONSTRAINT managed_realtime_presence_leases_member_id_check CHECK (((length(member_id) >= 1) AND (length(member_id) <= 128))),
+    CONSTRAINT managed_realtime_presence_leases_principal_check CHECK ((length(principal) <= 256)),
+    CONSTRAINT managed_realtime_presence_leases_state_check CHECK ((jsonb_typeof(state) = 'object'::text))
+);
+
+
+--
+-- Name: managed_realtime_push_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_deliveries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    device text NOT NULL,
+    provider text NOT NULL,
+    version bigint NOT NULL,
+    message_id text NOT NULL,
+    sequence bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    status_code integer DEFAULT 0 NOT NULL,
+    code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    next_attempt timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease uuid,
+    lease_until timestamp with time zone,
+    category text DEFAULT 'notifications'::text NOT NULL,
+    expires_at timestamp with time zone DEFAULT (clock_timestamp() + '24:00:00'::interval) NOT NULL,
+    group_key text DEFAULT ''::text NOT NULL,
+    group_label text DEFAULT ''::text NOT NULL,
+    digest_id uuid,
+    digest_count integer DEFAULT 0 NOT NULL,
+    digest_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    priority text DEFAULT 'normal'::text NOT NULL,
+    hard_expires_at timestamp with time zone,
+    collapse_key text DEFAULT ''::text NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_push_deliveries_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_push_deliveries_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_push_deliveries_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_push_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'sent'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_device_version; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.managed_realtime_push_device_version
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: managed_realtime_push_devices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_devices (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    device text NOT NULL,
+    provider text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    version bigint DEFAULT nextval('public.managed_realtime_push_device_version'::regclass) NOT NULL,
+    fingerprint text NOT NULL,
+    sealed bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_devices_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_push_devices_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_push_devices_provider_check CHECK ((provider = ANY (ARRAY['fcm'::text, 'apns'::text, 'webpush'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_preferences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_preferences (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    preferences jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_preferences_preferences_check CHECK ((jsonb_typeof(preferences) = 'object'::text)),
+    CONSTRAINT managed_realtime_push_preferences_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: managed_realtime_push_providers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_providers (
+    endpoint_id uuid NOT NULL,
+    provider text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    sealed bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_providers_provider_check CHECK ((provider = ANY (ARRAY['fcm'::text, 'apns'::text, 'webpush'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_rate_reservations (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    digest_id uuid NOT NULL,
+    reserved_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: managed_realtime_read_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_read_progress (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    stream text NOT NULL,
+    inbox boolean NOT NULL,
+    sequence bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_read_progress_check CHECK (((NOT inbox) OR (stream = principal))),
+    CONSTRAINT managed_realtime_read_progress_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_read_progress_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_read_progress_stream_check CHECK (((length(stream) >= 1) AND (length(stream) <= 256)))
+);
+
+
+--
+-- Name: managed_realtime_schedule_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_schedule_history (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    schedule_id text NOT NULL,
+    version bigint NOT NULL,
+    event text NOT NULL,
+    status text NOT NULL,
+    attempts bigint NOT NULL,
+    cycle_attempts integer NOT NULL,
+    deliver_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone,
+    failure_code text DEFAULT ''::text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    occurrence bigint DEFAULT 1 NOT NULL,
+    completed_occurrences bigint DEFAULT 0 NOT NULL,
+    skipped_occurrences bigint DEFAULT 0 NOT NULL,
+    skip_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_realtime_schedule_history_event_check CHECK ((event = ANY (ARRAY['baseline'::text, 'created'::text, 'rescheduled'::text, 'canceled'::text, 'manual_retry'::text, 'attempt_failed'::text, 'published'::text, 'paused'::text, 'resumed'::text, 'skipped'::text]))),
+    CONSTRAINT managed_realtime_schedule_history_version_check CHECK ((version >= 1))
+);
+
+
+--
+-- Name: managed_realtime_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_schedules (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    schedule_id text NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    metadata json DEFAULT '{}'::json NOT NULL,
+    deliver_at timestamp with time zone NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    max_attempts integer DEFAULT 1 NOT NULL,
+    backoff_seconds integer DEFAULT 5 NOT NULL,
+    attempts bigint DEFAULT 0 NOT NULL,
+    cycle_attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    last_attempt_at timestamp with time zone,
+    interval_seconds integer DEFAULT 0 NOT NULL,
+    max_occurrences bigint DEFAULT 0 NOT NULL,
+    end_at timestamp with time zone,
+    initial_deliver_at timestamp with time zone NOT NULL,
+    occurrence bigint DEFAULT 1 NOT NULL,
+    completed_occurrences bigint DEFAULT 0 NOT NULL,
+    conditions json,
+    on_condition_failure text DEFAULT ''::text NOT NULL,
+    skipped_occurrences bigint DEFAULT 0 NOT NULL,
+    skip_reason text DEFAULT ''::text NOT NULL,
+    schedule_group text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_realtime_schedule_group_chk CHECK (((octet_length(schedule_group) <= 128) AND (schedule_group = btrim(schedule_group)) AND (schedule_group !~ '[\r\n]'::text))),
+    CONSTRAINT managed_realtime_schedules_attempts_check CHECK (((attempts >= 0) AND (attempts <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_backoff_seconds_check CHECK (((backoff_seconds >= 5) AND (backoff_seconds <= 3600))),
+    CONSTRAINT managed_realtime_schedules_completed_occurrences_check CHECK (((completed_occurrences >= 0) AND (completed_occurrences <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_conditions_check CHECK (((conditions IS NULL) OR ((json_typeof(conditions) = 'array'::text) AND (octet_length((conditions)::text) <= 4096)))),
+    CONSTRAINT managed_realtime_schedules_cycle_attempts_check CHECK (((cycle_attempts >= 0) AND (cycle_attempts <= 10))),
+    CONSTRAINT managed_realtime_schedules_data_check CHECK ((octet_length(data) <= 4096)),
+    CONSTRAINT managed_realtime_schedules_interval_seconds_check CHECK (((interval_seconds = 0) OR ((interval_seconds >= 5) AND (interval_seconds <= 2592000)))),
+    CONSTRAINT managed_realtime_schedules_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 10))),
+    CONSTRAINT managed_realtime_schedules_max_occurrences_check CHECK (((max_occurrences >= 0) AND (max_occurrences <= 1000000))),
+    CONSTRAINT managed_realtime_schedules_occurrence_check CHECK (((occurrence >= 1) AND (occurrence <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_on_condition_failure_check CHECK ((on_condition_failure = ANY (ARRAY[''::text, 'skip'::text, 'retry'::text]))),
+    CONSTRAINT managed_realtime_schedules_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_schedules_skipped_occurrences_check CHECK (((skipped_occurrences >= 0) AND (skipped_occurrences <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'paused'::text, 'published'::text, 'canceled'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT managed_realtime_schedules_version_check CHECK (((version >= 1) AND (version <= '9007199254740991'::bigint)))
 );
 
 
@@ -28223,6 +29374,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 
 --
+-- Name: managed_realtime_channel_batches managed_realtime_channel_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_batches
+    ADD CONSTRAINT managed_realtime_channel_batches_pkey PRIMARY KEY (endpoint_id, channel, batch_id);
+
+
+--
 -- Name: managed_realtime_channel_heads managed_realtime_channel_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28236,6 +29395,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_pkey PRIMARY KEY (endpoint_id, channel, sequence);
+
+
+--
+-- Name: managed_realtime_channel_reducers managed_realtime_channel_reducers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_reducers
+    ADD CONSTRAINT managed_realtime_channel_reducers_pkey PRIMARY KEY (endpoint_id, channel);
 
 
 --
@@ -28279,11 +29446,35 @@ ALTER TABLE ONLY public.managed_realtime_channel_routes
 
 
 --
+-- Name: managed_realtime_channel_snapshots managed_realtime_channel_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_snapshots
+    ADD CONSTRAINT managed_realtime_channel_snapshots_pkey PRIMARY KEY (endpoint_id, channel);
+
+
+--
 -- Name: managed_realtime_connection_owners managed_realtime_connection_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_realtime_connection_owners
     ADD CONSTRAINT managed_realtime_connection_owners_pkey PRIMARY KEY (connection_id);
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries managed_realtime_direct_message_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_deliveries
+    ADD CONSTRAINT managed_realtime_direct_message_deliveries_pkey PRIMARY KEY (endpoint_id, message_id, connection_id);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts managed_realtime_direct_message_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_receipts
+    ADD CONSTRAINT managed_realtime_direct_message_receipts_pkey PRIMARY KEY (endpoint_id, message_id);
 
 
 --
@@ -28295,11 +29486,147 @@ ALTER TABLE ONLY public.managed_realtime_drain_operations
 
 
 --
+-- Name: managed_realtime_durable_cursors managed_realtime_durable_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_durable_cursors
+    ADD CONSTRAINT managed_realtime_durable_cursors_pkey PRIMARY KEY (endpoint_id, principal, subscription, channel);
+
+
+--
 -- Name: managed_realtime_endpoints managed_realtime_endpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_realtime_endpoints
     ADD CONSTRAINT managed_realtime_endpoints_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_event_schemas managed_realtime_event_schemas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_event_schemas
+    ADD CONSTRAINT managed_realtime_event_schemas_pkey PRIMARY KEY (endpoint_id, channel, event_type, version);
+
+
+--
+-- Name: managed_realtime_inbox_cursors managed_realtime_inbox_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_cursors
+    ADD CONSTRAINT managed_realtime_inbox_cursors_pkey PRIMARY KEY (endpoint_id, principal, subscription, channel);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_inbox_fallbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_fallbacks
+    ADD CONSTRAINT managed_realtime_inbox_fallbacks_pkey PRIMARY KEY (endpoint_id, principal, sequence);
+
+
+--
+-- Name: managed_realtime_inbox_heads managed_realtime_inbox_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_heads
+    ADD CONSTRAINT managed_realtime_inbox_heads_pkey PRIMARY KEY (endpoint_id, channel);
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_messages
+    ADD CONSTRAINT managed_realtime_inbox_messages_pkey PRIMARY KEY (endpoint_id, channel, sequence);
+
+
+--
+-- Name: managed_realtime_notification_timeline managed_realtime_notification_timeline_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_notification_timeline
+    ADD CONSTRAINT managed_realtime_notification_timeline_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_pkey PRIMARY KEY (endpoint_id, channel, node_id, connection_id);
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliver_endpoint_id_principal_sequenc_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliver_endpoint_id_principal_sequenc_key UNIQUE (endpoint_id, principal, sequence, device);
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_push_devices managed_realtime_push_devices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_devices
+    ADD CONSTRAINT managed_realtime_push_devices_pkey PRIMARY KEY (endpoint_id, principal, device);
+
+
+--
+-- Name: managed_realtime_push_preferences managed_realtime_push_preferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_preferences
+    ADD CONSTRAINT managed_realtime_push_preferences_pkey PRIMARY KEY (endpoint_id, principal);
+
+
+--
+-- Name: managed_realtime_push_providers managed_realtime_push_providers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_providers
+    ADD CONSTRAINT managed_realtime_push_providers_pkey PRIMARY KEY (endpoint_id, provider);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations managed_realtime_push_rate_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_rate_reservations
+    ADD CONSTRAINT managed_realtime_push_rate_reservations_pkey PRIMARY KEY (endpoint_id, principal, digest_id);
+
+
+--
+-- Name: managed_realtime_read_progress managed_realtime_read_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_read_progress
+    ADD CONSTRAINT managed_realtime_read_progress_pkey PRIMARY KEY (endpoint_id, principal, stream, inbox);
+
+
+--
+-- Name: managed_realtime_schedule_history managed_realtime_schedule_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedule_history
+    ADD CONSTRAINT managed_realtime_schedule_history_pkey PRIMARY KEY (endpoint_id, channel, schedule_id, version);
+
+
+--
+-- Name: managed_realtime_schedules managed_realtime_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedules
+    ADD CONSTRAINT managed_realtime_schedules_pkey PRIMARY KEY (endpoint_id, channel, schedule_id);
 
 
 --
@@ -34960,6 +36287,13 @@ CREATE INDEX managed_postgres_usage_account_period_idx ON public.managed_postgre
 
 
 --
+-- Name: managed_realtime_channel_batches_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_realtime_channel_batches USING btree (endpoint_id, created_at);
+
+
+--
 -- Name: managed_realtime_channel_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34971,6 +36305,13 @@ CREATE INDEX managed_realtime_channel_messages_created_at_idx ON public.managed_
 --
 
 CREATE UNIQUE INDEX managed_realtime_channel_messages_idempotency_idx ON public.managed_realtime_channel_messages USING btree (endpoint_id, channel, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_channel_messages_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_messages_target_idx ON public.managed_realtime_channel_messages USING btree (endpoint_id, channel, target_message_id, sequence DESC);
 
 
 --
@@ -35002,6 +36343,20 @@ CREATE INDEX managed_realtime_connection_owners_node_idx ON public.managed_realt
 
 
 --
+-- Name: managed_realtime_direct_message_deliveries_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_direct_message_deliveries_node_idx ON public.managed_realtime_direct_message_deliveries USING btree (endpoint_id, message_id, node_id);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_direct_message_receipts_expiry_idx ON public.managed_realtime_direct_message_receipts USING btree (expires_at);
+
+
+--
 -- Name: managed_realtime_drain_operations_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35016,6 +36371,13 @@ CREATE INDEX managed_realtime_drain_operations_worker_idx ON public.managed_real
 
 
 --
+-- Name: managed_realtime_durable_cursors_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_durable_cursors_expiry_idx ON public.managed_realtime_durable_cursors USING btree (updated_at, endpoint_id);
+
+
+--
 -- Name: managed_realtime_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35027,6 +36389,160 @@ CREATE INDEX managed_realtime_endpoints_account_idx ON public.managed_realtime_e
 --
 
 CREATE INDEX managed_realtime_endpoints_app_idx ON public.managed_realtime_endpoints USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: managed_realtime_inbox_cursors_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_cursors_expiry_idx ON public.managed_realtime_inbox_cursors USING btree (updated_at, endpoint_id);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_fallbacks_due_idx ON public.managed_realtime_inbox_fallbacks USING btree (deadline);
+
+
+--
+-- Name: managed_realtime_inbox_gap_candidates_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON public.managed_realtime_inbox_cursors USING btree (updated_at, endpoint_id) WHERE (NOT gap_reported);
+
+
+--
+-- Name: managed_realtime_inbox_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_messages_created_at_idx ON public.managed_realtime_inbox_messages USING btree (created_at);
+
+
+--
+-- Name: managed_realtime_inbox_messages_idempotency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_inbox_messages_idempotency_idx ON public.managed_realtime_inbox_messages USING btree (endpoint_id, channel, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_inbox_messages_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_messages_target_idx ON public.managed_realtime_inbox_messages USING btree (endpoint_id, channel, target_message_id, sequence DESC);
+
+
+--
+-- Name: managed_realtime_notification_timeline_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_cleanup_idx ON public.managed_realtime_notification_timeline USING btree (occurred_at);
+
+
+--
+-- Name: managed_realtime_notification_timeline_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_endpoint_idx ON public.managed_realtime_notification_timeline USING btree (endpoint_id, id DESC);
+
+
+--
+-- Name: managed_realtime_notification_timeline_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_lookup_idx ON public.managed_realtime_notification_timeline USING btree (endpoint_id, principal, message_id, id DESC);
+
+
+--
+-- Name: managed_realtime_presence_leases_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_presence_leases_expiry_idx ON public.managed_realtime_presence_leases USING btree (expires_at);
+
+
+--
+-- Name: managed_realtime_presence_principal_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_presence_principal_idx ON public.managed_realtime_presence_leases USING btree (endpoint_id, channel, principal, updated_at DESC) WHERE (principal <> ''::text);
+
+
+--
+-- Name: managed_realtime_push_collapse_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_collapse_idx ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, device, category, priority, collapse_key, sequence) WHERE (collapse_key <> ''::text);
+
+
+--
+-- Name: managed_realtime_push_digest_members; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_digest_members ON public.managed_realtime_push_deliveries USING btree (digest_id, id) WHERE (digest_id IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_push_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_due ON public.managed_realtime_push_deliveries USING btree (next_attempt) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]));
+
+
+--
+-- Name: managed_realtime_push_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_expiry ON public.managed_realtime_push_deliveries USING btree (updated_at) WHERE (status = ANY (ARRAY['sent'::text, 'failed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: managed_realtime_push_group_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_group_pending ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, device, version, category, group_key) WHERE ((digest_id IS NULL) AND (status = ANY (ARRAY['pending'::text, 'sending'::text])));
+
+
+--
+-- Name: managed_realtime_push_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_history ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, created_at DESC);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_rate_reservations_cleanup_idx ON public.managed_realtime_push_rate_reservations USING btree (reserved_at);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_rate_reservations_window_idx ON public.managed_realtime_push_rate_reservations USING btree (endpoint_id, principal, reserved_at);
+
+
+--
+-- Name: managed_realtime_reducer_next_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_reducer_next_expiry_idx ON public.managed_realtime_channel_reducers USING btree (next_expiry, endpoint_id, channel) WHERE (next_expiry IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_schedule_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_schedule_due_idx ON public.managed_realtime_schedules USING btree (COALESCE(next_attempt_at, deliver_at), endpoint_id, channel, schedule_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: managed_realtime_schedule_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_schedule_group_idx ON public.managed_realtime_schedules USING btree (endpoint_id, channel, schedule_group, schedule_id);
 
 
 --
@@ -39349,6 +40865,13 @@ CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE O
 
 
 --
+-- Name: managed_realtime_channel_messages managed_realtime_channel_message_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_channel_message_identity BEFORE INSERT ON public.managed_realtime_channel_messages FOR EACH ROW EXECUTE FUNCTION public.faas_realtime_message_identity();
+
+
+--
 -- Name: compute_nodes managed_realtime_channel_route_targets_compute_nodes_update_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39423,6 +40946,34 @@ CREATE TRIGGER managed_realtime_channel_route_targets_overflow_write_trg AFTER I
 --
 
 CREATE TRIGGER managed_realtime_channel_route_targets_routes_trg AFTER INSERT OR DELETE OR UPDATE ON public.managed_realtime_channel_routes FOR EACH ROW EXECUTE FUNCTION public.managed_realtime_channel_route_targets_notify();
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_fallback_timeline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_fallback_timeline AFTER INSERT OR DELETE OR UPDATE ON public.managed_realtime_inbox_fallbacks FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_message_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_inbox_message_identity BEFORE INSERT ON public.managed_realtime_inbox_messages FOR EACH ROW EXECUTE FUNCTION public.faas_realtime_message_identity();
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_notification_outcome; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_emit_notification_outcome();
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_timeline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
 
 
 --
@@ -44765,6 +46316,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 
 --
+-- Name: managed_realtime_channel_batches managed_realtime_channel_batches_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_batches
+    ADD CONSTRAINT managed_realtime_channel_batches_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_channel_heads managed_realtime_channel_heads_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44778,6 +46337,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_channel_reducers managed_realtime_channel_reducers_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_reducers
+    ADD CONSTRAINT managed_realtime_channel_reducers_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
 
 
 --
@@ -44821,6 +46388,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_routes
 
 
 --
+-- Name: managed_realtime_channel_snapshots managed_realtime_channel_snapshots_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_snapshots
+    ADD CONSTRAINT managed_realtime_channel_snapshots_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_connection_owners managed_realtime_connection_owners_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44834,6 +46409,22 @@ ALTER TABLE ONLY public.managed_realtime_connection_owners
 
 ALTER TABLE ONLY public.managed_realtime_connection_owners
     ADD CONSTRAINT managed_realtime_connection_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries managed_realtime_direct_message_del_endpoint_id_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_deliveries
+    ADD CONSTRAINT managed_realtime_direct_message_del_endpoint_id_message_id_fkey FOREIGN KEY (endpoint_id, message_id) REFERENCES public.managed_realtime_direct_message_receipts(endpoint_id, message_id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_direct_message_receipts managed_realtime_direct_message_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_receipts
+    ADD CONSTRAINT managed_realtime_direct_message_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -44861,6 +46452,14 @@ ALTER TABLE ONLY public.managed_realtime_drain_operations
 
 
 --
+-- Name: managed_realtime_durable_cursors managed_realtime_durable_cursors_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_durable_cursors
+    ADD CONSTRAINT managed_realtime_durable_cursors_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_endpoints managed_realtime_endpoints_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44874,6 +46473,134 @@ ALTER TABLE ONLY public.managed_realtime_endpoints
 
 ALTER TABLE ONLY public.managed_realtime_endpoints
     ADD CONSTRAINT managed_realtime_endpoints_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_event_schemas managed_realtime_event_schemas_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_event_schemas
+    ADD CONSTRAINT managed_realtime_event_schemas_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_cursors managed_realtime_inbox_cursors_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_cursors
+    ADD CONSTRAINT managed_realtime_inbox_cursors_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_inbox_fallbacks_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_fallbacks
+    ADD CONSTRAINT managed_realtime_inbox_fallbacks_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_heads managed_realtime_inbox_heads_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_heads
+    ADD CONSTRAINT managed_realtime_inbox_heads_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_messages_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_messages
+    ADD CONSTRAINT managed_realtime_inbox_messages_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_inbox_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_notification_timeline managed_realtime_notification_timeline_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_notification_timeline
+    ADD CONSTRAINT managed_realtime_notification_timeline_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliveries_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliveries_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_devices managed_realtime_push_devices_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_devices
+    ADD CONSTRAINT managed_realtime_push_devices_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_preferences managed_realtime_push_preferences_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_preferences
+    ADD CONSTRAINT managed_realtime_push_preferences_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_providers managed_realtime_push_providers_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_providers
+    ADD CONSTRAINT managed_realtime_push_providers_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_rate_reservations managed_realtime_push_rate_reservations_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_rate_reservations
+    ADD CONSTRAINT managed_realtime_push_rate_reservations_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_read_progress managed_realtime_read_progress_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_read_progress
+    ADD CONSTRAINT managed_realtime_read_progress_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_schedule_history managed_realtime_schedule_his_endpoint_id_channel_schedule_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedule_history
+    ADD CONSTRAINT managed_realtime_schedule_his_endpoint_id_channel_schedule_fkey FOREIGN KEY (endpoint_id, channel, schedule_id) REFERENCES public.managed_realtime_schedules(endpoint_id, channel, schedule_id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_schedules managed_realtime_schedules_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedules
+    ADD CONSTRAINT managed_realtime_schedules_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --

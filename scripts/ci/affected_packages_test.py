@@ -88,11 +88,12 @@ class ShardTest(unittest.TestCase):
         self.assertIn(["cmd/gregale"], shards)
 
     def test_split_packages_are_never_assigned_whole(self):
-        # The large API/state suites run by name across every shard.
-        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
+        # API and state tests run by name across every shard instead.
+        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3)
+                  for i in (1, 2, 3)]
         self.assertEqual([d for s in shards for d in s], ["pkg/x"])
-        self.assertIn("cmd/apid", ap.SPLIT_PACKAGES)
-        self.assertIn("pkg/state", ap.SPLIT_PACKAGES)
+        for pkg in ("cmd/apid", "pkg/state"):
+            self.assertIn(pkg, ap.SPLIT_PACKAGES)
 
 
 class CommandTest(unittest.TestCase):
