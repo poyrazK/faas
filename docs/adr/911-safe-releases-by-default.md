@@ -1,6 +1,6 @@
 # ADR-911 · Safe releases by default
 
-- **Status:** accepted; default-on behind staging and low-traffic drills (see Rollout)
+- **Status:** accepted; drills passed on the n2 metal node 2026-10-10 (see Rollout)
 - **Date:** 2026-10-09
 - **Amends:** [ADR-200](200-auto-rollback-on-every-plan.md) ("the opt-in stays off by default"), [ADR-122](122-safe-releases.md) canary progression
 - **Follows:** [ADR-199](199-rollouts-on-every-plan.md), [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md)
@@ -158,8 +158,9 @@ therefore still protected when its traffic does arrive.
   `3 × (2 + 5)` minutes on the balanced ladder instead of never.
 - Each in-flight rollout uses the ADR-199 `RolloutConcurrencyGrant` (+1
   instance) for its duration. That cost already existed for `--safe`.
-- `docs/capabilities.md` keeps progressive rollouts at `preview` until the
-  drills below pass; this ADR changes the default, not the maturity claim.
+- Progressive rollouts move to `beta` in the product registry on the
+  2026-10-10 drill evidence (`docs/drills/2026-10-10-safe-release-drill.md`,
+  `cmd/e2e/safe_release_drill_metal_test.go`).
 
 ## Rollout
 

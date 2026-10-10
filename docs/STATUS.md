@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Safe releases by default — 2026-10-10
+
+[ADR-911](adr/911-safe-releases-by-default.md) makes the balanced health-gated
+canary with first-wake 5xx rollback the default for production releases,
+bounds low-traffic canary holds, adds a crash-loop gate, and fixes plain
+rollback of image, GitHub, and preview deployments, which the latest-revision
+promotion fence had silently superseded. The metal drill suite
+(`cmd/e2e/safe_release_drill_metal_test.go`) passed on the n2 node:
+safe default, low-traffic advance (336–356 s), 5xx abort, crash-loop abort,
+canary-worker fallback, and rollback recovery in 8.3 s
+([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+are `beta` in the product registry.
+
 ## Local runtime update work — 2026-10-06
 
 [ADR-693](adr/693-private-runtime-routing-and-health-verification.md) adds private

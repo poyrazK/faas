@@ -357,7 +357,7 @@
       "name": "Progressive rollouts and rollback",
       "category": "delivery",
       "description": "Shift traffic between immutable deployment revisions, advance a canary ladder automatically while health signals stay clean, and roll back to a named revision.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -365,7 +365,7 @@
         "scale"
       ],
       "docs_url": "/docs/deploys",
-      "acceptance_test": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"
+      "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal"
     },
     {
       "id": "request-retry",

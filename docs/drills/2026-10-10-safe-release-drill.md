@@ -17,7 +17,7 @@ also covers the crash-loop gate added to ADR-911.
 | Test | `cmd/e2e/safe_release_drill_metal_test.go` `TestSafeReleaseDrillMetal` |
 | Branch | `feat/safe-releases-by-default` |
 | Signals | real apid, meterd canary progression, schedd, vmmd, gatewayd-internal; breaker PromQL answered from schedd's and the gateway's real `/metrics` |
-| Verdict | **4 of 5 PASS; rollback recovery FAIL (product bug, below)** |
+| Verdict | **PASS** — all six drills after the rollback fix (finding 1) |
 
 | Drill | Result | Evidence |
 |---|---|---|
@@ -26,7 +26,7 @@ also covers the crash-loop gate added to ADR-911.
 | Bad release aborts and restores the predecessor | PASS | `/api` 5xx at a 50% canary; breaker input candidate 26/26 5xx vs stable 0/25; abort `circuit breaker: 5xx error rate regression; restoring predecessor`, predecessor back to 100% (run 8) |
 | Crash-looping release aborts on liveness restarts | PASS | `/livez` failing, `/` healthy; abort `circuit breaker: crash loop (repeated liveness restarts); restoring predecessor` (runs 5, 6) |
 | Defaulted release falls back when the canary worker is down | PASS | meterd killed, lease expired; flag-free deploy went live at 100% with no canary and `rollback_on_5xx=true` (runs 4–6) |
-| Rollback recovery ≤ 60 s | **FAIL** | `POST /v1/apps/{slug}/rollback` accepted; target went `snapshotting` → `superseded` within 30 s and never served (run 6, 5 min watch) |
+| Rollback recovery ≤ 60 s | PASS | before the fix the target went `snapshotting` → `superseded` and never served (run 6); with `ab57a4b03` the predecessor served 100% again **8.3 s** after `POST /v1/apps/{slug}/rollback` (run 9) |
 
 ## Findings
 
