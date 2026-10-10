@@ -20,7 +20,7 @@
 # The image is built and published by CI. imaged resolves the immutable
 # per-runtime reference and auto-stages the matching ext4 on first use, so a
 # newly provisioned compute node does not need a hand-copied runtime image.
-FROM golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a
+FROM public.ecr.aws/docker/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 
 # Guest runtime user (uid 1000, spec §4.8).

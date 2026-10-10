@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_state_sla import OperationWorkflowStateSLA
 
 
 T = TypeVar("T", bound="OperationWorkflowState")
@@ -38,6 +39,11 @@ class OperationWorkflowState:
     revision: int
     contract_version: int
     updated_at: datetime.datetime
+    sla: OperationWorkflowStateSLA | Unset = UNSET
+    """Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state
+    metadata reports preserve entry time. Known history establishes the current visit from revision 1 or a
+    contiguous prior different state. Gaps or inconsistent times/versions/budgets yield unknown status and omit
+    inferred timestamps/durations. Breached at due_at or later. Terminal states have no current SLA."""
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
     """In the latest retained state, full replacement snapshot of direct prerequisite references."""
     dependencies_only: bool | Unset = UNSET
@@ -94,6 +100,10 @@ class OperationWorkflowState:
         contract_version = self.contract_version
 
         updated_at = self.updated_at.isoformat()
+
+        sla: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sla, Unset):
+            sla = self.sla.to_dict()
 
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -171,6 +181,8 @@ class OperationWorkflowState:
                 "updated_at": updated_at,
             }
         )
+        if sla is not UNSET:
+            field_dict["sla"] = sla
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if dependencies_only is not UNSET:
@@ -212,6 +224,7 @@ class OperationWorkflowState:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_state_sla import OperationWorkflowStateSLA
 
         d = dict(src_dict)
         overdue = d.pop("overdue")
@@ -233,6 +246,13 @@ class OperationWorkflowState:
         contract_version = d.pop("contract_version")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _sla = d.pop("sla", UNSET)
+        sla: OperationWorkflowStateSLA | Unset
+        if isinstance(_sla, Unset):
+            sla = UNSET
+        else:
+            sla = OperationWorkflowStateSLA.from_dict(_sla)
 
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -325,6 +345,7 @@ class OperationWorkflowState:
             revision=revision,
             contract_version=contract_version,
             updated_at=updated_at,
+            sla=sla,
             depends_on=depends_on,
             dependencies_only=dependencies_only,
             outcome_code=outcome_code,

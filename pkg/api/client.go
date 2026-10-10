@@ -961,10 +961,22 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
-// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+// InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
 	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
+// ClearScenarioTestChaos removes the active fault plan from a live scenario run.
+func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+}
+
+// ScenarioTestChaosMatches returns bounded per-rule match counts for the
+// current or most recently cleared plan in one isolated run.
+func (c *Client) ScenarioTestChaosMatches(ctx context.Context, runID string) (ScenarioTestChaosMatchesResponse, error) {
+	var out ScenarioTestChaosMatchesResponse
+	return out, c.do(ctx, "GET", "/v1/dev/test-runs/"+runID+"/chaos/matches", nil, &out)
 }
 
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {

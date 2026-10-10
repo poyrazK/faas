@@ -11,17 +11,21 @@ import (
 // Both schedulers execute the same complete HTTP journey, with private captures
 // and an identity derived from its iteration or scheduled arrival number.
 type testLoadJourney struct {
-	Client       *http.Client
-	BaseURL      string
-	RunID        string
-	ConsumerKeys map[string]string
-	Steps        []testHTTPRequest
-	Data         map[string]any
+	Client          *http.Client
+	BaseURL         string
+	RunID           string
+	ConsumerKeys    map[string]string
+	Steps           []testHTTPRequest
+	Data            map[string]any
+	InitialCaptures map[string]string
 }
 
 func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, iteration int) {
-	values := testHTTPValues(fmt.Sprintf("%s-%d", j.RunID, iteration), nil, j.Data)
-	captures := map[string]string{}
+	values := testHTTPValues(fmt.Sprintf("%s-%d", j.RunID, iteration), j.InitialCaptures, j.Data)
+	captures := make(map[string]string, len(j.InitialCaptures))
+	for name, value := range j.InitialCaptures {
+		captures[name] = value
+	}
 	failed, interrupted := false, false
 	for i, step := range j.Steps {
 		if !collector.reserve(ctx, cfg.RequestLimit) {

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/chaos"
@@ -25,6 +27,7 @@ type ScenarioTestMember struct {
 
 var scenarioTestRunPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var scenarioTestWorkloadPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var scenarioChaosRuleIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMember) error {
 	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) || len(members) == 0 || len(members) > 16 {
@@ -210,28 +213,52 @@ func (s *PgStore) SetScenarioTestChaosPlan(ctx context.Context, accountID, runID
 	if err != nil {
 		return chaos.Lease{}, fmt.Errorf("encode scenario chaos rules: %w", err)
 	}
+	generation := uuid.NewString()
 	expiresAt := time.Now().UTC().Add(time.Duration(plan.DurationMS) * time.Millisecond)
+	if _, err := tx.Exec(ctx, `delete from scenario_test_chaos_matches where account_id = $1 and run_id = $2`, accountID, runID); err != nil {
+		return chaos.Lease{}, fmt.Errorf("clear prior scenario chaos matches: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `update scenario_test_members
-		set chaos_rules = $3::jsonb, chaos_expires_at = $4
-		where account_id = $1 and run_id = $2`, accountID, runID, rawRules, expiresAt); err != nil {
+		set chaos_rules = $3::jsonb, chaos_expires_at = $4, chaos_generation = $5::uuid
+		where account_id = $1 and run_id = $2`, accountID, runID, rawRules, expiresAt, generation); err != nil {
 		return chaos.Lease{}, fmt.Errorf("store scenario chaos plan: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return chaos.Lease{}, fmt.Errorf("commit scenario chaos plan: %w", err)
 	}
-	return chaos.Lease{Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}, nil
+	return chaos.Lease{Generation: generation, Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}, nil
+}
+
+func (s *PgStore) ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return ErrConflict
+	}
+	result, err := s.pool.Exec(ctx, `update scenario_test_members m
+		set chaos_rules = '[]'::jsonb, chaos_expires_at = now()
+		from apps a
+		where m.account_id = $1 and m.run_id = $2 and a.id = m.app_id
+		and a.status <> 'deleted' and a.preview_pr_state = 'open' and a.preview_expires_at > now()`, accountID, runID)
+	if err != nil {
+		return fmt.Errorf("clear scenario chaos plan: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 	var lease chaos.Lease
 	var rawRules []byte
 	var expiresAt pgtype.Timestamptz
-	err := s.pool.QueryRow(ctx, `select member_caller.workload_name, member_caller.chaos_rules, member_caller.chaos_expires_at
+	var generation pgtype.Text
+	err := s.pool.QueryRow(ctx, `select member_caller.workload_name, member_caller.chaos_rules, member_caller.chaos_expires_at,
+		member_caller.chaos_generation::text
 		from scenario_test_members member_caller
 		join scenario_test_members member_target on member_target.account_id = member_caller.account_id
 			and member_target.run_id = member_caller.run_id and member_target.workload_name = $3
 		where member_caller.run_id = $1 and member_caller.app_id = $2`, runID, callerAppID, targetWorkload).
-		Scan(&lease.CallerWorkload, &rawRules, &expiresAt)
+		Scan(&lease.CallerWorkload, &rawRules, &expiresAt, &generation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return chaos.Lease{}, nil
 	}
@@ -245,6 +272,9 @@ func (s *PgStore) ScenarioTestChaosForCall(ctx context.Context, runID, callerApp
 		return chaos.Lease{}, fmt.Errorf("decode scenario chaos plan: %w", err)
 	}
 	lease.ExpiresAt = expiresAt.Time
+	if generation.Valid {
+		lease.Generation = generation.String
+	}
 	filtered := lease.Rules[:0]
 	for _, rule := range lease.Rules {
 		if rule.To == targetWorkload && (rule.From == "" || rule.From == lease.CallerWorkload) {
@@ -256,6 +286,83 @@ func (s *PgStore) ScenarioTestChaosForCall(ctx context.Context, runID, callerApp
 		return chaos.Lease{}, nil
 	}
 	return lease, nil
+}
+
+func (s *PgStore) RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error {
+	for _, injection := range injections {
+		if err := validateScenarioChaosInjection(injection); err != nil {
+			return err
+		}
+		_, err := s.pool.Exec(ctx, `insert into scenario_test_chaos_matches
+			(account_id, run_id, caller_app_id, generation, rule_id, matches)
+			select m.account_id, m.run_id, m.app_id, $3::uuid, $4, $5
+			from scenario_test_members m
+			where m.run_id = $1 and m.app_id = $2 and m.chaos_generation = $3::uuid
+			on conflict (account_id, run_id, caller_app_id, generation, rule_id)
+			do update set matches = scenario_test_chaos_matches.matches + excluded.matches, updated_at = now()`,
+			injection.RunID, injection.CallerApp, injection.Generation, injection.RuleID, injection.Count)
+		if err != nil {
+			return fmt.Errorf("record scenario chaos matches: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *PgStore) ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error) {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return chaos.MatchEvidence{}, ErrConflict
+	}
+	var evidence chaos.MatchEvidence
+	err := s.pool.QueryRow(ctx, `select coalesce(m.chaos_generation::text, '')
+		from scenario_test_members m join apps a on a.id = m.app_id
+		where m.account_id = $1 and m.run_id = $2 and a.status <> 'deleted'
+		and a.preview_pr_state = 'open' and a.preview_expires_at > now()
+		order by m.workload_name limit 1`, accountID, runID).Scan(&evidence.Generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return chaos.MatchEvidence{}, ErrNotFound
+	}
+	if err != nil {
+		return chaos.MatchEvidence{}, fmt.Errorf("load scenario chaos generation: %w", err)
+	}
+	if evidence.Generation == "" {
+		return evidence, nil
+	}
+	rows, err := s.pool.Query(ctx, `select rule_id, sum(matches)::bigint
+		from scenario_test_chaos_matches
+		where account_id = $1 and run_id = $2 and generation = $3::uuid
+		group by rule_id order by rule_id`, accountID, runID, evidence.Generation)
+	if err != nil {
+		return chaos.MatchEvidence{}, fmt.Errorf("list scenario chaos matches: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var match chaos.RuleMatchCount
+		if err := rows.Scan(&match.RuleID, &match.Count); err != nil {
+			return chaos.MatchEvidence{}, fmt.Errorf("scan scenario chaos matches: %w", err)
+		}
+		evidence.Matches = append(evidence.Matches, match)
+	}
+	if err := rows.Err(); err != nil {
+		return chaos.MatchEvidence{}, fmt.Errorf("read scenario chaos matches: %w", err)
+	}
+	if evidence.Matches == nil {
+		evidence.Matches = []chaos.RuleMatchCount{}
+	}
+	return evidence, nil
+}
+
+func validateScenarioChaosInjection(injection chaos.InjectionBatch) error {
+	if !scenarioTestRunPattern.MatchString(injection.RunID) || injection.CallerApp == "" ||
+		!scenarioChaosRuleIDPattern.MatchString(injection.RuleID) || injection.Count < 1 {
+		return ErrConflict
+	}
+	if _, err := uuid.Parse(injection.CallerApp); err != nil {
+		return ErrConflict
+	}
+	if _, err := uuid.Parse(injection.Generation); err != nil {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (m *MemStore) SetScenarioTestChaosPlan(_ context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error) {
@@ -297,9 +404,40 @@ func (m *MemStore) SetScenarioTestChaosPlan(_ context.Context, accountID, runID 
 		m.scenarioTestChaosPlans = make(map[string]chaos.Lease)
 	}
 	key := accountID + "\x00" + runID
-	lease := chaos.Lease{Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}
+	generation := uuid.NewString()
+	lease := chaos.Lease{Generation: generation, Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}
+	m.deleteScenarioChaosMatchesLocked(accountID, runID)
 	m.scenarioTestChaosPlans[key] = lease
 	return lease, nil
+}
+
+func (m *MemStore) ClearScenarioTestChaosPlan(_ context.Context, accountID, runID string) error {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := false
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID != accountID || member.RunID != runID {
+			continue
+		}
+		if app, ok := m.apps[member.AppID]; ok && eligibleScenarioTestApp(app, accountID) {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return ErrNotFound
+	}
+	key := accountID + "\x00" + runID
+	lease, exists := m.scenarioTestChaosPlans[key]
+	if exists {
+		lease.Rules = nil
+		lease.ExpiresAt = time.Now().UTC()
+		m.scenarioTestChaosPlans[key] = lease
+	}
+	return nil
 }
 
 func (m *MemStore) ScenarioTestChaosForCall(_ context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
@@ -337,6 +475,80 @@ func (m *MemStore) ScenarioTestChaosForCall(_ context.Context, runID, callerAppI
 	return lease, nil
 }
 
+func (m *MemStore) RecordScenarioTestChaosInjections(_ context.Context, injections []chaos.InjectionBatch) error {
+	for _, injection := range injections {
+		if err := validateScenarioChaosInjection(injection); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.scenarioTestChaosMatches == nil {
+		m.scenarioTestChaosMatches = make(map[string]map[string]int64)
+	}
+	for _, injection := range injections {
+		caller, ok := m.scenarioTestMembers[injection.CallerApp]
+		if !ok || caller.RunID != injection.RunID {
+			continue
+		}
+		planKey := caller.AccountID + "\x00" + injection.RunID
+		lease, ok := m.scenarioTestChaosPlans[planKey]
+		if !ok || lease.Generation != injection.Generation {
+			continue
+		}
+		evidenceKey := scenarioChaosEvidenceKey(caller.AccountID, injection.RunID, injection.Generation)
+		if m.scenarioTestChaosMatches[evidenceKey] == nil {
+			m.scenarioTestChaosMatches[evidenceKey] = make(map[string]int64)
+		}
+		m.scenarioTestChaosMatches[evidenceKey][injection.RuleID] += injection.Count
+	}
+	return nil
+}
+
+func (m *MemStore) ScenarioTestChaosMatchEvidence(_ context.Context, accountID, runID string) (chaos.MatchEvidence, error) {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return chaos.MatchEvidence{}, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := false
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID != accountID || member.RunID != runID {
+			continue
+		}
+		if app, ok := m.apps[member.AppID]; ok && eligibleScenarioTestApp(app, accountID) {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return chaos.MatchEvidence{}, ErrNotFound
+	}
+	lease, ok := m.scenarioTestChaosPlans[accountID+"\x00"+runID]
+	if !ok || lease.Generation == "" {
+		return chaos.MatchEvidence{Matches: []chaos.RuleMatchCount{}}, nil
+	}
+	evidence := chaos.MatchEvidence{Generation: lease.Generation, Matches: []chaos.RuleMatchCount{}}
+	for ruleID, count := range m.scenarioTestChaosMatches[scenarioChaosEvidenceKey(accountID, runID, lease.Generation)] {
+		evidence.Matches = append(evidence.Matches, chaos.RuleMatchCount{RuleID: ruleID, Count: count})
+	}
+	sort.Slice(evidence.Matches, func(i, j int) bool { return evidence.Matches[i].RuleID < evidence.Matches[j].RuleID })
+	return evidence, nil
+}
+
+func scenarioChaosEvidenceKey(accountID, runID, generation string) string {
+	return accountID + "\x00" + runID + "\x00" + generation
+}
+
+func (m *MemStore) deleteScenarioChaosMatchesLocked(accountID, runID string) {
+	prefix := accountID + "\x00" + runID + "\x00"
+	for key := range m.scenarioTestChaosMatches {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			delete(m.scenarioTestChaosMatches, key)
+		}
+	}
+}
+
 func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -358,6 +570,7 @@ func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID
 		}
 	}
 	delete(m.scenarioTestChaosPlans, accountID+"\x00"+runID)
+	m.deleteScenarioChaosMatchesLocked(accountID, runID)
 	return nil
 }
 
@@ -388,6 +601,9 @@ func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runI
 		}
 		return ErrNotFound
 	}
+	if _, err := s.pool.Exec(ctx, `delete from scenario_test_chaos_matches where account_id = $1 and run_id = $2`, accountID, runID); err != nil {
+		return fmt.Errorf("delete scenario chaos matches: %w", err)
+	}
 	return nil
 }
 
@@ -401,6 +617,10 @@ func (s *PgStore) PruneScenarioTestMembers(ctx context.Context, maxRuns int) (in
 		group by m.account_id, m.run_id
 		having bool_and(a.status = 'deleted')
 		limit $1
+	), removed_matches as (
+		delete from scenario_test_chaos_matches c using finished f
+		where c.account_id = f.account_id and c.run_id = f.run_id
+		returning c.run_id
 	)
 	delete from scenario_test_members m using finished f
 	where m.account_id = f.account_id and m.run_id = f.run_id`, maxRuns)
@@ -447,6 +667,7 @@ func (m *MemStore) PruneScenarioTestMembers(_ context.Context, maxRuns int) (int
 			if !remaining {
 				prunedGroups++
 				delete(m.scenarioTestChaosPlans, key)
+				m.deleteScenarioChaosMatchesLocked(member.AccountID, member.RunID)
 			}
 		}
 	}

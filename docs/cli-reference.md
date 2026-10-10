@@ -5562,7 +5562,7 @@ Inject bounded faults into isolated real-VM scenario tests
 
 Run one scenario profile with a scoped service fault
 
-`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
+`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--tcp-port <PORT>] [--direction <DIRECTION>] [--bandwidth <N>] [--timeout] [--reset] [--reset-after <DURATION>] [--connect-timeout] [--connect-refused] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5572,7 +5572,15 @@ Run one scenario profile with a scoped service fault
 | `--from <SERVICE>` | only affect calls from this workload |  |
 | `--latency <DURATION>` | add this delay to selected requests, such as 1500ms |  |
 | `--error <CODE>` | return this synthetic HTTP 5xx status |  |
-| `--percent <N>` | fraction of matching requests affected (1..100) |  |
+| `--tcp-port <PORT>` | target TCP port; selects TCP latency |  |
+| `--direction <DIRECTION>` | TCP traffic direction | one of `upstream` · `downstream` · `both` |
+| `--bandwidth <N>` | TCP throughput cap in KiB/s |  |
+| `--timeout` | stall TCP traffic until the lease expires |  |
+| `--reset` | reset selected TCP connections |  |
+| `--reset-after <DURATION>` | delay before a TCP reset |  |
+| `--connect-timeout` | hold new service connections until timeout or fault clear |  |
+| `--connect-refused` | reset new service connections before reaching the target |  |
+| `--percent <N>` | fraction of matching requests or TCP connections affected (1..100) |  |
 | `--duration <DURATION>` | maximum fault lease duration (1s..5m) |  |
 | `--profile <PROFILE>` | real-VM lifecycle profile | one of `warm` · `cold` · `restored` |
 | `--seed <N>` | deterministic fault-selection seed |  |
@@ -5580,8 +5588,11 @@ Run one scenario profile with a scoped service fault
 Examples:
 
 ```sh
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --bandwidth 64 --direction downstream
 gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m
 gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-timeout --duration 8s
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-refused
 ```
 
 
@@ -8030,7 +8041,7 @@ Summarize explicit business outcomes
 
 List workflows needing attention
 
-`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8043,8 +8054,12 @@ List workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 
@@ -8052,11 +8067,11 @@ List workflows needing attention
 
 Summarize workflows needing attention
 
-`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--group-by <DIMENSION>` | summary grouping | one of `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--group-by <DIMENSION>` | summary grouping | one of `owner` · `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
 | `--app <SLUG>` | owned app in account mode |  |
 | `--self` | authenticated customer queue |  |
 | `--app-id <UUID>` | required with --self |  |
@@ -8066,8 +8081,12 @@ Summarize workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 

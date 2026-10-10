@@ -20,11 +20,11 @@ class APIConsumerUsageStatementBucketResponse:
     window_start: datetime.datetime
     billable_units: int
     charged_units: int
-    """Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge
-    units it does not add when late usage exhausted the allowance sooner."""
+    """Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may
+    charge units it does not add when late usage exhausted the allowance sooner."""
     amount_millicents: int
-    """Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper
-    step; a revision's total is never negative."""
+    """Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a
+    cheaper step; a revision's total is never negative."""
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
     price_millicents_per_unit: int | Unset = UNSET

@@ -1,12 +1,29 @@
 from typing import Literal
 
-OperationWorkflowAttentionEntryReasonsItem = Literal["blocked", "dependency", "overdue", "stale"]
-
-OPERATION_WORKFLOW_ATTENTION_ENTRY_REASONS_ITEM_VALUES: set[OperationWorkflowAttentionEntryReasonsItem] = {
+OperationWorkflowAttentionEntryReasonsItem = Literal[
+    "awaiting_verification",
     "blocked",
     "dependency",
+    "escalated",
+    "follow_up_overdue",
     "overdue",
+    "sla_at_risk",
+    "sla_breached",
     "stale",
+    "unacknowledged",
+]
+
+OPERATION_WORKFLOW_ATTENTION_ENTRY_REASONS_ITEM_VALUES: set[OperationWorkflowAttentionEntryReasonsItem] = {
+    "awaiting_verification",
+    "blocked",
+    "dependency",
+    "escalated",
+    "follow_up_overdue",
+    "overdue",
+    "sla_at_risk",
+    "sla_breached",
+    "stale",
+    "unacknowledged",
 }
 
 

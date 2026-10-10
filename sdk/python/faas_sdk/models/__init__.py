@@ -1516,7 +1516,11 @@ from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerReq
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
 from .list_account_operations_state import ListAccountOperationsState
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
+from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
 from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
+from .list_account_workflow_attention_sort import ListAccountWorkflowAttentionSort
+from .list_account_workflow_performance_instances_cohort import ListAccountWorkflowPerformanceInstancesCohort
+from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1554,7 +1558,15 @@ from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOp
 from .list_platform_tenant_self_workflow_attention_dependency_status import (
     ListPlatformTenantSelfWorkflowAttentionDependencyStatus,
 )
+from .list_platform_tenant_self_workflow_attention_priority import ListPlatformTenantSelfWorkflowAttentionPriority
 from .list_platform_tenant_self_workflow_attention_reason import ListPlatformTenantSelfWorkflowAttentionReason
+from .list_platform_tenant_self_workflow_attention_sort import ListPlatformTenantSelfWorkflowAttentionSort
+from .list_platform_tenant_self_workflow_performance_instances_cohort import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
+)
+from .list_platform_tenant_self_workflow_performance_instances_dimension import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+)
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
 from .list_profile_investigations_response import ListProfileInvestigationsResponse
@@ -2034,7 +2046,14 @@ from .operation_workflow_attention_stats import OperationWorkflowAttentionStats
 from .operation_workflow_attention_summary import OperationWorkflowAttentionSummary
 from .operation_workflow_attention_summary_group_by import OperationWorkflowAttentionSummaryGroupBy
 from .operation_workflow_blocker import OperationWorkflowBlocker
+from .operation_workflow_blocker_duration import OperationWorkflowBlockerDuration
+from .operation_workflow_blocker_escalation import OperationWorkflowBlockerEscalation
+from .operation_workflow_blocker_escalation_policy import OperationWorkflowBlockerEscalationPolicy
+from .operation_workflow_blocker_performance import OperationWorkflowBlockerPerformance
+from .operation_workflow_blocker_priority import OperationWorkflowBlockerPriority
 from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
+from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
@@ -2051,6 +2070,7 @@ from .operation_workflow_dependency_trace_limits_reached_item import OperationWo
 from .operation_workflow_dependency_trace_workflow_limit import OperationWorkflowDependencyTraceWorkflowLimit
 from .operation_workflow_dependent_instance import OperationWorkflowDependentInstance
 from .operation_workflow_dependent_instance_dependency_status import OperationWorkflowDependentInstanceDependencyStatus
+from .operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
 from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
@@ -2063,6 +2083,17 @@ from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
 from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
 from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
 from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+from .operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
+from .operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
+from .operation_workflow_performance_coverage_reason_reason import OperationWorkflowPerformanceCoverageReasonReason
+from .operation_workflow_performance_group import OperationWorkflowPerformanceGroup
+from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
+from .operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
+from .operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
+from .operation_workflow_performance_instances_response_cohort import (
+    OperationWorkflowPerformanceInstancesResponseCohort,
+)
+from .operation_workflow_performance_summary import OperationWorkflowPerformanceSummary
 from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
@@ -2076,14 +2107,23 @@ from .operation_workflow_reconciliation_payload_kind import OperationWorkflowRec
 from .operation_workflow_reconciliation_status import OperationWorkflowReconciliationStatus
 from .operation_workflow_related_instance import OperationWorkflowRelatedInstance
 from .operation_workflow_related_instance_status import OperationWorkflowRelatedInstanceStatus
+from .operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+from .operation_workflow_resolution_verification_status import OperationWorkflowResolutionVerificationStatus
 from .operation_workflow_state import OperationWorkflowState
+from .operation_workflow_state_duration import OperationWorkflowStateDuration
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
+from .operation_workflow_state_performance import OperationWorkflowStatePerformance
 from .operation_workflow_state_report import OperationWorkflowStateReport
 from .operation_workflow_state_report_deadline_at_type_1 import OperationWorkflowStateReportDeadlineAtType1
 from .operation_workflow_state_report_response import OperationWorkflowStateReportResponse
+from .operation_workflow_state_sla import OperationWorkflowStateSLA
+from .operation_workflow_state_sla_status import OperationWorkflowStateSLAStatus
 from .operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
 from .operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
 from .operation_workflow_step import OperationWorkflowStep
+from .operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
+from .operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
+from .operation_workflow_step_state_sla_warning_percent import OperationWorkflowStepStateSlaWarningPercent
 from .operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
 from .operation_workflow_transition import OperationWorkflowTransition
 from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
@@ -2093,6 +2133,8 @@ from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
 from .operation_workflow_unmet_effect_reason import OperationWorkflowUnmetEffectReason
 from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
+from .operation_workflow_verification_duration import OperationWorkflowVerificationDuration
+from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -2986,7 +3028,10 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_match import ScenarioTestChaosMatch
+from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesResponse
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
@@ -3133,7 +3178,9 @@ from .stream_app_logs_level import StreamAppLogsLevel
 from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .summarize_account_workflow_attention_dependency_status import SummarizeAccountWorkflowAttentionDependencyStatus
 from .summarize_account_workflow_attention_group_by import SummarizeAccountWorkflowAttentionGroupBy
+from .summarize_account_workflow_attention_priority import SummarizeAccountWorkflowAttentionPriority
 from .summarize_account_workflow_attention_reason import SummarizeAccountWorkflowAttentionReason
+from .summarize_account_workflow_attention_sort import SummarizeAccountWorkflowAttentionSort
 from .summarize_account_workflow_outcomes_group_by import SummarizeAccountWorkflowOutcomesGroupBy
 from .summarize_platform_tenant_self_workflow_attention_dependency_status import (
     SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus,
@@ -3141,7 +3188,11 @@ from .summarize_platform_tenant_self_workflow_attention_dependency_status import
 from .summarize_platform_tenant_self_workflow_attention_group_by import (
     SummarizePlatformTenantSelfWorkflowAttentionGroupBy,
 )
+from .summarize_platform_tenant_self_workflow_attention_priority import (
+    SummarizePlatformTenantSelfWorkflowAttentionPriority,
+)
 from .summarize_platform_tenant_self_workflow_attention_reason import SummarizePlatformTenantSelfWorkflowAttentionReason
+from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePlatformTenantSelfWorkflowAttentionSort
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
@@ -4912,7 +4963,11 @@ __all__ = (
     "LinkPlatformTenantSurfaceRequest",
     "ListAccountOperationsState",
     "ListAccountWorkflowAttentionDependencyStatus",
+    "ListAccountWorkflowAttentionPriority",
     "ListAccountWorkflowAttentionReason",
+    "ListAccountWorkflowAttentionSort",
+    "ListAccountWorkflowPerformanceInstancesCohort",
+    "ListAccountWorkflowPerformanceInstancesDimension",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -4948,7 +5003,11 @@ __all__ = (
     "ListOrgAPIKeysResponse",
     "ListPlatformTenantSelfOperationsState",
     "ListPlatformTenantSelfWorkflowAttentionDependencyStatus",
+    "ListPlatformTenantSelfWorkflowAttentionPriority",
     "ListPlatformTenantSelfWorkflowAttentionReason",
+    "ListPlatformTenantSelfWorkflowAttentionSort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesCohort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -5408,7 +5467,14 @@ __all__ = (
     "OperationWorkflowAttentionSummary",
     "OperationWorkflowAttentionSummaryGroupBy",
     "OperationWorkflowBlocker",
+    "OperationWorkflowBlockerDuration",
+    "OperationWorkflowBlockerEscalation",
+    "OperationWorkflowBlockerEscalationPolicy",
+    "OperationWorkflowBlockerPerformance",
+    "OperationWorkflowBlockerPriority",
     "OperationWorkflowBlockerResolution",
+    "OperationWorkflowBottlenecks",
+    "OperationWorkflowBottlenecksIncompleteReasonsItem",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionReason",
@@ -5425,6 +5491,7 @@ __all__ = (
     "OperationWorkflowDependencyTraceWorkflowLimit",
     "OperationWorkflowDependentInstance",
     "OperationWorkflowDependentInstanceDependencyStatus",
+    "OperationWorkflowDurationDistribution",
     "OperationWorkflowEffectRequirement",
     "OperationWorkflowEvidenceMilestone",
     "OperationWorkflowInstanceMilestoneRef",
@@ -5437,6 +5504,15 @@ __all__ = (
     "OperationWorkflowOutcomesResponse",
     "OperationWorkflowOutcomeSummary",
     "OperationWorkflowOutcomeSummaryGroupBy",
+    "OperationWorkflowPerformanceCohort",
+    "OperationWorkflowPerformanceCoverageReason",
+    "OperationWorkflowPerformanceCoverageReasonReason",
+    "OperationWorkflowPerformanceGroup",
+    "OperationWorkflowPerformanceGroupDimension",
+    "OperationWorkflowPerformanceInstance",
+    "OperationWorkflowPerformanceInstancesResponse",
+    "OperationWorkflowPerformanceInstancesResponseCohort",
+    "OperationWorkflowPerformanceSummary",
     "OperationWorkflowPlannedDecision",
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
@@ -5450,14 +5526,23 @@ __all__ = (
     "OperationWorkflowReconciliationStatus",
     "OperationWorkflowRelatedInstance",
     "OperationWorkflowRelatedInstanceStatus",
+    "OperationWorkflowResolutionVerification",
+    "OperationWorkflowResolutionVerificationStatus",
     "OperationWorkflowState",
+    "OperationWorkflowStateDuration",
     "OperationWorkflowStateHistoryEntry",
+    "OperationWorkflowStatePerformance",
     "OperationWorkflowStateReport",
     "OperationWorkflowStateReportDeadlineAtType1",
     "OperationWorkflowStateReportResponse",
+    "OperationWorkflowStateSLA",
+    "OperationWorkflowStateSLAStatus",
     "OperationWorkflowStateValidationRequest",
     "OperationWorkflowStateValidationResponse",
     "OperationWorkflowStep",
+    "OperationWorkflowStepBlockerEscalations",
+    "OperationWorkflowStepStateSlaBudgetSeconds",
+    "OperationWorkflowStepStateSlaWarningPercent",
     "OperationWorkflowStepStateStaleAfterSeconds",
     "OperationWorkflowTransition",
     "OperationWorkflowTransitionReadiness",
@@ -5467,6 +5552,8 @@ __all__ = (
     "OperationWorkflowUnmetEffectReason",
     "OperationWorkflowUnmetInvariant",
     "OperationWorkflowUnmetInvariantReason",
+    "OperationWorkflowVerificationDuration",
+    "OperationWorkflowVerificationPerformance",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -6306,7 +6393,10 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosMatch",
+    "ScenarioTestChaosMatchesResponse",
     "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
@@ -6445,11 +6535,15 @@ __all__ = (
     "StreamDeploymentLogsFollow",
     "SummarizeAccountWorkflowAttentionDependencyStatus",
     "SummarizeAccountWorkflowAttentionGroupBy",
+    "SummarizeAccountWorkflowAttentionPriority",
     "SummarizeAccountWorkflowAttentionReason",
+    "SummarizeAccountWorkflowAttentionSort",
     "SummarizeAccountWorkflowOutcomesGroupBy",
     "SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus",
     "SummarizePlatformTenantSelfWorkflowAttentionGroupBy",
+    "SummarizePlatformTenantSelfWorkflowAttentionPriority",
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
+    "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",

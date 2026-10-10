@@ -37,10 +37,7 @@ class AssignAPIConsumerPlanRequest:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-            }
-        )
+        field_dict.update({})
         if plan_id is not UNSET:
             field_dict["plan_id"] = plan_id
         if effective_from is not UNSET:
