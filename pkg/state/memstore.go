@@ -186,13 +186,15 @@ type MemStore struct {
 	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
 	featureFlagVersions         map[string][]FeatureFlagVersion
 	safeReleaseWorkerLeaseUntil time.Time
-	requestAuditEvents          map[string]RequestAuditRecord
-	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
-	discoveryReceipts           map[string]struct{}
-	revisionPins                map[string]time.Time
-	imagePreparations           map[string]ImagePreparation
-	deploymentActivationMu      sync.Mutex
-	deploymentActivationLocks   map[string]*deploymentActivationLock
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-911).
+	rollbackPrepared          map[string]time.Time
+	requestAuditEvents        map[string]RequestAuditRecord
+	discoveredAPIRoutes       map[string]DiscoveredAPIRoute
+	discoveryReceipts         map[string]struct{}
+	revisionPins              map[string]time.Time
+	imagePreparations         map[string]ImagePreparation
+	deploymentActivationMu    sync.Mutex
+	deploymentActivationLocks map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -8579,6 +8581,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	// A prepared rollback is consumed by its promotion (ADR-911).
+	defer func() {
+		if err == nil {
+			delete(m.rollbackPrepared, id)
+		}
+	}()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -9546,6 +9554,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
 	m.putDeploymentLocked(targetDeploymentID, target)
+	if m.rollbackPrepared == nil {
+		m.rollbackPrepared = map[string]time.Time{}
+	}
+	m.rollbackPrepared[targetDeploymentID] = now
 	return target, nil
 }
 

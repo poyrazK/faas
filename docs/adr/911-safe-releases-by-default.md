@@ -91,6 +91,24 @@ into failures there. Such hosts must either configure
 `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid. The safe-release metal
 drill found this and runs with the verifier wired, as production does.
 
+### Plain rollback is promoted unfenced
+
+The safe default leans on the first-wake 5xx auto-rollback, which reuses the
+plain rollback path (`rollbackAppCore` → `PrepareDeploymentRollback`). imaged
+fences automatic promotion of image, GitHub, and preview deployments against
+newer revisions and re-checks a GitHub source branch's head; both rejected
+every rollback target, because an older revision is the point of a rollback.
+The safe-release drill found that a plain rollback, manual or automatic,
+left the target `superseded` and the bad release serving while the
+auto-rollback was still recorded.
+
+`deployments.rollback_prepared_at` marks a target prepared by
+`PrepareDeploymentRollback`. imaged treats a marked target like a checked
+rollback: unfenced `MarkDeploymentLive`, no source-branch freshness check.
+Promotion clears the marker in the same transaction, so a refused or failed
+activation keeps it for the next attempt. Automatic promotion of a fresh
+deployment is unchanged.
+
 ### Bounded low-traffic hold
 
 `api.CanaryLowTrafficMaxHold` (5 minutes) bounds a hold that exists only

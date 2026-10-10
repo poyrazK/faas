@@ -9491,6 +9491,11 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 			}
 		}
 	}
+	// ADR-911: a prepared rollback is consumed by its promotion. Clearing it
+	// in this transaction means a failed promotion keeps the marker for retry.
+	if _, err := tx.Exec(ctx, `update deployments set rollback_prepared_at = null where id = $1 and rollback_prepared_at is not null`, id); err != nil {
+		return fmt.Errorf("state: clear rollback marker: %w", err)
+	}
 	if _, gateErr := checkDeploymentDependenciesTx(ctx, tx, dep, time.Now().UTC(), false); gateErr != nil {
 		return gateErr
 	}
@@ -10866,6 +10871,7 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
 		update deployments
 		   set status = 'snapshotting',
+		       rollback_prepared_at = $3,
 		       error = '', error_code = '',
 		       traffic_percent = 0,
 		       traffic_percent_explicit = false,

@@ -40,7 +40,9 @@ also covers the crash-loop gate added to ADR-911.
    the same `rollbackAppCore` path, so it records an auto-rollback without
    restoring traffic. GitHub and preview kinds were fenced before; #4311
    (2026-10-08) added image. Canary aborts use rollout recovery and are not
-   affected. Open; fix pending.
+   affected. Fixed in this branch: `deployments.rollback_prepared_at` marks a
+   prepared rollback target and imaged promotes it unfenced (ADR-911
+   §Plain rollback is promoted unfenced); rollback recovery is re-run below.
 2. **A defaulted canary requires imaged's hosting smoke verifier.** imaged
    requires the post-readiness smoke for every canary deployment; a host
    without `FAAS_API_HOSTING_SMOKE_URL` fails it. Production compute nodes
