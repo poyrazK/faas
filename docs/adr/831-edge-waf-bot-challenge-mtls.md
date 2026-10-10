@@ -219,3 +219,52 @@ Consequences:
 
 Items 1 and 2 are open decisions for the product owner before step 1
 leaves preview.
+
+## Amendment 3: cheaper engine configurations (spike, 2026-10-10)
+
+Four configurations at PL1 on `gregale-internal-test-1` while it was idle
+(load 0.0, one 2.8 GHz Xeon core, CRS v4.25, Coraza v3.8.1). Every
+configuration detected all five probe attacks (SQLi in the query, XSS and
+RCE in a JSON body, LFI in the query, SQLi inside 8 KiB of JSON) and none
+flagged a benign 8 KiB JSON body. "RE2" registers the
+`coraza-wasilibs` v0.2.0 operators (RE2, Aho-Corasick and libinjection
+compiled to WebAssembly, run by wazero; pure Go, no cgo). "Trimmed" loads
+only REQUEST-901 initialization and the LFI, RFI, RCE, XSS and SQLi files
+(930, 931, 932, 941, 942).
+
+| Configuration | headers+URI p50 / p95 / p99 | 8 KiB JSON | 8 KiB text | 64 KiB JSON |
+|---|---|---|---|---|
+| shipped (full CRS) | 1.27 / 1.46 / 3.30 ms | 134 ms | 59 ms | 326 ms |
+| RE2 | 1.45 / 1.68 / 2.72 ms | 120 ms | 8.4 ms | 296 ms |
+| trimmed | 0.76 / 0.89 / 1.78 ms | 97 ms | 38 ms | 243 ms |
+| RE2 + trimmed | 0.86 / 1.08 / 1.69 ms | 91 ms | 5.3 ms | 233 ms |
+
+Headers+URI latency is over 3000 requests across five realistic paths; body
+columns are means. The 2.1 ms headers-only figure in amendment 2 was a mean
+taken while the node was busy.
+
+Findings:
+
+- **In-path blocking on headers and URI meets the 2 ms p95 gate.** Even
+  the full rule set has a 1.46 ms p95 on an idle core; the trimmed set has
+  0.89 ms, leaving headroom for a loaded node. p99 is 1.7-3.3 ms.
+- **Bodies cannot be blocked in-path with any of these.** Many-field JSON
+  stays at 90-134 ms per 8 KiB. Its profile is 55% Go `regexp` calls on
+  hundreds of short values and 30% hashing in Coraza's transformation
+  cache: per-argument overhead, which RE2-in-WebAssembly does not reduce.
+- **RE2 is a large win only for long text fields** (7x on 8 KiB of text)
+  and costs ~0.2 ms on headers-only. Operator registration is process-wide,
+  so a gateway cannot use RE2 for bodies and the Go engine for headers.
+- **Trimming trades coverage for speed.** It drops scanner detection (913),
+  protocol enforcement and attack (920, 921), multipart (922), PHP (933),
+  generic (934), session fixation (943) and Java (944).
+
+Proposed shape for the next step, for the product owner to decide:
+
+1. `warn` and `block` evaluate headers and URI only, in-path, with the
+   trimmed rule set at PL1, behind its own latency measurement on the
+   reference node.
+2. Bodies stay observe-only and sampled off-path, budgeted in worker time
+   (amendment 2), with the full rule set.
+3. Adopt RE2 only if body samples turn out to be mostly long text fields;
+   for JSON APIs it adds a dependency without a gain.
