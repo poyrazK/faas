@@ -504,6 +504,7 @@ func cmdDev(args []string) int {
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
+	var patchExplainer devPatchExplainer
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
 	reportDevDiagnostic := func(d devDiagnostic) {
@@ -584,6 +585,9 @@ func cmdDev(args []string) int {
 				onQueued: func(dep api.DeploymentResponse) {
 					devTelemetry.setDeploymentID(dep.ID)
 					devTelemetry.setDevPatch(dep.DevPatch)
+					if line := patchExplainer.explain(dep.DevPatch); line != "" && !jsonOutput {
+						PrintProgress(osStdout, "%s", line)
+					}
 					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 {
 						go watchDevPatch(deployCtx, dep.DevPatch.Generation,
 							func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
