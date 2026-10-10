@@ -115,7 +115,7 @@ func TestPlatformReceiversRegisterSeparateQualificationHandlers(t *testing.T) {
 	if _, err := StartWorkloadIdentityReceiver(context.Background(), nil, manager, nil, jailer); err != nil {
 		t.Fatal("workload-identity receiver:", err)
 	}
-	if _, err := StartRuntimeConfigReceiver(context.Background(), nil, manager, nil, jailer); err != nil {
+	if _, err := StartRuntimeConfigReceiver(context.Background(), nil, manager, nil, jailer, nil); err != nil {
 		t.Fatal("runtime-config receiver:", err)
 	}
 	for _, port := range []uint32{VsockFrameworkReadyHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort} {
