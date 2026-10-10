@@ -1,0 +1,336 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "notes-crud",
+      "requests": [
+        {
+          "name": "Create note",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 201
+          },
+          "body": {
+            "subject": "alice",
+            "body": "Starter CRUD"
+          },
+          "capture": {
+            "note_id": "/0/id"
+          }
+        },
+        {
+          "name": "Read created note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id,body,version",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}",
+                "body": "Starter CRUD",
+                "version": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Update note",
+          "method": "PATCH",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id,body,version",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}",
+                "body": "Updated CRUD",
+                "version": 2
+              }
+            ]
+          },
+          "body": {
+            "body": "Updated CRUD"
+          }
+        },
+        {
+          "name": "Delete note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Verify deletion",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "notes-rls",
+      "requests": [
+        {
+          "name": "Alice creates owned note",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 201
+          },
+          "body": {
+            "subject": "alice",
+            "body": "Private Alice note"
+          },
+          "capture": {
+            "note_id": "/0/id"
+          }
+        },
+        {
+          "name": "Bob cannot read Alice note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Bob cannot update Alice note",
+          "method": "PATCH",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "body": "Forbidden"
+          }
+        },
+        {
+          "name": "Bob cannot delete Alice note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Alice cannot insert as Bob",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "subject": "bob",
+            "body": "Forbidden ownership"
+          }
+        },
+        {
+          "name": "Alice note remains unchanged",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id,body,version",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}",
+                "body": "Private Alice note",
+                "version": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Alice deletes owned note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Verify owned note cleanup",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "notes-rpc",
+      "requests": [
+        {
+          "name": "Alice creates note and tag with RPC",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_note_with_tags",
+          "identity": "alice",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "note_body": "Starter RPC",
+            "tag_names": [
+              "starter-replay"
+            ]
+          },
+          "capture": {
+            "note_id": "/0/id"
+          }
+        },
+        {
+          "name": "Read RPC note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id,subject,body",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}",
+                "subject": "alice",
+                "body": "Starter RPC"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Capture attached tag",
+          "method": "GET",
+          "path": "/rest/v1/note_tags?note_id=eq.{{note_id}}&select=tag_id",
+          "identity": "alice",
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "tag_id": "/0/tag_id"
+          }
+        },
+        {
+          "name": "Bob cannot read RPC note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Bob cannot read Alice tag",
+          "method": "GET",
+          "path": "/rest/v1/tags?id=eq.{{tag_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Verify RPC tag",
+          "method": "GET",
+          "path": "/rest/v1/tags?id=eq.{{tag_id}}&select=id,name",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{tag_id}}",
+                "name": "starter-replay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Delete RPC note and attachment",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Delete RPC tag",
+          "method": "DELETE",
+          "path": "/rest/v1/tags?id=eq.{{tag_id}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{tag_id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Verify RPC note cleanup",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Verify attachment cleanup",
+          "method": "GET",
+          "path": "/rest/v1/note_tags?note_id=eq.{{note_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Verify tag cleanup",
+          "method": "GET",
+          "path": "/rest/v1/tags?id=eq.{{tag_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    }
+  ]
+}

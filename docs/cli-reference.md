@@ -8489,6 +8489,32 @@ Create schema-generated PostgreSQL APIs and export application types
 
 `gregale data-api [<subcommand>]`
 
+### data-api dev
+
+Run a disposable local Data API with test identities
+
+`gregale data-api dev [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | starter project directory (default .) |  |
+| `--output <FILE>` | types output relative to the project |  |
+| `--port <PORT>` | loopback gateway port (default 8080; 0 selects a free port) |  |
+| `--check` | run installed client typecheck and tests |  |
+| `--once` | verify and exit, removing disposable containers |  |
+| `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
+| `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |
+| `--check-breaking` | reject breaking changes; requires an existing baseline |  |
+| `--replay <FILE>` | replay saved requests relative to the project (requires --once) |  |
+| `--scenario <NAME>` | select one named scenario (requires --replay) |  |
+
+Examples:
+
+```sh
+gregale data-api dev --check
+gregale data-api dev --port 0 --check --once
+```
+
 ### data-api create
 
 Deploy a managed PostgREST Data API
@@ -8523,11 +8549,12 @@ Generate types in an owner-authenticated app task
 
 Compare the current schema with a saved JSON baseline
 
-`gregale data-api diff --baseline <FILE> [--check] [--timeout <DURATION>] <name>`
+`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
+| `--current <FILE>` | compare a saved current contract offline; omit the app name |  |
 | `--check` | fail on breaking contract changes |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 

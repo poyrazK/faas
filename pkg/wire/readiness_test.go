@@ -354,18 +354,60 @@ func TestNewPGPingSignal_StopperIdempotent(t *testing.T) {
 	stopper()
 }
 
+// gatedPinger holds each Ping until released and records its deadline.
+type gatedPinger struct {
+	entered  chan time.Duration
+	release  chan struct{}
+	released sync.Once
+}
+
+func (g *gatedPinger) Ping(ctx context.Context) error {
+	deadline, _ := ctx.Deadline()
+	select {
+	case g.entered <- time.Until(deadline):
+	default:
+	}
+	select {
+	case <-g.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func TestNewPGPingSignal_ZeroEveryDefaultsTo5s(t *testing.T) {
-	// Passing every=0 must not panic or block. The first ping
-	// happens immediately; subsequent ticks at every/2 = 2.5s.
-	// We just verify construction completes and the first ping
-	// runs within a reasonable budget.
-	pool := &fakePinger{}
+	// Passing every=0 must not panic or block. The first ping happens
+	// immediately, bounded to every/2 = 2.5s. The ping is held so the
+	// "not ready before the first ping completes" check cannot race the
+	// goroutine (the release gate saw ready=true on a loaded runner).
+	pool := &gatedPinger{entered: make(chan time.Duration, 1), release: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s, stopper := wire.NewPGPingSignal(ctx, pool, 0)
 	defer stopper()
+	defer pool.released.Do(func() { close(pool.release) })
+	var budget time.Duration
+	select {
+	case budget = <-pool.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("zero-every default: first ping did not start immediately")
+	}
+	if budget <= 2*time.Second || budget > 2500*time.Millisecond {
+		t.Errorf("first ping budget = %s, want every/2 = 2.5s from the 5s default", budget)
+	}
 	if r, _ := s.Report(); r {
-		t.Errorf("zero-every default: ready = true before first ping, want false")
+		t.Error("zero-every default: ready = true before the first ping completed, want false")
+	}
+	pool.released.Do(func() { close(pool.release) })
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if r, _ := s.Report(); r {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("zero-every default: ready stayed false after the first ping succeeded")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
