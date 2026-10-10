@@ -36,9 +36,15 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 			t.Run(name+"/"+change, func(t *testing.T) {
 				ctx := t.Context()
 				mem := state.NewMemStore()
-				account, app, _ := seedApp(t, mem, api.PlanPro, 256, 5)
+				account, app, seedDeployment := seedApp(t, mem, api.PlanPro, 256, 5)
 				status := state.DeployLive
 				if prime {
+					// Prime has no prior live worker in this fixture. Otherwise a
+					// failed candidate legitimately reconciles the seeded worker,
+					// racing the candidate-only delivery and RAM assertions below.
+					if err := mem.UpdateDeploymentStatus(ctx, seedDeployment.ID, state.DeploySuperseded, ""); err != nil {
+						t.Fatal(err)
+					}
 					status = state.DeploySnapshotting
 					manifest := app.Manifest
 					manifest.ExecutionMode = api.ExecutionModeWorker

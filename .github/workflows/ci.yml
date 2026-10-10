@@ -1240,9 +1240,10 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
-    # retain time for the remaining SQLC, vulnerability and Ansible gates.
-    timeout-minutes: 30
+    # The complete cold-run gate sequence can exhaust 30 minutes at the
+    # final watchdog rule check. Retain time for every contract and safety
+    # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
