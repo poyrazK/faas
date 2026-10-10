@@ -221,11 +221,11 @@ func cmdWebhooksUpdate(args []string) int {
 	format := fs.String("delivery-format", "", "new delivery format (json|cloudevents)")
 	enable := fs.Bool("enable", false, "enable")
 	disable := fs.Bool("disable", false, "disable")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks update <id> --app <slug> [--target-url X] [--retry-policy X] [--delivery-format X] [--enable|--disable]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks update --app <slug> <id> [--target-url X] [--retry-policy X] [--delivery-format X] [--enable|--disable]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -276,7 +276,7 @@ func cmdWebhooksUpdate(args []string) int {
 func cmdWebhooksRm(args []string) int {
 	fs := newFlagSet("webhooks-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
@@ -362,7 +362,7 @@ func cmdWebhookDeliveries(args []string) int {
 func cmdWebhookInfo(args []string) int {
 	fs := newFlagSet("webhooks-info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
@@ -399,7 +399,7 @@ func cmdWebhookInfo(args []string) int {
 func cmdWebhookRetry(args []string) int {
 	fs := newFlagSet("webhooks-retry", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 2 {

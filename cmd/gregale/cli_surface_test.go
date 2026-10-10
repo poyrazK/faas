@@ -92,25 +92,72 @@ func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
 	}
 }
 
-func TestEdgeRuleValidateFlagsAppearInCreateAndUpdateHelp(t *testing.T) {
+// Every flag the edge-rules create/update parsers accept must be in their
+// help and the CLI reference. Production-us rc.251: `--kind cors` failed
+// with "requires at least one allow_origin" while create's help listed no
+// --cors-allow-origin; 21 create flags (all of kind=headers, CORS origins,
+// JWT audience/claims, --name, --expires-*) were parsed but undocumented.
+func TestEdgeRuleParsedFlagsAppearInCreateAndUpdateHelp(t *testing.T) {
 	oldOut := osStdout
 	t.Cleanup(func() { osStdout = oldOut })
-	for _, subcommand := range []string{"create", "update"} {
+	parsed := flagsRegisteredIn(t, "commands_edge_rules.go")
+	for subcommand, fn := range map[string]string{"create": "cmdEdgeRulesCreate", "update": "cmdEdgeRulesUpdate"} {
+		if len(parsed[fn]) == 0 {
+			t.Fatalf("found no flags registered in %s", fn)
+		}
 		var out bytes.Buffer
 		osStdout = &out
 		if code := run([]string{"edge-rules", subcommand, "--help"}); code != 0 {
 			t.Fatalf("edge-rules %s --help = %d", subcommand, code)
 		}
-		for _, flag := range []string{
-			"--validate-schema", "--validate-mode", "--validate-content-type",
-			"--validate-max-body-bytes", "--validate-apply-while-streaming",
-			"--validate-reject-unknown-fields",
-		} {
-			if !strings.Contains(out.String(), flag) {
-				t.Errorf("edge-rules %s --help missing %s:\n%s", subcommand, flag, out.String())
+		for _, flag := range parsed[fn] {
+			if !strings.Contains(out.String(), "--"+flag+" ") && !strings.Contains(out.String(), "--"+flag+"[") {
+				t.Errorf("edge-rules %s parses --%s but its help omits it", subcommand, flag)
 			}
 		}
 	}
+}
+
+// flagsRegisteredIn returns, per top-level function in file, the names of
+// flags registered on a FlagSet variable named fs.
+func flagsRegisteredIn(t *testing.T, file string) map[string][]string {
+	t.Helper()
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string][]string)
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if recv, ok := sel.X.(*ast.Ident); !ok || recv.Name != "fs" {
+				return true
+			}
+			for _, arg := range call.Args {
+				lit, ok := arg.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				if name, err := strconv.Unquote(lit.Value); err == nil {
+					out[fn.Name.Name] = append(out[fn.Name.Name], name)
+				}
+				break
+			}
+			return true
+		})
+	}
+	return out
 }
 
 func TestCommonCommandExamplesAgreeAcrossHelpAndReference(t *testing.T) {

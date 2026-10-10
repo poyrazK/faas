@@ -7,6 +7,8 @@ set -euo pipefail
 
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid RELEASE_SHA" >&2; exit 2; }
 [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "invalid RUN_ID" >&2; exit 2; }
+RUN_ATTEMPT="${RUN_ATTEMPT:-1}"
+[[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo "invalid RUN_ATTEMPT" >&2; exit 2; }
 [[ "$ACTIVE_NODE_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "invalid ACTIVE_NODE_COUNT" >&2; exit 2; }
 SHARED_RETRY_BUDGET_REQUIRED="${SHARED_RETRY_BUDGET_REQUIRED:-false}"
 case "$SHARED_RETRY_BUDGET_REQUIRED" in
@@ -67,6 +69,12 @@ export FAAS_API FAAS_APPS_DOMAIN
 
 short_sha="${RELEASE_SHA:0:8}"
 run_suffix="${RUN_ID: -8}"
+# A re-run keeps the run id, and the previous attempt's cleanup deleted its
+# apps, whose slugs stay reserved through the delete grace period: rc.251's
+# re-run failed every deploy with "slug ... is already in use".
+if ((RUN_ATTEMPT > 1)); then
+	run_suffix+="r${RUN_ATTEMPT}"
+fi
 
 deploy_attempt() {
 	local template="$1" slug="$2" output="$3"

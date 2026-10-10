@@ -3082,7 +3082,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if secretPolicyBlocksSnapshots {
 		choice.coldReason = secretPolicyColdReason
 	} else {
-		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
 	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
@@ -8375,6 +8375,24 @@ func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan stri
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
 	}
 	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+}
+
+// guestRAMMB is the memory vmmd boots a deployment's guest with: the app's RAM
+// plus explicitly allocated companion RAM (fcvm.wakeGuestMemoryMiB). Snapshot
+// RAM checks compare against it; production-us rc.251 rejected every companion
+// deployment's snapshot against the app RAM alone. An unknown companion shape
+// returns 0, which skips the check and leaves vmmd's restore gate in charge.
+func (e *Engine) guestRAMMB(ctx context.Context, deploymentID string, appRAMMB int) int {
+	if appRAMMB <= 0 {
+		return appRAMMB
+	}
+	sidecarMBs, err := e.store.DeploymentSidecarRAMs(ctx, deploymentID)
+	if err != nil {
+		e.log.Warn("wake: companion RAM unknown; deferring snapshot RAM check to vmmd",
+			"deployment_id", deploymentID, "err", err)
+		return 0
+	}
+	return api.BillableRAMMBWithSidecars(appRAMMB, sidecarMBs) - api.PerVMOverheadMB
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different

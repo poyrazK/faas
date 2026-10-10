@@ -264,12 +264,31 @@ func (j *ResourceJournal) foreignBindReference(file resourceFileIdentity, owned 
 	}
 	for _, r := range j.records {
 		for _, a := range r.Assets {
-			if a.Kind == "bind" && a.SourceFile != nil && *a.SourceFile == file && !owned[a.Path] {
+			if a.Kind == "bind" && a.SourceFile != nil && *a.SourceFile == file && !owned[a.Path] && bindAssetStillNames(a, file) {
 				return true, nil
 			}
 		}
 	}
 	return false, nil
+}
+
+// bindAssetStillNames reports whether a recorded bind can still hold file:
+// its source path or its bind target still resolves to that inode. An inode
+// number is reused only after the old file is unlinked and no mount pins it,
+// so a record whose source and target both resolve elsewhere (or nowhere)
+// described an earlier file. Production rc.251 (fsn-2): a dead instance's
+// record of a deleted cache file matched a new build drive by (device, inode)
+// and the build VM's cleanup waited forever on that "unknown owner".
+func bindAssetStillNames(a resourceAsset, file resourceFileIdentity) bool {
+	for _, path := range []string{a.Source, a.Path} {
+		if path == "" {
+			continue
+		}
+		if same, err := resourceFileMatches(path, file); err == nil && same {
+			return true
+		}
+	}
+	return false
 }
 
 // A replaced path cannot authorize an unlink or permission restoration.
