@@ -10,11 +10,16 @@ from ..models.route_monitor_finding_error_status import (
     RouteMonitorFindingErrorStatus,
     check_route_monitor_finding_error_status,
 )
+from ..models.route_monitor_finding_evidence_window import (
+    RouteMonitorFindingEvidenceWindow,
+    check_route_monitor_finding_evidence_window,
+)
 from ..models.route_monitor_finding_latency_status import (
     RouteMonitorFindingLatencyStatus,
     check_route_monitor_finding_latency_status,
 )
 from ..models.route_monitor_finding_status import RouteMonitorFindingStatus, check_route_monitor_finding_status
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.route_monitor_route import RouteMonitorRoute
@@ -37,6 +42,12 @@ class RouteMonitorFinding:
     error_status: RouteMonitorFindingErrorStatus
     latency_status: RouteMonitorFindingLatencyStatus
     windows: list[RouteMonitorWindow]
+    evidence_window: RouteMonitorFindingEvidenceWindow | Unset = UNSET
+    """Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846).
+    Budgets are unchanged."""
+    pooled_windows: list[RouteMonitorWindow] | Unset = UNSET
+    """Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes
+    whose one-minute windows were sparse."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +66,17 @@ class RouteMonitorFinding:
             windows_item = windows_item_data.to_dict()
             windows.append(windows_item)
 
+        evidence_window: str | Unset = UNSET
+        if not isinstance(self.evidence_window, Unset):
+            evidence_window = self.evidence_window
+
+        pooled_windows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.pooled_windows, Unset):
+            pooled_windows = []
+            for pooled_windows_item_data in self.pooled_windows:
+                pooled_windows_item = pooled_windows_item_data.to_dict()
+                pooled_windows.append(pooled_windows_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +89,10 @@ class RouteMonitorFinding:
                 "windows": windows,
             }
         )
+        if evidence_window is not UNSET:
+            field_dict["evidence_window"] = evidence_window
+        if pooled_windows is not UNSET:
+            field_dict["pooled_windows"] = pooled_windows
 
         return field_dict
 
@@ -93,6 +119,22 @@ class RouteMonitorFinding:
 
             windows.append(windows_item)
 
+        _evidence_window = d.pop("evidence_window", UNSET)
+        evidence_window: RouteMonitorFindingEvidenceWindow | Unset
+        if isinstance(_evidence_window, Unset):
+            evidence_window = UNSET
+        else:
+            evidence_window = check_route_monitor_finding_evidence_window(_evidence_window)
+
+        _pooled_windows = d.pop("pooled_windows", UNSET)
+        pooled_windows: list[RouteMonitorWindow] | Unset = UNSET
+        if _pooled_windows is not UNSET:
+            pooled_windows = []
+            for pooled_windows_item_data in _pooled_windows:
+                pooled_windows_item = RouteMonitorWindow.from_dict(pooled_windows_item_data)
+
+                pooled_windows.append(pooled_windows_item)
+
         route_monitor_finding = cls(
             route=route,
             status=status,
@@ -100,6 +142,8 @@ class RouteMonitorFinding:
             error_status=error_status,
             latency_status=latency_status,
             windows=windows,
+            evidence_window=evidence_window,
+            pooled_windows=pooled_windows,
         )
 
         route_monitor_finding.additional_properties = d

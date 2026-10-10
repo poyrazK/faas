@@ -24537,11 +24537,13 @@ CREATE TABLE public.route_monitors (
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
+    on_violation text DEFAULT 'report'::text NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
     CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT route_monitors_on_violation_check CHECK ((on_violation = ANY (ARRAY['report'::text, 'rollback'::text]))),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
     CONSTRAINT route_monitors_updated_at_check CHECK (isfinite(updated_at))
@@ -24563,6 +24565,43 @@ CREATE TABLE public.route_policy_receipts (
     CONSTRAINT route_policy_receipts_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 200))),
     CONSTRAINT route_policy_receipts_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
     CONSTRAINT route_policy_receipts_request_sha256_check CHECK ((request_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: route_probe_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_observations (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    server_errors bigint DEFAULT 0 NOT NULL,
+    unauthenticated bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT route_probe_observations_check CHECK (((server_errors + unauthenticated) <= requests)),
+    CONSTRAINT route_probe_observations_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT route_probe_observations_path_check CHECK (((octet_length(path) >= 1) AND (octet_length(path) <= 240))),
+    CONSTRAINT route_probe_observations_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT route_probe_observations_server_errors_check CHECK ((server_errors >= 0)),
+    CONSTRAINT route_probe_observations_unauthenticated_check CHECK ((unauthenticated >= 0)),
+    CONSTRAINT route_probe_observations_window_start_check CHECK (isfinite(window_start))
+);
+
+
+--
+-- Name: route_probe_rounds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_rounds (
+    app_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT route_probe_rounds_claimed_at_check CHECK (isfinite(claimed_at)),
+    CONSTRAINT route_probe_rounds_window_start_check CHECK (isfinite(window_start))
 );
 
 
@@ -31739,6 +31778,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: route_probe_observations route_probe_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_pkey PRIMARY KEY (app_id, deployment_id, method, path, window_start);
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_pkey PRIMARY KEY (app_id, window_start);
+
+
+--
 -- Name: route_removal_approvals route_removal_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38117,6 +38172,20 @@ CREATE UNIQUE INDEX route_monitor_incidents_one_open_idx ON public.route_monitor
 --
 
 CREATE INDEX route_monitors_due_idx ON public.route_monitors USING btree (next_check_at, app_id) WHERE enabled;
+
+
+--
+-- Name: route_probe_observations_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_observations_window_idx ON public.route_probe_observations USING btree (window_start);
+
+
+--
+-- Name: route_probe_rounds_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_rounds_window_idx ON public.route_probe_rounds USING btree (window_start);
 
 
 --
@@ -49445,6 +49514,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 ALTER TABLE ONLY public.route_policy_receipts
     ADD CONSTRAINT route_policy_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_observations route_probe_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

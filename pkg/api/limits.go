@@ -9112,6 +9112,37 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
 
+// RouteHealthSeed bounds the report-mode selectors apid saves for an app that
+// never configured route health when its first canary advances (ADR-844).
+const (
+	RouteHealthSeedRoutes   = 10
+	RouteHealthSeedLookback = 7 * 24 * time.Hour
+)
+
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
+// requests per route and deployment, only while a canary is in flight.
+// Probe requests are never written to request telemetry or usage.
+const (
+	RouteHealthProbeMaxRoutes         = 5
+	RouteHealthProbeRequestsPerMinute = 10
+	RouteHealthProbeRequestTimeout    = 10 * time.Second
+	RouteHealthProbeChallengeTTL      = 2 * time.Minute
+	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbeRetention         = 24 * time.Hour
+	// A probe window is unknown when at least this share of responses were
+	// 401/403: customer auth gates stay in force for probes.
+	RouteHealthProbeUnauthenticatedShare = 0.5
+)
+
+// RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// covering at most the newest RouteHealthPooledMaxSpan of the stage.
+const (
+	RouteHealthPooledMinSpan = 4 * time.Minute
+	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
@@ -9166,6 +9197,11 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// error-budget incident must open within this long after the deployment
+// started serving all traffic.
+const RouteMonitorRollbackWindow = 30 * time.Minute
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (

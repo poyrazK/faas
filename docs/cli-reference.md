@@ -6141,6 +6141,24 @@ Analyze route changes, migrations, lifecycle and production policies
 
 `gregale routes [<subcommand>] [<slug>]`
 
+### routes status
+
+Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps
+
+`gregale routes status [--deployment <ID>] [--since <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | serving deployment UUID or vN (default: the app&#39;s serving deployment) |  |
+| `--since <DURATION>` | observed usage window (default 168h; also accepts 7d or RFC3339) |  |
+
+Examples:
+
+```sh
+gregale routes status my-api
+gregale routes status my-api --since 24h --json
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app
@@ -6205,13 +6223,14 @@ gregale routes monitor preview my-api --routes production-routes.json --customer
 
 Save advisory production route budgets
 
-`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> <slug>`
+`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> [--on-violation <ACTION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--mode <MODE>` | enabled or disabled | required; one of `enabled` · `disabled` |
 | `--routes <PATH>` | JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms | required |
 | `--expected-revision <N>` | current monitor revision; 0 initially | required |
+| `--on-violation <ACTION>` | report (default) or rollback to the last healthy deployment when an error budget is violated within 30 minutes of release | one of `report` · `rollback` |
 
 #### routes monitor report
 

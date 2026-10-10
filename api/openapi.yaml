@@ -40978,6 +40978,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
+        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default report-only action."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -40989,6 +40990,7 @@ components:
       properties:
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
+        on_violation: {"type": "string", "enum": ["report", "rollback"], "description": "report (default) only records incidents. rollback requests one checked rollback per early error-budget incident and requires at least one route with max_5xx_rate_bps."}
         expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
     PreviewRouteMonitorRequest:
@@ -41022,6 +41024,8 @@ components:
         error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
+        pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -41160,6 +41164,18 @@ components:
         timeline_truncated: {"type": "boolean", "description": "True when older evaluations were dropped to preserve the opening baseline and bounded incident size."}
         escalations: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentEscalation"}, "maxItems": 20, "description": "Newest newly violated route/signal transitions with bounded evidence captured at each transition."}
         escalations_truncated: {"type": "boolean", "description": "True when older escalation records were dropped to preserve the newest transition details and incident size."}
+        rollback: {"$ref": "#/components/schemas/RouteMonitorIncidentRollback"}
+    RouteMonitorIncidentRollback:
+      type: object
+      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is transient while the checked rollback is requested."
+      required: [status, decided_at]
+      properties:
+        status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
+        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible"]}
+        route: {"type": "string", "maxLength": 256, "description": "First error-budget route that triggered the decision, as METHOD /path."}
+        target_deployment_id: {"type": "string", "format": "uuid"}
+        operation_id: {"type": "string", "format": "uuid", "description": "Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."}
+        decided_at: {"type": "string", "format": "date-time"}
     RouteMonitorIncidentTimelineEntry:
       type: object
       description: "One confirmed production monitor evaluation. It contains no customer identifiers or request details."
@@ -41254,6 +41270,14 @@ components:
         path: { type: string, minLength: 1, maxLength: 240, description: 'Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example /profiles/{id}.' }
         check_latency: { type: boolean, description: 'Opt in to the relative p95 slowdown check (at least 1.5 times stable and 100 ms slower). Omitted or false disables this check independently of max_p95_ms.' }
         max_p95_ms: { type: integer, format: int64, minimum: 0, maximum: 86400000, description: 'Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero disables it. Does not enable the relative slowdown check.' }
+        probe: { $ref: '#/components/schemas/RouteHealthProbe' }
+    RouteHealthProbe:
+      type: object
+      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 240, description: 'Concrete absolute path matching the selector, with a value for each {parameter}, for example /users/42 for /users/{id}. No query, fragment or wildcard.' }
     RouteHealthGate:
       type: object
       description: Current critical-route selection, health guard mode, recovery policy, and configuration revision.
@@ -41560,6 +41584,7 @@ components:
         server_errors: { type: integer, format: int64, minimum: 0 }
         error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
+        unauthenticated: { type: integer, format: int64, minimum: 0, description: 'Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).' }
     RouteHealthWindowEvidence:
       type: object
       description: Candidate and stable observations within one closed window, with independent error and latency verdicts.
@@ -41594,7 +41619,10 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
+        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+        pooled_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse." }
+        synthetic_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They settle the 5xx signal only." }
     RouteCustomerHealthAttribution:
       type: object
       description: Weighted request attribution for one selected identity dimension across both shared windows. Missing identities and unresolved scoped identities remain separate. Other requests are identified traffic outside the cohort output cap.

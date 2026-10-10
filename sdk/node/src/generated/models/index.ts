@@ -1515,6 +1515,7 @@ export type { RouteHealthInvestigationSide } from './RouteHealthInvestigationSid
 export type { RouteHealthInvestigationWindow } from './RouteHealthInvestigationWindow.js';
 export type { RouteHealthLatencyDiagnostics } from './RouteHealthLatencyDiagnostics.js';
 export type { RouteHealthLatencySample } from './RouteHealthLatencySample.js';
+export type { RouteHealthProbe } from './RouteHealthProbe.js';
 export type { RouteHealthReport } from './RouteHealthReport.js';
 export type { RouteHealthRoute } from './RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './RouteHealthStatusCounts.js';
@@ -1540,6 +1541,7 @@ export type { RouteMonitorIncident } from './RouteMonitorIncident.js';
 export type { RouteMonitorIncidentEscalation } from './RouteMonitorIncidentEscalation.js';
 export type { RouteMonitorIncidentEscalationSignal } from './RouteMonitorIncidentEscalationSignal.js';
 export type { RouteMonitorIncidentPage } from './RouteMonitorIncidentPage.js';
+export type { RouteMonitorIncidentRollback } from './RouteMonitorIncidentRollback.js';
 export type { RouteMonitorIncidentTimelineEntry } from './RouteMonitorIncidentTimelineEntry.js';
 export type { RouteMonitorIncidentTimelineRoute } from './RouteMonitorIncidentTimelineRoute.js';
 export type { RouteMonitorPreview } from './RouteMonitorPreview.js';

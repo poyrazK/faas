@@ -421,6 +421,10 @@ type PGBackend struct {
 
 	smokeMu         sync.Mutex
 	smokeChallenges map[string][]deploymentSmokeChallenge
+	// probeMu/probeChallenges hold ADR-847 route probe tokens, separate
+	// from smoke tokens so a probe never authorizes the smoke bypass.
+	probeMu         sync.Mutex
+	probeChallenges map[string][]deploymentSmokeChallenge
 }
 
 type deploymentSmokeChallenge struct {

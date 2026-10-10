@@ -3106,25 +3106,55 @@ func dashboardHostingReceipt(raw json.RawMessage) (*dashboard.HostingReceiptView
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		verifiedAt = receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339)
 	}
+	routeCheckSetStatus := ""
+	routeCheckDocumentSHA256 := ""
+	var routeChecks []dashboard.HostingRouteCheckView
+	if checks := receipt.Smoke.RouteChecks; checks != nil {
+		routeCheckSetStatus = checks.Status
+		routeCheckDocumentSHA256 = checks.DocumentSHA256
+		routeChecks = dashboardHostingRouteChecks(checks.Checks)
+	}
 	return &dashboard.HostingReceiptView{
-		AppURL:          receipt.AppURL,
-		SourceKind:      receipt.Source.Kind,
-		SourceURL:       receipt.Source.URL,
-		CommitSHA:       receipt.Source.CommitSHA,
-		ImageDigest:     receipt.Source.ImageDigest,
-		ProfileVersion:  receipt.Profile.Version,
-		Framework:       receipt.Profile.Framework,
-		FrameworkVer:    receipt.Profile.FrameworkVer,
-		Port:            receipt.Profile.Port,
-		HealthPath:      receipt.Profile.HealthPath,
-		SmokeStatus:     receipt.Smoke.Status,
-		SmokePath:       receipt.Smoke.Path,
-		SmokeStatusCode: receipt.Smoke.StatusCode,
-		SmokeLatencyMS:  receipt.Smoke.LatencyMS,
-		SmokeVerifiedAt: verifiedAt,
-		SmokeErrorCode:  receipt.Smoke.ErrorCode,
-		SmokeError:      receipt.Smoke.Error,
+		AppURL:                   receipt.AppURL,
+		SourceKind:               receipt.Source.Kind,
+		SourceURL:                receipt.Source.URL,
+		CommitSHA:                receipt.Source.CommitSHA,
+		ImageDigest:              receipt.Source.ImageDigest,
+		ProfileVersion:           receipt.Profile.Version,
+		Framework:                receipt.Profile.Framework,
+		FrameworkVer:             receipt.Profile.FrameworkVer,
+		Port:                     receipt.Profile.Port,
+		HealthPath:               receipt.Profile.HealthPath,
+		SmokeStatus:              receipt.Smoke.Status,
+		SmokePath:                receipt.Smoke.Path,
+		SmokeStatusCode:          receipt.Smoke.StatusCode,
+		SmokeLatencyMS:           receipt.Smoke.LatencyMS,
+		SmokeVerifiedAt:          verifiedAt,
+		SmokeErrorCode:           receipt.Smoke.ErrorCode,
+		SmokeError:               receipt.Smoke.Error,
+		RouteCheckSetStatus:      routeCheckSetStatus,
+		RouteCheckDocumentSHA256: routeCheckDocumentSHA256,
+		RouteChecks:              routeChecks,
 	}, nil
+}
+
+func dashboardHostingRouteChecks(checks []apihostingreceipt.RouteCheckResult) []dashboard.HostingRouteCheckView {
+	if len(checks) == 0 {
+		return nil
+	}
+	views := make([]dashboard.HostingRouteCheckView, 0, len(checks))
+	for _, check := range checks {
+		verifiedAt := ""
+		if !check.VerifiedAt.IsZero() {
+			verifiedAt = check.VerifiedAt.UTC().Format(time.RFC3339)
+		}
+		views = append(views, dashboard.HostingRouteCheckView{
+			Method: check.Method, Path: check.Path, Status: check.Status,
+			StatusCode: check.StatusCode, LatencyMS: check.LatencyMS,
+			VerifiedAt: verifiedAt, ErrorCode: check.ErrorCode, Error: check.Error,
+		})
+	}
+	return views
 }
 
 // dashboardStagePayload projects the typed state.Deployment row

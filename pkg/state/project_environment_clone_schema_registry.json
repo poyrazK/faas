@@ -7817,6 +7817,7 @@
       "last_deployment_id",
       "last_healthy_deployment",
       "next_check_at",
+      "on_violation",
       "revision",
       "routes",
       "updated_at"
@@ -7833,6 +7834,30 @@
       "idempotency_key",
       "receipt",
       "request_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_observations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "deployment_id",
+      "method",
+      "path",
+      "requests",
+      "server_errors",
+      "unauthenticated",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_rounds",
+    "columns": [
+      "app_id",
+      "claimed_at",
+      "window_start"
     ],
     "kind": "operational"
   },

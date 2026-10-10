@@ -1002,6 +1002,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyDeploymentChanged,
 		db.NotifyDeploymentRouteChanged,
 		db.NotifyDeploymentSmokeChallenge,
+		db.NotifyRouteProbeChallenge,
 		db.NotifyEdgeRuleChanged,
 		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
@@ -1381,6 +1382,22 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			AuthorizeDeploymentSmoke(string, string, string, time.Time)
 		}); ok {
 			authorizer.AuthorizeDeploymentSmoke(p.AppID, p.DeploymentID, p.Token, p.ExpiresAt)
+		}
+	case db.NotifyRouteProbeChallenge:
+		var p struct {
+			AppID        string    `json:"app_id"`
+			DeploymentID string    `json:"deployment_id"`
+			Token        string    `json:"token"`
+			ExpiresAt    time.Time `json:"expires_at"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.DeploymentID == "" || p.Token == "" || p.ExpiresAt.IsZero() {
+			log.Warn("gatewayd: bad route probe challenge", "payload_length", len(n.Payload))
+			return
+		}
+		if authorizer, ok := inv.(interface {
+			AuthorizeRouteProbe(string, string, string, time.Time)
+		}); ok {
+			authorizer.AuthorizeRouteProbe(p.AppID, p.DeploymentID, p.Token, p.ExpiresAt)
 		}
 	case db.NotifyCachePurge:
 		var p struct {

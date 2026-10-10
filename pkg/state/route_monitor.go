@@ -141,3 +141,46 @@ type RouteMonitorCustomerDetailsStore interface {
 type RouteMonitorPreviewDetailsStore interface {
 	PreviewRouteMonitorWithCustomerDetails(context.Context, string, string, api.PreviewRouteMonitorRequest, bool) (api.RouteMonitorPreview, error)
 }
+
+// RouteMonitorRollbackClaim is one incident apid must roll back (ADR-845).
+type RouteMonitorRollbackClaim struct {
+	IncidentID, DeploymentID, TargetDeploymentID, Route string
+}
+
+// RouteMonitorRollbackStore claims at most one automatic rollback decision per
+// incident. Monitor evaluation never writes deployments; apid requests the
+// checked rollback after a claim and records its outcome.
+type RouteMonitorRollbackStore interface {
+	ClaimRouteMonitorRollback(ctx context.Context, accountID, appID string) (RouteMonitorRollbackClaim, bool, error)
+	RecordRouteMonitorRollback(ctx context.Context, accountID, appID, incidentID string, outcome api.RouteMonitorIncidentRollback) error
+}
+
+// decideRouteMonitorRollback marks the incident claimed or skipped. It
+// reports what to roll back when claimed and whether the incident changed.
+// A deployment that no longer serves all traffic leaves the incident
+// undecided: a rollout or rollback already owns it.
+func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorIncident, d Deployment, now time.Time) (RouteMonitorRollbackClaim, bool, bool) {
+	if d.ID != i.DeploymentID || d.Status != DeployLive || d.TrafficPercent != 100 || d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps {
+		return RouteMonitorRollbackClaim{}, false, false
+	}
+	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt))
+	switch {
+	case decision.Eligible:
+		i.Rollback = &api.RouteMonitorIncidentRollback{Status: "claimed", Route: decision.Route, TargetDeploymentID: decision.Target, DecidedAt: now}
+		return RouteMonitorRollbackClaim{IncidentID: i.ID, DeploymentID: i.DeploymentID, TargetDeploymentID: decision.Target, Route: decision.Route}, true, true
+	case decision.Skip != "":
+		i.Rollback = &api.RouteMonitorIncidentRollback{Status: "skipped", Reason: decision.Skip, Route: decision.Route, DecidedAt: now}
+		return RouteMonitorRollbackClaim{}, false, true
+	}
+	return RouteMonitorRollbackClaim{}, false, false
+}
+
+// recordRouteMonitorRollback replaces a claim with its final outcome.
+func recordRouteMonitorRollback(i *api.RouteMonitorIncident, outcome api.RouteMonitorIncidentRollback) error {
+	if i.Rollback == nil || i.Rollback.Status != "claimed" || outcome.Status != "requested" && outcome.Status != "skipped" {
+		return ErrConflict
+	}
+	outcome.Route, outcome.TargetDeploymentID = i.Rollback.Route, i.Rollback.TargetDeploymentID
+	i.Rollback = &outcome
+	return nil
+}
