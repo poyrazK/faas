@@ -3304,6 +3304,18 @@ var cliCommands = []cliCommand{
 	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
+			{Name: "dev", Short: "Run a disposable local Data API with test identities", Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "starter project directory (default .)"},
+				{Name: "output", Value: "FILE", Short: "types output relative to the project"},
+				{Name: "port", Value: "PORT", Short: "loopback gateway port (default 8080; 0 selects a free port)"},
+				{Name: "check", Short: "run installed client typecheck and tests"},
+				{Name: "once", Short: "verify and exit, removing disposable containers"},
+				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
+				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},
+				{Name: "check-breaking", Short: "reject breaking changes; requires an existing baseline"},
+				{Name: "replay", Value: "FILE", Short: "replay saved requests relative to the project (requires --once)"},
+				{Name: "scenario", Value: "NAME", Short: "select one named scenario (requires --replay)"},
+			}, Examples: []string{"gregale data-api dev --check", "gregale data-api dev --port 0 --check --once"}},
 			{Name: "create", Short: "Deploy a managed PostgREST Data API", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
 				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
@@ -3320,8 +3332,9 @@ var cliCommands = []cliCommand{
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
-			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "baseline", Value: "FILE", Req: true, Short: "JSON snapshot exported with types --snapshot"},
+				{Name: "current", Value: "FILE", Short: "compare a saved current contract offline; omit the app name"},
 				{Name: "check", Short: "fail on breaking contract changes"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}, Examples: []string{"gregale data-api diff notes-data --baseline schema.json --check"}},

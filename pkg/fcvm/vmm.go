@@ -251,15 +251,22 @@ type restoreTimingBreakdown struct {
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
 	// two-syscall mem/vmstate bind look expensive.
 	StagePreBootFilesMs int64
-	StageSnapshotMs     int64
-	HelperMs            int64
-	StartJailerMs       int64
-	BindTunMs           int64
-	LoadSnapshotMs      int64
-	ResumeHookMs        int64
-	WaitReadyMs         int64
-	TotalMs             int64
-	ResolveArtifacts    []restoreArtifactTiming
+	// PreBootJoinWaitMs is how long the restore waited for the concurrent
+	// pre-boot write after the rest of the jail was staged. Operator-only.
+	PreBootJoinWaitMs int64
+	StageSnapshotMs   int64
+	HelperMs          int64
+	StartJailerMs     int64
+	// NetworkWaitMs is how long the restore blocked on the overlapped wake
+	// network before startJailer (wake_network.go). Operator-only, like the
+	// TUN subphases: it is not on the customer wake.restore_breakdown event.
+	NetworkWaitMs    int64
+	BindTunMs        int64
+	LoadSnapshotMs   int64
+	ResumeHookMs     int64
+	WaitReadyMs      int64
+	TotalMs          int64
+	ResolveArtifacts []restoreArtifactTiming
 }
 
 // restoreArtifactTiming attributes one restore input to where its bytes came
@@ -998,6 +1005,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 	}
 	helperReadyAt := time.Now()
+	if _, _, err = awaitWakeNetwork(ctx); err != nil {
+		return err
+	}
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
@@ -1838,13 +1848,43 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
+	// The pre-boot write loop-mounts drive1 (a clone already bound into the
+	// jail) on a private host mountpoint; nothing staged next — the snapshot
+	// binds, chroot ownership, vsock listeners, mount helper, TUN source —
+	// touches drive1, so the write runs alongside them. It is joined before
+	// startJailer: the jailer's mount namespace must never copy an in-flight
+	// loop mount. Native recovery journals every staging step in order, so it
+	// keeps the serial path.
 	var preBootTimings preBootStageTimings
-	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
-	if err != nil {
-		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
+	var preBootSkipped bool
+	var preBootErr error
+	var tPreBootFiles time.Time
+	preBootDone := make(chan struct{})
+	runPreBoot := func() {
+		defer close(preBootDone)
+		preBootSkipped, preBootErr = v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
+		tPreBootFiles = time.Now()
 	}
-	tPreBootFiles := time.Now()
+	joinPreBoot := func() error {
+		<-preBootDone
+		if preBootErr != nil {
+			return fmt.Errorf("vmm: stage pre-boot workload state: %w", preBootErr)
+		}
+		return nil
+	}
+	if v.nativeRecovery == nil {
+		go runPreBoot()
+		// Every return below (including errors) waits for the write, so the
+		// deferred Kill never unmounts drive1 under an active loop session.
+		defer func() { <-preBootDone }()
+	} else {
+		runPreBoot()
+		if err = joinPreBoot(); err != nil {
+			return err
+		}
+	}
 
+	tSnapshotStart := time.Now()
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
@@ -1876,12 +1916,23 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tHelper := time.Now()
+	if v.nativeRecovery == nil {
+		if err = joinPreBoot(); err != nil {
+			return err
+		}
+	}
+	tPreBootJoined := time.Now()
 
 	// Start firecracker with only the API socket, then load + resume.
 	// Move 4 (issue #254): register the per-instance ring BEFORE
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
 	_ = v.registerRing(l.Instance)
+	networkWait, networkSetup, err := awaitWakeNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	tNetworkReady := time.Now()
 	if err = v.startJailer(ctx, l); err != nil {
 		return err
 	}
@@ -1970,9 +2021,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		TunSetupJailWorkUs:   tunTimings.SetupJailWorkUs,
 		CgroupFenceMs:        tBindTun.Sub(tTunReady).Milliseconds(),
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
-		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
+		StageSnapshotMs:      tMemState.Sub(tSnapshotStart).Milliseconds(),
+		PreBootJoinWaitMs:    tPreBootJoined.Sub(tHelper).Milliseconds(),
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
-		StartJailerMs:        tStartJailer.Sub(tHelper).Milliseconds(),
+		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
+		NetworkWaitMs:        networkWait.Milliseconds(),
 		BindTunMs:            tBindTun.Sub(tStartJailer).Milliseconds(),
 		LoadSnapshotMs:       tLoad.Sub(tBindTun).Milliseconds(),
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
@@ -1983,6 +2036,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// budget, so an operator reading the timeline sees them before the
 		// kernel/base/layer drives.
 		ResolveArtifacts: append(blobTimings, restoreArtifactTimings(resolvedArtifacts)...),
+	}
+	if networkSetup > 0 {
+		// Overlapped wake: report the namespace build's real duration, not
+		// the near-zero gap Manager marked when it started it.
+		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
@@ -2011,8 +2069,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"pre_boot_files_total", preBootTimings.FilesTotal,
 		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
+		"pre_boot_join_wait_ms", breakdown.PreBootJoinWaitMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
+		"network_wait_ms", breakdown.NetworkWaitMs,
 		"bind_tun_ms", breakdown.BindTunMs,
 		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
@@ -5712,7 +5772,7 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 				if b.mount == nil || *current != *b.mount {
 					return errors.New("bind mount identity changed; retaining ownership")
 				}
-				if err := exec.Command("umount", b.mountpoint).Run(); err != nil {
+				if err := umountRetryBusy(b.mountpoint); err != nil {
 					return fmt.Errorf("unmount owned image: %w", err)
 				}
 				remaining, err := resourceMountAt(b.mountpoint)
