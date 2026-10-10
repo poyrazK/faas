@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const apiConsumerPlanCols = `id, account_id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at`
+const apiConsumerPlanCols = `id, account_id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at`
 
 func scanAPIConsumerPlan(row pgx.Row) (APIConsumerPlan, error) {
 	var plan APIConsumerPlan
 	err := row.Scan(&plan.ID, &plan.AccountID, &plan.AppID, &plan.Name,
-		&plan.MaxRequestsPerMinute, &plan.MaxUnitsPerMonth, &plan.CreatedAt, &plan.UpdatedAt)
+		&plan.MaxRequestsPerMinute, &plan.MaxUnitsPerMonth, &plan.AlertThresholdsPercent, &plan.CreatedAt, &plan.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerPlan{}, ErrNotFound
 	}
@@ -44,9 +44,10 @@ func (s *PgStore) CreateAPIConsumerPlan(ctx context.Context, plan APIConsumerPla
 		return APIConsumerPlan{}, ErrConflict
 	}
 	out, err := scanAPIConsumerPlan(tx.QueryRow(ctx, `insert into api_consumer_plans
-		(account_id, app_id, name, max_requests_per_minute, max_units_per_month)
-		values ($1::uuid, $2::uuid, $3, $4, $5) returning `+apiConsumerPlanCols,
-		plan.AccountID, plan.AppID, plan.Name, plan.MaxRequestsPerMinute, plan.MaxUnitsPerMonth))
+		(account_id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6) returning `+apiConsumerPlanCols,
+		plan.AccountID, plan.AppID, plan.Name, plan.MaxRequestsPerMinute, plan.MaxUnitsPerMonth,
+		normalizeAPIConsumerPlanAlerts(plan.AlertThresholdsPercent)))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -57,14 +58,34 @@ func (s *PgStore) CreateAPIConsumerPlan(ctx context.Context, plan APIConsumerPla
 	return out, tx.Commit(ctx)
 }
 
-func (s *PgStore) UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64) (APIConsumerPlan, error) {
+func (s *PgStore) UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32) (APIConsumerPlan, error) {
 	if perMinute < 0 || perMonth < 0 {
 		return APIConsumerPlan{}, ErrInvalidArgument
 	}
-	return scanAPIConsumerPlan(s.pool.QueryRow(ctx, `update api_consumer_plans
-		set max_requests_per_minute = $4, max_units_per_month = $5, updated_at = now()
-		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid
-		returning `+apiConsumerPlanCols, planID, accountID, appID, perMinute, perMonth))
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return APIConsumerPlan{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	plan, err := scanAPIConsumerPlan(tx.QueryRow(ctx, `select `+apiConsumerPlanCols+` from api_consumer_plans
+		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid for update`, planID, accountID, appID))
+	if err != nil {
+		return APIConsumerPlan{}, err
+	}
+	plan.MaxRequestsPerMinute, plan.MaxUnitsPerMonth = perMinute, perMonth
+	if alertThresholds != nil {
+		plan.AlertThresholdsPercent = normalizeAPIConsumerPlanAlerts(alertThresholds)
+	}
+	if err := ValidateAPIConsumerPlan(plan); err != nil {
+		return APIConsumerPlan{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	out, err := scanAPIConsumerPlan(tx.QueryRow(ctx, `update api_consumer_plans
+		set max_requests_per_minute = $2, max_units_per_month = $3, alert_thresholds_percent = $4, updated_at = now()
+		where id = $1::uuid returning `+apiConsumerPlanCols, planID, perMinute, perMonth, plan.AlertThresholdsPercent))
+	if err != nil {
+		return APIConsumerPlan{}, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *PgStore) GetAPIConsumerPlan(ctx context.Context, accountID, appID, planID string) (APIConsumerPlan, error) {
@@ -153,12 +174,12 @@ func (s *PgStore) GetAPIConsumerPlanPolicy(ctx context.Context, accountID, appID
 			select plan_id from api_consumer_plan_assignments
 			 where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid and effective_from <= $4
 			 order by effective_from desc limit 1)
-		select p.id, p.max_requests_per_minute, p.max_units_per_month,
+		select p.id, p.app_id, p.max_requests_per_minute, p.max_units_per_month, p.alert_thresholds_percent,
 		       coalesce((select c.route_weights from api_consumer_rate_cards c
 		                  where c.plan_id = p.id and c.effective_from <= $4
 		                  order by c.effective_from desc limit 1), '{}'::jsonb)
 		  from current_assignment a join api_consumer_plans p on p.id = a.plan_id`,
-		accountID, appID, consumerID, at.UTC()).Scan(&policy.PlanID, &policy.MaxRequestsPerMinute, &policy.MaxUnitsPerMonth, &weights)
+		accountID, appID, consumerID, at.UTC()).Scan(&policy.PlanID, &policy.AppID, &policy.MaxRequestsPerMinute, &policy.MaxUnitsPerMonth, &policy.AlertThresholdsPercent, &weights)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerPlanPolicy{}, nil // default plan: no limits
 	}
@@ -197,8 +218,18 @@ func (s *PgStore) AdmitAPIConsumerPlanRequest(ctx context.Context, accountID, co
 		return APIConsumerPlanDecision{}, fmt.Errorf("lock consumer plan admission row: %w", err)
 	}
 	counter.MinuteStart, counter.MonthStart = counter.MinuteStart.UTC(), counter.MonthStart.UTC()
-	counter, decision := decidePlanAdmission(counter, policy, units, now)
+	counter, decision, crossed := decidePlanAdmission(counter, policy, units, now)
+	if len(crossed) > 0 {
+		if err := recordAPIConsumerUsageAlertsTx(ctx, tx, accountID, consumerID, policy, counter, crossed); err != nil {
+			return APIConsumerPlanDecision{}, err
+		}
+	}
 	if !decision.Allowed {
+		if len(crossed) > 0 {
+			if err := tx.Commit(ctx); err != nil {
+				return APIConsumerPlanDecision{}, fmt.Errorf("commit consumer usage alert: %w", err)
+			}
+		}
 		return decision, nil
 	}
 	if _, err := tx.Exec(ctx, `update api_consumer_plan_admissions

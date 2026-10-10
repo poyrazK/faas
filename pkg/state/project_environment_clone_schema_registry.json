@@ -224,6 +224,7 @@
     "table": "api_consumer_plans",
     "columns": [
       "account_id",
+      "alert_thresholds_percent",
       "app_id",
       "created_at",
       "id",
@@ -262,6 +263,22 @@
       "route",
       "updated_at",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_usage_alerts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "crossed_at",
+      "id",
+      "limit_units",
+      "month_start",
+      "plan_id",
+      "threshold_percent",
+      "used_units"
     ],
     "kind": "operational"
   },

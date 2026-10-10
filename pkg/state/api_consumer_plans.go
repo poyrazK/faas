@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// APIConsumerPlan is a named consumer plan (ADR-847): enforcement limits
+// APIConsumerPlan is a named consumer plan (ADR-938): enforcement limits
 // plus its own rate-card history (APIConsumerRateCard.PlanID). App-wide
 // cards are the default plan. Zero limits mean unlimited.
 type APIConsumerPlan struct {
@@ -21,8 +22,11 @@ type APIConsumerPlan struct {
 	Name                 string
 	MaxRequestsPerMinute int64
 	MaxUnitsPerMonth     int64
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	// AlertThresholdsPercent are ascending percentages of MaxUnitsPerMonth
+	// at which a consumer.usage_threshold webhook fires (ADR-849).
+	AlertThresholdsPercent []int32
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 // APIConsumerPlanAssignment moves one consumer onto a plan from a UTC
@@ -43,9 +47,12 @@ type APIConsumerPlanAssignment struct {
 // monthly cap counts the same weighted units as billing.
 type APIConsumerPlanPolicy struct {
 	PlanID               string
+	AppID                string
 	MaxRequestsPerMinute int64
 	MaxUnitsPerMonth     int64
 	RouteWeights         map[string]int64
+	// AlertThresholdsPercent are the plan's usage alert thresholds (ADR-849).
+	AlertThresholdsPercent []int32
 }
 
 // Limited reports whether admission must consult the counter.
@@ -83,7 +90,9 @@ const MaxAPIConsumerPlansPerApp = 20
 // counters. Optional, like the other pricing stores.
 type APIConsumerPlanStore interface {
 	CreateAPIConsumerPlan(context.Context, APIConsumerPlan) (APIConsumerPlan, error)
-	UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64) (APIConsumerPlan, error)
+	// UpdateAPIConsumerPlanLimits replaces a plan's limits. A nil
+	// alertThresholds keeps the plan's alert thresholds; an empty one clears them.
+	UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32) (APIConsumerPlan, error)
 	GetAPIConsumerPlan(ctx context.Context, accountID, appID, planID string) (APIConsumerPlan, error)
 	ListAPIConsumerPlans(ctx context.Context, accountID, appID string) ([]APIConsumerPlan, error)
 	AssignAPIConsumerPlan(context.Context, APIConsumerPlanAssignment) (APIConsumerPlanAssignment, error)
@@ -92,6 +101,9 @@ type APIConsumerPlanStore interface {
 	ListAPIConsumerPlanAssignments(ctx context.Context, accountID, appID, consumerID string) ([]APIConsumerPlanAssignment, error)
 	GetAPIConsumerPlanPolicy(ctx context.Context, accountID, appID, consumerID string, at time.Time) (APIConsumerPlanPolicy, error)
 	AdmitAPIConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy APIConsumerPlanPolicy, units int64) (APIConsumerPlanDecision, error)
+	// ListAPIConsumerUsageAlerts returns a consumer's recorded usage alerts,
+	// newest first, at most limit.
+	ListAPIConsumerUsageAlerts(ctx context.Context, accountID, appID, consumerID string, limit int) ([]APIConsumerUsageAlert, error)
 }
 
 var apiConsumerPlanNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -104,7 +116,7 @@ func ValidateAPIConsumerPlan(plan APIConsumerPlan) error {
 	if plan.MaxRequestsPerMinute < 0 || plan.MaxUnitsPerMonth < 0 {
 		return fmt.Errorf("consumer plan: limits must be non-negative")
 	}
-	return nil
+	return validateAPIConsumerPlanAlerts(plan.AlertThresholdsPercent, plan.MaxUnitsPerMonth)
 }
 
 func validateAPIConsumerPlanAssignment(a APIConsumerPlanAssignment) error {
@@ -135,7 +147,10 @@ type planAdmissionCounter struct {
 // decidePlanAdmission applies one request of units at now. It resets
 // expired windows, denies a request that would exceed a limit without
 // consuming anything, and otherwise consumes one request and the units.
-func decidePlanAdmission(counter planAdmissionCounter, policy APIConsumerPlanPolicy, units int64, now time.Time) (planAdmissionCounter, APIConsumerPlanDecision) {
+//
+// crossed lists the alert thresholds this request crossed (ADR-849): those
+// the admitted units reached, or 100 when the monthly limit denied it.
+func decidePlanAdmission(counter planAdmissionCounter, policy APIConsumerPlanPolicy, units int64, now time.Time) (next planAdmissionCounter, decision APIConsumerPlanDecision, crossed []int32) {
 	now = now.UTC()
 	minute := now.Truncate(time.Minute)
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -147,15 +162,20 @@ func decidePlanAdmission(counter planAdmissionCounter, policy APIConsumerPlanPol
 	}
 	if policy.MaxRequestsPerMinute > 0 && counter.MinuteUsed+1 > policy.MaxRequestsPerMinute {
 		return counter, APIConsumerPlanDecision{Scope: "minute", Limit: policy.MaxRequestsPerMinute, Observed: counter.MinuteUsed,
-			RetryAfterSeconds: max(1, int64(minute.Add(time.Minute).Sub(now).Seconds()))}
+			RetryAfterSeconds: max(1, int64(minute.Add(time.Minute).Sub(now).Seconds()))}, nil
 	}
 	if policy.MaxUnitsPerMonth > 0 && counter.MonthUsed+units > policy.MaxUnitsPerMonth {
+		if slices.Contains(policy.AlertThresholdsPercent, 100) {
+			crossed = []int32{100}
+		}
 		return counter, APIConsumerPlanDecision{Scope: "month", Limit: policy.MaxUnitsPerMonth, Observed: counter.MonthUsed,
-			RetryAfterSeconds: max(1, int64(month.AddDate(0, 1, 0).Sub(now).Seconds()))}
+			RetryAfterSeconds: max(1, int64(month.AddDate(0, 1, 0).Sub(now).Seconds()))}, crossed
 	}
+	before := counter.MonthUsed
 	counter.MinuteUsed++
 	counter.MonthUsed += units
-	return counter, APIConsumerPlanDecision{Allowed: true}
+	return counter, APIConsumerPlanDecision{Allowed: true},
+		crossedUsageAlertThresholds(policy.AlertThresholdsPercent, policy.MaxUnitsPerMonth, before, counter.MonthUsed)
 }
 
 // --- MemStore ---
@@ -179,12 +199,13 @@ func (m *MemStore) CreateAPIConsumerPlan(_ context.Context, plan APIConsumerPlan
 		return APIConsumerPlan{}, ErrConflict
 	}
 	now := time.Now().UTC()
+	plan.AlertThresholdsPercent = normalizeAPIConsumerPlanAlerts(plan.AlertThresholdsPercent)
 	plan.ID, plan.CreatedAt, plan.UpdatedAt = uuid.NewString(), now, now
 	m.apiConsumerPlans[plan.ID] = plan
 	return plan, nil
 }
 
-func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, appID, planID string, perMinute, perMonth int64) (APIConsumerPlan, error) {
+func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32) (APIConsumerPlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	plan, ok := m.apiConsumerPlans[planID]
@@ -192,8 +213,11 @@ func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, app
 		return APIConsumerPlan{}, ErrNotFound
 	}
 	plan.MaxRequestsPerMinute, plan.MaxUnitsPerMonth = perMinute, perMonth
+	if alertThresholds != nil {
+		plan.AlertThresholdsPercent = normalizeAPIConsumerPlanAlerts(alertThresholds)
+	}
 	if err := ValidateAPIConsumerPlan(plan); err != nil {
-		return APIConsumerPlan{}, err
+		return APIConsumerPlan{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	plan.UpdatedAt = time.Now().UTC()
 	m.apiConsumerPlans[planID] = plan
@@ -275,7 +299,8 @@ func (m *MemStore) GetAPIConsumerPlanPolicy(_ context.Context, accountID, appID,
 	if planID == "" || !ok {
 		return APIConsumerPlanPolicy{}, nil
 	}
-	policy := APIConsumerPlanPolicy{PlanID: plan.ID, MaxRequestsPerMinute: plan.MaxRequestsPerMinute, MaxUnitsPerMonth: plan.MaxUnitsPerMonth}
+	policy := APIConsumerPlanPolicy{PlanID: plan.ID, AppID: plan.AppID, MaxRequestsPerMinute: plan.MaxRequestsPerMinute,
+		MaxUnitsPerMonth: plan.MaxUnitsPerMonth, AlertThresholdsPercent: slices.Clone(plan.AlertThresholdsPercent)}
 	var current APIConsumerRateCard
 	for _, card := range m.apiConsumerRateCards {
 		if card.PlanID == plan.ID && !card.EffectiveFrom.After(at) && card.EffectiveFrom.After(current.EffectiveFrom) {
@@ -292,9 +317,15 @@ func (m *MemStore) AdmitAPIConsumerPlanRequest(_ context.Context, accountID, con
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	counter, decision := decidePlanAdmission(m.apiConsumerPlanAdmissions[consumerID], policy, units, time.Now())
+	now := time.Now().UTC()
+	counter, decision, crossed := decidePlanAdmission(m.apiConsumerPlanAdmissions[consumerID], policy, units, now)
 	if decision.Allowed {
 		m.apiConsumerPlanAdmissions[consumerID] = counter
+	}
+	if len(crossed) > 0 {
+		if err := m.recordAPIConsumerUsageAlertsLocked(accountID, consumerID, policy, counter, crossed, now); err != nil {
+			return APIConsumerPlanDecision{}, err
+		}
 	}
 	return decision, nil
 }

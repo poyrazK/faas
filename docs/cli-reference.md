@@ -5699,7 +5699,7 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 -
 gregale consumers completeness my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
-gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000
+gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000 --alert-at 80,100
 gregale consumers set-plan my-api CONSUMER_ID --plan free
 ```
 
@@ -5862,25 +5862,27 @@ List an app&#39;s consumer plans
 
 Create a consumer plan with request limits
 
-`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
 | `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
 | `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
 
 ### consumers plan-update
 
 Change a plan&#39;s limits (applied within 15 seconds)
 
-`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--plan <NAME>` | plan name | required |
 | `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
 | `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
 
 ### consumers set-plan
 
@@ -5898,6 +5900,12 @@ Move a consumer onto a plan from a minute
 List a consumer&#39;s plan assignments
 
 `gregale consumers plan-history <slug> <consumer-id>`
+
+### consumers usage-alerts
+
+List the plan usage alerts a consumer crossed
+
+`gregale consumers usage-alerts <slug> <consumer-id>`
 
 
 ## platform-tenants

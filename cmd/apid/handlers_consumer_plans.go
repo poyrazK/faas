@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -13,7 +14,8 @@ import (
 func apiConsumerPlanResponse(plan state.APIConsumerPlan) api.APIConsumerPlanResponse {
 	return api.APIConsumerPlanResponse{ID: plan.ID, AppID: plan.AppID, Name: plan.Name,
 		MaxRequestsPerMinute: plan.MaxRequestsPerMinute, MaxUnitsPerMonth: plan.MaxUnitsPerMonth,
-		CreatedAt: plan.CreatedAt.UTC(), UpdatedAt: plan.UpdatedAt.UTC()}
+		AlertThresholdsPercent: append([]int32{}, plan.AlertThresholdsPercent...),
+		CreatedAt:              plan.CreatedAt.UTC(), UpdatedAt: plan.UpdatedAt.UTC()}
 }
 
 func apiConsumerPlanAssignmentResponse(a state.APIConsumerPlanAssignment) api.APIConsumerPlanAssignmentResponse {
@@ -69,7 +71,8 @@ func (s *server) createAPIConsumerPlan(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	plan := state.APIConsumerPlan{AccountID: acct.ID, AppID: app.ID, Name: req.Name,
-		MaxRequestsPerMinute: req.MaxRequestsPerMinute, MaxUnitsPerMonth: req.MaxUnitsPerMonth}
+		MaxRequestsPerMinute: req.MaxRequestsPerMinute, MaxUnitsPerMonth: req.MaxUnitsPerMonth,
+		AlertThresholdsPercent: req.AlertThresholdsPercent}
 	if err := state.ValidateAPIConsumerPlan(plan); err != nil {
 		api.WriteProblem(w, planProblem(err.Error()))
 		return
@@ -87,6 +90,7 @@ func (s *server) createAPIConsumerPlan(w http.ResponseWriter, r *http.Request, a
 	s.audit.Emit(r.Context(), "api_consumer_plan.created", &acct.ID, map[string]any{
 		"app_id": app.ID, "plan_id": created.ID, "name": created.Name,
 		"max_requests_per_minute": created.MaxRequestsPerMinute, "max_units_per_month": created.MaxUnitsPerMonth,
+		"alert_thresholds_percent": created.AlertThresholdsPercent,
 	})
 	writeJSON(w, http.StatusCreated, apiConsumerPlanResponse(created))
 }
@@ -105,14 +109,23 @@ func (s *server) updateAPIConsumerPlanLimits(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, planProblem("limits must be non-negative"))
 		return
 	}
-	plan, err := store.UpdateAPIConsumerPlanLimits(r.Context(), acct.ID, app.ID, r.PathValue("plan_id"), req.MaxRequestsPerMinute, req.MaxUnitsPerMonth)
-	if err != nil {
+	var alerts []int32
+	if req.AlertThresholdsPercent != nil {
+		alerts = append([]int32{}, *req.AlertThresholdsPercent...)
+	}
+	plan, err := store.UpdateAPIConsumerPlanLimits(r.Context(), acct.ID, app.ID, r.PathValue("plan_id"), req.MaxRequestsPerMinute, req.MaxUnitsPerMonth, alerts)
+	switch {
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, planProblem(strings.TrimPrefix(err.Error(), state.ErrInvalidArgument.Error()+": ")))
+		return
+	case err != nil:
 		s.notFound(w, "no such consumer plan")
 		return
 	}
 	s.audit.Emit(r.Context(), "api_consumer_plan.limits_updated", &acct.ID, map[string]any{
 		"app_id": app.ID, "plan_id": plan.ID,
 		"max_requests_per_minute": plan.MaxRequestsPerMinute, "max_units_per_month": plan.MaxUnitsPerMonth,
+		"alert_thresholds_percent": plan.AlertThresholdsPercent,
 	})
 	writeJSON(w, http.StatusOK, apiConsumerPlanResponse(plan))
 }
@@ -223,7 +236,7 @@ func (s *server) writePlanAssignment(w http.ResponseWriter, r *http.Request, acc
 
 // consumerPriceHistory returns the cards that priced one consumer: the app
 // default cards and plan cards, resolved through the consumer's plan
-// assignments (ADR-847).
+// assignments (ADR-938).
 func (s *server) consumerPriceHistory(r *http.Request, cards []state.APIConsumerRateCard, accountID, appID, consumerID string) ([]state.APIConsumerRateCard, error) {
 	store, ok := s.store.(state.APIConsumerPlanStore)
 	if !ok {

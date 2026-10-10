@@ -3,10 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Replacement limits for a consumer plan.
+ * Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them.
  */
 export type UpdateAPIConsumerPlanLimitsRequest = {
   max_requests_per_minute: number;
   max_units_per_month: number;
+  /**
+   * Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month.
+   */
+  alert_thresholds_percent?: Array<number>;
 };
 

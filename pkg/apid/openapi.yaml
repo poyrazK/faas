@@ -10325,6 +10325,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose usage alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerUsageAlerts
+      summary: List the plan usage alerts a consumer crossed.
+      description: |
+        Returns up to 100 recorded crossings of the consumer's plan alert
+        thresholds, newest first. Each crossing also emitted one
+        consumer.usage_threshold webhook; this list reconciles missed
+        deliveries.
+      responses:
+        '200':
+          description: The consumer's usage alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageAlertListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/rate-cards/{rate_card_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -48044,25 +48070,39 @@ components:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
         max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month."
 
     UpdateAPIConsumerPlanLimitsRequest:
-      description: "Replacement limits for a consumer plan."
+      description: "Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them."
       type: object
       required: [max_requests_per_minute, max_units_per_month]
       properties:
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
       type: object
-      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "The plan's usage alert thresholds, ascending; empty means no alerts."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -67988,6 +68028,45 @@ components:
         period: { type: string }
       additionalProperties: true
 
+    APIConsumerUsageAlertResponse:
+      description: "One plan alert threshold a consumer crossed in one UTC month (ADR-849)."
+      type: object
+      required: [id, consumer_id, plan_id, month_start, threshold_percent, limit_units, used_units, crossed_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        month_start: { type: string, format: date-time }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0, description: "Weighted units used this month when the threshold was crossed." }
+        crossed_at: { type: string, format: date-time }
+
+    APIConsumerUsageAlertListResponse:
+      description: "A consumer's usage alerts, newest first."
+      type: object
+      required: [alerts]
+      properties:
+        alerts:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageAlertResponse' }
+
+    APIConsumerUsageThresholdWebhookPayload:
+      type: object
+      description: Data delivered with consumer.usage_threshold when a consumer crosses a plan alert threshold. alert_id is stable across retries.
+      required: [alert_id, app_id, consumer_id, external_ref, plan_id, threshold_percent, limit_units, used_units, month_start, crossed_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        plan_id: { type: string, format: uuid }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0 }
+        month_start: { type: string, format: date-time }
+        crossed_at: { type: string, format: date-time }
+
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object
       description: Complete payable usage statement delivered with usage_statement.finalized.
@@ -68228,7 +68307,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -69128,7 +69207,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -69210,7 +69289,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
