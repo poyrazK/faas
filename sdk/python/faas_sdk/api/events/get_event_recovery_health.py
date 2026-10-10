@@ -80,13 +80,17 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[EventRecoveryHealth | Problem]:
-    """Inspect active recovery progress and expiry risk.
+    """Inspect recovery admission and unresolved execution health.
 
-     Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled
-    requires five minutes without admission progress and five minutes overdue for eligibility.
-    Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and
-    excluded from running-job alert counts. Expiry warnings cover pending items within one hour of
-    expiry, including overdue expiry cleanup. No query parameters are accepted.
+     Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded
+    unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs
+    missing exact saved replay results, samples up to three, and marks partial counts as lower bounds.
+    Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24
+    hours before the nominal 30-day job retention boundary. Reads do not capture results or
+    notifications. Stalled requires five minutes without admission progress and five minutes overdue for
+    eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported
+    separately and excluded from running-job alert counts. Expiry warnings cover pending items within
+    one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
 
     Args:
         slug (str):
@@ -115,13 +119,17 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> EventRecoveryHealth | Problem | None:
-    """Inspect active recovery progress and expiry risk.
+    """Inspect recovery admission and unresolved execution health.
 
-     Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled
-    requires five minutes without admission progress and five minutes overdue for eligibility.
-    Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and
-    excluded from running-job alert counts. Expiry warnings cover pending items within one hour of
-    expiry, including overdue expiry cleanup. No query parameters are accepted.
+     Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded
+    unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs
+    missing exact saved replay results, samples up to three, and marks partial counts as lower bounds.
+    Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24
+    hours before the nominal 30-day job retention boundary. Reads do not capture results or
+    notifications. Stalled requires five minutes without admission progress and five minutes overdue for
+    eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported
+    separately and excluded from running-job alert counts. Expiry warnings cover pending items within
+    one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
 
     Args:
         slug (str):
@@ -145,13 +153,17 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[EventRecoveryHealth | Problem]:
-    """Inspect active recovery progress and expiry risk.
+    """Inspect recovery admission and unresolved execution health.
 
-     Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled
-    requires five minutes without admission progress and five minutes overdue for eligibility.
-    Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and
-    excluded from running-job alert counts. Expiry warnings cover pending items within one hour of
-    expiry, including overdue expiry cleanup. No query parameters are accepted.
+     Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded
+    unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs
+    missing exact saved replay results, samples up to three, and marks partial counts as lower bounds.
+    Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24
+    hours before the nominal 30-day job retention boundary. Reads do not capture results or
+    notifications. Stalled requires five minutes without admission progress and five minutes overdue for
+    eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported
+    separately and excluded from running-job alert counts. Expiry warnings cover pending items within
+    one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
 
     Args:
         slug (str):
@@ -178,13 +190,17 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> EventRecoveryHealth | Problem | None:
-    """Inspect active recovery progress and expiry risk.
+    """Inspect recovery admission and unresolved execution health.
 
-     Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled
-    requires five minutes without admission progress and five minutes overdue for eligibility.
-    Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and
-    excluded from running-job alert counts. Expiry warnings cover pending items within one hour of
-    expiry, including overdue expiry cleanup. No query parameters are accepted.
+     Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded
+    unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs
+    missing exact saved replay results, samples up to three, and marks partial counts as lower bounds.
+    Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24
+    hours before the nominal 30-day job retention boundary. Reads do not capture results or
+    notifications. Stalled requires five minutes without admission progress and five minutes overdue for
+    eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported
+    separately and excluded from running-job alert counts. Expiry warnings cover pending items within
+    one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
 
     Args:
         slug (str):

@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.dev_patch_preview import DevPatchPreview
     from ..models.log_excerpt import LogExcerpt
     from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
@@ -91,6 +92,10 @@ class DeploymentResponse:
     failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
     promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
    """
+    dev_patch: DevPatchPreview | Unset = UNSET
+    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
+    been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
+    measurement only; the normal developer build always runs."""
     revision: int | Unset = UNSET
     """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
     API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
@@ -291,6 +296,10 @@ class DeploymentResponse:
         stage_state: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stage_state, Unset):
             stage_state = self.stage_state.to_dict()
+
+        dev_patch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dev_patch, Unset):
+            dev_patch = self.dev_patch.to_dict()
 
         revision = self.revision
 
@@ -595,6 +604,8 @@ class DeploymentResponse:
         )
         if stage_state is not UNSET:
             field_dict["stage_state"] = stage_state
+        if dev_patch is not UNSET:
+            field_dict["dev_patch"] = dev_patch
         if revision is not UNSET:
             field_dict["revision"] = revision
         if build_id is not UNSET:
@@ -717,6 +728,7 @@ class DeploymentResponse:
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.dev_patch_preview import DevPatchPreview
         from ..models.log_excerpt import LogExcerpt
         from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
@@ -744,6 +756,13 @@ class DeploymentResponse:
             stage_state = UNSET
         else:
             stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+
+        _dev_patch = d.pop("dev_patch", UNSET)
+        dev_patch: DevPatchPreview | Unset
+        if isinstance(_dev_patch, Unset):
+            dev_patch = UNSET
+        else:
+            dev_patch = DevPatchPreview.from_dict(_dev_patch)
 
         revision = d.pop("revision", UNSET)
 
@@ -1283,6 +1302,7 @@ class DeploymentResponse:
             status=status,
             created_at=created_at,
             stage_state=stage_state,
+            dev_patch=dev_patch,
             revision=revision,
             build_id=build_id,
             build_cache_status=build_cache_status,

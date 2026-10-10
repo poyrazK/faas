@@ -7,9 +7,15 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type EventRecoveryRequest struct {
+	ParentJobID string `json:"parent_job_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+
+	ProtectReceipts     bool   `json:"protect_receipts,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 	Mode                string `json:"mode,omitempty"`
 	Outcome             string `json:"outcome,omitempty"`
@@ -23,6 +29,23 @@ type EventRecoveryRequest struct {
 }
 
 func (r EventRecoveryRequest) Validate() error {
+	if r.ParentJobID != "" {
+		if _, err := uuid.Parse(r.ParentJobID); err != nil {
+			return fmt.Errorf("parent_job_id must be a UUID")
+		}
+		if r.Mode != "execution" {
+			return fmt.Errorf("parent_job_id requires execution mode")
+		}
+	}
+	if r.RequestID != "" {
+		if _, err := uuid.Parse(r.RequestID); err != nil {
+			return fmt.Errorf("request_id must be a UUID")
+		}
+		if r.ParentJobID == "" {
+			return fmt.Errorf("request_id requires parent_job_id")
+		}
+	}
+
 	if err := (EventRecoveryControlRequest{Reason: r.Reason}).Validate(); err != nil {
 		return err
 	}
@@ -55,13 +78,16 @@ func (r EventRecoveryRequest) Validate() error {
 }
 
 type EventRecoveryExecution struct {
-	ObservedAt  time.Time  `json:"observed_at"`
-	State       string     `json:"state"`
-	Source      string     `json:"source"`
-	Attempts    int        `json:"attempts"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	RecordedAt     *time.Time `json:"recorded_at,omitempty"`
+	EvidenceSource string     `json:"evidence_source,omitempty"`
+	ObservedAt     time.Time  `json:"observed_at"`
+	State          string     `json:"state"`
+	Source         string     `json:"source"`
+	Attempts       int        `json:"attempts"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 type EventRecoveryExecutionSummary struct {
+	SavedResults int64     `json:"saved_results"`
 	ObservedAt   time.Time `json:"observed_at"`
 	TrackedCount int64     `json:"tracked_count"`
 	Queued       int64     `json:"queued"`
@@ -76,6 +102,9 @@ type EventRecoveryExecutionSummary struct {
 	Unknown      int64     `json:"unknown"`
 }
 type EventRecoveryItem struct {
+	ParentJobID    string `json:"parent_job_id,omitempty"`
+	ParentPosition *int64 `json:"parent_position,omitempty"`
+
 	ReplayInvocationID string                  `json:"replay_invocation_id,omitempty"`
 	ReplayGeneration   *int64                  `json:"replay_generation,omitempty"`
 	Execution          *EventRecoveryExecution `json:"execution,omitempty"`
@@ -99,6 +128,8 @@ type EventRecoveryPreview struct {
 	Sample          []EventRecoveryItem `json:"sample"`
 }
 type EventRecoveryJob struct {
+	ExecutionFinishedAt *time.Time `json:"execution_finished_at,omitempty"`
+
 	RatePerSecond  int                            `json:"rate_per_second"`
 	PausedAt       *time.Time                     `json:"paused_at,omitempty"`
 	Execution      *EventRecoveryExecutionSummary `json:"execution,omitempty"`

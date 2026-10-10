@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventRecoveryExecutionResults   map[recoveryResultKey]memRecoveryExecutionResult
 	productionLifecycleHistory      []api.RouteLifecycleHistoryEntry
 	nextProductionLifecycleReviewID int64
 	productionLifecycleDecisions    map[string]api.RouteGateDecision
@@ -364,8 +365,13 @@ type MemStore struct {
 	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
 	// overwrites the same row instead of doubling.
 	buildProvenance map[string]BuildProvenance
-	domains         map[string]CustomDomain
-	defaultDomains  map[string]string
+	// ADR-740 developer live patches; allocated on first use.
+	devSourceManifests   map[string]DevSourceManifest
+	devSourceManifestSeq int64
+	devSourcePatches     []DevSourcePatch
+	devSourcePatchSeq    int64
+	domains              map[string]CustomDomain
+	defaultDomains       map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
@@ -25850,7 +25856,8 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if _, ok := m.invocations[id]; ok {
+		if inv, ok := m.invocations[id]; ok {
+			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

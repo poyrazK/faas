@@ -59,10 +59,14 @@ func (m *MemStore) enqueueRecoveryNotificationLocked(job *memEventRecoveryJob, o
 			recipients = append(recipients, hook.ID)
 		}
 	}
+	sort.Strings(recipients)
+	if job.NotificationReceipts == nil {
+		job.NotificationReceipts = map[string]recoveryNotificationReceipt{}
+	}
+	job.NotificationReceipts[string(event)] = recoveryNotificationReceipt{EventID: payload.EventID, CapturedAt: payload.CompletedAt, RecipientWebhookIDs: append([]string{}, recipients...)}
 	if len(recipients) == 0 {
 		return
 	}
-	sort.Strings(recipients)
 	data, _ := json.Marshal(payload)
 	if m.appWebhookEventOutbox == nil {
 		m.appWebhookEventOutbox = map[string]appWebhookOutboxEvent{}

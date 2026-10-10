@@ -20,6 +20,9 @@ func eventRecoveryCoverage(req api.EventRecoveryRequest) string {
 }
 
 type executionRecoveryIdentity struct {
+	ParentJobID    string `json:"parent_job_id,omitempty"`
+	ParentPosition int64  `json:"parent_position,omitempty"`
+
 	InvocationID string          `json:"invocation_id"`
 	State        InvocationState `json:"state"`
 	Attempts     int             `json:"attempts"`
@@ -35,9 +38,12 @@ func executionRecoveryInvocationID(encoded []byte) string {
 	return identity.InvocationID
 }
 func executionRecoveryIdentityFor(inv Invocation, deadLetterID string) executionRecoveryIdentity {
-	return executionRecoveryIdentity{inv.ID, inv.State, inv.Attempts, inv.ReplayGeneration, inv.CreatedAt, inv.CompletedAt, deadLetterID}
+	return executionRecoveryIdentity{InvocationID: inv.ID, State: inv.State, Attempts: inv.Attempts, Generation: inv.ReplayGeneration, CreatedAt: inv.CreatedAt, CompletedAt: inv.CompletedAt, DeadLetterID: deadLetterID}
 }
 func (identity executionRecoveryIdentity) matches(inv Invocation) bool {
+	if identity.ParentJobID != "" && inv.Outcome != nil && *inv.Outcome == OutcomeUncertain {
+		return false
+	}
 	if identity.InvocationID != inv.ID || identity.State != inv.State || identity.Attempts != inv.Attempts || identity.Generation != inv.ReplayGeneration || !identity.CreatedAt.Equal(inv.CreatedAt) {
 		return false
 	}

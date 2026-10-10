@@ -1173,6 +1173,7 @@ type BuildProvenance struct {
 	SbomStorageKey   pgtype.Text
 	FrameworkVersion pgtype.Text
 	RuntimeBaseRef   string
+	DevPatch         []byte
 }
 
 // Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
@@ -2122,6 +2123,30 @@ type DevBridgeWebhookReplay struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type DevSourceManifest struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	SourceRoot   string
+	Manifest     []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type DevSourcePatch struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	BaseDeploymentID pgtype.UUID
+	Generation       int64
+	ImageDir         string
+	Archive          []byte
+	Deleted          []byte
+	Digest           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	AppliedAt        pgtype.Timestamptz
+	ApplyMs          pgtype.Int4
+	ApplyError       pgtype.Text
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -2546,6 +2571,19 @@ type EventFanoutRecipient struct {
 	DeliveryDeadlineAt          pgtype.Timestamptz
 }
 
+type EventRecoveryExecutionResult struct {
+	JobID              pgtype.UUID
+	Position           int64
+	ReplayInvocationID pgtype.UUID
+	ReplayGeneration   int64
+	ReplayCreatedAt    pgtype.Timestamptz
+	State              string
+	Attempts           int32
+	CompletedAt        pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	EvidenceSource     string
+}
+
 type EventRecoveryHistory struct {
 	ID            int64
 	JobID         pgtype.UUID
@@ -2580,25 +2618,31 @@ type EventRecoveryItem struct {
 }
 
 type EventRecoveryJob struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	AppID                  pgtype.UUID
-	Selection              []byte
-	RatePerSecond          int32
-	WindowStartedAt        pgtype.Timestamptz
-	WindowCount            int32
-	State                  string
-	NextAttemptAt          pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-	CompletedAt            pgtype.Timestamptz
-	PausedAt               pgtype.Timestamptz
-	LastProgressAt         pgtype.Timestamptz
-	WaitReason             string
-	CapacityScope          string
-	CapacityWaitStartedAt  pgtype.Timestamptz
-	CapacityWaitObservedAt pgtype.Timestamptz
+	ID                            pgtype.UUID
+	AccountID                     pgtype.UUID
+	AppID                         pgtype.UUID
+	Selection                     []byte
+	RatePerSecond                 int32
+	WindowStartedAt               pgtype.Timestamptz
+	WindowCount                   int32
+	State                         string
+	NextAttemptAt                 pgtype.Timestamptz
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	ExpiresAt                     pgtype.Timestamptz
+	CompletedAt                   pgtype.Timestamptz
+	PausedAt                      pgtype.Timestamptz
+	LastProgressAt                pgtype.Timestamptz
+	WaitReason                    string
+	CapacityScope                 string
+	CapacityWaitStartedAt         pgtype.Timestamptz
+	CapacityWaitObservedAt        pgtype.Timestamptz
+	ExecutionNotificationCaptured bool
+	ExecutionFinishedAt           pgtype.Timestamptz
+	ExecutionNotificationNextAt   pgtype.Timestamptz
+	RequestID                     pgtype.UUID
+	NotificationReceipts          []byte
+	NotificationRetryReceipts     []byte
 }
 
 type EventReplayJob struct {

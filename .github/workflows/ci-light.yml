@@ -341,8 +341,8 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Match the mega PostgreSQL shard's budget for cold APID compilation and
-    # its complete race suite. State batches keep their own 12m timeouts and
+    # Cover cold API compilation, sequential ordinary/state/API race runs,
+    # and container setup. State batches keep their own 12m timeouts and
     # default runtime settings, on the separate PostgreSQL service.
     timeout-minutes: 45
     strategy:
@@ -453,6 +453,17 @@ jobs:
           set -euo pipefail
           PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
           SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          # The API integration suite also needs test-name sharding. Keep every
+          # selected API test while avoiding a whole-suite run on shard 1.
+          SELECTED_PKGS="$(python3 scripts/ci/affected_packages.py test --shard 1 --shards 1 < "$RUNNER_TEMP/changed-paths.txt")"
+          if [[ " $SELECTED_PKGS " == *" ./cmd/apid "* ]]; then
+            read -r -a TEST_PACKAGES <<< "$PKGS"
+            PKGS=""
+            for pkg in "${TEST_PACKAGES[@]}"; do
+              if [[ "$pkg" != ./cmd/apid ]]; then PKGS+=" $pkg"; fi
+            done
+            SPLIT="$SPLIT ./cmd/apid"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
@@ -461,36 +472,38 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
-          pids=()
+          status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS &
-            pids+=("$!")
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
           fi
-          # Preserve each job's third of the tests as two sequential sixths.
-          # Thousands of state tests can exceed one 12m aggregate timer even
-          # while individual tests keep completing. Each batch retains that
-          # timer, and the registered inventory must match before execution.
+          # Keep main's sequential execution and API thirds. State tests
+          # retain each job's original third as two sequential sixths.
+          # Verify every selected package's complete compiled inventory.
           for pkg in $SPLIT; do
             (
-              export DATABASE_URL="$SPLIT_DATABASE_URL"
+              if [[ "$pkg" == ./pkg/state ]]; then
+                export DATABASE_URL="$SPLIT_DATABASE_URL"
+                shards=6
+                batches=("$SHARD" "$((SHARD + 3))")
+              else
+                export GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2
+                shards=3
+                batches=("$SHARD")
+              fi
+              echo "checking complete test inventory: $pkg"
               inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
-              go test -race -list . "$pkg" > "$inventory"
-              go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=6 -check -list-file="$inventory"
+              go test -race -list . "$pkg" > "$inventory" || exit 1
+              go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -check -list-file="$inventory" || exit 1
               split_status=0
-              for test_shard in "$SHARD" "$((SHARD + 3))"; do
-                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=6 -shard="$test_shard")"
-                echo "testing: $pkg (test batch $test_shard/6)"
+              for test_shard in "${batches[@]}"; do
+                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -shard="$test_shard")" || exit 1
+                echo "testing: $pkg (test batch $test_shard/$shards)"
                 go test -race -count=1 -timeout=12m -run "$run" "$pkg" || split_status=1
               done
               exit "$split_status"
-            ) &
-            pids+=("$!")
-          done
-          status=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
+            ) || status=1
           done
           exit "$status"
       - name: save Go build + test cache

@@ -76,7 +76,7 @@ func TestWaitForCompletionRequiresMatchingGuestResult(t *testing.T) {
 		{"host configuration failure", 1, nil, 1, "FailureInfra"},
 		{"clean host exit without guest", 0, nil, -1, "FailureInfra"},
 		{"foreign result", 0, &api.BuildDone{SchemaVersion: 1, BuildID: "another-build", ExitCode: 0}, -1, "FailureInfra"},
-		{"halted successful guest", -9, &api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 0}, 0, ""},
+		{"halted successful guest", -9, &api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 0, DevPatch: &api.DevPatchSourceMap{Version: 1, Verbatim: true, ImageDir: "/app"}}, 0, ""},
 		{"guest source failure", -9, &api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 1}, 1, "FailureUserError"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,6 +97,11 @@ func TestWaitForCompletionRequiresMatchingGuestResult(t *testing.T) {
 			}
 			if out.ExitCode != tc.wantExit || out.FailureClass != tc.wantClass {
 				t.Fatalf("outcome=%+v, want exit=%d class=%q", out, tc.wantExit, tc.wantClass)
+			}
+			if tc.done != nil && tc.done.DevPatch != nil {
+				if out.DevPatch == nil || out.DevPatch.Version != tc.done.DevPatch.Version || out.DevPatch.Verbatim != tc.done.DevPatch.Verbatim || out.DevPatch.ImageDir != tc.done.DevPatch.ImageDir {
+					t.Fatalf("development source map=%+v, want %+v", out.DevPatch, tc.done.DevPatch)
+				}
 			}
 		})
 	}
