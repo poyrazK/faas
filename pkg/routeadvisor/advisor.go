@@ -1,5 +1,5 @@
 // Package routeadvisor derives edge-rule suggestions from retained request
-// telemetry (ADR-940). It is pure: callers supply aggregated route and
+// telemetry (ADR-955). It is pure: callers supply aggregated route and
 // consumer statistics, existing rules and plan capabilities, and receive
 // suggestions with evidence, a what-if estimate and disabled rule bodies.
 package routeadvisor

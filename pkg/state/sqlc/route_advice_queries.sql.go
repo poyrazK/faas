@@ -162,7 +162,7 @@ type RouteAdviceRouteStatsRow struct {
 	WakesAvoided      int64
 }
 
-// Route advisor reads (ADR-940). Retained debugger telemetry only; nothing
+// Route advisor reads (ADR-955). Retained debugger telemetry only; nothing
 // here touches the usage ledger. Route labels are "METHOD /template".
 // The busiest routes of an app across deployments. The cache estimate buckets
 // anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first

@@ -1,8 +1,8 @@
-# ADR-943: Opt-in automatic rollback for early production route incidents
+# ADR-952: Opt-in automatic rollback for early production route incidents
 
 - Status: Accepted
 - Date: 2026-10-09
-- Related: ADR-458, ADR-498, ADR-601, ADR-942
+- Related: ADR-458, ADR-498, ADR-601, ADR-951
 - Amends: ADR-498 ("Monitoring is advisory")
 
 ## Context

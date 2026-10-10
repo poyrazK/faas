@@ -11,7 +11,7 @@ import (
 
 const wakeAheadUsage = "usage: gregale wake-ahead <slug> [on|off]"
 
-// cmdWakeAhead reads or changes an app's service wake-ahead opt-in (ADR-946).
+// cmdWakeAhead reads or changes an app's service wake-ahead opt-in (ADR-956).
 func cmdWakeAhead(args []string) int {
 	if len(args) < 1 || len(args) > 2 || !validCLISlug(args[0]) {
 		return printErr("Invalid wake-ahead command", errors.New(wakeAheadUsage))

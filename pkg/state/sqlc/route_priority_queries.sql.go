@@ -41,7 +41,7 @@ type GetRoutePrioritiesRow struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
-// Route priorities (ADR-947). apid owns the rows; gatewayd-internal reads them.
+// Route priorities (ADR-957). apid owns the rows; gatewayd-internal reads them.
 func (q *Queries) GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error) {
 	row := db.QueryRow(ctx, getRoutePriorities, arg.AppID, arg.AccountID)
 	var i GetRoutePrioritiesRow

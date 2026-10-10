@@ -12859,7 +12859,7 @@ SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deploym
 FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE SKIP LOCKED;
 
 -- name: LockRouteMonitorRollbackIncident :one
--- ADR-943: waits for an in-flight evaluation instead of skipping it, so the
+-- ADR-952: waits for an in-flight evaluation instead of skipping it, so the
 -- claim reads the incident that evaluation committed.
 SELECT coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
 FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
@@ -18197,7 +18197,7 @@ SELECT app_id,name,generation,'resumed','operator_resume',monitoring_since,sqlc.
  sqlc.arg(policy_version)::bigint,sqlc.arg(actor_account_id)::uuid FROM changed;
 
 -- name: ListRouteProbeTargets :many
--- ADR-945: apps whose route health gate opts a selector into probes and that
+-- ADR-954: apps whose route health gate opts a selector into probes and that
 -- have exactly one in-flight canary candidate in the default scope.
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
 FROM route_health_gates g

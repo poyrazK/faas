@@ -1,6 +1,6 @@
 package api
 
-// Route advice kinds (ADR-940). Each maps to the edge-rule kind it proposes.
+// Route advice kinds (ADR-955). Each maps to the edge-rule kind it proposes.
 const (
 	RouteAdviceKindCache    = "cache"
 	RouteAdviceKindAsync    = "async"

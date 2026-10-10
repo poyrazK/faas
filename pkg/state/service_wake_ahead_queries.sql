@@ -1,4 +1,4 @@
--- Service wake-ahead (ADR-946). apid owns the setting; gatewayd-internal reads
+-- Service wake-ahead (ADR-956). apid owns the setting; gatewayd-internal reads
 -- it and the fleet residency that guards every wake-ahead.
 
 -- name: GetServiceWakeAhead :one

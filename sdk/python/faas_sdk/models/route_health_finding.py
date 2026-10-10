@@ -62,8 +62,8 @@ class RouteHealthFinding:
     """Independently confirmed latency verdict across both windows when selected."""
     latency_reason: str | Unset = UNSET
     evidence_window: RouteHealthFindingEvidenceWindow | Unset = UNSET
-    """pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944);
-    synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-945). Thresholds are
+    """pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-953);
+    synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-954). Thresholds are
     unchanged."""
     pooled_windows: list[RouteHealthWindowEvidence] | Unset = UNSET
     """Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute

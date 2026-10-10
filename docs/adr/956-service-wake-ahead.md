@@ -1,4 +1,4 @@
-# ADR-946: Opt-in service wake-ahead along measured edges
+# ADR-956: Opt-in service wake-ahead along measured edges
 
 - Status: Accepted
 - Date: 2026-10-10

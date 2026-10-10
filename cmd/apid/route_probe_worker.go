@@ -24,7 +24,7 @@ type routeProbeSender interface {
 // and simply not counted.
 var routeProbeChallengeDelay = time.Second
 
-// WithRouteProbes enables ADR-945 synthetic probes. Without a configured
+// WithRouteProbes enables ADR-954 synthetic probes. Without a configured
 // sender the worker never runs and probe evidence stays unavailable.
 func (s *server) WithRouteProbes(sender routeProbeSender) *server {
 	s.routeProbes = sender

@@ -14,7 +14,7 @@ import (
 
 const routesPriorityUsage = "usage: gregale routes priority APP [--critical \"[METHOD] PATH\"]... [--bulk \"[METHOD] PATH\"]... | --clear | --reset"
 
-// cmdRoutesPriority shows or replaces an app's route priorities (ADR-947).
+// cmdRoutesPriority shows or replaces an app's route priorities (ADR-957).
 func cmdRoutesPriority(args []string) int {
 	flags, positional := splitArgsForFlags(args, "clear", "reset")
 	fs := newFlagSet("routes priority", flag.ContinueOnError)

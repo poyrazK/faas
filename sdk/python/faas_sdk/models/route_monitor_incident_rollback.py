@@ -23,7 +23,7 @@ T = TypeVar("T", bound="RouteMonitorIncidentRollback")
 
 @_attrs_define
 class RouteMonitorIncidentRollback:
-    """The single automatic rollback decision for an incident when on_violation is rollback (ADR-943). claimed is transient
+    """The single automatic rollback decision for an incident when on_violation is rollback (ADR-952). claimed is transient
     while the checked rollback is requested.
 
     """

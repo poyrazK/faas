@@ -14831,7 +14831,7 @@ paths:
       operationId: getRouteAdvice
       summary: Suggest edge rules for observed routes with what-if estimates.
       description: |
-        Read-only route advisor (ADR-940). Reads retained request telemetry for
+        Read-only route advisor (ADR-955). Reads retained request telemetry for
         the app's busiest observed routes across deployments and suggests three
         kinds of edge rules: cache for anonymous, successful GET routes with
         repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -14888,7 +14888,7 @@ paths:
       operationId: getServiceWakeAhead
       summary: Read an app's service wake-ahead opt-in.
       description: |
-        Service wake-ahead (ADR-946) is off by default. When it is on and this
+        Service wake-ahead (ADR-956) is off by default. When it is on and this
         app starts a cold wake, the gateway also starts restoring the services
         it has measured this app calling soon after it wakes, so their restores
         overlap instead of running one after another. Measurement is per
@@ -14912,7 +14912,7 @@ paths:
       operationId: setServiceWakeAhead
       summary: Turn an app's service wake-ahead on or off.
       description: |
-        Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+        Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
         Wake-ahead never starts while fleet residency is at or above 60% of the
         admission ceiling, never parks other instances to make room, and goes
         through the same admission and plan concurrency limits as a request.
@@ -14944,7 +14944,7 @@ paths:
       operationId: getRoutePriorities
       summary: Read the routes served first and last when an app is saturated.
       description: |
-        Route priorities (ADR-947) order the queue requests wait in while every
+        Route priorities (ADR-957) order the queue requests wait in while every
         routable instance of the app is busy. Critical requests are served
         before normal ones and normal before bulk; within a class the queue
         stays first in, first out, and the request already at the head is never
@@ -42861,7 +42861,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
-        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-943). Omitted for the default report-only action."}
+        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-952). Omitted for the default report-only action."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -42907,11 +42907,11 @@ components:
         error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
-        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944). Budgets are unchanged."}
+        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-953). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
     RouteAdviceResponse:
       type: object
-      description: "Route advisor suggestions derived from retained request telemetry (ADR-940). Nothing is applied."
+      description: "Route advisor suggestions derived from retained request telemetry (ADR-955). Nothing is applied."
       required: [slug, from, until, cache_max_age_seconds, routes_analyzed, suggestions]
       properties:
         slug: {"type": "string"}
@@ -42970,7 +42970,7 @@ components:
         timeouts_affected: {"type": "integer", "format": "int64"}
     ServiceWakeAheadResponse:
       type: object
-      description: "An app's service wake-ahead opt-in (ADR-946)."
+      description: "An app's service wake-ahead opt-in (ADR-956)."
       required: [slug, enabled]
       properties:
         slug: {"type": "string"}
@@ -42985,7 +42985,7 @@ components:
         enabled: {"type": "boolean", "description": "true to wake measured services ahead, false to wake them only when called."}
     RoutePriorityRule:
       type: object
-      description: "Assigns a priority class to requests matching a method and path (ADR-947)."
+      description: "Assigns a priority class to requests matching a method and path (ADR-957)."
       required: [path, class]
       additionalProperties: false
       properties:
@@ -43154,7 +43154,7 @@ components:
         rollback: {"$ref": "#/components/schemas/RouteMonitorIncidentRollback"}
     RouteMonitorIncidentRollback:
       type: object
-      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-943). claimed is transient while the checked rollback is requested."
+      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-952). claimed is transient while the checked rollback is requested."
       required: [status, decided_at]
       properties:
         status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
@@ -43260,7 +43260,7 @@ components:
         probe: { $ref: '#/components/schemas/RouteHealthProbe' }
     RouteHealthProbe:
       type: object
-      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-945). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
+      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-954). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
       additionalProperties: false
       required: [path]
       properties:
@@ -43607,7 +43607,7 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
-        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-945). Thresholds are unchanged." }
+        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-953); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-954). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
         pooled_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse." }
         synthetic_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They settle the 5xx signal only." }

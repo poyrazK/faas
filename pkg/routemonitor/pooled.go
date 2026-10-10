@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
 
-// PooledWindows reuses route health's stage pooling (ADR-944). For a long
+// PooledWindows reuses route health's stage pooling (ADR-953). For a long
 // serving deployment it is the newest RouteHealthPooledMaxSpan in two halves.
 func PooledWindows(anchor *time.Time, now time.Time) ([]api.RouteMonitorWindow, bool) {
 	windows, ok := routehealth.PooledWindows(anchor, now)

@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-946: a caller app opts into wake-ahead of the services it is measured
+-- ADR-956: a caller app opts into wake-ahead of the services it is measured
 -- to call after it wakes. apid is the only writer; gatewayd-internal reads it.
 CREATE TABLE IF NOT EXISTS app_service_wake_ahead (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { RouteAdviceSuggestion } from './RouteAdviceSuggestion.js';
 /**
- * Route advisor suggestions derived from retained request telemetry (ADR-940). Nothing is applied.
+ * Route advisor suggestions derived from retained request telemetry (ADR-955). Nothing is applied.
  */
 export type RouteAdviceResponse = {
   slug: string;

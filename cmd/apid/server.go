@@ -113,7 +113,7 @@ type server struct {
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
 	notif          Notifier
-	// routeProbes sends ADR-945 synthetic route probes; nil disables them.
+	// routeProbes sends ADR-954 synthetic route probes; nil disables them.
 	routeProbes routeProbeSender
 	// edgeRuleFleetRequired is true on named multi-box control planes. Those
 	// deployments must see at least one active serving gateway before a policy

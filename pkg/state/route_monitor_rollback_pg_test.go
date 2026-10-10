@@ -39,7 +39,7 @@ func rollbackMonitorIncident(t *testing.T, released string) (*state.PgStore, sta
 	return s, a, app, stable, candidate
 }
 
-// adr: 943
+// adr: 952
 func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	s, a, app, stable, candidate := rollbackMonitorIncident(t, "5 minutes")
 	claim, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID)
@@ -72,7 +72,7 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	}
 }
 
-// adr: 943
+// adr: 952
 func TestRouteMonitorRollbackPostgresSkipsLateIncident(t *testing.T) {
 	s, a, app, _, _ := rollbackMonitorIncident(t, "2 hours")
 	if _, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || claimed {

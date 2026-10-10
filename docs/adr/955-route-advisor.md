@@ -1,4 +1,4 @@
-# ADR-940: Route advisor — edge-rule suggestions from observed traffic
+# ADR-955: Route advisor — edge-rule suggestions from observed traffic
 
 - Status: Accepted
 - Date: 2026-10-10

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Assigns a priority class to requests matching a method and path (ADR-947).
+ * Assigns a priority class to requests matching a method and path (ADR-957).
  */
 export type RoutePriorityRule = {
   /**

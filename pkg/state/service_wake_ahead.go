@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// ServiceWakeAheadSetting is an app's ADR-946 opt-in. A zero UpdatedAt means
+// ServiceWakeAheadSetting is an app's ADR-956 opt-in. A zero UpdatedAt means
 // the app never changed it from the default (off).
 type ServiceWakeAheadSetting struct {
 	Enabled   bool

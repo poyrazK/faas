@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-945: synthetic route probes record their own per-minute results here.
+-- ADR-847: synthetic route probes record their own per-minute results here.
 -- Probe requests are never written to request_telemetry or usage, so organic
 -- analytics, budgets and customer reach exclude them by construction.
 CREATE TABLE IF NOT EXISTS route_probe_observations (

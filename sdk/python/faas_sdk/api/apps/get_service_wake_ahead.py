@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[Problem | ServiceWakeAheadResponse]:
     """Read an app's service wake-ahead opt-in.
 
-     Service wake-ahead (ADR-946) is off by default. When it is on and this
+     Service wake-ahead (ADR-956) is off by default. When it is on and this
     app starts a cold wake, the gateway also starts restoring the services
     it has measured this app calling soon after it wakes, so their restores
     overlap instead of running one after another. Measurement is per
@@ -119,7 +119,7 @@ def sync(
 ) -> Problem | ServiceWakeAheadResponse | None:
     """Read an app's service wake-ahead opt-in.
 
-     Service wake-ahead (ADR-946) is off by default. When it is on and this
+     Service wake-ahead (ADR-956) is off by default. When it is on and this
     app starts a cold wake, the gateway also starts restoring the services
     it has measured this app calling soon after it wakes, so their restores
     overlap instead of running one after another. Measurement is per
@@ -151,7 +151,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | ServiceWakeAheadResponse]:
     """Read an app's service wake-ahead opt-in.
 
-     Service wake-ahead (ADR-946) is off by default. When it is on and this
+     Service wake-ahead (ADR-956) is off by default. When it is on and this
     app starts a cold wake, the gateway also starts restoring the services
     it has measured this app calling soon after it wakes, so their restores
     overlap instead of running one after another. Measurement is per
@@ -186,7 +186,7 @@ async def asyncio(
 ) -> Problem | ServiceWakeAheadResponse | None:
     """Read an app's service wake-ahead opt-in.
 
-     Service wake-ahead (ADR-946) is off by default. When it is on and this
+     Service wake-ahead (ADR-956) is off by default. When it is on and this
     app starts a cold wake, the gateway also starts restoring the services
     it has measured this app calling soon after it wakes, so their restores
     overlap instead of running one after another. Measurement is per

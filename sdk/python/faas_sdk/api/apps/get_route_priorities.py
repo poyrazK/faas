@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[Problem | RoutePrioritiesResponse]:
     """Read the routes served first and last when an app is saturated.
 
-     Route priorities (ADR-947) order the queue requests wait in while every
+     Route priorities (ADR-957) order the queue requests wait in while every
     routable instance of the app is busy. Critical requests are served
     before normal ones and normal before bulk; within a class the queue
     stays first in, first out, and the request already at the head is never
@@ -122,7 +122,7 @@ def sync(
 ) -> Problem | RoutePrioritiesResponse | None:
     """Read the routes served first and last when an app is saturated.
 
-     Route priorities (ADR-947) order the queue requests wait in while every
+     Route priorities (ADR-957) order the queue requests wait in while every
     routable instance of the app is busy. Critical requests are served
     before normal ones and normal before bulk; within a class the queue
     stays first in, first out, and the request already at the head is never
@@ -157,7 +157,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | RoutePrioritiesResponse]:
     """Read the routes served first and last when an app is saturated.
 
-     Route priorities (ADR-947) order the queue requests wait in while every
+     Route priorities (ADR-957) order the queue requests wait in while every
     routable instance of the app is busy. Critical requests are served
     before normal ones and normal before bulk; within a class the queue
     stays first in, first out, and the request already at the head is never
@@ -195,7 +195,7 @@ async def asyncio(
 ) -> Problem | RoutePrioritiesResponse | None:
     """Read the routes served first and last when an app is saturated.
 
-     Route priorities (ADR-947) order the queue requests wait in while every
+     Route priorities (ADR-957) order the queue requests wait in while every
     routable instance of the app is busy. Critical requests are served
     before normal ones and normal before bulk; within a class the queue
     stays first in, first out, and the request already at the head is never

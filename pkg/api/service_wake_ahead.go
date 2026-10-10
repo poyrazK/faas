@@ -1,6 +1,6 @@
 package api
 
-// ServiceWakeAheadResponse is an app's ADR-946 wake-ahead opt-in. When
+// ServiceWakeAheadResponse is an app's ADR-956 wake-ahead opt-in. When
 // enabled, a cold wake of this app also starts restoring the services it is
 // measured to call soon after it wakes.
 type ServiceWakeAheadResponse struct {

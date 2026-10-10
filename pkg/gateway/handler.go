@@ -962,9 +962,9 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
-	// wakeAhead is the opt-in ADR-946 wake-ahead runner; nil disables it.
+	// wakeAhead is the opt-in ADR-956 wake-ahead runner; nil disables it.
 	wakeAhead *wakeAheadRunner
-	// routePriorities orders the warm-capacity queue by route (ADR-947);
+	// routePriorities orders the warm-capacity queue by route (ADR-957);
 	// nil keeps it FIFO.
 	routePriorities *routePriorityCache
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
@@ -5952,7 +5952,7 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
-	// ADR-945: a route probe pins one live deployment and keeps every customer
+	// ADR-954: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
@@ -6881,7 +6881,7 @@ haveApp:
 		return
 	}
 	if !pick.OK {
-		// ADR-946: a cold app starts restoring the services it is measured to
+		// ADR-956: a cold app starts restoring the services it is measured to
 		// call before its own restore completes. Opt-in; never blocks.
 		h.noteColdWake(r.Context(), app.ID)
 		// This is the canonical platform-only boundary. Authentication,
@@ -7159,7 +7159,7 @@ haveApp:
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	} else if routeProbe && target.DeploymentID == probeDeploymentID {
 		// The same upstream-only proof lets the prober attribute a response
-		// to the probed deployment (ADR-945).
+		// to the probed deployment (ADR-954).
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
@@ -7811,7 +7811,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	// Route probes (ADR-945) record their own results; they never become
+	// Route probes (ADR-954) record their own results; they never become
 	// customer telemetry or usage.
 	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())
@@ -8840,12 +8840,12 @@ func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
 	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
 }
 
-// triggerServiceWakeAhead attributes ADR-946 wake-ahead restores.
+// triggerServiceWakeAhead attributes ADR-956 wake-ahead restores.
 const triggerServiceWakeAhead = sched.TriggerServiceWakeAhead
 
 // ensureServiceCapacity is the shared body of service-mesh and wake-ahead
 // restores. A parked target starting to wake may itself wake its measured
-// targets ahead (ADR-946), up to the depth limit.
+// targets ahead (ADR-956), up to the depth limit.
 func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {

@@ -1,6 +1,6 @@
 package gateway
 
-// Opt-in service wake-ahead along measured edges (ADR-946, amending ADR-196).
+// Opt-in service wake-ahead along measured edges (ADR-956, amending ADR-196).
 //
 // ADR-196 holds a cold internal call while its parked target restores, so a
 // fully cold chain public-api → auth → billing pays its restores one after
@@ -269,7 +269,7 @@ type wakeAheadCached struct {
 
 type wakeAheadDepthKey struct{}
 
-// SetWakeAhead enables ADR-946 wake-ahead. Without it the handler only wakes
+// SetWakeAhead enables ADR-956 wake-ahead. Without it the handler only wakes
 // what is called, exactly as ADR-196 specifies.
 func (h *Handler) SetWakeAhead(cfg WakeAheadConfig) {
 	if cfg.Learner == nil || cfg.Enabled == nil || cfg.Residency == nil || cfg.Wake == nil {

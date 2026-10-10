@@ -97,7 +97,7 @@ def sync_detailed(
 ) -> Response[Problem | ServiceWakeAheadResponse]:
     """Turn an app's service wake-ahead on or off.
 
-     Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+     Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
     Wake-ahead never starts while fleet residency is at or above 60% of the
     admission ceiling, never parks other instances to make room, and goes
     through the same admission and plan concurrency limits as a request.
@@ -135,7 +135,7 @@ def sync(
 ) -> Problem | ServiceWakeAheadResponse | None:
     """Turn an app's service wake-ahead on or off.
 
-     Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+     Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
     Wake-ahead never starts while fleet residency is at or above 60% of the
     admission ceiling, never parks other instances to make room, and goes
     through the same admission and plan concurrency limits as a request.
@@ -168,7 +168,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | ServiceWakeAheadResponse]:
     """Turn an app's service wake-ahead on or off.
 
-     Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+     Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
     Wake-ahead never starts while fleet residency is at or above 60% of the
     admission ceiling, never parks other instances to make room, and goes
     through the same admission and plan concurrency limits as a request.
@@ -204,7 +204,7 @@ async def asyncio(
 ) -> Problem | ServiceWakeAheadResponse | None:
     """Turn an app's service wake-ahead on or off.
 
-     Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+     Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
     Wake-ahead never starts while fleet residency is at or above 60% of the
     admission ceiling, never parks other instances to make room, and goes
     through the same admission and plan concurrency limits as a request.

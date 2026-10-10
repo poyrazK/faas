@@ -690,7 +690,7 @@ const (
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
 	//           "expires_at":RFC3339}
 	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
-	// NotifyRouteProbeChallenge carries an ADR-945 route probe token from apid
+	// NotifyRouteProbeChallenge carries an ADR-954 route probe token from apid
 	// to every gateway. It is a separate kind from the smoke challenge: it
 	// pins one live deployment but never bypasses customer auth gates.
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,

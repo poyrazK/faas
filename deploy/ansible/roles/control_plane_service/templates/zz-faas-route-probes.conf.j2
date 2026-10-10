@@ -1,5 +1,5 @@
 [Service]
-# ADR-945 synthetic route probes. apid sends opted-in probes through the public
+# ADR-954 synthetic route probes. apid sends opted-in probes through the public
 # gateway origin; unset (route_probes_enabled false) keeps probes off.
 {% if route_probes_enabled | default(false) | bool %}
 Environment=FAAS_ROUTE_PROBE_URL=https://{{ gatewayd_apps_domain | default('gregale.dev') }}

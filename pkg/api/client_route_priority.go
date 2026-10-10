@@ -9,7 +9,7 @@ func routePrioritiesPath(slug string) string {
 	return "/v1/apps/" + url.PathEscape(slug) + "/route-priorities"
 }
 
-// GetRoutePriorities reads an app's effective route priorities (ADR-947).
+// GetRoutePriorities reads an app's effective route priorities (ADR-957).
 func (c *Client) GetRoutePriorities(ctx context.Context, slug string) (RoutePrioritiesResponse, error) {
 	var out RoutePrioritiesResponse
 	return out, c.do(ctx, "GET", routePrioritiesPath(slug), nil, &out)

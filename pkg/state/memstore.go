@@ -582,7 +582,7 @@ type MemStore struct {
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
-	// routeProbeData holds ADR-945 probe rounds and results; lazily created.
+	// routeProbeData holds ADR-954 probe rounds and results; lazily created.
 	routeProbeOnce           sync.Once
 	routeProbeData           *memRouteProbes
 	routeHealthGates         map[string]api.RouteHealthGate
@@ -841,9 +841,9 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
-	// serviceWakeAhead holds ADR-946 opt-ins keyed by app ID.
+	// serviceWakeAhead holds ADR-956 opt-ins keyed by app ID.
 	serviceWakeAhead map[string]memServiceWakeAhead
-	// routePriorities holds ADR-947 saved route priorities keyed by app ID.
+	// routePriorities holds ADR-957 saved route priorities keyed by app ID.
 	routePriorities     map[string]memRoutePriorities
 	platformTenantUsage map[string]APIConsumerUsageBucket
 	// Consumer plans (ADR-847): plans by ID, assignments by ID, and admission

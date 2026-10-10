@@ -1064,14 +1064,14 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
-	// Route priorities (ADR-947). apid owns the rows; gatewayd-internal reads them.
+	// Route priorities (ADR-957). apid owns the rows; gatewayd-internal reads them.
 	GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error)
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
 	GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error)
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
-	// Service wake-ahead (ADR-946). apid owns the setting; gatewayd-internal reads
+	// Service wake-ahead (ADR-956). apid owns the setting; gatewayd-internal reads
 	// it and the fleet residency that guards every wake-ahead.
 	GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServiceWakeAheadParams) (GetServiceWakeAheadRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
@@ -1875,7 +1875,7 @@ type Querier interface {
 	ListRouteCheckHistory(ctx context.Context, db DBTX, arg ListRouteCheckHistoryParams) ([][]byte, error)
 	ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error)
 	ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error)
-	// ADR-945: apps whose route health gate opts a selector into probes and that
+	// ADR-954: apps whose route health gate opts a selector into probes and that
 	// have exactly one in-flight canary candidate in the default scope.
 	ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
@@ -2064,7 +2064,7 @@ type Querier interface {
 	LockRouteHealthRecoveryLease(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LockRouteHealthRecoverySiblings(ctx context.Context, db DBTX, arg LockRouteHealthRecoverySiblingsParams) ([]LockRouteHealthRecoverySiblingsRow, error)
 	LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMonitorParams) (LockRouteMonitorRow, error)
-	// ADR-943: waits for an in-flight evaluation instead of skipping it, so the
+	// ADR-952: waits for an in-flight evaluation instead of skipping it, so the
 	// claim reads the incident that evaluation committed.
 	LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error)
 	LockRoutePolicyAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error)
@@ -3183,7 +3183,7 @@ type Querier interface {
 	// The two busiest identified consumers of each route with their peak minute.
 	// The consumer join validates ownership; it never infers one from today's link.
 	RouteAdviceConsumers(ctx context.Context, db DBTX, arg RouteAdviceConsumersParams) ([]RouteAdviceConsumersRow, error)
-	// Route advisor reads (ADR-940). Retained debugger telemetry only; nothing
+	// Route advisor reads (ADR-955). Retained debugger telemetry only; nothing
 	// here touches the usage ledger. Route labels are "METHOD /template".
 	// The busiest routes of an app across deployments. The cache estimate buckets
 	// anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first

@@ -14,7 +14,7 @@ T = TypeVar("T", bound="ServiceWakeAheadResponse")
 
 @_attrs_define
 class ServiceWakeAheadResponse:
-    """An app's service wake-ahead opt-in (ADR-946)."""
+    """An app's service wake-ahead opt-in (ADR-956)."""
 
     slug: str
     enabled: bool

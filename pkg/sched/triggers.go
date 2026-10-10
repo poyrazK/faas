@@ -108,7 +108,7 @@ const (
 	TriggerServiceMesh = "service.mesh"
 
 	// TriggerServiceWakeAhead — an opt-in, speculative wake of a service
-	// that a waking caller is measured to call soon after it wakes (ADR-946).
+	// that a waking caller is measured to call soon after it wakes (ADR-956).
 	// It is distinct from TriggerServiceMesh so the wake timeline shows which
 	// restores were predictions, and it never parks idle instances for room.
 	TriggerServiceWakeAhead = "service.wake_ahead"

@@ -1,4 +1,4 @@
--- Route priorities (ADR-947). apid owns the rows; gatewayd-internal reads them.
+-- Route priorities (ADR-957). apid owns the rows; gatewayd-internal reads them.
 
 -- name: GetRoutePriorities :one
 SELECT routes, updated_at FROM app_route_priorities

@@ -13,7 +13,7 @@ import (
 
 const routesAdviseUsage = "usage: gregale routes advise APP [--since 7d] [--until RFC3339] [--cache-max-age SECONDS] [--apply ID [--enable]]"
 
-// cmdRoutesAdvise lists route advisor suggestions (ADR-940) or applies one by
+// cmdRoutesAdvise lists route advisor suggestions (ADR-955) or applies one by
 // creating its edge rules, disabled unless --enable is given.
 func cmdRoutesAdvise(args []string) int {
 	flags, positional := splitArgsForFlags(args, "enable")

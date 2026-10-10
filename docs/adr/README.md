@@ -619,7 +619,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
 - [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
 - [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
-- [ADR-941: pre-promotion API route checks](941-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
+- [ADR-950: pre-promotion API route checks](950-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
 
 ## Route review and release protection
 
@@ -647,15 +647,15 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
-- [ADR-942: Default report-mode route health selectors](942-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
-- [ADR-944: Stage-pooled evidence for low-traffic critical routes](944-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
-- [ADR-945: Opt-in synthetic probes for routes without organic traffic](945-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
-- [ADR-940: Route advisor](940-route-advisor.md) — suggest cache, async and per-consumer throttle rules from observed traffic with what-if estimates; rules are created disabled
+- [ADR-951: Default report-mode route health selectors](951-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
+- [ADR-953: Stage-pooled evidence for low-traffic critical routes](953-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
+- [ADR-954: Opt-in synthetic probes for routes without organic traffic](954-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
+- [ADR-955: Route advisor](955-route-advisor.md) — suggest cache, async and per-consumer throttle rules from observed traffic with what-if estimates; rules are created disabled
 - [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
 - [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
 - [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
-- [ADR-946: Opt-in service wake-ahead along measured edges](946-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
-- [ADR-947: Route priority for the warm-capacity queue](947-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
+- [ADR-956: Opt-in service wake-ahead along measured edges](956-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
+- [ADR-957: Route priority for the warm-capacity queue](957-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -663,7 +663,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
-- [ADR-943: Opt-in automatic rollback for early production route incidents](943-route-monitor-automatic-rollback.md) — request one checked rollback to the saved healthy baseline when an error budget is violated within 30 minutes of release
+- [ADR-952: Opt-in automatic rollback for early production route incidents](952-route-monitor-automatic-rollback.md) — request one checked rollback to the saved healthy baseline when an error budget is violated within 30 minutes of release
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
 - [ADR-593: Static Go net/http route impact](593-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence

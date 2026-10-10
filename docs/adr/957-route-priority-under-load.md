@@ -1,4 +1,4 @@
-# ADR-947: Route priority for the warm-capacity queue
+# ADR-957: Route priority for the warm-capacity queue
 
 - Status: Accepted
 - Date: 2026-10-10

@@ -114,7 +114,7 @@ def sync_detailed(
 ) -> Response[Problem | RouteAdviceResponse]:
     """Suggest edge rules for observed routes with what-if estimates.
 
-     Read-only route advisor (ADR-940). Reads retained request telemetry for
+     Read-only route advisor (ADR-955). Reads retained request telemetry for
     the app's busiest observed routes across deployments and suggests three
     kinds of edge rules: cache for anonymous, successful GET routes with
     repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -171,7 +171,7 @@ def sync(
 ) -> Problem | RouteAdviceResponse | None:
     """Suggest edge rules for observed routes with what-if estimates.
 
-     Read-only route advisor (ADR-940). Reads retained request telemetry for
+     Read-only route advisor (ADR-955). Reads retained request telemetry for
     the app's busiest observed routes across deployments and suggests three
     kinds of edge rules: cache for anonymous, successful GET routes with
     repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -223,7 +223,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | RouteAdviceResponse]:
     """Suggest edge rules for observed routes with what-if estimates.
 
-     Read-only route advisor (ADR-940). Reads retained request telemetry for
+     Read-only route advisor (ADR-955). Reads retained request telemetry for
     the app's busiest observed routes across deployments and suggests three
     kinds of edge rules: cache for anonymous, successful GET routes with
     repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -278,7 +278,7 @@ async def asyncio(
 ) -> Problem | RouteAdviceResponse | None:
     """Suggest edge rules for observed routes with what-if estimates.
 
-     Read-only route advisor (ADR-940). Reads retained request telemetry for
+     Read-only route advisor (ADR-955). Reads retained request telemetry for
     the app's busiest observed routes across deployments and suggests three
     kinds of edge rules: cache for anonymous, successful GET routes with
     repeat traffic; async for POST routes that time out or exceed a 10 s

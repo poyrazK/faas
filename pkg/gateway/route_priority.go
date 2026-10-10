@@ -1,6 +1,6 @@
 package gateway
 
-// Route priority for the warm-capacity queue (ADR-947).
+// Route priority for the warm-capacity queue (ADR-957).
 //
 // When every routable instance of an app is busy, requests wait in the
 // per-app queue in vm_concurrency.go. A request is classified only once it
@@ -47,7 +47,7 @@ type routePriorityEntry struct {
 	expires time.Time
 }
 
-// SetRoutePrioritySource enables ADR-947 route priorities. Without it every
+// SetRoutePrioritySource enables ADR-957 route priorities. Without it every
 // queued request is normal priority and the queue stays FIFO.
 func (h *Handler) SetRoutePrioritySource(source RoutePrioritySource) {
 	if source == nil {

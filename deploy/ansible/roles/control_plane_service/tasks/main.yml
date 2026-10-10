@@ -346,7 +346,7 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'control-plane'
 
-# ADR-945: synthetic route probes stay off until route_probes_enabled is set;
+# ADR-954: synthetic route probes stay off until route_probes_enabled is set;
 # the drop-in then points apid at the public gateway origin.
 - name: control_plane_service — configure synthetic route probes
   notify: restart faas-apid

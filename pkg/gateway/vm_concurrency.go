@@ -74,7 +74,7 @@ type concurrencyWaitTicket struct {
 	ready   chan struct{}
 	left    bool
 	leaseID string
-	// class orders the queue (ADR-947). displaced is closed when a
+	// class orders the queue (ADR-957). displaced is closed when a
 	// higher-priority request takes this waiter's place.
 	class     routePriority
 	displaced chan struct{}
@@ -82,7 +82,7 @@ type concurrencyWaitTicket struct {
 	displacedOther bool
 }
 
-// routePriority orders warm-capacity waiters (ADR-947); lower is served first.
+// routePriority orders warm-capacity waiters (ADR-957); lower is served first.
 type routePriority int
 
 const (
@@ -149,7 +149,7 @@ func (m *vmConcurrencyManager) enterQueue(ctx context.Context, appID, plan strin
 }
 
 // enterQueueWithPriority queues a request behind every waiter of its class or
-// higher (ADR-947); the head, which is already acquiring a slot, never moves.
+// higher (ADR-957); the head, which is already acquiring a slot, never moves.
 // When the local queue or the fleet permit budget is full, the newest waiter
 // of a lower class is displaced and its fleet permit passes to this request.
 // Within a class the queue stays FIFO.

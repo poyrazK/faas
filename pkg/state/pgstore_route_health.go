@@ -53,7 +53,7 @@ func (s *PgStore) SetRouteHealthGate(ctx context.Context, accountID, appID strin
 		return g, ErrRouteHealthPlan
 	}
 	// The first explicit save records intent even when it matches the default,
-	// so an empty selector list opts out of default seeding (ADR-942).
+	// so an empty selector list opts out of default seeding (ADR-951).
 	if g.Revision > 0 && g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, tx.Commit(ctx)
 	}
@@ -130,7 +130,7 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 
 // pgPooledRouteHealth reads pooled_windows only for routes whose one-minute
 // windows lacked requests, then re-evaluates with unchanged thresholds
-// (ADR-944). One-minute windows stay in every finding.
+// (ADR-953). One-minute windows stay in every finding.
 func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, anchor *time.Time) error {
 	windows, ok := routehealth.PooledWindows(anchor, report.CheckedAt)
 	if !ok {
@@ -158,7 +158,7 @@ func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g 
 		report.Routes[i].PooledWindows = pooled.Routes[k].Windows
 	}
 	routehealth.Evaluate(report, anchor, "")
-	// Probes count only for opted-in routes that pooling left sparse (ADR-945).
+	// Probes count only for opted-in routes that pooling left sparse (ADR-954).
 	if err := pgSyntheticRouteHealth(ctx, db, accountID, g, report, anchor, windows); err != nil {
 		return err
 	}

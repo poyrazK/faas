@@ -27,7 +27,7 @@ type GetServiceWakeAheadRow struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
-// Service wake-ahead (ADR-946). apid owns the setting; gatewayd-internal reads
+// Service wake-ahead (ADR-956). apid owns the setting; gatewayd-internal reads
 // it and the fleet residency that guards every wake-ahead.
 func (q *Queries) GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServiceWakeAheadParams) (GetServiceWakeAheadRow, error) {
 	row := db.QueryRow(ctx, getServiceWakeAhead, arg.AppID, arg.AccountID)

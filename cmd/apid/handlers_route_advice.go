@@ -24,7 +24,7 @@ type routeAdviceReader interface {
 	RouteAdviceThrottleExcess(context.Context, sqlc.RouteAdviceThrottleExcessParams) (int64, error)
 }
 
-// getRouteAdvice serves GET /v1/apps/{slug}/routes/advice (ADR-940): edge-rule
+// getRouteAdvice serves GET /v1/apps/{slug}/routes/advice (ADR-955): edge-rule
 // suggestions from retained request telemetry. It never writes; the customer
 // applies a suggestion through the edge-rules API, disabled for review.
 func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct state.Account) {

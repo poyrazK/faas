@@ -32,7 +32,7 @@ type RollbackDecision struct {
 	Target   string
 }
 
-// DecideRollback applies ADR-943 to one open incident of a fully serving
+// DecideRollback applies ADR-952 to one open incident of a fully serving
 // deployment. releasedAt is when that deployment last started a traffic stage
 // or completed its rollout. It never inspects telemetry beyond the immutable
 // opening report, so the decision is reproducible from the saved incident.

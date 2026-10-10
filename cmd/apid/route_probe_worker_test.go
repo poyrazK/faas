@@ -86,7 +86,7 @@ func (s *sparseReportStore) GetRouteHealthReport(_ context.Context, _, _, deploy
 	}}, nil
 }
 
-// adr: 945
+// adr: 954
 func TestRouteProbeWorkerProbesSparseSelectorsOncePerMinute(t *testing.T) {
 	old := routeProbeChallengeDelay
 	routeProbeChallengeDelay = 0
@@ -131,7 +131,7 @@ func TestRouteProbeWorkerProbesSparseSelectorsOncePerMinute(t *testing.T) {
 	}
 }
 
-// adr: 945
+// adr: 954
 func TestRouteProbeWorkerDisabledWithoutSender(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	if err := e.s.drainRouteProbes(context.Background()); err != nil {

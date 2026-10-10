@@ -102,6 +102,7 @@ import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyRespons
 import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
 import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
 import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RoutePrioritiesResponse } from '../models/RoutePrioritiesResponse.js';
 import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
 import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
 import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
@@ -117,6 +118,7 @@ import type { SetBindingReleasePolicyRequest } from '../models/SetBindingRelease
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
+import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
@@ -4556,7 +4558,7 @@ export class AppsService {
   }
   /**
    * Suggest edge rules for observed routes with what-if estimates.
-   * Read-only route advisor (ADR-940). Reads retained request telemetry for
+   * Read-only route advisor (ADR-955). Reads retained request telemetry for
    * the app's busiest observed routes across deployments and suggests three
    * kinds of edge rules: cache for anonymous, successful GET routes with
    * repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -4583,20 +4585,6 @@ export class AppsService {
     since = '168h',
     until,
     cacheMaxAge = 60,
-   * Read an app's service wake-ahead opt-in.
-   * Service wake-ahead (ADR-946) is off by default. When it is on and this
-   * app starts a cold wake, the gateway also starts restoring the services
-   * it has measured this app calling soon after it wakes, so their restores
-   * overlap instead of running one after another. Measurement is per
-   * gateway and needs at least 20 observed wakes of this app before any
-   * service is woken ahead. Woken services are billed like any other
-   * running instance. Requires app read access and completed MFA.
-   *
-   * @returns ServiceWakeAheadResponse The app's wake-ahead opt-in.
-   * @throws ApiError
-   */
-  public static getServiceWakeAhead({
-    slug,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -4630,6 +4618,40 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an app's service wake-ahead opt-in.
+   * Service wake-ahead (ADR-956) is off by default. When it is on and this
+   * app starts a cold wake, the gateway also starts restoring the services
+   * it has measured this app calling soon after it wakes, so their restores
+   * overlap instead of running one after another. Measurement is per
+   * gateway and needs at least 20 observed wakes of this app before any
+   * service is woken ahead. Woken services are billed like any other
+   * running instance. Requires app read access and completed MFA.
+   *
+   * @returns ServiceWakeAheadResponse The app's wake-ahead opt-in.
+   * @throws ApiError
+   */
+  public static getServiceWakeAhead({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
   }): CancelablePromise<ServiceWakeAheadResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -4655,7 +4677,7 @@ export class AppsService {
   }
   /**
    * Turn an app's service wake-ahead on or off.
-   * Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+   * Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
    * Wake-ahead never starts while fleet residency is at or above 60% of the
    * admission ceiling, never parks other instances to make room, and goes
    * through the same admission and plan concurrency limits as a request.
@@ -4684,6 +4706,135 @@ export class AppsService {
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the routes served first and last when an app is saturated.
+   * Route priorities (ADR-957) order the queue requests wait in while every
+   * routable instance of the app is busy. Critical requests are served
+   * before normal ones and normal before bulk; within a class the queue
+   * stays first in, first out, and the request already at the head is never
+   * moved. When the queue is full, a request takes the place of the newest
+   * waiting request of a lower class, which receives the usual 503 with
+   * Retry-After. Saved rules apply when present (source configured);
+   * otherwise the app's route-health selectors are critical (route_health);
+   * otherwise there are none. Crawlers and link-preview bots that match no
+   * rule are bulk. Requires app read access and completed MFA.
+   *
+   * @returns RoutePrioritiesResponse The app's effective route priorities.
+   * @throws ApiError
+   */
+  public static getRoutePriorities({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an app's saved route priorities.
+   * Saves at most 20 rules, matched in order; the first match wins. A path
+   * is a route template (/users/{id}) or an edge-rule glob (/exports*); an
+   * omitted method matches every method. An empty list saves "no
+   * priorities" and turns off the route-health default. Gateways apply the
+   * change within 30 seconds. Requires deploy write access and completed
+   * MFA. Body limit is 16 KiB.
+   *
+   * @returns RoutePrioritiesResponse The effective route priorities after saving.
+   * @throws ApiError
+   */
+  public static setRoutePriorities({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRoutePrioritiesRequest,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an app's saved route priorities.
+   * Deletes saved rules so the route-health default applies again. Requires deploy write access and completed MFA.
+   * @returns RoutePrioritiesResponse The effective route priorities after the reset.
+   * @throws ApiError
+   */
+  public static resetRoutePriorities({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,

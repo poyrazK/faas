@@ -15,7 +15,7 @@ export type RouteMonitorFinding = {
   latency_status: 'healthy' | 'violated' | 'unknown' | 'disabled';
   windows: Array<RouteMonitorWindow>;
   /**
-   * Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944). Budgets are unchanged.
+   * Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-953). Budgets are unchanged.
    */
   evidence_window?: 'pooled';
   /**

@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-947: per-app route priorities for the warm-capacity queue. apid is the
+-- ADR-957: per-app route priorities for the warm-capacity queue. apid is the
 -- only writer; gatewayd-internal reads them when a request has to queue.
 CREATE TABLE IF NOT EXISTS app_route_priorities (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

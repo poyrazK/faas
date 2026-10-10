@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 945
+// adr: 954
 // A probed route with no organic traffic reaches a verdict from probe rows,
 // rounds are claimed once per minute, and old rows are pruned.
 func TestRouteProbePostgresSyntheticEvidence(t *testing.T) {

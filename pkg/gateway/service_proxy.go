@@ -278,7 +278,7 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
-	// ObserveCall is the optional ADR-946 learner seam. It receives every
+	// ObserveCall is the optional ADR-956 learner seam. It receives every
 	// call that reached the target's guest from a production caller, with
 	// woken true when the call itself restored the target.
 	ObserveCall func(callerAppID, targetAppID string, woken bool)
@@ -1050,7 +1050,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
 }
 
-// observeWakeAheadCall feeds the ADR-946 learner. Preview callers are left
+// observeWakeAheadCall feeds the ADR-956 learner. Preview callers are left
 // out: their calls must not teach production wake-ahead.
 func (p *ServiceProxy) observeWakeAheadCall(caller ServiceCaller, target ServiceTarget, woken bool) {
 	if p.observeCall != nil && caller.PreviewOfSlug == "" {

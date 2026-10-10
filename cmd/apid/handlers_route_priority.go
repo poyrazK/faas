@@ -12,7 +12,7 @@ import (
 // routePrioritiesRequestMaxBytes bounds the PUT body (20 rules).
 const routePrioritiesRequestMaxBytes = 16 << 10
 
-// getRoutePriorities serves GET /v1/apps/{slug}/route-priorities (ADR-947):
+// getRoutePriorities serves GET /v1/apps/{slug}/route-priorities (ADR-957):
 // the rules gateways apply when the app's warm capacity is saturated.
 func (s *server) getRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))

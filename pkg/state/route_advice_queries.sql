@@ -1,4 +1,4 @@
--- Route advisor reads (ADR-940). Retained debugger telemetry only; nothing
+-- Route advisor reads (ADR-955). Retained debugger telemetry only; nothing
 -- here touches the usage ledger. Route labels are "METHOD /template".
 
 -- name: RouteAdviceRouteStats :many
