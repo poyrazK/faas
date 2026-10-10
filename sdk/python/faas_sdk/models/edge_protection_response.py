@@ -26,7 +26,8 @@ class EdgeProtectionResponse:
     app_id: str
     range_: EdgeProtectionResponseRange
     source: str
-    """prometheus or degraded: <reason>."""
+    """Where the edge counts come from: prometheus, or degraded: <reason> when they are unavailable (counts are
+    then zero, not measured)."""
     as_of: datetime.datetime
     pre_auth: EdgeProtectionResponsePreAuth
     validation_failures: list[EdgeProtectionResponseValidationFailuresItem]

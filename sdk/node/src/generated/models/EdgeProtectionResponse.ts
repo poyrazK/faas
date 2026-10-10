@@ -9,7 +9,7 @@ export type EdgeProtectionResponse = {
   app_id: string;
   range: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
   /**
-   * prometheus or degraded: <reason>.
+   * Where the edge counts come from: prometheus, or degraded: <reason> when they are unavailable (counts are then zero, not measured).
    */
   source: string;
   as_of: string;
