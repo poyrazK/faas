@@ -3,7 +3,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink, rename } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,8 +41,9 @@ async function ordersSetup(project) {
 
 test('an orders project verifies custom identities and seeds without a notes table', { skip: !enabled, timeout: 180000 }, async t => {
   const before = await containers(), beforeVolumes = await volumes()
-  const { config, options } = await fixture(t, { check: false, projectSetup: ordersSetup, json: true })
-  const result = await execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 })
+  const { options } = await fixture(t, { check: false, projectSetup: ordersSetup, json: true })
+  await rename(join(options.directory, 'data-api.dev.json'), join(options.directory, 'orders.dev.json'))
+  const result = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--config', 'orders.dev.json', '--port', '0', '--once'], { timeout: 150000 })
   assert.equal(JSON.parse(result.stdout.trim()).status, 'verified')
   const types = await readFile(join(options.directory, 'database.types.ts'), 'utf8')
   assert.match(types, /"orders"/); assert.doesNotMatch(types, /"notes"/)
