@@ -156,6 +156,7 @@ type Querier interface {
 	ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ClaimCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error)
 	ClaimCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error)
+	ClaimCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error)
 	ClaimCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error)
 	ClaimCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	ClaimCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error)
@@ -212,11 +213,12 @@ type Querier interface {
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
 	CloneCheckpointCaptureRetirementCatalogueCounts(ctx context.Context, db DBTX, operationID pgtype.UUID) (CloneCheckpointCaptureRetirementCatalogueCountsRow, error)
 	CloneCheckpointCaptureRetirementHasAdoption(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
-	// PostgreSQL copy readers/targets remain gated. Restore/isolation/credential
-	// and object intents require original catalogue owners and terminal proof in Go.
+	// All borrower intents require original catalogue owners and authenticated
+	// terminal proof in Go; missing copy catalogue proof links remain blockers.
 	CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error)
 	CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error)
+	CloneCheckpointPgCopyRetirementHasBorrowers(ctx context.Context, db DBTX, arg CloneCheckpointPgCopyRetirementHasBorrowersParams) (pgtype.Bool, error)
 	CloneCheckpointPgTargetCompensationBlocked(ctx context.Context, db DBTX, arg CloneCheckpointPgTargetCompensationBlockedParams) (pgtype.Bool, error)
 	CloneCheckpointPostgresCredentialPublished(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error)
@@ -707,6 +709,7 @@ type Querier interface {
 	FinishCloneCheckpointObjectTargetBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectTargetBucketParams) (int64, error)
 	FinishCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectVerificationParams) (int64, error)
 	FinishCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgActivationParams) (int64, error)
+	FinishCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgCopyRetirementParams) (int64, error)
 	FinishCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgTargetCompensationParams) (int64, error)
 	FinishCloneCheckpointPgTargetRestore(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgTargetRestoreParams) (int64, error)
 	FinishCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresCredentialParams) (int64, error)
@@ -912,6 +915,7 @@ type Querier interface {
 	InsertCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error)
 	InsertCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgAppSecretParams) error
 	InsertCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)
+	InsertCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error)
 	InsertCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgPublicationParams) (ProjectEnvironmentCloneCheckpointPgPublication, error)
 	InsertCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error)
 	InsertCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
@@ -2262,6 +2266,7 @@ type Querier interface {
 	ReadCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error)
 	ReadCloneCheckpointPgActivation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgActivation, error)
 	ReadCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)
+	ReadCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error)
 	ReadCloneCheckpointPgPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgPublication, error)
 	ReadCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error)
 	ReadCloneCheckpointPgTargetCredentials(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgTargetCredentialsParams) ([]ProjectEnvironmentCloneCheckpointPostgresCredential, error)
@@ -2674,6 +2679,9 @@ type Querier interface {
 	RetireAutoRollbackDeploymentSiblings(ctx context.Context, db DBTX, arg RetireAutoRollbackDeploymentSiblingsParams) error
 	RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, arg RetireCheckedRollbackSiblingsParams) error
 	RetireCloneCheckpointCaptureSnapshot(ctx context.Context, db DBTX, arg RetireCloneCheckpointCaptureSnapshotParams) (int64, error)
+	RetireCloneCheckpointPgCopyDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyDatabaseParams) (int64, error)
+	RetireCloneCheckpointPgCopyReader(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyReaderParams) (int64, error)
+	RetireCloneCheckpointPgCopyTarget(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyTargetParams) (int64, error)
 	RetireCloneCheckpointPgTargetDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgTargetDatabaseParams) (int64, error)
 	RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error)
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)

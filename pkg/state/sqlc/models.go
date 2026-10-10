@@ -5163,6 +5163,17 @@ type ProjectEnvironmentCloneCheckpointPgConnectionValue struct {
 	ActivationOperationID pgtype.UUID
 }
 
+type ProjectEnvironmentCloneCheckpointPgCopyRetirement struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	RetiredAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPgCredentialRetirement struct {
 	OperationID       pgtype.UUID
 	SourceBindingID   pgtype.UUID
@@ -5445,45 +5456,47 @@ type ProjectEnvironmentClonePostgresContent struct {
 }
 
 type ProjectEnvironmentClonePostgresCopyReader struct {
-	OperationID         pgtype.UUID
-	SourceDatabaseID    pgtype.UUID
-	AccountID           pgtype.UUID
-	ProjectID           pgtype.UUID
-	CaptureDatabaseID   pgtype.UUID
-	Scope               []byte
-	OwnerID             pgtype.UUID
-	State               string
-	RequestStartedAt    pgtype.Timestamptz
-	EndpointID          pgtype.Text
-	EndpointCreatedAt   pgtype.Timestamptz
-	Available           bool
-	ObservedAt          pgtype.Timestamptz
-	CleanupRequestedAt  pgtype.Timestamptz
-	CleanupDispatchedAt pgtype.Timestamptz
-	DeleteOperationIds  []byte
-	CaptureOperationIds []byte
-	RetiredAt           pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	OperationID                           pgtype.UUID
+	SourceDatabaseID                      pgtype.UUID
+	AccountID                             pgtype.UUID
+	ProjectID                             pgtype.UUID
+	CaptureDatabaseID                     pgtype.UUID
+	Scope                                 []byte
+	OwnerID                               pgtype.UUID
+	State                                 string
+	RequestStartedAt                      pgtype.Timestamptz
+	EndpointID                            pgtype.Text
+	EndpointCreatedAt                     pgtype.Timestamptz
+	Available                             bool
+	ObservedAt                            pgtype.Timestamptz
+	CleanupRequestedAt                    pgtype.Timestamptz
+	CleanupDispatchedAt                   pgtype.Timestamptz
+	DeleteOperationIds                    []byte
+	CaptureOperationIds                   []byte
+	RetiredAt                             pgtype.Timestamptz
+	CreatedAt                             pgtype.Timestamptz
+	UpdatedAt                             pgtype.Timestamptz
+	CheckpointRetirementObservationSha256 pgtype.Text
 }
 
 type ProjectEnvironmentClonePostgresCopyTarget struct {
-	OperationID        pgtype.UUID
-	SourceDatabaseID   pgtype.UUID
-	AccountID          pgtype.UUID
-	CaptureDatabaseID  pgtype.UUID
-	TargetDatabaseID   pgtype.UUID
-	State              string
-	RequestStartedAt   pgtype.Timestamptz
-	ProviderResourceID pgtype.Text
-	ProviderCreatedAt  pgtype.Timestamptz
-	ObservedAt         pgtype.Timestamptz
-	PreparedAt         pgtype.Timestamptz
-	RetiredAt          pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	DeletionStartedAt  pgtype.Timestamptz
-	DeletionObservedAt pgtype.Timestamptz
+	OperationID                           pgtype.UUID
+	SourceDatabaseID                      pgtype.UUID
+	AccountID                             pgtype.UUID
+	CaptureDatabaseID                     pgtype.UUID
+	TargetDatabaseID                      pgtype.UUID
+	State                                 string
+	RequestStartedAt                      pgtype.Timestamptz
+	ProviderResourceID                    pgtype.Text
+	ProviderCreatedAt                     pgtype.Timestamptz
+	ObservedAt                            pgtype.Timestamptz
+	PreparedAt                            pgtype.Timestamptz
+	RetiredAt                             pgtype.Timestamptz
+	CreatedAt                             pgtype.Timestamptz
+	UpdatedAt                             pgtype.Timestamptz
+	DeletionStartedAt                     pgtype.Timestamptz
+	DeletionObservedAt                    pgtype.Timestamptz
+	CheckpointRetirementObservationSha256 pgtype.Text
 }
 
 type ProjectEnvironmentClonePostgresDatabasePlan struct {

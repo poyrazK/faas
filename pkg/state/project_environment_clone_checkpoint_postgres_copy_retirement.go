@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -12,10 +13,11 @@ import (
 // durable store must authenticate these ORIGINAL journals under the operation
 // lease before reservation. Legacy deletion receipts cannot supply this proof.
 type ProjectEnvironmentCloneCheckpointPostgresCopyRetirementPlan struct {
-	Capture ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan
-	Scope   copyinventory.Scope
-	Reader  *ProjectEnvironmentClonePostgresCopyReader `json:",omitempty"`
-	Target  *ProjectEnvironmentClonePostgresCopyTarget `json:",omitempty"`
+	SourceCompensationSHA256 string
+	Capture                  ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan
+	Scope                    copyinventory.Scope
+	Reader                   *ProjectEnvironmentClonePostgresCopyReader `json:",omitempty"`
+	Target                   *ProjectEnvironmentClonePostgresCopyTarget `json:",omitempty"`
 }
 
 type ProjectEnvironmentCloneCheckpointPostgresCopyRetirement struct {
@@ -58,7 +60,7 @@ func validateCheckpointPostgresCopyRetirementPlan(p ProjectEnvironmentCloneCheck
 		return ErrQuotaExceeded
 	}
 	s, c := p.Capture.Snapshot, p.Capture.Restore
-	if validateCheckpointPostgresTargetCompensationPlan(p.Capture) != nil || c.State != "adopted" || p.Capture.Isolation == nil || p.Scope.Validate() != nil || p.Reader == nil && p.Target == nil {
+	if !validCloneObjectSHA256(p.SourceCompensationSHA256) || validateCheckpointPostgresTargetCompensationPlan(p.Capture) != nil || c.State != "adopted" || p.Capture.Isolation == nil || p.Scope.Validate() != nil || p.Reader == nil && p.Target == nil {
 		return ErrConflict
 	}
 	expected := copyinventory.Scope{PostgresMajor: p.Scope.PostgresMajor, ProjectID: p.Scope.ProjectID, OperationID: c.OperationID, AccountID: c.AccountID, SourceDatabaseID: s.SourceDatabaseID, CaptureDatabaseID: c.AdoptedDatabaseID,
@@ -214,4 +216,13 @@ func checkpointCopyRetirementObservedIdentity(p ProjectEnvironmentCloneCheckpoin
 		return original == observed
 	}
 	return observed == "" || !requested.IsZero() && checkpointCopyRetirementPhysical(p, observed)
+}
+
+// These methods only authorize permanent retirement under a compensation lease.
+// Claim commits once before native IO; requested recovery must observe only.
+type ProjectEnvironmentCloneCheckpointPostgresCopyRetirementStore interface {
+	ReserveProjectEnvironmentCloneCheckpointPostgresCopyRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresCopyRetirement, error)
+	ProjectEnvironmentCloneCheckpointPostgresCopyRetirementForLease(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresCopyRetirement, error)
+	ClaimProjectEnvironmentCloneCheckpointPostgresCopyRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresCopyRetirement, bool, error)
+	FinishProjectEnvironmentCloneCheckpointPostgresCopyRetirement(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentCloneCheckpointPostgresCopyRetirementObservation) error
 }

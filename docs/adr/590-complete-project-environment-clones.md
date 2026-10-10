@@ -8305,10 +8305,31 @@ identities. Proofs for omitted dependencies, protected source/capture identities
 missing closure and changed terminal replay are rejected. Legacy deleted/retired
 labels and deletion receipts do not satisfy this contract.
 
-This is a proof contract only. Durable journal authentication, once-only dispatch,
-atomic borrower catalogue retirement and capture-gate integration remain to be
-implemented. PostgreSQL copy dependencies and public full-stage admission remain
-gated; no native provider adapter is qualified by these shape checks.
+The private durable journal now authenticates this original plan under the
+compensation lease, including the exact completed source-compensation digest,
+frozen bindings, capture adoption/isolation, reader scope and independent target
+catalogue. Reservation replay cannot replace ownership. Claim commits
+`planned` to `requested` once; recovery of a requested journal observes the
+original native retirement request without another dispatch claim.
+
+Terminal native proof, reader retirement, independent target deletion/quota
+release and target retirement commit in one transaction. Reader/target rows carry
+foreign-key links to that exact proof digest. Unknown physical identities remain
+unknown in original catalogue rows; the native proof may report a discovered
+identity without fabricating legacy deletion operation receipts. Re-read before
+commit verifies the complete catalogue and proof agree, so any failed mutation
+rolls back the proof and quota release.
+
+PostgreSQL target compensation and capture retirement now authenticate these
+complete copy proofs, including replay after native capture/snapshot retirement.
+Legacy `retired` labels without proof links remain blockers; changed original
+ownership, missing closure, changed terminal evidence and new borrowers block
+cleanup. Empty journal migrations can replay up/down; a journal in any owned
+state prevents downgrade.
+
+The private native coordinator and qualified provider adapter remain outstanding.
+Public full-stage admission remains gated; these control-plane checks do not
+qualify a native provider or complete whole-stage reconciliation.
 
 ### Checkpoint terminal compensation gate
 

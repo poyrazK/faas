@@ -167,6 +167,9 @@ func checkpointPgTargetCompensationReadyTx(ctx context.Context, tx pgx.Tx, op Pr
 	if !blocked.Valid || blocked.Bool {
 		return ErrConflict
 	}
+	if err = checkpointPgCopyDependenciesRetiredTx(ctx, tx, op, p.Restore.SourceDatabaseID); err != nil {
+		return err
+	}
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return err

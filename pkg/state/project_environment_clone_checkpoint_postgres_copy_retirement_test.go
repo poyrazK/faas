@@ -20,7 +20,7 @@ func postgresCopyRetirementFixture(reader, target string) (ProjectEnvironmentClo
 	r.OperationID, r.SourceDatabaseID, r.AccountID, r.TargetOwnerID, r.BackendFingerprint = s.OperationID, s.SourceDatabaseID, uuid.NewString(), uuid.NewString(), s.BackendFingerprint
 	r.AdoptedDatabaseID = r.TargetOwnerID
 	i.OperationID, i.SourceDatabaseID, i.AccountID, i.OwnerID, i.BackendFingerprint = r.OperationID, r.SourceDatabaseID, r.AccountID, r.TargetOwnerID, s.BackendFingerprint
-	p := ProjectEnvironmentCloneCheckpointPostgresCopyRetirementPlan{Capture: c, Scope: copyinventory.Scope{PostgresMajor: 16, ProjectID: uuid.NewString(), OperationID: r.OperationID, AccountID: r.AccountID, SourceDatabaseID: s.SourceDatabaseID, CaptureDatabaseID: r.AdoptedDatabaseID,
+	p := ProjectEnvironmentCloneCheckpointPostgresCopyRetirementPlan{SourceCompensationSHA256: strings.Repeat("c", 64), Capture: c, Scope: copyinventory.Scope{PostgresMajor: 16, ProjectID: uuid.NewString(), OperationID: r.OperationID, AccountID: r.AccountID, SourceDatabaseID: s.SourceDatabaseID, CaptureDatabaseID: r.AdoptedDatabaseID,
 		SourceVersion: s.SourceVersion, BackendID: s.BackendID, BackendFingerprint: s.BackendFingerprint, SourceProviderResourceID: s.SourceProviderResourceID, SourceDataResourceID: s.SourceDataResourceID,
 		ProviderSnapshotID: s.ProviderSnapshotID, CaptureProviderResourceID: r.TargetProviderResourceID, CapturePoint: s.CapturePoint, SnapshotCreatedAt: s.SnapshotCreatedAt, CaptureCreatedAt: r.TargetCreatedAt}}
 	at := s.CapturePoint

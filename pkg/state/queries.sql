@@ -15476,8 +15476,8 @@ WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.
  AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
 
 -- name: CloneCheckpointPgTargetCompensationBlocked :one
-SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid AND state<>'retired')
- OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid AND state<>'retired')
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid AND (state<>'retired' OR checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid AND (state<>'retired' OR checkpoint_retirement_observation_sha256 IS NULL))
  OR EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=sqlc.arg(owner_id)::uuid AND state<>'deleted')
  OR EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=sqlc.arg(owner_id)::uuid AND state<>'deleted')
  OR EXISTS(SELECT 1 FROM app_secrets s JOIN managed_postgres_bindings b ON b.id=s.managed_postgres_binding_id WHERE b.database_id=sqlc.arg(owner_id)::uuid) AS blocked;
@@ -15552,10 +15552,11 @@ SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE
  OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.environment_clone_operation_id=sqlc.arg(operation_id)::uuid);
 
 -- name: CloneCheckpointCaptureRetirementHasBorrowers :one
--- PostgreSQL copy readers/targets remain gated. Restore/isolation/credential
--- and object intents require original catalogue owners and terminal proof in Go.
-SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+-- All borrower intents require original catalogue owners and authenticated
+-- terminal proof in Go; missing copy catalogue proof links remain blockers.
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND (r.state<>'retired' OR r.checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND (r.state<>'retired' OR r.checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_copy_retirements r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers b WHERE b.operation_id=r.operation_id AND b.source_database_id=r.source_database_id) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets b WHERE b.operation_id=r.operation_id AND b.source_database_id=r.source_database_id))
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
   SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
  OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_target_compensations r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
@@ -15595,3 +15596,58 @@ WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.
  AND r.operation_id=s.operation_id AND r.source_id=s.source_database_id AND r.source_kind='managed_postgres'
  AND r.capture_identity=s.provider_snapshot_id AND r.source_resource_id=s.source_data_resource_id AND r.observation_sha256=sqlc.arg(observation_sha256)::text
  AND o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: ReadCloneCheckpointPgCopyRetirement :one
+SELECT * FROM project_environment_clone_checkpoint_pg_copy_retirements WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertCloneCheckpointPgCopyRetirement :one
+INSERT INTO project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,plan)
+SELECT o.id,sqlc.arg(source_database_id)::uuid,sqlc.arg(plan)::jsonb FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating' AND o.resources->0->>'kind'='data_checkpoint'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimCloneCheckpointPgCopyRetirement :one
+UPDATE project_environment_clone_checkpoint_pg_copy_retirements c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING c.*;
+
+-- name: FinishCloneCheckpointPgCopyRetirement :execrows
+UPDATE project_environment_clone_checkpoint_pg_copy_retirements c SET state='retired',
+ observation=sqlc.arg(observation)::jsonb,observation_sha256=sqlc.arg(observation_sha256)::text,retired_at=sqlc.arg(retired_at)::timestamptz
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state='requested'
+ AND sqlc.arg(retired_at)::timestamptz BETWEEN c.requested_at AND clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: RetireCloneCheckpointPgCopyReader :execrows
+UPDATE project_environment_clone_postgres_copy_readers r SET state='retired',available=false,
+ cleanup_requested_at=coalesce(r.cleanup_requested_at,c.requested_at),retired_at=c.retired_at,updated_at=clock_timestamp(),checkpoint_retirement_observation_sha256=c.observation_sha256
+FROM project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid AND r.owner_id=sqlc.arg(owner_id)::uuid
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=sqlc.arg(observation_sha256)::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: RetireCloneCheckpointPgCopyTarget :execrows
+UPDATE project_environment_clone_postgres_copy_targets r SET state='retired',retired_at=c.retired_at,updated_at=clock_timestamp(),checkpoint_retirement_observation_sha256=c.observation_sha256
+FROM project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid AND r.target_database_id=sqlc.arg(owner_id)::uuid
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=sqlc.arg(observation_sha256)::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: RetireCloneCheckpointPgCopyDatabase :execrows
+UPDATE managed_postgres_databases d SET state='deleted',deleted_at=c.retired_at,updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets r,project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid
+ AND d.id=r.target_database_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id AND d.restore_source_database_id=r.source_database_id
+ AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+ AND d.provider_resource_id IS NOT DISTINCT FROM r.provider_resource_id AND d.lease_token IS NULL AND d.lease_until IS NULL
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=sqlc.arg(observation_sha256)::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: CloneCheckpointPgCopyRetirementHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=b.database_id WHERE r.operation_id=$1 AND r.source_database_id=$2 AND b.state<>'deleted')
+ OR EXISTS(SELECT 1 FROM app_secrets s JOIN managed_postgres_bindings b ON b.id=s.managed_postgres_binding_id JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=b.database_id WHERE r.operation_id=$1 AND r.source_database_id=$2)
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases d JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=d.restore_source_database_id WHERE r.operation_id=$1 AND r.source_database_id=$2 AND d.state<>'deleted') AS blocked;

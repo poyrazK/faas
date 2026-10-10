@@ -17,7 +17,7 @@ var _ ProjectEnvironmentCloneCheckpointCaptureRetirementStore = (*PgStore)(nil)
 // Adopted object captures require original unused-reservation completion or the
 // authenticated native target/copy retirement proof. PostgreSQL restore/isolation
 // intents require target compensation and credential retirement proofs; copy
-// readers/targets remain closed pending their complete retirement provenance.
+// readers/targets require their permanently fenced retirement proofs.
 func checkpointCaptureRetirementPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneCheckpointCaptureRetirementPlan, error) {
 	var p ProjectEnvironmentCloneCheckpointCaptureRetirementPlan
 	if len(op.Resources) < 1 || op.Resources[0].Kind != "data_checkpoint" {

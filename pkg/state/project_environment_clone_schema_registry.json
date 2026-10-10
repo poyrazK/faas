@@ -5627,6 +5627,22 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "platform_tenant_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
+  },
+  {
     "table": "platform_tenants",
     "columns": [
       "account_id",
@@ -5751,6 +5767,80 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_capture_catalogues",
+    "columns": [
+      "operation_id",
+      "source_kind",
+      "source_id",
+      "capture_identity",
+      "source_resource_id",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_capture_retirements",
+    "columns": [
+      "operation_id",
+      "plan",
+      "state",
+      "requested_at",
+      "observation",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_copies",
+    "columns": [
+      "copied_at",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_credential_ids",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "state",
+      "withdrawn_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_object_targets",
     "columns": [
       "observation_sha256",
@@ -5765,6 +5855,29 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_object_values",
+    "columns": [
+      "operation_id",
+      "payload",
+      "payload_sha256",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_verification",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_pg_activations",
     "columns": [
       "activated_at",
@@ -5774,18 +5887,6 @@
       "plan",
       "requested_at",
       "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_pg_publications",
-    "columns": [
-      "operation_id",
-      "plan",
-      "plan_sha256",
-      "published_at",
-      "state",
-      "withdrawn_at"
     ],
     "kind": "operational"
   },
@@ -5805,6 +5906,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_pg_copy_retirements",
+    "kind": "operational",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_database_id",
+      "state"
+    ]
+  },
+  {
     "table": "project_environment_clone_checkpoint_pg_credential_retirements",
     "columns": [
       "observation",
@@ -5814,6 +5929,32 @@
       "requested_at",
       "retired_at",
       "source_binding_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "published_at",
+      "state",
+      "withdrawn_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_target_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
       "state"
     ],
     "kind": "operational"
@@ -5890,6 +6031,30 @@
       "released_at",
       "requested_at",
       "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_source_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_unused_object_reservations",
+    "columns": [
+      "completed_at",
+      "operation_id",
+      "reservation",
+      "source_bucket_id",
+      "target_bucket_id"
     ],
     "kind": "operational"
   },
@@ -6114,6 +6279,7 @@
       "available",
       "capture_database_id",
       "capture_operation_ids",
+      "checkpoint_retirement_observation_sha256",
       "cleanup_dispatched_at",
       "cleanup_requested_at",
       "created_at",
@@ -6138,6 +6304,7 @@
     "columns": [
       "account_id",
       "capture_database_id",
+      "checkpoint_retirement_observation_sha256",
       "created_at",
       "deletion_observed_at",
       "deletion_started_at",
@@ -7759,22 +7926,6 @@
     "kind": "operational"
   },
   {
-    "table": "platform_tenant_workflow_schedule_cursors",
-    "kind": "operational",
-    "columns": [
-      "app_id",
-      "deployment_id",
-      "last_evaluated_at",
-      "last_run_id",
-      "platform_tenant_id",
-      "scheduled_for",
-      "status",
-      "trigger_snapshot",
-      "updated_at",
-      "workflow_name"
-    ]
-  },
-  {
     "table": "workflow_schedule_cursors",
     "kind": "operational",
     "columns": [
@@ -7857,140 +8008,5 @@
       "status",
       "workflow_name"
     ]
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_verification",
-    "columns": [
-      "observation_sha256",
-      "operation_id",
-      "plan",
-      "requested_at",
-      "source_bucket_id",
-      "state",
-      "verified_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_copies",
-    "columns": [
-      "copied_at",
-      "observation_sha256",
-      "operation_id",
-      "plan",
-      "requested_at",
-      "source_bucket_id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_credential_ids",
-    "columns": [
-      "operation_id",
-      "plan",
-      "plan_sha256",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_values",
-    "columns": [
-      "operation_id",
-      "payload",
-      "payload_sha256",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_publications",
-    "columns": [
-      "operation_id",
-      "plan",
-      "plan_sha256",
-      "state",
-      "withdrawn_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_object_retirements",
-    "columns": [
-      "observation",
-      "observation_sha256",
-      "operation_id",
-      "plan",
-      "requested_at",
-      "retired_at",
-      "source_bucket_id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_unused_object_reservations",
-    "columns": [
-      "completed_at",
-      "operation_id",
-      "reservation",
-      "source_bucket_id",
-      "target_bucket_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_source_compensations",
-    "columns": [
-      "compensated_at",
-      "observation",
-      "observation_sha256",
-      "operation_id",
-      "plan",
-      "requested_at",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_pg_target_compensations",
-    "columns": [
-      "compensated_at",
-      "observation",
-      "observation_sha256",
-      "operation_id",
-      "plan",
-      "requested_at",
-      "source_database_id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_capture_retirements",
-    "columns": [
-      "operation_id",
-      "plan",
-      "state",
-      "requested_at",
-      "observation",
-      "observation_sha256",
-      "retired_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "project_environment_clone_checkpoint_capture_catalogues",
-    "columns": [
-      "operation_id",
-      "source_kind",
-      "source_id",
-      "capture_identity",
-      "source_resource_id",
-      "observation_sha256",
-      "retired_at"
-    ],
-    "kind": "operational"
   }
 ]
