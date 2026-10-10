@@ -5,10 +5,12 @@ A minimal Go function handler built with Gregale's patched Go 1.26.9 starter too
 Functions differ from apps in two ways:
 
 1. No HTTP server — the go124 runner is the HTTP server (listens on
-   `:8080` inside the microVM) and execs your compiled handler at
-   `/app/handler` per request. The runner pipes the §4.9 envelope
-   into stdin; your handler writes the §4.9 response envelope to
-   stdout.
+   `:8080` inside the microVM) and talks to your compiled handler at
+   `/app/handler` over stdin/stdout: one §4.9 request envelope per
+   line in, one response envelope per line out. This template speaks
+   the persistent protocol, so the runner starts it once and reuses
+   the process for every request; setup done in `main()` before the
+   loop is paid once, not per request.
 2. CLI forces `--runtime go124 --handler handler.go` so the wiring
    is automatic. You don't need to know those flags.
 
@@ -43,5 +45,6 @@ echo '{"method":"GET","path":"/hello","headers":{},"query":"","body_b64":""}' \
 ```
 
 You'll see a JSON object on stdout with the same shape the runner
-expects. The platform runs the same handler binary in production;
+expects. Set `FAAS_PERSISTENT_WORKER=1` and send several lines to see
+the persistent mode: a ready line, then one response per request. The platform runs the same handler binary in production;
 nothing else differs.

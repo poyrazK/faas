@@ -1,18 +1,19 @@
 // Function template for gregale (go124 runtime contract; built with Go 1.26.9).
 //
 // The go124 runner is a static binary that lives at
-// /usr/local/bin/gregale-runner in the layer. It listens on :8080, reads
-// the §4.9 envelope for each incoming request, and execs this binary
-// (at /app/handler) per request. The runner pipes the envelope JSON
-// into stdin; your handler writes the response envelope to stdout.
+// /usr/local/bin/gregale-runner in the layer. It listens on :8080 and talks
+// to this binary (at /app/handler) over stdin/stdout with newline-framed
+// §4.9 envelopes: one request envelope per line in, one response envelope
+// per line out.
 //
-// This file is the minimal contract:
+// This handler speaks the persistent protocol: the runner starts it once,
+// before the init snapshot, and sends every request to the same process.
+// Anything you set up in main() before the loop (clients, pools, caches) is
+// reused across requests. Older runners that start the handler once per
+// request still work: they send one envelope and close stdin.
 //
-//   - package main
-//   - main() reads the envelope from stdin, builds a response, writes
-//     the response envelope to stdout
-//   - the runner encodes/decodes the JSON; you only need to do the
-//     work in between.
+// Once the Go SDK is published, github.com/poyrazK/faas/sdk/go/function.Serve
+// runs a standard net/http handler instead of envelopes.
 //
 // No go.mod is shipped on purpose: Go's //go:embed refuses to descend
 // into a directory that contains one, and a local go.mod would make a later
@@ -23,13 +24,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 )
 
-// Envelope matches the §4.9 request contract. The runner emits it on
-// stdin; you decode it, do the work, and write a Response on stdout.
+// persistentProtocol tells the runner this binary keeps serving after the
+// first request. The runner finds the marker in the compiled binary, so it
+// must stay referenced from code that runs.
+const persistentProtocol = "FAAS_PERSISTENT_PROTOCOL_V1"
+
+// Envelope matches the §4.9 request contract.
 type Envelope struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
@@ -52,38 +60,54 @@ type reply struct {
 	Method string `json:"method"`
 }
 
-func main() {
-	// 1. Read the envelope from stdin. The runner writes exactly one
-	// JSON object and closes stdin.
-	in := bufio.NewReader(os.Stdin)
-	var env Envelope
-	if err := json.NewDecoder(in).Decode(&env); err != nil {
-		// A decode failure is the customer's bug (malformed stdin is
-		// not the runner's contract). We exit non-zero so the runner
-		// surfaces a 500 to the gateway with stderr attached.
-		panic("function-go: decode envelope: " + err.Error())
-	}
-
-	// 2. Do the work. For the starter template, echo the path back.
+// handle is your function. It runs once per request.
+func handle(env Envelope) Response {
 	// Encode with encoding/json: request fields can contain quotes and
 	// backslashes, and splicing them into a JSON string by hand produces
 	// invalid (or field-injected) output.
 	body, err := json.Marshal(reply{OK: true, Path: env.Path, Method: env.Method})
 	if err != nil {
-		panic("function-go: encode reply: " + err.Error())
+		return Response{Status: 500}
 	}
-	resp := Response{
-		Status: 200,
-		Headers: map[string]string{
-			"content-type": "application/json",
-		},
+	return Response{
+		Status:  200,
+		Headers: map[string]string{"content-type": "application/json"},
 		BodyB64: base64.StdEncoding.EncodeToString(body),
 	}
+}
 
-	// 3. Write the response envelope on stdout. The runner decodes
-	// the first JSON object it sees and returns the response to
-	// the gateway.
-	if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
-		panic("function-go: encode response: " + err.Error())
+func main() {
+	// stdout carries response envelopes. Send ordinary prints to stderr,
+	// which reaches `gregale logs`.
+	protocol := json.NewEncoder(os.Stdout)
+	os.Stdout = os.Stderr
+
+	if os.Getenv("FAAS_PERSISTENT_WORKER") == "1" {
+		if err := protocol.Encode(map[string]any{"__faas_ready": true, "protocol": persistentProtocol}); err != nil {
+			panic("function-go: write ready handshake: " + err.Error())
+		}
+	}
+
+	in := bufio.NewReader(os.Stdin)
+	for {
+		line, readErr := in.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var env Envelope
+			resp := Response{Status: 500}
+			if err := json.Unmarshal(line, &env); err != nil {
+				fmt.Fprintln(os.Stderr, "function-go: decode envelope:", err)
+			} else {
+				resp = handle(env)
+			}
+			if err := protocol.Encode(resp); err != nil {
+				panic("function-go: write response: " + err.Error())
+			}
+		}
+		if readErr == io.EOF {
+			return
+		}
+		if readErr != nil {
+			panic("function-go: read request: " + readErr.Error())
+		}
 	}
 }

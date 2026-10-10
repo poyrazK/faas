@@ -2,10 +2,12 @@ package workerpool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"testing"
@@ -141,5 +143,59 @@ func TestPoolWaitCancellationAndFailedStartReleaseSlot(t *testing.T) {
 		if p.live != 0 {
 			t.Fatalf("live=%d after failed start", p.live)
 		}
+	}
+}
+
+// chunkReader returns at most chunk bytes per Read so tests can place the
+// marker across a read boundary.
+type chunkReader struct {
+	data  []byte
+	chunk int
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p[:min(len(p), r.chunk)], r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+func TestContainsMarkerAcrossReadBoundaries(t *testing.T) {
+	data := append(bytes.Repeat([]byte{0}, 64*1024-5), []byte(protocolMarker)...)
+	data = append(data, bytes.Repeat([]byte{0}, 1024)...)
+	for _, chunk := range []int{1, 7, 4096, 64 * 1024, len(data)} {
+		got, err := containsMarker(&chunkReader{data: data, chunk: chunk})
+		if err != nil || !got {
+			t.Fatalf("chunk %d: found %v, err %v", chunk, got, err)
+		}
+	}
+	partial := bytes.Repeat([]byte(protocolMarker[:len(protocolMarker)-1]+"_"), 5000)
+	if got, err := containsMarker(bytes.NewReader(partial)); err != nil || got {
+		t.Fatalf("partial markers: found %v, err %v", got, err)
+	}
+}
+
+func TestMarkerAnywhereFindsCompiledHandlerMarker(t *testing.T) {
+	dir := t.TempDir()
+	compiled := dir + "/compiled"
+	body := append(bytes.Repeat([]byte{0x7f}, 128*1024), []byte(protocolMarker)...)
+	if err := os.WriteFile(compiled, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if supportsPersistentProtocol(Spec{HandlerPath: compiled}) {
+		t.Fatal("prefix scan must not see a marker past 4 KiB")
+	}
+	supportCache.Delete(compiled)
+	if !supportsPersistentProtocol(Spec{HandlerPath: compiled, MarkerAnywhere: true}) {
+		t.Fatal("whole-file scan missed the marker")
+	}
+	legacy := dir + "/legacy"
+	if err := os.WriteFile(legacy, bytes.Repeat([]byte{0x7f}, 128*1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if supportsPersistentProtocol(Spec{HandlerPath: legacy, MarkerAnywhere: true}) {
+		t.Fatal("whole-file scan reported a marker in a legacy binary")
 	}
 }

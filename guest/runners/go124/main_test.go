@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
 	"github.com/onebox-faas/faas/guest/runners/internal/runnerparity"
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -143,5 +145,40 @@ func TestHandle_CrashedHandlerIsTerminalHandlerError(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "boom") {
 		t.Fatalf("handler stderr leaked into the response: %q", rec.Body.String())
+	}
+}
+
+// TestHandle_PersistentHandlerIsReused drives the runner with a handler that
+// advertises the persistent protocol past the 4 KiB prefix, where a compiled
+// Go binary carries it. Every request must reach the same process, and the
+// prewarmed worker must be the one that answers.
+func TestHandle_PersistentHandlerIsReused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handler")
+	script := "#!/bin/sh\n" +
+		"# " + strings.Repeat("x", 8192) + "\n" +
+		"# FAAS_PERSISTENT_PROTOCOL_V1\n" +
+		`[ "$FAAS_PERSISTENT_WORKER" = 1 ] && echo '{"__faas_ready":true}'` + "\n" +
+		"while IFS= read -r line; do\n" +
+		`  printf '{"status":200,"headers":{"Content-Type":"text/plain"},"body_b64":"%s"}\n' "$(printf '%s:%s' "$$" "$FAAS_RUNTIME" | base64)"` + "\n" +
+		"done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if handled, err := workerpool.PrewarmIfSupported(ctx, handlerSpec(path)); !handled || err != nil {
+		t.Fatalf("prewarm handled=%v err=%v", handled, err)
+	}
+	var seen []string
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		handle(rec, httptest.NewRequest(http.MethodGet, "/", nil), path, internal.NewRunnerSignal("persistent-test", time.Now()), 0, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status %d body %q", i, rec.Code, rec.Body.String())
+		}
+		seen = append(seen, rec.Body.String())
+	}
+	if !strings.HasSuffix(seen[0], ":go124") || seen[1] != seen[0] || seen[2] != seen[0] {
+		t.Fatalf("responses %q, want one go124 worker process for every request", seen)
 	}
 }
