@@ -25,6 +25,12 @@ fields remain nullable, including domain attributes. Hidden dependencies become
 `unknown` and exclude dependent RPCs. Upgrade the CLI before reading new
 normalized version 2 snapshots; the current CLI also accepts version 1 baselines.
 
+Ordinary views can inherit typed joins when they directly project every column
+of a readable declared key. Renamed columns and view chains work within the
+same exposed schema. Use security-invoker views and underlying RLS. Partial
+keys, expressions, unions and inaccessible origins are excluded; ambiguous
+paths still require PostgREST hints or an unambiguous view projection.
+
 Build with the included Dockerfile through Gregale's builder. For local
 development, install dependencies with `npm ci --ignore-scripts`, provide
 the restricted database connection and authentication settings, and set

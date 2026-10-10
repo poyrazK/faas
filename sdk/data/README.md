@@ -65,6 +65,11 @@ remains subject to the SDK publishing policy.
 The token getter runs on each request. Requests omit browser cookies and refuse
 redirects so access tokens stay at the configured API. The client preserves
 PostgREST relation, insert, update, filter, projection and relationship inference.
+Generated view relationships preserve readable, complete key projections,
+including renamed columns and view chains in the same exposed schema. Aliased
+embeds and FK hints use the normal PostgREST select syntax. Cardinality follows
+the underlying key constraint; view column types remain nullable. Expressions
+and partial keys have no inferred path, and ambiguous embeds can fail at runtime.
 See [the Data API guide](../../docs/data-api.md).
 
 Opted-in PostgreSQL functions appear in the generated `Functions` contract.

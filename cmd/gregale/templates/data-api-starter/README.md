@@ -249,6 +249,15 @@ const comments = await notes.listComments()
 
 The generator preserves composite foreign-key column order and detects
 one-to-one relationships from matching primary-key/unique constraints.
+
+Ordinary views that directly project complete foreign keys or referenced keys
+also receive typed relationships, including renamed columns and readable view
+chains in the same exposed schema. Use `security_invoker=true` and keep RLS on
+the underlying tables. Expressions, missing key columns, unions, inaccessible
+origins and materialized views are excluded. Use constraint hints for multiple
+foreign keys; repeated aliases of one composite key can remain ambiguous even
+with a hint. Changing key origins changes the fingerprint and is checked by
+`data-api diff`, including when the view's column types stay unchanged.
 `comments.note_id` is nullable; unattached comments have a null parent embed.
 An absent details row yields null, and notes without replies return an empty
 array. Add `!inner` to an embed to omit rows without a visible match. Nested

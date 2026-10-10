@@ -450,8 +450,44 @@ changes affect the schema fingerprint and are detected by `types --check`.
 
 Cross-schema foreign keys are omitted from generated relationship metadata:
 the client resolves embedded types within the selected schema, so exporting
-such a relationship could infer a same-named, unrelated local table. View-inferred
-and computed relationships are not emitted. The starter qualifies many-to-many
+such a relationship could infer a same-named, unrelated local table. Ordinary
+views inherit relationships when every foreign-key or referenced-key column is
+projected directly and remains readable. Renamed columns and view chains are
+supported within the same exposed schema. For example:
+
+```sql
+CREATE VIEW api.order_summaries WITH (security_invoker=true) AS
+SELECT id AS order_id, customer_id AS buyer_id, total FROM api.orders;
+```
+
+```ts
+const orders = await db.from('order_summaries')
+  .select('order_id,buyer:customers!orders_customer_id_fkey(name)')
+```
+
+The example assumes a declared `orders_customer_id_fkey` foreign key and grants
+for the serving binding. Joins can target tables or views. Foreign-key column
+order and aliases come from PostgreSQL's recorded origins, and one-to-one
+cardinality follows the underlying key constraint as PostgREST does. View columns
+retain their conservative nullable types; views remain read contracts in the
+generated helpers. Use security-invoker views and RLS on every underlying table.
+
+Computed key expressions, incomplete composite keys, unions, inaccessible
+origins, materialized views and unsupported definitions do not gain inferred
+relationships. Chains require readable objects in exposed schemas; cross-schema
+paths and computed relationships remain omitted. Multiple foreign keys require
+constraint hints. Repeated aliases of a composite key may still return
+`PGRST201` even with a constraint hint; avoid duplicating key projections when
+you need one unambiguous embed. Inference preserves the engine's alternatives
+and does not validate dispatch hints. View definitions are never exported;
+inspection fails if their combined input or expanded relationship metadata
+exceeds existing generation bounds.
+
+Changing a view's key origins can change its relationship metadata and schema
+fingerprint without changing the column types. Refresh the runtime, regenerate
+types and review the structural diff after changing a view.
+
+The starter qualifies many-to-many
 joins in both directions using `tags!note_tags(id,name)` and
 `notes!note_tags(id,body)`. The SDK infers these from the junction foreign keys;
 PostgREST requires their columns to be included in the junction primary key.

@@ -6,6 +6,7 @@ import { databaseURL, schemaNames, limits } from './config.mjs'
 // Fixed, parameterized catalog reads run in the customer's workload using
 // its restricted binding. No SQL text or database URL comes from a request.
 const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relkind AS kind,
+ c.oid::text AS id, a.attnum AS number,
  a.attname AS name, a.atttypid::text AS type, a.attnotnull AS required,
  a.attidentity AS identity, a.attgenerated AS generated, d.oid IS NOT NULL AS defaulted,
  has_column_privilege(c.oid,a.attnum,'INSERT') AS insertable,
@@ -48,9 +49,142 @@ const relationsQuery = `SELECT n.nspname AS schema, c.relname AS relation, x.con
  AND u.conkey @> x.conkey AND u.conkey <@ x.conkey) AS one_to_one
  FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_class rc ON rc.oid=x.confrelid JOIN pg_namespace rn ON rn.oid=rc.relnamespace
- WHERE x.contype='f' AND n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])
+ WHERE x.contype='f' AND x.conparentid=0 AND n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])
  AND has_table_privilege(c.oid,'SELECT') AND has_table_privilege(rc.oid,'SELECT')
  ORDER BY n.nspname,c.relname,x.conname LIMIT ${limits.relations + 1}`
+
+// The engine follows resorigtbl/resorigcol in pg_rewrite's root target list.
+// Budget the complete input before returning definitions to the workload.
+const viewsQuery = `WITH views AS (
+ SELECT c.oid::text AS id,n.nspname AS schema,c.relname AS relation,r.ev_action::text AS action
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ JOIN pg_rewrite r ON r.ev_class=c.oid AND r.rulename='_RETURN'
+ WHERE c.relkind='v' AND n.nspname=ANY($1::text[])
+ AND has_schema_privilege(n.oid,'USAGE') AND has_any_column_privilege(c.oid,'SELECT')
+), budget AS (SELECT sum(octet_length(action)) AS bytes FROM views)
+ SELECT id,schema,relation,CASE WHEN bytes<=${limits.outputBytes} THEN action ELSE NULL END AS action
+ FROM views CROSS JOIN budget ORDER BY schema,relation LIMIT ${limits.relations + 1}`
+
+// Read PostgreSQL's structural node format, never SQL text or view names.
+// Escaped delimiters stay inside their token; nested query targets cannot be
+// mistaken for the root projection. Unsupported definitions have no lineage.
+export function viewOrigins(action) {
+  if (typeof action !== 'string' || Buffer.byteLength(action) > limits.outputBytes) return []
+  try {
+    const tokens = []
+    for (let i = 0; i < action.length;) {
+      if (/\s/.test(action[i])) { i++; continue }
+      if ('(){}'.includes(action[i])) { tokens.push(action[i++]); continue }
+      const start = i
+      while (i < action.length && !/\s/.test(action[i]) && !'(){}'.includes(action[i])) {
+        if (action[i] === '\\') { if (++i === action.length) throw new Error('Invalid token') }
+        i++
+      }
+      tokens.push(action.slice(start, i))
+    }
+    function end(start) {
+      const pairs = { '(': ')', '{': '}' }, stack = []
+      if (!pairs[tokens[start]]) return start + 1
+      for (let i = start; i < tokens.length; i++) {
+        const token = tokens[i]
+        if (pairs[token]) stack.push(pairs[token])
+        else if (token === ')' || token === '}') {
+          if (stack.pop() !== token) throw new Error('Invalid nesting')
+          if (!stack.length) return i + 1
+        }
+      }
+      throw new Error('Incomplete node')
+    }
+    function node(start, tag) {
+      if (tokens[start] !== '{' || tokens[start + 1] !== tag) throw new Error('Invalid node')
+      const stop = end(start), fields = new Map()
+      for (let i = start + 2; i < stop - 1;) {
+        const key = tokens[i++]
+        if (!key.startsWith(':')) throw new Error('Invalid field')
+        const value = i, next = end(i)
+        if (next >= stop || fields.has(key)) throw new Error('Invalid value')
+        fields.set(key, [value, next])
+        i = next
+      }
+      return fields
+    }
+    if (tokens[0] !== '(' || tokens.at(-1) !== ')' || end(1) !== tokens.length - 1) return []
+    const query = node(1, 'QUERY')
+    const scalar = (fields, name) => {
+      const range = fields.get(name)
+      return range && range[1] === range[0] + 1 ? tokens[range[0]] : undefined
+    }
+    if (scalar(query, ':commandType') !== '1' || scalar(query, ':setOperations') !== '<>') return []
+    const target = query.get(':targetList')
+    if (!target || tokens[target[0]] !== '(') return []
+    const origins = []
+    for (let i = target[0] + 1; i < target[1] - 1; i = end(i)) {
+      const entry = node(i, 'TARGETENTRY')
+      const integer = key => {
+        const value = scalar(entry, key)
+        return /^[1-9][0-9]*$/.test(value ?? '') && Number.isSafeInteger(Number(value)) ? Number(value) : 0
+      }
+      const number = integer(':resno'), id = integer(':resorigtbl'), column = integer(':resorigcol')
+      if (number && id && column && scalar(entry, ':resjunk') === 'false') origins.push({ number, id: String(id), column })
+    }
+    return origins
+  } catch { return [] }
+}
+
+export function viewRelationships(columns, relationships, views) {
+  const readable = new Map(columns.filter(c => c.id && c.number).map(c => [`${c.id}:${c.number}`, c]))
+  const origins = new Map(), projected = new Map()
+  for (const view of views) for (const origin of viewOrigins(view.action)) {
+    const key = `${view.id}:${origin.number}`
+    if (readable.has(key)) origins.set(key, `${origin.id}:${origin.column}`)
+  }
+  function base(key) {
+    const seen = new Set()
+    while (origins.has(key)) {
+      if (seen.has(key) || seen.size > 12) return null
+      seen.add(key); key = origins.get(key)
+      if (!readable.has(key)) return null
+    }
+    const column = readable.get(key)
+    return column && ['r', 'p'].includes(column.kind) ? key : null
+  }
+  for (const view of views) {
+    const mapping = new Map()
+    for (const c of columns.filter(c => c.id === view.id)) {
+      const key = base(`${c.id}:${c.number}`)
+      if (key) mapping.set(key, [...(mapping.get(key) ?? []), c.name])
+    }
+    projected.set(view.id, mapping)
+  }
+  function candidates(schema, relation, names) {
+    const keys = names.map(name => columns.find(c => c.schema === schema && c.relation === relation && c.name === name)).map(c => c && `${c.id}:${c.number}`)
+    if (keys.some(key => !key)) return []
+    const result = [{ schema, relation, columns: names }]
+    for (const view of views.filter(v => v.schema === schema)) {
+      const options = keys.map(key => projected.get(view.id).get(key))
+      if (options.some(names => !names?.length)) continue
+      let combinations = [[]]
+      for (const names of options) {
+        if (combinations.length * names.length > limits.relations) throw new Error('Too many inferred view relationships')
+        combinations = combinations.flatMap(prefix => names.map(name => [...prefix, name]))
+      }
+      result.push(...combinations.map(columns => ({ schema, relation: view.relation, columns })))
+      if (result.length > limits.relations) throw new Error('Too many inferred view relationships')
+    }
+    return result
+  }
+  const inferred = []
+  for (const r of relationships) {
+    if (r.schema !== r.referenced_schema) continue
+    const sources = candidates(r.schema, r.relation, r.columns), targets = candidates(r.referenced_schema, r.referenced_relation, r.referenced_columns)
+    for (const source of sources) for (const target of targets) {
+      if (source.relation === r.relation && target.relation === r.referenced_relation) continue
+      inferred.push({ ...r, schema: source.schema, relation: source.relation, columns: source.columns, referenced_schema: target.schema, referenced_relation: target.relation, referenced_columns: target.columns })
+      if (inferred.length + relationships.length > limits.relations) throw new Error('Too many inferred view relationships')
+    }
+  }
+  return inferred
+}
 
 // An exact annotation is the owner's explicit RPC opt-in. Count every overload,
 // including inaccessible ones: PostgREST dispatch must never select another body.
@@ -87,7 +221,9 @@ export async function inspectClient(client, schemas, { includeUnexecutable = fal
   if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
   const composites = (await client.query(compositesQuery, [schemas, privilegeRole])).rows
   if (columns.length + composites.length > limits.columns) throw new Error('Schema exceeds generation limits')
-  return normalize(columns, types, relations, schemas, functions, composites)
+  const views = (await client.query(viewsQuery, [schemas])).rows
+  if (views.length > limits.relations || views.some(v => v.action === null)) throw new Error('View lineage exceeds generation limits')
+  return normalize(columns, types, [...relations, ...viewRelationships(columns, relations, views)], schemas, functions, composites)
 }
 
 export function normalize(columns, types, relationships, schemas, functions = [], compositeFields = []) {
