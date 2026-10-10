@@ -41,7 +41,7 @@ func stageManifestProfiling(ctx context.Context, client manifestScalingClient, s
 		return txn, fmt.Errorf("read profiling policy: %w", err)
 	}
 	desired := *m.Lifecycle.Profiling
-	if app.Manifest.Profiling != nil && *app.Manifest.Profiling == desired {
+	if app.Manifest.Profiling != nil && app.Manifest.Profiling.Equal(&desired) {
 		return txn, nil
 	}
 	previous := api.ProfilingConfig{}
@@ -63,7 +63,7 @@ func (t *manifestProfilingTransaction) rollback(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read profiling policy for rollback: %w", err)
 	}
-	if app.Manifest.Profiling == nil || *app.Manifest.Profiling != *t.desired {
+	if app.Manifest.Profiling == nil || !app.Manifest.Profiling.Equal(t.desired) {
 		return nil
 	}
 	if _, err := t.client.UpdateApp(ctx, t.slug, api.UpdateAppRequest{Profiling: t.previous}); err != nil {

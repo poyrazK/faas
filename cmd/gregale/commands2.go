@@ -1523,7 +1523,7 @@ func workerReplicasEqual(a, b *api.WorkerScaling) bool {
 
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
-	if desired.Profiling != nil && (manifest.Profiling == nil || *desired.Profiling != *manifest.Profiling) {
+	if desired.Profiling != nil && (manifest.Profiling == nil || !desired.Profiling.Equal(manifest.Profiling)) {
 		return true
 	}
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {

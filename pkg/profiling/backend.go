@@ -23,6 +23,14 @@ type Backend interface {
 	Query(context.Context, string, string, string, api.ProfileQuery) (*profile.Profile, error)
 }
 
+// HeapBackend stores and queries continuous heap profiles (ADR-967).
+type HeapBackend interface {
+	PushHeap(context.Context, Principal, *profile.Profile) error
+	QueryHeap(context.Context, string, string, string, api.ProfileQuery) (*profile.Profile, error)
+}
+
+var _ HeapBackend = (*Pyroscope)(nil)
+
 type Pyroscope struct {
 	base   string
 	token  string
@@ -97,6 +105,40 @@ func (b *Pyroscope) Push(ctx context.Context, principal Principal, p *profile.Pr
 	body := protoBytes(nil, 1, series)
 	body = protoBytes(body, 1, metadata)
 	return b.pushSeries(ctx, principal.AccountID, body)
+}
+
+// PushHeap stores one normalized live-heap snapshot. Heap series carry no
+// route frames or coverage metadata; those describe CPU collection.
+func (b *Pyroscope) PushHeap(ctx context.Context, principal Principal, p *profile.Profile) error {
+	p = p.Copy()
+	if err := NormalizeHeap(p); err != nil {
+		return err
+	}
+	var encoded bytes.Buffer
+	if err := p.WriteUncompressed(&encoded); err != nil {
+		return fmt.Errorf("encode heap profile: %w", err)
+	}
+	hash := sha256.Sum256(encoded.Bytes())
+	identity := sampleIdentity{
+		ID:         uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s:%s:heap:%x", principal.InstanceID, principal.Generation, hash))).String(),
+		Collector:  uuid.NewSHA1(uuid.NameSpaceOID, []byte(principal.InstanceID+":"+principal.Generation)).String(),
+		ReceivedAt: time.Now(),
+	}
+	if supplied, ok := ctx.Value(rawSampleIdentityKey{}).(sampleIdentity); ok {
+		identity = supplied
+	}
+	series, err := encodeSeries(principal, identity, "memory", p)
+	if err != nil {
+		return err
+	}
+	return b.pushSeries(ctx, principal.AccountID, protoBytes(nil, 1, series))
+}
+
+// QueryHeap merges live-heap snapshots for a deployment window. Merged heap
+// samples sum across snapshots; callers divide by the snapshot count when
+// they need an average live heap.
+func (b *Pyroscope) QueryHeap(ctx context.Context, tenant, appID, scope string, q api.ProfileQuery) (*profile.Profile, error) {
+	return b.queryProfile(ctx, tenant, appID, scope, q, HeapProfileType, api.ProfileMaxViewNodes)
 }
 
 func encodeSeries(principal Principal, identity sampleIdentity, name string, p *profile.Profile) ([]byte, error) {

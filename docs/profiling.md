@@ -225,6 +225,70 @@ and `candidate_status`. Window statuses are `retained`, `expired`,
 The bounded list sorts by last update and UUID. Saving metadata does not query
 the CPU backend; reopening uses the existing bounded profile query pipeline.
 
+## Capture a running instance on demand
+
+On-demand captures profile one running instance now, without a redeploy or
+`profiling.enabled` (ADR-967). They are the tool for "why is this instance hot"
+and "where is this memory going":
+
+```sh
+# 30 seconds of CPU and heap from the app's earliest running instance
+gregale debug capture my-app --type cpu,heap --duration 30s
+
+# a specific instance, keeping the merged pprof files
+gregale debug capture my-app --instance INSTANCE_UUID --output ./profiles
+
+# list captures, or show one again
+gregale debug captures my-app
+gregale debug captures my-app CAPTURE_UUID --output ./profiles
+```
+
+The command prints the hottest functions per kind. `--output` writes
+`profile-<id>-<kind>.pb.gz`, which opens in `go tool pprof -http=:`,
+speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s).
+
+Captures only run on a RUNNING instance; a parked app is not woken, because a
+fresh process would not show the state you are investigating. Send a request
+first. While a capture runs the instance counts as busy and is not parked for
+idleness. One capture per app runs at a time, and an account can start 60 per
+hour. Captures are kept for 7 days.
+
+What a heap capture shows depends on the runtime:
+
+- **Go** — the sampled live heap of the process (`runtime/pprof`).
+- **Node** — objects allocated during the window that are still live at its
+  end (V8 sampling heap profiler). `Buffer` contents live outside the V8 heap
+  and appear as `(external)`.
+- **Python** — allocations made during the window that are still live at its
+  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs.
+
+Memory that is allocated during a capture and still held at its end is the
+shape of a leak. Repeat a capture later and compare the top functions.
+
+The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
+`kinds`, `duration_seconds` and `instance_id`; poll
+`GET /v1/apps/{slug}/profiles/captures/{id}` until `status` is `ready` or
+`failed`, then read `GET …/captures/{id}/view?kind=cpu|heap` or download
+`GET …/captures/{id}/pprof?kind=cpu|heap`. A ready capture with zero
+`processes` means the instance has no collector: a custom image without an
+instrumented runtime, or a Go app that does not call `guestprofiling.Start`.
+
+## Continuous heap profiles
+
+Add heap to continuous collection with:
+
+```yaml
+profiling:
+  enabled: true
+  kinds: [cpu, heap]
+```
+
+Each instrumented process reports its live heap once per window.
+`gregale debug profiles my-app --type heap --deployment-id UUID --runtime node22
+--start … --end …` shows the live heap near `--end`: the query is narrowed to
+the last collection window so snapshots are not added together. Heap profiles
+have no route attribution or deployment comparison.
+
 ## Operator setup
 
 Run a private Pyroscope with tenant enforcement enabled. The integration is
@@ -263,6 +327,14 @@ Restart apid and vmmd to load the opt-in flag. Confirm
 readiness checks backend health. `gregale_profile_uploads_total{result=...}`
 records accepted, duplicate, invalid, limited and unavailable uploads. Add a
 local scrape or an existing private metrics tunnel for this loopback endpoint.
+
+On-demand captures need no Pyroscope backend. Set `FAAS_PROFILING_ON_DEMAND=1`
+for apid (captures API) and imaged (stamps dormant collectors into new
+deployments), apply the `profile_captures` migration, and release guest-init,
+vmmd, schedd and the managed runtime bases together. Existing deployments gain
+collectors on their next deploy. Continuous heap profiles additionally need
+the Pyroscope backend above; they are stored as
+`memory:inuse_space:bytes:space:bytes` under the same tenant selectors.
 
 | Plan | API query history | Uploads / account / minute |
 |---|---:|---:|

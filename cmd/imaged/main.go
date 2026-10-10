@@ -467,6 +467,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
+		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().

@@ -69,6 +69,8 @@ func cmdDebug(args []string) int {
 		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		_, _ = fmt.Fprintln(os.Stderr, "  requests inspect  select a request and render the complete investigation")
 		_, _ = fmt.Fprintln(os.Stderr, "  profiles          CPU profiles and deployment comparison")
+		_, _ = fmt.Fprintln(os.Stderr, "  capture           capture CPU or heap profiles from a running instance now")
+		_, _ = fmt.Fprintln(os.Stderr, "  captures          list or show on-demand profile captures")
 		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
 		return 0
 	}
@@ -77,6 +79,10 @@ func cmdDebug(args []string) int {
 		return cmdDebugRequests(args[1:])
 	case "profiles":
 		return cmdDebugProfiles(args[1:])
+	case "capture":
+		return cmdDebugCapture(args[1:])
+	case "captures":
+		return cmdDebugCaptures(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
 	case "dependencies":

@@ -13143,6 +13143,150 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/profiles/heap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHeapProfile
+      summary: Query the continuous live heap near a window end (ADR-967).
+      description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment belonging to the selected app., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime name attached by the compute broker., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Live heap functions and call paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileHeapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileCaptures
+      summary: List the app's on-demand profile captures, newest first.
+      responses:
+        '200':
+          description: Up to 50 captures retained for 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileCapture
+      summary: Capture CPU and/or heap profiles from a running instance now (ADR-967).
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileCaptureRequest' }
+      responses:
+        '202':
+          description: Capture queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCapture
+      summary: Read one on-demand profile capture.
+      responses:
+        '200':
+          description: Capture status and collected profile summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/view:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCaptureView
+      summary: Merged functions and call paths of one capture kind.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap] } }
+      responses:
+        '200':
+          description: CPU nanoseconds or live heap bytes merged across the instance's processes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureView' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/pprof:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: downloadProfileCapture
+      summary: Download one capture kind as a merged gzip pprof profile.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap] } }
+      responses:
+        '200':
+          description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -50794,6 +50938,7 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        profiling_on_demand: { type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-967).' }
         entrypoint:
           type: array
           items: { type: string }
@@ -71054,6 +71199,97 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        kinds:
+          description: Continuous profile kinds (ADR-967); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [cpu, heap] }
+    CreateProfileCaptureRequest:
+      description: On-demand capture request (ADR-967). Kinds defaults to [cpu]; duration_seconds to 10.
+      type: object
+      properties:
+        kinds: { type: array, maxItems: 2, items: { type: string, enum: [cpu, heap] } }
+        duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: { type: string, enum: [cpu, heap] }
+        process_id: { type: string }
+        bytes: { type: integer }
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, capturing, ready, failed] }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap] } }
+        duration_seconds: { type: integer }
+        requested_instance_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        processes: { type: integer }
+        dropped: { type: integer, description: Profiles discarded by the reply bounds. }
+        reason: { type: string }
+        profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    ProfileCaptureList:
+      type: object
+      required: [captures]
+      properties:
+        captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureFunction:
+      description: Self and inclusive cost of one function in the view's unit.
+      type: object
+      required: [name, self, total]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    ProfileCaptureStack:
+      description: One frame in a bounded call-path tree.
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        value: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
+    ProfileCaptureView:
+      description: One profile kind merged across processes. unit is nanoseconds for cpu and bytes for heap. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      type: object
+      required: [capture, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap] }
+        unit: { type: string, enum: [nanoseconds, bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+    ProfileHeapResponse:
+      description: Continuous live heap near query.end (ADR-967).
+      type: object
+      required: [query, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [heap] }
+        unit: { type: string, enum: [bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

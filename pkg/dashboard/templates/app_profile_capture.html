@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{{if .Data.Refresh}}<meta http-equiv="refresh" content="2">{{end}}<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">
+body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b}
+</style></head><body>
+{{$d := .Data}}{{$c := $d.Capture}}
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles#profile-captures">Profiles</a></nav>
+<h1>Profile capture</h1>
+<p>Status: <strong>{{$c.Status}}</strong>{{if $d.Refresh}} — this page refreshes until the capture finishes.{{end}}</p>
+<p class="muted">{{range $i, $k := $c.Kinds}}{{if $i}} + {{end}}{{$k}}{{end}} for {{$c.DurationSeconds}}s · started {{$c.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}{{with $c.InstanceID}} · instance <code>{{.}}</code>{{end}}{{with $c.DeploymentID}} · deployment <code>{{.}}</code>{{end}}{{if $c.InstanceID}} · {{$c.Processes}} instrumented process(es){{end}}</p>
+{{with $c.Reason}}<p class="notice">{{.}}</p>{{end}}
+{{range $d.Kinds}}
+<section aria-label="{{.Kind}} profile"><h2>{{.Kind}}: {{.Total}}</h2>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{else if .Empty}}<p>No samples were captured.</p>{{else}}
+<p><a href="{{.DownloadURL}}">Download pprof</a> <span class="muted">(open with <code>go tool pprof -http=: file.pb.gz</code> or speedscope)</span></p>
+<table><thead><tr><th>Self</th><th>Total</th><th>Function</th><th>Location</th></tr></thead><tbody>
+{{range .Rows}}<tr><td>{{.Self}} <meter min="0" max="100" value="{{printf "%.1f" .SelfPercent}}"></meter></td><td>{{.Total}}</td><td><code>{{.Name}}</code></td><td><code>{{.Location}}</code></td></tr>
+{{end}}</tbody></table>{{end}}
+</section>
+{{end}}
+</body></html>

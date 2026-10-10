@@ -170,15 +170,27 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		}
 		e.Upload.ProcessID = strconv.FormatUint(pid, 10)
 	}
+	heap := e.Upload.Kind == api.ProfileKindHeap
+	if e.Upload.Kind != "" && e.Upload.Kind != api.ProfileKindCPU && !heap {
+		s.accepted.WithLabelValues("invalid").Inc()
+		return status.Error(codes.InvalidArgument, "unknown profile kind")
+	}
 	p, err := Parse(e.Upload.Profile)
-	if err == nil {
+	if err == nil && heap {
+		err = NormalizeHeap(p)
+	} else if err == nil {
 		reasons := sanitizeRouteSamples(p, e.Principal.Routes)
 		ctx = context.WithValue(ctx, routeReasonsKey{}, reasons)
 		err = normalizeCPU(p, true)
 	}
 	if err != nil {
 		s.accepted.WithLabelValues("invalid").Inc()
-		return status.Error(codes.InvalidArgument, "invalid CPU profile")
+		return status.Error(codes.InvalidArgument, "invalid profile")
+	}
+	if heap {
+		// A heap profile is a point-in-time snapshot; its collection window
+		// is the interval since the collector's previous report (ADR-967).
+		p.TimeNanos, p.DurationNanos = e.Upload.FromUnixNano, 0
 	}
 	if p.TimeNanos == 0 {
 		p.TimeNanos = e.Upload.FromUnixNano
@@ -192,13 +204,13 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		s.accepted.WithLabelValues("invalid").Inc()
 		return status.Error(codes.InvalidArgument, "profile window crosses its instance lifetime or exceeds bounds")
 	}
-	if report := admitRouteRequestReport(e.Upload.RouteRequests, e.Principal, p); report != nil && report.Until <= s.clock().Add(time.Second).UnixNano() {
+	if report := admitRouteRequestReport(e.Upload.RouteRequests, e.Principal, p); !heap && report != nil && report.Until <= s.clock().Add(time.Second).UnixNano() {
 		ctx = context.WithValue(ctx, routeRequestReportKey{}, report)
 	}
 	// Avoid replaying SDK retries within the same VM generation. The set has
 	// a hard cap and TTL, independent of tenant-provided labels.
 	hash := sha256.Sum256(append(append([]byte(nil), e.Upload.Profile...), []byte(fmt.Sprintf(":%d:%d", p.TimeNanos, p.DurationNanos))...))
-	id := e.Principal.InstanceID + ":" + e.Principal.Generation + ":" + e.Upload.ProcessID + ":" + hex.EncodeToString(hash[:])
+	id := e.Principal.InstanceID + ":" + e.Principal.Generation + ":" + e.Upload.ProcessID + ":" + e.Upload.Kind + ":" + hex.EncodeToString(hash[:])
 	s.mu.Lock()
 	if s.inflight[id] {
 		s.mu.Unlock()
@@ -236,7 +248,16 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		ReceivedAt: s.clock(),
 	}
 	ctx = context.WithValue(ctx, rawSampleIdentityKey{}, identity)
-	if err := s.Backend.Push(ctx, e.Principal, p); err != nil {
+	push := s.Backend.Push
+	if heap {
+		hb, ok := s.Backend.(HeapBackend)
+		if !ok {
+			s.accepted.WithLabelValues("unavailable").Inc()
+			return status.Error(codes.Unavailable, "heap profiles are unsupported by the backend")
+		}
+		push = hb.PushHeap
+	}
+	if err := push(ctx, e.Principal, p); err != nil {
 		s.accepted.WithLabelValues("unavailable").Inc()
 		return status.Error(codes.Unavailable, "profile backend unavailable")
 	}

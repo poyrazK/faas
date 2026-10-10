@@ -23760,6 +23760,42 @@ CREATE TABLE public.profile_canary_checks (
 
 
 --
+-- Name: profile_capture_data; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_capture_data (
+    capture_id uuid NOT NULL,
+    seq smallint NOT NULL,
+    kind text NOT NULL,
+    process_id text NOT NULL,
+    profile bytea NOT NULL,
+    CONSTRAINT profile_capture_data_kind_check CHECK ((kind = ANY (ARRAY['cpu'::text, 'heap'::text]))),
+    CONSTRAINT profile_capture_data_process_id_check CHECK ((octet_length(process_id) <= 16)),
+    CONSTRAINT profile_capture_data_profile_check CHECK (((octet_length(profile) >= 1) AND (octet_length(profile) <= 1048576))),
+    CONSTRAINT profile_capture_data_seq_check CHECK (((seq >= 0) AND (seq <= 7)))
+);
+
+
+--
+-- Name: profile_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_captures (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    status text NOT NULL,
+    capture jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_captures_capture_check CHECK (((jsonb_typeof(capture) = 'object'::text) AND (octet_length((capture)::text) <= 16384))),
+    CONSTRAINT profile_captures_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'capturing'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: profile_deployment_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32288,6 +32324,22 @@ ALTER TABLE ONLY public.profile_canary_checks
 
 
 --
+-- Name: profile_capture_data profile_capture_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_capture_data
+    ADD CONSTRAINT profile_capture_data_pkey PRIMARY KEY (capture_id, seq);
+
+
+--
+-- Name: profile_captures profile_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: profile_deployment_checks profile_deployment_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39071,6 +39123,34 @@ CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks USING
 --
 
 CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_captures_account_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_account_created_idx ON public.profile_captures USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: profile_captures_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_app_created_idx ON public.profile_captures USING btree (app_id, created_at DESC, id);
+
+
+--
+-- Name: profile_captures_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_expires_idx ON public.profile_captures USING btree (expires_at);
+
+
+--
+-- Name: profile_captures_status_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_status_created_idx ON public.profile_captures USING btree (status, created_at);
 
 
 --
@@ -49933,6 +50013,30 @@ ALTER TABLE ONLY public.profile_canary_checks
 
 ALTER TABLE ONLY public.profile_canary_checks
     ADD CONSTRAINT profile_canary_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_capture_data profile_capture_data_capture_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_capture_data
+    ADD CONSTRAINT profile_capture_data_capture_id_fkey FOREIGN KEY (capture_id) REFERENCES public.profile_captures(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_captures profile_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_captures profile_captures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

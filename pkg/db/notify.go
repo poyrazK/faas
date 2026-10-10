@@ -1011,6 +1011,12 @@ const (
 	//   closed by this channel: apid never imports
 	//   pkg/scheddgrpc.
 	NotifyOperatorIntent = "operator_intent"
+	// NotifyProfileCapture {"capture_id":uuid}
+	//   apid → schedd (ADR-967): a row was queued in profile_captures.
+	//   schedd's capture drain (pkg/sched/profile_capture_subscriber.go)
+	//   claims queued rows with FOR UPDATE SKIP LOCKED, so the payload is
+	//   informational and a 30s safety tick covers lost notifications.
+	NotifyProfileCapture = "profile_capture"
 	// NotifyRuntimeConfigChanged is emitted by migration 00466 after a
 	// durable operator configuration write. Daemons reconcile the row from
 	// Postgres instead of trusting the payload so missed notifications are

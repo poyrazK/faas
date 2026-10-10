@@ -2031,7 +2031,7 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if m.Lifecycle == nil {
 			m.Lifecycle = &LifecycleConfig{}
 		}
-		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+		if m.Lifecycle.Profiling != nil && !m.Lifecycle.Profiling.Equal(m.Profiling) {
 			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
 		}
 		m.Lifecycle.Profiling = m.Profiling

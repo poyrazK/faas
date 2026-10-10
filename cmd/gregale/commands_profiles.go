@@ -19,12 +19,13 @@ func cmdDebugProfiles(args []string) int {
 	baseline := fs.String("baseline-id", "", "baseline deployment UUID for comparison")
 	baselineStart := fs.String("baseline-start", "", "baseline start, RFC3339")
 	baselineEnd := fs.String("baseline-end", "", "baseline end, RFC3339")
-	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"route": true, "deployment-id": true, "runtime": true, "start": true, "end": true, "baseline-id": true, "baseline-start": true, "baseline-end": true})
+	kind := fs.String("type", "cpu", "profile kind: cpu or heap (heap shows the live heap near --end)")
+	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"route": true, "deployment-id": true, "runtime": true, "start": true, "end": true, "baseline-id": true, "baseline-start": true, "baseline-end": true, "type": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale debug profiles <slug> --deployment-id UUID --runtime NAME --start RFC3339 --end RFC3339 [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
+		PrintUsage(osStderr, "usage: gregale debug profiles <slug> --deployment-id UUID --runtime NAME --start RFC3339 --end RFC3339 [--type cpu|heap] [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
 		return 1
 	}
 	q, err := profileCLIQuery(*deployment, *runtime, *start, *end)
@@ -38,6 +39,12 @@ func cmdDebugProfiles(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *kind == "heap" {
+		return printHeapProfile(client, positional[0], q, *baseline != "" || q.Route != "")
+	}
+	if *kind != "cpu" {
+		return printErr("Invalid profile kind", fmt.Errorf("--type must be cpu or heap"))
 	}
 	if *baseline != "" {
 		b, err := profileCLIQuery(*baseline, *runtime, *baselineStart, *baselineEnd)
@@ -229,4 +236,26 @@ func printProfileAttribution(label string, q *api.ProfileAttributionQuality) err
 		}
 	}
 	return nil
+}
+
+// printHeapProfile prints the continuous live heap near the query end
+// (ADR-967). Heap profiles have no route labels or deployment comparison.
+func printHeapProfile(client *Client, slug string, q api.ProfileQuery, unsupported bool) int {
+	if unsupported {
+		return printErr("Unsupported heap query", fmt.Errorf("heap profiles do not support --route or --baseline-id"))
+	}
+	out, err := client.GetAppHeapProfile(context.Background(), slug, q)
+	if err != nil {
+		return printErr("Could not get heap profile", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	if _, err := fmt.Fprintf(osStdout, "Live heap between %s and %s\n", out.Query.Start.Format(time.RFC3339), out.Query.End.Format(time.RFC3339)); err != nil {
+		return printErr("Could not write heap profile", err)
+	}
+	if err := printProfileCaptureView(out.ProfileCaptureView, 20); err != nil {
+		return printErr("Could not write heap profile", err)
+	}
+	return 0
 }

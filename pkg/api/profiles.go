@@ -2,14 +2,42 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
+// Profile kinds. CPU samples on-CPU time; heap samples live allocations
+// (ADR-967). Continuous collection defaults to CPU only.
+const (
+	ProfileKindCPU  = "cpu"
+	ProfileKindHeap = "heap"
+)
+
+func ValidProfileKind(kind string) bool { return kind == ProfileKindCPU || kind == ProfileKindHeap }
+
 // ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked
-// into the deployment; changing them requires a redeploy.
+// into the deployment; changing them requires a redeploy. Kinds adds
+// continuous heap profiles (ADR-967); empty means CPU only.
 type ProfilingConfig struct {
-	Enabled       bool `json:"enabled" yaml:"enabled" toml:"enabled"`
-	WindowSeconds int  `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Enabled       bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	WindowSeconds int      `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Kinds         []string `json:"kinds,omitempty" yaml:"kinds,omitempty" toml:"kinds"`
+}
+
+// Equal compares two configurations by their effective settings.
+func (c *ProfilingConfig) Equal(o *ProfilingConfig) bool {
+	if c == nil || o == nil {
+		return c == o
+	}
+	return c.Enabled == o.Enabled && c.WindowSeconds == o.WindowSeconds && slices.Equal(c.EffectiveKinds(), o.EffectiveKinds())
+}
+
+// EffectiveKinds returns the continuous profile kinds, defaulting to CPU.
+func (c *ProfilingConfig) EffectiveKinds() []string {
+	if c == nil || len(c.Kinds) == 0 {
+		return []string{ProfileKindCPU}
+	}
+	return append([]string(nil), c.Kinds...)
 }
 
 func (c *ProfilingConfig) EffectiveWindowSeconds() int {
@@ -28,6 +56,13 @@ func (c *ProfilingConfig) Validate(plan Plan) error {
 	}
 	if n := c.EffectiveWindowSeconds(); n < ProfileMinWindowSeconds || n > ProfileMaxWindowSeconds {
 		return fmt.Errorf("profiling.window_seconds must be between %d and %d", ProfileMinWindowSeconds, ProfileMaxWindowSeconds)
+	}
+	seen := map[string]bool{}
+	for _, kind := range c.Kinds {
+		if !ValidProfileKind(kind) || seen[kind] {
+			return fmt.Errorf("profiling.kinds must list distinct values of cpu or heap")
+		}
+		seen[kind] = true
 	}
 	return nil
 }

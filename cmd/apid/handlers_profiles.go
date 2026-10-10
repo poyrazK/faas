@@ -15,6 +15,7 @@ import (
 )
 
 func (s *server) configureProfiles(getenv func(string) string) error {
+	s.profileCapturesEnabled = getenv("FAAS_PROFILING_ON_DEMAND") == "1"
 	if getenv("FAAS_PROFILING_ENABLED") != "1" {
 		return nil
 	}

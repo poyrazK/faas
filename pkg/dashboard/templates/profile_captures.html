@@ -1,0 +1,20 @@
+{{define "profile_captures"}}
+<section id="profile-captures" aria-label="On-demand profile captures"><h2>Capture now</h2>
+<p>Profile one running instance for a short window without redeploying. CPU shows where time goes; heap shows memory that is still held (Node and Python: allocated during the window and still live at its end).</p>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{end}}
+<form method="post" action="/dashboard/apps/{{.AppSlug}}/profiles/captures">
+<input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<fieldset><legend>Profile kinds</legend>
+<label><input type="checkbox" name="kind" value="cpu" checked> CPU</label>
+<label><input type="checkbox" name="kind" value="heap"> Heap</label>
+</fieldset>
+<label>Duration (seconds)<input type="number" name="duration_seconds" min="1" max="{{.MaxDuration}}" value="10"></label>
+<label>Instance (optional)<input type="text" name="instance_id" placeholder="earliest running instance" pattern="[0-9a-fA-F-]{36}"></label>
+<button type="submit">Start capture</button>
+</form>
+<p class="muted">The app must be running: captures do not wake a parked app. One capture per app runs at a time; captures are kept for 7 days.</p>
+{{if .Captures}}<table><thead><tr><th>Started</th><th>Status</th><th>Kinds</th><th>Duration</th><th>Instance</th></tr></thead><tbody>
+{{range .Captures}}<tr><td><a href="/dashboard/apps/{{$.AppSlug}}/profiles/captures/{{.ID}}">{{.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}</a></td><td>{{.Status}}</td><td>{{range $i, $k := .Kinds}}{{if $i}}, {{end}}{{$k}}{{end}}</td><td>{{.DurationSeconds}}s</td><td><code>{{.InstanceID}}</code></td></tr>
+{{end}}</tbody></table>{{end}}
+</section>
+{{end}}

@@ -205,6 +205,10 @@ type Loop struct {
 	// stay in the DB (Mega-1 cluster-wide gate).
 	jobsDispatched bool
 
+	// profileCaptureSlots bounds concurrent on-demand profile captures
+	// (ADR-967); allocated on first drain by the loop goroutine.
+	profileCaptureSlots chan struct{}
+
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
 	workflowsDispatched               bool
@@ -774,6 +778,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// handler arm, one extra safety ticker. No additional
 		// pool subscriber.
 		db.NotifyOperatorIntent,
+		db.NotifyProfileCapture,         // ADR-967: on-demand profile capture queued by apid.
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
@@ -796,6 +801,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	// sensitive (the on-call is paged) so bounding post-restart
 	// latency at ~1 round-trip matters.
 	l.drainPendingOperatorIntents(ctx)
+	// ADR-967: fail captures interrupted by a schedd bounce and start any
+	// queued while it was down.
+	l.drainProfileCaptures(ctx)
 
 	// PR-#TBD / C5: run the completeness tick once at startup so
 	// the gauge surfaces a real value at t=0 instead of the
@@ -829,6 +837,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	// operatorIntentSafetyTick.
 	operatorIntentT := time.NewTicker(operatorIntentSafetyTick)
 	defer operatorIntentT.Stop()
+	profileCaptureT := time.NewTicker(profileCaptureSafetyTick)
+	defer profileCaptureT.Stop()
 	// Operator-intent completeness ticker (PR-#TBD / C5). 60s
 	// cadence — drives the gauge
 	// operatorActionTraceCompletenessRatio and the counter
@@ -1255,6 +1265,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			// cadence (vs fire-now's 60s) matches the operator-
 			// action SLA.
 			l.drainPendingOperatorIntents(ctx)
+		case <-profileCaptureT.C:
+			// ADR-967 safety sweep: expiry plus queued rows whose
+			// NotifyProfileCapture was lost.
+			l.drainProfileCaptures(ctx)
 		case <-operatorIntentCompletenessT.C:
 			// PR-#TBD / C5: 60s observability sweep. Reads
 			// events + operator_intents to drive
@@ -2320,6 +2334,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// carried. Same defense-in-depth pattern as
 		// NotifyCronRunNow's handler arm above.
 		l.drainPendingOperatorIntents(ctx)
+	case db.NotifyProfileCapture:
+		l.drainProfileCaptures(ctx)
 	case db.NotifyEventPublished:
 		l.dispatchEventFanoutSweep(ctx)
 	}

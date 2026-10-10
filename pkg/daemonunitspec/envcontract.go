@@ -441,6 +441,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PROFILE_SOCKET", Owners: []string{"vmmd", "profiled"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PROFILING_ENABLED", Owners: []string{"apid", "vmmd", "profiled", "guest", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819)"},
 	{Name: "FAAS_PROFILING_ENDPOINT", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "loopback bridge stamped by guest-init for SDKs"},
+	{Name: "FAAS_PROFILING_ON_DEMAND", Owners: []string{"apid", "imaged"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only on-demand CPU/heap captures; imaged stamps dormant collectors into new deployments and apid serves the captures API (ADR-967)"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; \"shared\" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement)"},

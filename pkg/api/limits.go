@@ -148,6 +148,26 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+
+	// On-demand captures (ADR-967).
+	ProfileCaptureMinDuration     = time.Second
+	ProfileCaptureMaxDuration     = 60 * time.Second
+	ProfileCaptureDefaultDuration = 10 * time.Second
+	// ProfileCaptureGrace covers the collectors' final flush after the window.
+	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
+	ProfileCaptureMaxProfiles = 8
+	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
+	// host hop stays under gRPC's default 4 MiB message limit.
+	ProfileCaptureMaxProfileBytes = 3 << 20
+	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	ProfileCaptureMaxPerAccountHour = 60
+	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
+	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxListed bounds GET /profiles/captures.
+	ProfileCaptureMaxListed = 50
+	// ProfileCaptureRetention is how long stored capture results remain.
+	ProfileCaptureRetention = 7 * 24 * time.Hour
 )
 
 type ProfilingLimits struct {
@@ -9635,7 +9655,7 @@ const (
 	EventPublishBatchTimeout            = 30 * time.Second
 )
 
-// Retention observations are bounded read-only snapshots (ADR-912).
+// Retention observations are bounded read-only snapshots (ADR-967).
 const (
 	EventRetentionDefaultWindow  = 24 * time.Hour
 	EventRetentionMaxWindow      = 30 * 24 * time.Hour

@@ -3,8 +3,9 @@ package api
 import "time"
 
 type ProfilingConfig struct {
-	Enabled       bool `json:"enabled" yaml:"enabled" toml:"enabled"`
-	WindowSeconds int  `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Enabled       bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	WindowSeconds int      `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Kinds         []string `json:"kinds,omitempty" yaml:"kinds,omitempty" toml:"kinds"`
 }
 
 type ProfileQuery struct {

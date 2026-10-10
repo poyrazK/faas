@@ -573,6 +573,7 @@ type MemStore struct {
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation
+	profileCaptures           map[string]*memProfileCapture
 	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
 	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
 	profileCanaryChecks       map[string]*memProfileCanaryCheck

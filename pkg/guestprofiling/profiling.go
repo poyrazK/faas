@@ -1,5 +1,7 @@
-// Package guestprofiling enables CPU profiling in Go applications running on
-// Gregale. Call Start once during application startup (ADR-819).
+// Package guestprofiling enables CPU and heap profiling in Go applications
+// running on Gregale. Call Start once during application startup (ADR-819,
+// ADR-967). Collection is driven by the deployment's continuous profiling
+// configuration and by on-demand captures; otherwise the collector is dormant.
 package guestprofiling
 
 import (
@@ -13,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -22,16 +25,29 @@ import (
 )
 
 type control struct {
-	Enabled       bool   `json:"enabled"`
-	Suspended     bool   `json:"suspended"`
-	Epoch         string `json:"epoch"`
-	WindowSeconds int    `json:"window_seconds"`
+	Enabled       bool     `json:"enabled"`
+	Suspended     bool     `json:"suspended"`
+	Epoch         string   `json:"epoch"`
+	WindowSeconds int      `json:"window_seconds"`
+	Kinds         []string `json:"kinds,omitempty"`
+	Capture       bool     `json:"capture,omitempty"`
 }
+
+func (c control) wants(kind string) bool {
+	if len(c.Kinds) == 0 {
+		return kind == api.ProfileKindCPU
+	}
+	return slices.Contains(c.Kinds, kind)
+}
+
+// dormantPollInterval paces control polls while nothing is collected. An
+// on-demand capture therefore starts within one interval.
+const dormantPollInterval = time.Second
 
 var started atomic.Bool
 
 // Start returns immediately. Collection is opt-in through the deployment's
-// profiling configuration. It shares Go's process-wide profiler, so callers
+// profiling configuration or an on-demand capture. It shares Go's process-wide profiler, so callers
 // must not also run runtime/pprof.StartCPUProfile. Cancel ctx before exiting.
 func Start(ctx context.Context) {
 	if os.Getenv("FAAS_PROFILING_ENABLED") != "1" || !started.CompareAndSwap(false, true) {
@@ -44,47 +60,73 @@ func Start(ctx context.Context) {
 	go func() { defer started.Store(false); run(ctx, endpoint) }()
 }
 
+// window is one collection interval. Heap profiles are read at its end;
+// Go's heap profile is always sampled, so it reports the live heap.
+type window struct {
+	epoch string
+	from  time.Time
+	span  time.Duration
+	cpu   bool
+	heap  bool
+}
+
 func run(ctx context.Context, endpoint string) {
 	client := &http.Client{Timeout: api.ProfileTransportTimeout}
 	pid := strconv.Itoa(os.Getpid())
 	var buffer bytes.Buffer
-	var epoch string
-	var from time.Time
-	running := false
-	window := time.Duration(api.ProfileDefaultWindowSeconds) * time.Second
-	defer func() {
-		if running {
-			stopRouteRequestWindow()
+	var active *window
+	// finished is the capture epoch whose single window already ended.
+	var finished string
+	stop := func(upload bool) {
+		w := active
+		active = nil
+		if w == nil {
+			return
+		}
+		var report *profileproto.RouteRequestReport
+		if w.cpu {
+			report = stopRouteRequestWindow()
 			pprof.StopCPUProfile()
 		}
-	}()
-	ticker := time.NewTicker(api.ProfileControlPollInterval)
-	defer ticker.Stop()
+		if !upload {
+			buffer.Reset()
+			return
+		}
+		until := time.Now()
+		if w.cpu {
+			_ = uploadKind(ctx, client, endpoint, api.ProfileKindCPU, w.epoch, w.from, until, buffer.Bytes(), report)
+		}
+		if w.heap {
+			var heap bytes.Buffer
+			if err := pprof.Lookup("heap").WriteTo(&heap, 0); err == nil {
+				_ = uploadKind(ctx, client, endpoint, api.ProfileKindHeap, w.epoch, w.from, until, heap.Bytes())
+			}
+		}
+		buffer.Reset()
+	}
+	defer stop(false)
+	delay := api.ProfileControlPollInterval
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(delay):
 		}
 		cfg, err := readControl(ctx, client, endpoint, pid)
 		if err != nil {
-			if running && time.Since(from) >= window {
-				stopRouteRequestWindow()
-				pprof.StopCPUProfile()
-				running = false
-				buffer.Reset()
+			if active != nil && time.Since(active.from) >= active.span {
+				stop(false)
 			}
+			delay = api.ProfileControlPollInterval
 			continue
 		}
-		if running && (cfg.Suspended || !cfg.Enabled || cfg.Epoch != epoch || time.Since(from) >= time.Duration(cfg.WindowSeconds)*time.Second) {
-			report := stopRouteRequestWindow()
-			pprof.StopCPUProfile()
-			running = false
+		if active != nil && (cfg.Suspended || !cfg.Enabled || cfg.Epoch != active.epoch || time.Since(active.from) >= active.span) {
 			// A restored process discards its pre-snapshot buffer rather than
 			// relabelling old samples with the new deployment/instance epoch.
-			if cfg.Epoch == epoch {
-				_ = upload(ctx, client, endpoint, epoch, from, time.Now(), buffer.Bytes(), report)
+			if cfg.Capture && cfg.Epoch == active.epoch {
+				finished = cfg.Epoch
 			}
+			stop(cfg.Epoch == active.epoch)
 		}
 		if cfg.Suspended {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/control/ack?pid="+pid+"&epoch="+url.QueryEscape(cfg.Epoch), nil)
@@ -94,15 +136,22 @@ func run(ctx context.Context, endpoint string) {
 					_ = resp.Body.Close()
 				}
 			}
-		} else if cfg.Enabled && !running && cfg.Epoch != "" {
+		} else if cfg.Enabled && active == nil && cfg.Epoch != "" && !(cfg.Capture && cfg.Epoch == finished) {
+			w := &window{epoch: cfg.Epoch, from: time.Now(), span: time.Duration(cfg.WindowSeconds) * time.Second, heap: cfg.wants(api.ProfileKindHeap)}
 			buffer.Reset()
-			window = time.Duration(cfg.WindowSeconds) * time.Second
-			from = time.Now()
-			epoch = cfg.Epoch
-			if err := pprof.StartCPUProfile(&buffer); err == nil {
-				running = true
-				startRouteRequestWindow()
+			if cfg.wants(api.ProfileKindCPU) {
+				if err := pprof.StartCPUProfile(&buffer); err == nil {
+					w.cpu = true
+					startRouteRequestWindow()
+				}
 			}
+			if w.cpu || w.heap {
+				active = w
+			}
+		}
+		delay = api.ProfileControlPollInterval
+		if !cfg.Enabled && active == nil {
+			delay = dormantPollInterval
 		}
 	}
 }
@@ -128,8 +177,11 @@ func readControl(ctx context.Context, client *http.Client, endpoint, pid string)
 	return cfg, err
 }
 
-func upload(ctx context.Context, client *http.Client, endpoint, epoch string, from, until time.Time, body []byte, reports ...*profileproto.RouteRequestReport) error {
+func uploadKind(ctx context.Context, client *http.Client, endpoint, kind, epoch string, from, until time.Time, body []byte, reports ...*profileproto.RouteRequestReport) error {
 	query := url.Values{"name": {"gregale{gregale_epoch=" + strconv.Quote(epoch) + ",gregale_process=" + strconv.Itoa(os.Getpid()) + "}"}, "from": {strconv.FormatInt(from.Unix(), 10)}, "until": {strconv.FormatInt(until.Unix(), 10)}}
+	if kind != api.ProfileKindCPU {
+		query.Set("kind", kind)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/ingest?"+query.Encode(), bytes.NewReader(body))
 	if err != nil {
 		return err

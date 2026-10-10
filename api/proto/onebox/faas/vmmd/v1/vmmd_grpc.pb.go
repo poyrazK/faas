@@ -54,6 +54,7 @@ const (
 	Vmmd_UpdateEgressAllowlist_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
 	Vmmd_AllowResolvedEgress_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
 	Vmmd_UpdateAppCPULimit_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
+	Vmmd_CaptureProfile_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/CaptureProfile"
 	Vmmd_UpdateStaticEgressIP_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
 	Vmmd_UpdateEgressCircuit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
 	Vmmd_UpdatePrivateNetwork_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
@@ -278,6 +279,12 @@ type VmmdClient interface {
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
 	// remain boot-time settings.
 	UpdateAppCPULimit(ctx context.Context, in *UpdateAppCPULimitRequest, opts ...grpc.CallOption) (*UpdateAppCPULimitAck, error)
+	// CaptureProfile (ADR-967) arms one live instance's dormant guest profile
+	// collectors for a bounded window and returns the pprof profiles they
+	// report. vmmd bounds the reply and never parses the profiles. The call
+	// counts as in-flight activity so the idle reaper does not park the
+	// instance mid-capture. Additive per ADR-016.
+	CaptureProfile(ctx context.Context, in *CaptureProfileRequest, opts ...grpc.CallOption) (*CaptureProfileResponse, error)
 	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
 	// per-app static egress IP into every live netns the vmmd
 	// owns without tearing the netns down. The caller passes
@@ -873,6 +880,16 @@ func (c *vmmdClient) UpdateAppCPULimit(ctx context.Context, in *UpdateAppCPULimi
 	return out, nil
 }
 
+func (c *vmmdClient) CaptureProfile(ctx context.Context, in *CaptureProfileRequest, opts ...grpc.CallOption) (*CaptureProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureProfileResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateStaticEgressIPAck)
@@ -1296,6 +1313,12 @@ type VmmdServer interface {
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
 	// remain boot-time settings.
 	UpdateAppCPULimit(context.Context, *UpdateAppCPULimitRequest) (*UpdateAppCPULimitAck, error)
+	// CaptureProfile (ADR-967) arms one live instance's dormant guest profile
+	// collectors for a bounded window and returns the pprof profiles they
+	// report. vmmd bounds the reply and never parses the profiles. The call
+	// counts as in-flight activity so the idle reaper does not park the
+	// instance mid-capture. Additive per ADR-016.
+	CaptureProfile(context.Context, *CaptureProfileRequest) (*CaptureProfileResponse, error)
 	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
 	// per-app static egress IP into every live netns the vmmd
 	// owns without tearing the netns down. The caller passes
@@ -1645,6 +1668,9 @@ func (UnimplementedVmmdServer) AllowResolvedEgress(context.Context, *AllowResolv
 }
 func (UnimplementedVmmdServer) UpdateAppCPULimit(context.Context, *UpdateAppCPULimitRequest) (*UpdateAppCPULimitAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateAppCPULimit not implemented")
+}
+func (UnimplementedVmmdServer) CaptureProfile(context.Context, *CaptureProfileRequest) (*CaptureProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureProfile not implemented")
 }
 func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateStaticEgressIP not implemented")
@@ -2278,6 +2304,24 @@ func _Vmmd_UpdateAppCPULimit_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_CaptureProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureProfile(ctx, req.(*CaptureProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_UpdateStaticEgressIP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UpdateStaticEgressIPRequest)
 	if err := dec(in); err != nil {
@@ -2709,6 +2753,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateAppCPULimit",
 			Handler:    _Vmmd_UpdateAppCPULimit_Handler,
+		},
+		{
+			MethodName: "CaptureProfile",
+			Handler:    _Vmmd_CaptureProfile_Handler,
 		},
 		{
 			MethodName: "UpdateStaticEgressIP",
