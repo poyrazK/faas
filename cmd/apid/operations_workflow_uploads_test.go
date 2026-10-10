@@ -439,6 +439,7 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 	for _, action := range []string{"commit", "reuse"} {
 		t.Run(action, func(t *testing.T) {
 			f := newWorkflowUploadFixture(t, "postgres", 30*time.Second)
+
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 				defer cancel()

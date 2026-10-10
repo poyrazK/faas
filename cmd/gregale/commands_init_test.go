@@ -559,7 +559,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		t.Fatalf("runCmdInitList = %d, want 0", code)
 	}
 	out := buf.String()
-	// Order: hello → function → event-driven → stateless-contract → ai (the pinned
+	// Order: hello → function → event-driven → stateless-contract → ai → mcp (the pinned
 	// CategoryOrder). Find each header line; assert relative order.
 	idx := map[string]int{
 		"hello":              strings.Index(out, "hello ("),
@@ -567,13 +567,14 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"event-driven":       strings.Index(out, "event-driven ("),
 		"stateless-contract": strings.Index(out, "stateless-contract ("),
 		"ai":                 strings.Index(out, "ai ("),
+		"mcp":                strings.Index(out, "mcp ("),
 	}
 	for k, i := range idx {
 		if i < 0 {
 			t.Errorf("missing category header %q in --list output:\n%s", k, out)
 		}
 	}
-	if idx["hello"] >= idx["function"] || idx["function"] >= idx["event-driven"] || idx["event-driven"] >= idx["stateless-contract"] || idx["stateless-contract"] >= idx["ai"] {
+	if idx["hello"] >= idx["function"] || idx["function"] >= idx["event-driven"] || idx["event-driven"] >= idx["stateless-contract"] || idx["stateless-contract"] >= idx["ai"] || idx["ai"] >= idx["mcp"] {
 		t.Errorf("category order drift: %v\noutput:\n%s", idx, out)
 	}
 	// Spot-check expected contents under each category so a future
@@ -584,6 +585,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"event-driven":       {"event-worker", "queue-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},
+		"mcp":                {"mcp-node", "mcp-go", "mcp-python"},
 	}
 	for cat, names := range wantPerCat {
 		for _, n := range names {

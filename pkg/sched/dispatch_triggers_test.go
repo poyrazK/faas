@@ -388,6 +388,16 @@ type fakePollerForFilter struct {
 	ackCalls []string
 }
 
+type deploymentAwareAckTestPoller struct {
+	fakePollerForFilter
+	deploymentAcks []queueDispatchAcknowledgement
+}
+
+func (f *deploymentAwareAckTestPoller) AckWithDeployment(_ context.Context, _ sqlc.Trigger, acknowledgements []queueDispatchAcknowledgement) error {
+	f.deploymentAcks = append(f.deploymentAcks, acknowledgements...)
+	return nil
+}
+
 func (f *fakePollerForFilter) Kind() string { return "kafka" }
 func (f *fakePollerForFilter) Poll(_ context.Context, _ sqlc.Trigger) PollResult {
 	return PollResult{}
@@ -400,6 +410,30 @@ func (f *fakePollerForFilter) Nack(_ context.Context, _ sqlc.Trigger, _ []string
 	return nil
 }
 func (f *fakePollerForFilter) Close() error { return nil }
+
+func TestAcknowledgeSuccessfulQueueItemsPreservesSelectedDeployments(t *testing.T) {
+	poller := &deploymentAwareAckTestPoller{}
+	items := []string{"item-a", "item-b"}
+	results := map[string]triggerDispatchResult{
+		"item-a": {ItemIdentifier: "item-a", Status: "succeeded", DeploymentID: "deployment-a"},
+		"item-b": {ItemIdentifier: "item-b", Status: "succeeded", DeploymentID: "deployment-b"},
+	}
+	if err := acknowledgeSuccessfulQueueItems(t.Context(), poller, sqlc.Trigger{}, items, results); err != nil {
+		t.Fatal(err)
+	}
+	if len(poller.ackCalls) != 0 || len(poller.deploymentAcks) != len(items) ||
+		poller.deploymentAcks[0] != (queueDispatchAcknowledgement{ItemIdentifier: "item-a", DeploymentID: "deployment-a"}) ||
+		poller.deploymentAcks[1] != (queueDispatchAcknowledgement{ItemIdentifier: "item-b", DeploymentID: "deployment-b"}) {
+		t.Fatalf("deployment-aware acknowledgements = %+v, legacy acks = %v", poller.deploymentAcks, poller.ackCalls)
+	}
+	legacy := &fakePollerForFilter{}
+	if err := acknowledgeSuccessfulQueueItems(t.Context(), legacy, sqlc.Trigger{}, items, results); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.ackCalls) != len(items) || legacy.ackCalls[0] != items[0] || legacy.ackCalls[1] != items[1] {
+		t.Fatalf("legacy queue acknowledgements = %v", legacy.ackCalls)
+	}
+}
 
 // makeLoopForFilter builds a Loop with the minimal wiring for
 // filterBatch — the triggerPollers map pre-populated with a

@@ -106,6 +106,85 @@ func TestServiceProxyCallerResolverRejectsAmbiguousHostIP(t *testing.T) {
 	}
 }
 
+func TestServiceProxyCallerResolverRejectsUnattributedHostIPCollision(t *testing.T) {
+	instances := []state.Instance{
+		{AppID: "app-local", DeploymentID: "dep-local", NodeID: "node-a", HostIP: "10.100.0.5", State: string(state.StateRunning)},
+		{NodeID: "node-a", HostIP: "10.100.0.5", State: string(state.StateRunning), Kind: "job_task"},
+	}
+	for _, tc := range []struct {
+		name string
+		new  func() *serviceProxyCallerResolver
+	}{
+		{
+			name: "cached list fallback",
+			new: func() *serviceProxyCallerResolver {
+				return newServiceProxyCallerIdentityResolver(func(context.Context) ([]state.Instance, error) {
+					return instances, nil
+				}, "node-a")
+			},
+		},
+		{
+			name: "fresh indexed lookup",
+			new: func() *serviceProxyCallerResolver {
+				resolver := newServiceProxyCallerIdentityResolver(nil, "node-a")
+				resolver.lookup = func(context.Context, string, string) ([]state.Instance, error) {
+					return instances, nil
+				}
+				return resolver
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			appID, deploymentID, err := tc.new().ResolveIdentity(context.Background(), "10.100.0.5:41234")
+			if err != nil {
+				t.Fatalf("resolve identity: %v", err)
+			}
+			if appID != "" || deploymentID != "" {
+				t.Fatalf("ambiguous address resolved to %q/%q, want no identity", appID, deploymentID)
+			}
+		})
+	}
+}
+
+func TestServiceProxyCallerResolverAcceptsAttributedScheduledJobIdentity(t *testing.T) {
+	instances := []state.Instance{
+		{AppID: "app-job", DeploymentID: "dep-job", NodeID: "node-a", HostIP: "10.100.0.9", State: string(state.StateRunning), Kind: "job_task"},
+	}
+	for _, tc := range []struct {
+		name string
+		new  func() *serviceProxyCallerResolver
+	}{
+		{
+			name: "cached list fallback",
+			new: func() *serviceProxyCallerResolver {
+				return newServiceProxyCallerIdentityResolver(func(context.Context) ([]state.Instance, error) {
+					return instances, nil
+				}, "node-a")
+			},
+		},
+		{
+			name: "fresh indexed lookup",
+			new: func() *serviceProxyCallerResolver {
+				resolver := newServiceProxyCallerIdentityResolver(nil, "node-a")
+				resolver.lookup = func(context.Context, string, string) ([]state.Instance, error) {
+					return instances, nil
+				}
+				return resolver
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			appID, deploymentID, err := tc.new().ResolveIdentity(context.Background(), "10.100.0.9:41234")
+			if err != nil {
+				t.Fatalf("resolve identity: %v", err)
+			}
+			if appID != "app-job" || deploymentID != "dep-job" {
+				t.Fatalf("resolved identity = %q/%q, want app-job/dep-job", appID, deploymentID)
+			}
+		})
+	}
+}
+
 func TestServiceProxyCallerIdentityDoesNotCacheReusedHostIP(t *testing.T) {
 	current := state.Instance{AppID: "old-app", DeploymentID: "old-deployment", NodeID: "node-a", HostIP: "10.100.0.5", State: string(state.StateRunning)}
 	lookups := 0

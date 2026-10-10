@@ -723,6 +723,7 @@ type batchDispatchResponse struct {
 type batchDispatchResult struct {
 	ItemIdentifier string `json:"item_identifier"`
 	Status         string `json:"status"`
+	DeploymentID   string `json:"deployment_id,omitempty"`
 	Error          string `json:"error,omitempty"`
 	Code           string `json:"code,omitempty"`
 }
@@ -1054,6 +1055,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 		return batchDispatchResult{
 			ItemIdentifier: rec.ItemIdentifier,
 			Status:         batchDispatchStatusSucceeded,
+			DeploymentID:   out.ResolvedDeploymentID,
 		}
 	}
 	return batchDispatchResult{

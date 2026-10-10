@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -21,8 +21,6 @@ func deviceFDIdentity(fd int) (DeviceFDIdentity, error) {
 	}
 	return DeviceFDIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}, nil
 }
-
-func deviceFDPath(fd int) string { return "/proc/self/fd/" + strconv.Itoa(fd) }
 
 func awaitDeviceSetup(args []string) error {
 	if len(args) != 4 || args[2] != "3" {
@@ -53,6 +51,15 @@ func awaitDeviceSetup(args []string) error {
 // general-purpose runtime pool. Root/TUN paths resolve through pinned FDs.
 func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	runtime.LockOSThread()
+	// The real jailer pivots away from the host root and detaches /proc.
+	// Pin this locked thread's proc directory before setns; metadata remains
+	// about this thread after it enters the original VM's namespace. Never
+	// mount host procfs into a guest or reopen an absolute procfs pathname.
+	procFD, err := unix.Open("/proc/thread-self", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("native jail device setup: pin helper proc metadata: %w", err)
+	}
+	defer func() { result = errors.Join(result, unix.Close(procFD)) }()
 	for i, expected := range scope.Identities() {
 		actual, err := deviceFDIdentity(4 + i)
 		if err != nil || actual != expected {
@@ -64,7 +71,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := unix.PidfdSendSignal(6, 0, nil, 0); err != nil {
 		return fmt.Errorf("native jail device setup: original task is unavailable: %w", err)
 	}
-	pidInfo, err := os.ReadFile("/proc/self/fdinfo/6")
+	pidInfo, err := readDeviceProcFile(procFD, "fdinfo/6")
 	if err != nil {
 		return err
 	}
@@ -87,7 +94,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := unix.Setns(5, unix.CLONE_NEWNS); err != nil {
 		return err
 	}
-	nsFD, err := unix.Open("/proc/thread-self/ns/mnt", unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	nsFD, err := unix.Openat(procFD, "ns/mnt", unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
@@ -99,9 +106,31 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if identity != scope.Namespace {
 		return errors.New("native jail device setup: original namespace handoff changed")
 	}
-	data, err := os.ReadFile("/proc/thread-self/mountinfo")
+	// Confine this one-shot helper's FS root to the original pinned jail too.
+	// mountinfo then describes mounts visible from that root, including the
+	// original jailer's private root after pivot_root.
+	if err := unix.Fchdir(4); err != nil {
+		return err
+	}
+	if err := unix.Chroot("."); err != nil {
+		return err
+	}
+	if err := unix.Chdir("/"); err != nil {
+		return err
+	}
+	data, err := readDeviceProcFile(procFD, "mountinfo")
 	if err != nil {
 		return err
+	}
+	for _, input := range []struct {
+		fd int
+		id uint64
+	}{{4, scope.RootMountID}, {7, scope.TunMountID}} {
+		info, err := readDeviceProcFile(procFD, "fdinfo/"+strconv.Itoa(input.fd))
+		id, valid := deviceFDMountID(info)
+		if err != nil || !valid || id != input.id {
+			return errors.Join(err, errors.New("native jail device setup: original input mount identity changed"))
+		}
 	}
 	for _, id := range []uint64{scope.RootMountID, scope.TunMountID} {
 		if !deviceMountPresent(data, id) {
@@ -120,8 +149,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err != nil {
 		return err
 	}
-	devTarget := deviceFDPath(4) + "/dev"
-	if err := unix.Mount("tmpfs", deviceFDPath(devFD), "tmpfs", unix.MS_NOSUID|unix.MS_NOEXEC, "mode=0755"); err != nil {
+	if err := mountDeviceTmpfs(devFD); err != nil {
 		_ = unix.Close(devFD)
 		return err
 	}
@@ -142,15 +170,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err != nil {
 		return err
 	}
-	if err := unix.Close(tunFD); err != nil {
-		return err
-	}
-	tunTarget := devTarget + "/net/tun"
-	if err := unix.Mount(deviceFDPath(7), tunTarget, "", unix.MS_BIND, ""); err != nil {
-		return err
-	}
-	attr := unix.MountAttr{Attr_set: unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NOEXEC, Attr_clr: unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_RDONLY}
-	if err := unix.MountSetattr(unix.AT_FDCWD, tunTarget, 0, &attr); err != nil {
+	if err := errors.Join(mountDeviceTun(tunFD), unix.Close(tunFD)); err != nil {
 		return err
 	}
 	if err := unix.Mknodat(devFD, "kvm", unix.S_IFCHR|0o660, int(unix.Mkdev(10, 232))); err != nil {
@@ -163,11 +183,11 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := unix.Fstatat(devFD, "kvm", &kvmStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	data, err = os.ReadFile("/proc/thread-self/mountinfo")
+	data, err = readDeviceProcFile(procFD, "mountinfo")
 	if err != nil {
 		return err
 	}
-	devMount, err := deviceMountAtFD(devFD, data)
+	devMount, err := deviceMountAtFD(procFD, devFD, data)
 	if err != nil {
 		return err
 	}
@@ -175,7 +195,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err != nil {
 		return err
 	}
-	tunMount, mountErr := deviceMountAtFD(tunFD, data)
+	tunMount, mountErr := deviceMountAtFD(procFD, tunFD, data)
 	actual, statErr := deviceFDIdentity(tunFD)
 	if err := errors.Join(mountErr, statErr, unix.Close(tunFD)); err != nil {
 		return err
@@ -251,19 +271,65 @@ func errnoError(errno unix.Errno) error {
 	return errno
 }
 
-func deviceMountAtFD(fd int, data []byte) (uint64, error) {
-	info, err := os.ReadFile("/proc/self/fdinfo/" + strconv.Itoa(fd))
+func deviceMountAtFD(procFD, fd int, data []byte) (uint64, error) {
+	info, err := readDeviceProcFile(procFD, "fdinfo/"+strconv.Itoa(fd))
 	if err != nil {
 		return 0, err
 	}
-	for _, line := range strings.Split(string(info), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "mnt_id:" {
-			id, err := strconv.ParseUint(fields[1], 10, 64)
-			if err == nil && id != 0 && deviceMountPresent(data, id) && deviceMountAccess(data, id) {
-				return id, nil
-			}
-		}
+	id, valid := deviceFDMountID(info)
+	if valid && deviceMountPresent(data, id) && deviceMountAccess(data, id) {
+		return id, nil
 	}
 	return 0, errors.New("native jail device setup: input has no mount identity in original namespace")
+}
+
+func readDeviceProcFile(procFD int, name string) (data []byte, err error) {
+	fd, err := unix.Openat(procFD, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("native jail device setup: original helper %s: %w", name, err)
+	}
+	file := os.NewFile(uintptr(fd), "native-device-proc-metadata")
+	defer func() { err = errors.Join(err, file.Close()) }()
+	const maxMetadata = 4 << 20
+	data, err = io.ReadAll(io.LimitReader(file, maxMetadata+1))
+	if len(data) > maxMetadata {
+		return nil, errors.New("native jail device setup: proc metadata exceeds bound")
+	}
+	return data, err
+}
+
+// Detached mount FDs replace /proc/self/fd mount pathnames. Every effect is
+// attached through an original directory/file descriptor in the pinned VM
+// namespace; unsupported kernels fail closed without a pathname fallback.
+func mountDeviceTmpfs(target int) (err error) {
+	fd, err := unix.Fsopen("tmpfs", unix.FSOPEN_CLOEXEC)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unix.Close(fd)) }()
+	if err := unix.FsconfigSetString(fd, "mode", "0755"); err != nil {
+		return err
+	}
+	if err := unix.FsconfigCreate(fd); err != nil {
+		return err
+	}
+	mount, err := unix.Fsmount(fd, unix.FSMOUNT_CLOEXEC, unix.MOUNT_ATTR_NOSUID|unix.MOUNT_ATTR_NOEXEC)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unix.Close(mount)) }()
+	return unix.MoveMount(mount, "", target, "", unix.MOVE_MOUNT_F_EMPTY_PATH|unix.MOVE_MOUNT_T_EMPTY_PATH)
+}
+
+func mountDeviceTun(target int) (err error) {
+	mount, err := unix.OpenTree(7, "", unix.OPEN_TREE_CLONE|unix.OPEN_TREE_CLOEXEC|unix.AT_EMPTY_PATH)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unix.Close(mount)) }()
+	attr := unix.MountAttr{Attr_set: unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NOEXEC, Attr_clr: unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_RDONLY}
+	if err := unix.MountSetattr(mount, "", unix.AT_EMPTY_PATH, &attr); err != nil {
+		return err
+	}
+	return unix.MoveMount(mount, "", target, "", unix.MOVE_MOUNT_F_EMPTY_PATH|unix.MOVE_MOUNT_T_EMPTY_PATH)
 }

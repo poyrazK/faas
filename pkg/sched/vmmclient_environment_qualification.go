@@ -79,7 +79,7 @@ func (c *VMMClient) RetireEnvironmentQualification(ctx context.Context, frame st
 	if c == nil || c.cli == nil {
 		return zero, state.ErrConflict
 	}
-	encoded, err := qualificationwire.ExecutionToProto(frame)
+	encoded, err := qualificationwire.RetirementExecutionToProto(frame)
 	if err != nil {
 		return zero, err
 	}
@@ -91,7 +91,7 @@ func (c *VMMClient) RetireEnvironmentQualification(ctx context.Context, frame st
 	if err != nil {
 		return zero, qualificationLiftError(err)
 	}
-	returned, err := qualificationwire.ExecutionFromProto(resp.GetExecution())
+	returned, err := qualificationwire.RetirementExecutionFromProto(resp.GetExecution())
 	if err != nil || returned != frame {
 		return zero, errors.Join(state.ErrConflict, err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,6 +28,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !executionOK || !nativeOK {
 		return fmt.Errorf("qualification requires attempt-aware VM execution and retirement: %w", state.ErrConflict)
 	}
+	if len(claimed.FrozenInputs.ServiceBindings) != 0 && (!e.hasEnvironmentQualificationServiceProxy() || ctx.Value(qualificationGraphContextKey{}) != claimed.GraphID) {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
 	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
 	defer deadlineCancel()
 	release, err := e.lockQualificationApp(ctx, claimed.AppID)
@@ -40,7 +44,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		}
 	}()
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
-		return err
+		return fmt.Errorf("validate qualification owner before admission: %w", err)
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -71,15 +75,27 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
 	}
+	preferredNodeID := app.NodeID
+	graphNodeID, graphNodePinned := ctx.Value(qualificationGraphDispatchNodeContextKey{}).(string)
+	if graphNodePinned && graphNodeID != "" {
+		preferredNodeID = graphNodeID
+	}
 	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: app.NodeID})
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
 	if err != nil {
 		return err
+	}
+	if graphNodePinned && graphNodeID != "" && placement.NodeID != graphNodeID {
+		return fmt.Errorf("qualification graph placement escaped its private node: %w", state.ErrConflict)
+	}
+	ctx, err = e.preflightQualificationGraphServiceListener(ctx, placement.NodeID)
+	if err != nil {
+		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
 	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
-		return err
+		return fmt.Errorf("admit qualification instance: %w", err)
 	}
 	if !admission.Created {
 		// An uncertain earlier boot must be recovered/retired explicitly. A
@@ -113,7 +129,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 			defer cleanupRelease()
 		}
 		if err := executor.RetireEnvironmentQualificationExecution(cleanupCtx, frame, proof); err != nil {
-			result = errors.Join(result, err)
+			result = errors.Join(result, fmt.Errorf("qualification execution retirement for %s: %w", claimed.Resource, err))
 			return
 		}
 		e.releaseHostPortLeases(cleanupCtx, frame.NodeID, frame.InstanceID)
@@ -143,6 +159,19 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return err
 	}
+	if ctx.Value(qualificationGraphContextKey{}) == claimed.GraphID && prepared.Spec.AppProtocol != "" && prepared.Spec.AppProtocol != api.AppProtocolHTTP1 {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
+	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
+		return fmt.Errorf("prepare qualification service bindings: %w", err)
+	}
+	var configDigest string
+	if ctx.Value(qualificationGraphContextKey{}) == claimed.GraphID {
+		configDigest, err = fcvm.QualificationAPIEnvSHA256(prepared.Spec.APIEnv)
+		if err != nil {
+			return err
+		}
+	}
 	delivery := bootInput{insID: ins.ID, appID: app.ID, accountID: acct.ID, wakeID: ins.WakeID, secretDeliveries: prepared.SecretDeliveries}
 	deliveryFinalized := false
 	defer func() {
@@ -154,7 +183,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return err
 	}
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
-		return err
+		return fmt.Errorf("validate qualification owner before dispatch: %w", err)
 	}
 	// VM effects and evidence checks may consume the full lease window.
 	// Existing serving wakes retain access to the app lock during that work;
@@ -164,36 +193,48 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
 	if err := executor.MarkEnvironmentQualificationDispatched(bootCtx, claimed, frame); err != nil {
-		return err
+		return fmt.Errorf("mark qualification dispatched: %w", err)
 	}
 	vmAttempted = true
 	out, err := vm.CreateEnvironmentQualification(bootCtx, frame, prepared.Spec)
 	if err != nil {
-		return errors.Join(err, context.Cause(ctx))
+		return fmt.Errorf("create qualification runtime: %w", errors.Join(err, context.Cause(ctx)))
 	}
 	if out == nil {
 		return state.ErrConflict
 	}
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
-		return err
+		return fmt.Errorf("validate qualification owner after boot: %w", err)
 	}
 	ins, err = publisher.PublishEnvironmentWorkloadQualificationRuntime(ctx, claimed, state.EnvironmentWorkloadQualificationRuntime{
 		NodeID: ins.NodeID, WakeID: ins.WakeID, Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Inputs: prepared.Inputs})
 	if err != nil {
 		// Keep the admitted identity for cleanup even when publication failed.
 		ins = admission.Instance
-		return err
+		return fmt.Errorf("publish qualification runtime: %w", err)
+	}
+	if configDigest != "" {
+		receipts, ok := e.store.(state.EnvironmentQualificationConfigReceiptStore)
+		if !ok {
+			return state.ErrEnvironmentWorkloadPreparationUnavailable
+		}
+		if _, err := receipts.RecordEnvironmentQualificationConfigReceipt(ctx, claimed, frame, configDigest); err != nil {
+			return fmt.Errorf("persist guest qualification configuration acknowledgement: %w", err)
+		}
 	}
 	e.recordQualificationInstanceTransition(ctx, ins, state.StateColdBooting, state.StateRunning, "environment_qualification")
 	e.recordAppSecretDelivery(ctx, delivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
-		return err
+		return fmt.Errorf("validate qualification owner before visitor: %w", err)
 	}
 	if err := visit(ctx, ins); err != nil {
-		return err
+		return fmt.Errorf("qualification runtime visitor: %w", err)
 	}
-	return e.validateQualificationOwner(ctx, qualifier, claimed)
+	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+		return fmt.Errorf("validate qualification owner after visitor: %w", err)
+	}
+	return nil
 }
 
 // A private attempt remains observable without asking the ordinary service or

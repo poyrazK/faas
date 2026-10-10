@@ -35,6 +35,7 @@ type gitOpsIntentApp struct {
 	Routes           *api.EnvironmentRouteContract `json:"routes"`
 	Policies         *[]ProjectEnvironmentEdgeRule `json:"policies"`
 	VariableCount    int                           `json:"variable_count"`
+	BindingCount     int                           `json:"binding_count"`
 	Type             AppType                       `json:"type"`
 	WorkloadClass    WorkloadClass                 `json:"workload_class"`
 	QueueBindings    []gitOpsQueueIntent           `json:"queue_bindings"`
@@ -52,6 +53,7 @@ type gitOpsIntentSnapshot struct {
 	Prune          bool                            `json:"prune"`
 	Version        int64                           `json:"version"`
 	Project        string                          `json:"project"`
+	Repository     string                          `json:"repository"`
 	Environment    string                          `json:"environment"`
 	EnvironmentID  string                          `json:"environment_id"`
 	QueueBindings  []gitOpsQueueIdentity           `json:"queue_bindings"`
@@ -84,6 +86,7 @@ func readEnvironmentGitOpsIntent(ctx context.Context, db sqlc.DBTX, source Envir
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return EnvironmentGitOpsObservation{}, snapshot, err
 	}
+	snapshot.Repository = source.Spec.Repository
 	observation, err := compileGitOpsObservation(snapshot, desired)
 	return observation, snapshot, err
 }
@@ -125,7 +128,9 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			out.State.Unsupported = append(out.State.Unsupported, resource+": mapped app identity differs from the definition")
 		}
 		if out.State.ResourceIDs[resource] == "" {
-			out.State.Unsupported = append(out.State.Unsupported, resource+": workload creation adapter is not available")
+			if _, err := newEnvironmentWorkloadApp(EnvironmentGitSource{EnvironmentID: snapshot.EnvironmentID}, name, workload, snapshot.Plan); err != nil {
+				out.State.Unsupported = append(out.State.Unsupported, resource+": new workload requires an explicit supported source and lifecycle")
+			}
 		} else if _, exists := byID[out.State.ResourceIDs[resource]]; !exists {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": mapped workload is absent; restoration adapter is not available")
 		}
@@ -134,7 +139,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			return out, ErrInvalidArgument
 		}
 		app := byID[out.State.ResourceIDs[resource]]
-		count := app.VariableCount + app.SecretRefCount
+		count := app.VariableCount + app.SecretRefCount + projectedEnvironmentServiceBindingCount(snapshot, resource, app, workload)
 		suppressionCount := app.SuppressionCount
 		for key, value := range workload.Variables {
 			if _, present := app.Variables[key]; !present {
@@ -195,6 +200,14 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			}
 		}
 		validateGitOpsSecretRefs(&out, desired, resource, app)
+		for name, binding := range workload.ServiceBindings {
+			if _, present := app.Variables[binding.EnvKey]; present {
+				out.State.Unsupported = append(out.State.Unsupported, resource+"#service_bindings/"+name+": binding environment key overlaps an existing variable")
+			}
+			if _, present := app.SecretRefs[binding.EnvKey]; present {
+				out.State.Unsupported = append(out.State.Unsupported, resource+"#service_bindings/"+name+": binding environment key overlaps an existing secret reference")
+			}
+		}
 		if suppressionCount > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": retained secret suppression count exceeds the application limit")
 		}
@@ -215,6 +228,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 		add(resource, "presence", true)
 		observeGitOpsWorkloadIntent(&out, snapshot, desired, resource, app)
+		observeEnvironmentServiceBindings(&out, app, resource)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
 		relevant := map[string]bool{}
 		for key := range desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].SecretRefs {
@@ -418,6 +432,16 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 	q := sqlc.New()
 	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, true) {
 		row.AccountID = accountID
+		if row.Schedule != nil && row.JobID == "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return ErrConflict
+			}
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, workload, snapshot.Plan)
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
 			return err
 		}
@@ -530,8 +554,25 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 		}
 	}
 	steps := []EnvironmentGitOpsStep{}
-	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false) {
+	workloadRows := changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false)
+	workloadIDs := make([]string, 0, len(workloadRows))
+	for appID := range workloadRows {
+		workloadIDs = append(workloadIDs, appID)
+	}
+	slices.Sort(workloadIDs)
+	for _, appID := range workloadIDs {
+		row := workloadRows[appID]
 		row.AccountID = lease.Source.AccountID
+		if row.Schedule != nil || row.JobID != "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return nil, ErrConflict
+			}
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, lease.Source, app, row, workload, snapshot.Plan)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
 			return nil, err
 		}
@@ -556,8 +597,10 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, desired.Definition, observed.State.ResourceIDs, change); err != nil {
 				return nil, mapErr(err)
 			}
-		} else if gitOpsWorkloadField(change.Path) {
+		} else if gitOpsWorkloadField(change.Path) && !strings.HasPrefix(change.Path, "variables/") {
 			// The complete scoped row was published in this transaction above.
+			// GitOps variables also need the app_envs write below; the workload
+			// intent row alone is not the value observed by reconciliation.
 		} else if err := applyEnvironmentGitOpsScopedField(ctx, tx, lease.Source, observed.State.ResourceIDs[change.Resource], change); err != nil {
 			return nil, mapErr(err)
 		}

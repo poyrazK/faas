@@ -45,7 +45,7 @@ func (s *PgStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Con
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}
 	current := qualificationRequestFromSQL(row)
-	if !qualificationLeaseMatches(current, claimed, time.Now()) || current.ExecutionMode == api.ExecutionModeJob || current.ReservedInstanceID == "" {
+	if !qualificationLeaseMatches(current, claimed, time.Now()) || current.ReservedInstanceID == "" {
 		return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
 	}
 	q := sqlc.New()

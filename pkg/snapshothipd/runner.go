@@ -40,6 +40,9 @@ type Runner struct {
 	interval           time.Duration
 	maxTick            int
 	leaseRenewInterval time.Duration
+	// memory shares snapshot memory pages with image blocks (ADR-942); nil
+	// disables it.
+	memory *memorySharer
 }
 
 func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {
@@ -103,6 +106,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
+	go r.runMemorySharing(ctx)
 	r.runTick(ctx)
 	t := time.NewTicker(r.interval)
 	defer t.Stop()
@@ -209,6 +213,9 @@ func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) erro
 	if fetchDrive {
 		r.shareDriveWithLayer(ctx, job, driveKey)
 	}
+	// Every node holding the snapshot gets a job, the capturing node included,
+	// and revalidation repeats it, so this also reaches existing snapshots.
+	r.offerMemoryShare(job)
 	return nil
 }
 

@@ -11,12 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -357,12 +359,12 @@ func (d *Drain) Tick(ctx context.Context) {
 		}
 		parallelRows := make([]state.Invocation, 0, len(rows))
 		queueRowsByApp := make(map[string][]state.Invocation)
-		queueBindings := make(map[string]map[state.InvocationSource]bool)
+		queueTriggers := make(map[string][]sqlc.Trigger)
 		queueTriggerSkipped := false
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
 				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
+					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
 						queueTriggerSkipped = true
 						continue
 					}
@@ -646,30 +648,58 @@ func invocationPageKey(rows []state.Invocation) string {
 	return b.String()
 }
 
-func (d *Drain) queueSourceBound(ctx context.Context, appID string, source state.InvocationSource, cache map[string]map[state.InvocationSource]bool) bool {
-	bySource, ok := cache[appID]
+func (d *Drain) queueSourceBound(ctx context.Context, inv state.Invocation, cache map[string][]sqlc.Trigger) bool {
+	triggers, ok := cache[inv.AppID]
 	if !ok {
-		bySource = make(map[state.InvocationSource]bool)
-		triggers, err := d.store.ListTriggersForApp(ctx, appID)
+		var err error
+		triggers, err = d.store.ListTriggersForApp(ctx, inv.AppID)
 		if err != nil {
 			// Fail open: a binding lookup outage must not strand generic
 			// queue traffic. The next tick retries the lookup.
-			d.log.Warn("drain: queue binding lookup failed", "app_id", appID, "err", err)
-			cache[appID] = bySource
+			d.log.Warn("drain: queue binding lookup failed", "app_id", inv.AppID, "err", err)
+			cache[inv.AppID] = nil
 			return false
 		}
-		for _, trigger := range triggers {
-			if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid {
-				continue
-			}
-			bound := state.InvocationSource(trigger.Source.String)
-			if bound == state.InvocationQueue || bound == state.InvocationDelayedTask {
-				bySource[bound] = true
-			}
-		}
-		cache[appID] = bySource
+		cache[inv.AppID] = triggers
 	}
-	return bySource[source]
+	return queueInvocationHasBoundTrigger(inv, triggers)
+}
+
+func queueInvocationHasBoundTrigger(inv state.Invocation, triggers []sqlc.Trigger) bool {
+	sharedQueueTriggers := 0
+	for _, trigger := range triggers {
+		if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid ||
+			trigger.Source.String != string(inv.Source) {
+			continue
+		}
+		if inv.Source == state.InvocationDelayedTask {
+			return true
+		}
+		if trigger.QueueBindingScope != "" && trigger.QueueBindingScope != inv.DeploymentScope {
+			continue
+		}
+		if trigger.QueueBindingScope == "" {
+			sharedQueueTriggers++
+		}
+		if inv.QueueBindingID != "" {
+			bindingID, err := uuid.Parse(inv.QueueBindingID)
+			if err == nil && trigger.QueueBindingID.Valid && trigger.QueueBindingID.Bytes == bindingID {
+				return true
+			}
+			continue
+		}
+		if trigger.QueueBindingScope != "" {
+			continue
+		}
+		if inv.QueueName != "" && trigger.Slug == inv.QueueName {
+			return true
+		}
+	}
+	// The legacy shared-queue poller owns an unnamed, unbound queue row only
+	// when it is the sole shared queue trigger. With multiple named consumers,
+	// its SQL candidate query deliberately leaves that row to the generic drain.
+	return inv.Source == state.InvocationQueue && inv.QueueBindingID == "" && inv.QueueName == "" &&
+		inv.WorkPolicyName == "" && sharedQueueTriggers == 1
 }
 
 // dispatchParallel runs non-FIFO invocation sources through a bounded worker
@@ -957,7 +987,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	// 6. Complete.
-	if err := completeClaimedInvocation(ctx, d.store, inv, dispatched.Result); err != nil {
+	if err := completeDispatchedInvocation(ctx, d.store, inv, dispatched.Result, dispatched.ResolvedDeploymentID); err != nil {
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
 		// terminal state and the meter join will see it.
@@ -1055,6 +1085,16 @@ func completeClaimedInvocation(ctx context.Context, store state.Store, inv state
 		return store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, result)
 	}
 	return store.CompleteInvocation(ctx, inv.ID, result)
+}
+
+func completeDispatchedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage,
+	deploymentID string) error {
+	if inv.Source == state.InvocationQueue && inv.QueueBindingID != "" && deploymentID != "" {
+		if pullStore, ok := store.(state.EnvironmentGitOpsPullQueueCompletionStore); ok {
+			return pullStore.CompleteEnvironmentGitOpsPullQueueDelivery(ctx, inv.ID, inv.Attempts, deploymentID, result)
+		}
+	}
+	return completeClaimedInvocation(ctx, store, inv, result)
 }
 
 func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {

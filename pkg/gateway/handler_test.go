@@ -750,6 +750,35 @@ func (s stubCountryReader) Lookup(net.IP) (string, bool, error) {
 	return s.country, s.found, s.err
 }
 
+// adr: 104 — key_by=ip buckets per trusted client address. IPv6 clients share
+// their /64 so rotating the interface identifier cannot mint fresh buckets,
+// and a forged or multi-hop X-Forwarded-For is refused, never trusted.
+func TestResolveThrottleDimension_IP(t *testing.T) {
+	h := &Handler{}
+	rule := &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByIP}
+	for _, tc := range []struct {
+		xff, want string
+	}{
+		{"203.0.113.10", "203.0.113.10"},
+		{"::ffff:203.0.113.10", "203.0.113.10"},
+		{"2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"},
+		{"2001:db8:1:2:bbbb::7", "2001:db8:1:2::/64"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+		req.Header.Set("X-Forwarded-For", tc.xff)
+		value, ok, unavailable := h.resolveThrottleDimension(req, rule)
+		if value != tc.want || !ok || unavailable != "" {
+			t.Errorf("ip dimension for %s = (%q, %v, %q), want (%q, true, empty)", tc.xff, value, ok, unavailable, tc.want)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	req.Header.Add("X-Forwarded-For", "198.51.100.4")
+	if _, _, unavailable := h.resolveThrottleDimension(req, rule); unavailable != "caller_ip_untrusted" {
+		t.Fatalf("multi-hop XFF unavailable reason = %q, want caller_ip_untrusted", unavailable)
+	}
+}
+
 func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
 	h := (&Handler{}).WithGeoReader(stubCountryReader{country: "tr", found: true})
 	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
@@ -2463,6 +2492,41 @@ func TestApplyEdgeRuleJWT_VerifierError_EmitsApplyError(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_edge_rule_match_total{kind="jwt",outcome="failed"} 1`) {
 		t.Errorf("match_total{jwt,failed} != 1; body:\n%s", body)
+	}
+}
+
+// adr: 091 — when the IdP's signing keys cannot be fetched the token was
+// never judged, so the gate answers 503 (retryable dependency outage), not
+// 401 (which tells the client its credential is bad).
+func TestApplyEdgeRuleJWT_KeysUnavailable_Returns503(t *testing.T) {
+	b := &fakeBackend{
+		app:      App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host:     "j.example.com",
+		upstream: "127.0.0.1:0",
+		running:  true,
+	}
+	b.targets = append(b.targets, Target{NodeID: b.upstream, InstanceID: "i-fake"})
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.SetWakeGateHook()
+	h.WithEdgeRules(stubEdgeRuleMatcher{jwt: &EdgeRuleJWTResolved{
+		ID: "rule-jwt", AccountID: "acct-1", AppID: "app-1",
+		Issuer: "https://idp.example.com", JWKSURL: "https://idp.example.com/.well-known/jwks.json",
+		Algorithms: []string{"RS256"},
+	}}, nil, nil)
+	h.WithJWTVerifier(&countingJWTVerifier{onVerify: func(context.Context, string, *EdgeRuleJWTResolved) (*JWTClaims, error) {
+		return nil, fmt.Errorf("%w: idp down", ErrJWTKeysUnavailable)
+	}})
+
+	req := httptest.NewRequest("GET", "http://j.example.com/", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rec.Code = %d; want 503 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q; a dependency outage must not challenge the credential", got)
 	}
 }
 

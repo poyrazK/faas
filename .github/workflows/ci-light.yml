@@ -348,7 +348,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Shards 4-6 split cmd/apid's long suite across dedicated PostgreSQL
+        # services; its database DDL cannot race pkg/state's catalogue checks.
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -451,8 +453,21 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
-          SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 6 < "$RUNNER_TEMP/changed-paths.txt")"
+          if (( SHARD > 3 )); then
+            SPLIT="$PKGS"
+            PKGS=""
+            SPLIT_SHARD=$((SHARD - 3))
+          else
+            selected_split="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+            SPLIT=""
+            for pkg in $selected_split; do
+              if [[ "$pkg" == ./pkg/state ]]; then
+                SPLIT="$pkg"
+              fi
+            done
+            SPLIT_SHARD="$SHARD"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
@@ -467,8 +482,8 @@ jobs:
             # shellcheck disable=SC2086 # space-separated package list
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
           fi
-          # Keep main's sequential execution and API thirds. State tests
-          # retain each job's original third as two sequential sixths.
+          # Main's dedicated API jobs retain their three batches. State jobs
+          # retain each original third as two sequential sixths.
           # Verify every selected package's complete compiled inventory.
           for pkg in $SPLIT; do
             (
@@ -479,7 +494,7 @@ jobs:
               else
                 export GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2
                 shards=3
-                batches=("$SHARD")
+                batches=("$SPLIT_SHARD")
               fi
               echo "checking complete test inventory: $pkg"
               inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
@@ -493,6 +508,7 @@ jobs:
               done
               exit "$split_status"
             ) || status=1
+
           done
           exit "$status"
       - name: save Go build + test cache

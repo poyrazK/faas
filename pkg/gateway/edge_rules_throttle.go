@@ -64,7 +64,7 @@ import "net/http"
 // The applier (handler.go::applyEdgeRuleThrottle) reads these and
 // routes the bucket-key construction through Limiter.AllowWithParams
 // (back-compat, KeyBy == "" or "none") or Limiter.AllowWithConsumerKey
-// (dimensional, KeyBy ∈ {"api_key","consumer_id","jwt_subject","jwt_claim","country"}):
+// (dimensional, KeyBy ∈ {"api_key","consumer_id","jwt_subject","jwt_claim","country","ip"}):
 //
 //   - KeyBy           closed vocab from api.ThrottleKeyBy*.
 //     Empty / "none" preserves PR #887 behaviour.
@@ -77,6 +77,7 @@ import "net/http"
 //     0 = use plan default at apply time (resolver
 //     in cmd-side compileThrottleRules).
 type EdgeRuleThrottleResolved struct {
+	EdgeRuleCondition
 	ID                string
 	AccountID         string
 	AppID             string
@@ -87,12 +88,17 @@ type EdgeRuleThrottleResolved struct {
 	RequestsPerSecond float64 // > 0 post-compile
 	Burst             int     // > 0 post-compile
 	// Phase 3 (ADR-104):
-	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim" | "country"
+	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim" | "country" | "ip"
 	JWTClaimName   string // required iff KeyBy == "jwt_claim"
 	MaxKeysPerRule int    // 0 = plan default; capped at compileThrottleRules
 	// MissingKeyPolicy is "shared" (or empty for back-compat) or
 	// "reject". Reject makes the selected identity dimension mandatory.
 	MissingKeyPolicy string
+	// ADR-965: KeyFields are the composite key's fields (KeyBy ==
+	// "composite"); CountStatuses, when non-nil, charges the bucket only
+	// for responses with one of these statuses.
+	KeyFields     []string
+	CountStatuses map[int]bool
 }
 
 // PickFirstThrottleMatch is the priority-ASC + methods +
@@ -121,7 +127,7 @@ func PickFirstThrottleMatch(rules []EdgeRuleThrottleResolved, requestPath, metho
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, requestPath)
+			ok, _ := protectivePathMatch(r.PathGlob, requestPath)
 			if !ok {
 				continue
 			}
