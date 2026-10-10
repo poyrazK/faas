@@ -1225,6 +1225,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := startProfilingReceiver(ctx, log, mgr, store, jailer); err != nil {
 		return fmt.Errorf("register profile receiver: %w", err)
 	}
+	closeTraceReceiver, err := startTraceReceiver(ctx, log, mgr, store, jailer)
+	if err != nil {
+		return fmt.Errorf("register trace receiver: %w", err)
+	}
+	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)

@@ -9,6 +9,7 @@ import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ProfilingConfig } from './ProfilingConfig.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
@@ -16,6 +17,7 @@ import type { WorkloadPort } from './WorkloadPort.js';
  */
 export type AppManifest = {
   profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**

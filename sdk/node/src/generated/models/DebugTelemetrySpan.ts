@@ -28,10 +28,14 @@ export type DebugTelemetrySpan = {
   /**
    * Allowlisted platform-owned dependency classification.
    */
-  dependency_type?: 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal';
+  dependency_type?: 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal' | 'app_dependency';
   /**
    * Allowlisted platform-owned dependency kind; raw span attributes are never returned.
    */
   dependency_kind?: string;
+  /**
+   * Grouping identity of an app_dependency span (ADR-957): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials.
+   */
+  dependency_name?: string;
 };
 

@@ -1176,6 +1176,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
+		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-957 — zero-config guest tracing manifest DTO
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),

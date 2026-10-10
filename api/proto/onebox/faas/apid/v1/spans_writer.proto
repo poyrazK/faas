@@ -42,6 +42,14 @@ service SpansWriter {
   //     the OTLP POST).
   //   - Internal on Postgres errors.
   rpc WriteSpansSummary(WriteSpansSummaryRequest) returns (WriteSpansSummaryResponse);
+
+  // IngestGuestSpans accepts one raw OTLP/HTTP trace export from the
+  // in-guest bridge (ADR-957). vmmd is the only caller: it bounds the
+  // frame and supplies the host-owned principal, but never decodes the
+  // payload. apid checks the plan and per-account rate cap, decodes with
+  // the public-ingest codec, and merges spans through its own flush loop.
+  // Outcomes ride on the response, not gRPC errors.
+  rpc IngestGuestSpans(IngestGuestSpansRequest) returns (IngestGuestSpansResponse);
 }
 
 // WriteSpansSummaryRequest is one coalesced spans_summary
@@ -78,4 +86,29 @@ message WriteSpansSummaryResponse {
   // Mirrors the IncrementRequestTelemetryResponse retry_after_ms
   // shape so the gateway can apply the same back-off logic.
   int64 retry_after_ms = 2;
+}
+// IngestGuestSpansRequest is one in-guest OTLP export plus the identity
+// vmmd resolved from the vsock peer (ADR-957).
+message IngestGuestSpansRequest {
+  // account_id, app_id, deployment_id, instance_id — host-owned identity.
+  string account_id = 1;
+  string app_id = 2;
+  string deployment_id = 3;
+  string instance_id = 4;
+
+  // codec — the guest frame codec byte (pkg/api TraceCodec*): protobuf or
+  // JSON, optionally gzip-encoded.
+  uint32 codec = 5;
+
+  // payload — the export body exactly as the SDK sent it.
+  bytes payload = 6;
+}
+
+// IngestGuestSpansResponse outcome ∈ {accepted, rate_limited, disabled,
+// invalid, unavailable}. vmmd maps it to the guest ack byte.
+message IngestGuestSpansResponse {
+  string outcome = 1;
+  int64 accepted_spans = 2;
+  int64 rejected_spans = 3;
+  int64 retry_after_ms = 4;
 }

@@ -4,6 +4,10 @@ from faas_sdk.api.invocations import export_durable_entity, restore_durable_enti
 from faas_sdk.models.durable_entity_restore_request import DurableEntityRestoreRequest
 from faas_sdk.models.durable_entity_state_export import DurableEntityStateExport
 
+ACCOUNT_ID = "22222222-2222-4222-8222-222222222222"
+APP_ID = "33333333-3333-4333-8333-333333333333"
+ENVIRONMENT_ID = "44444444-4444-4444-8444-444444444444"
+
 
 def test_application_validation_preserves_deployment_pin():
     from uuid import UUID
@@ -15,7 +19,13 @@ def test_application_validation_preserves_deployment_pin():
     exported = DurableEntityStateExport.from_dict(
         {
             "format": 1,
-            "entity": {"account_id": "a", "app_id": "b", "environment_id": "e", "namespace": "ns", "key": "doc"},
+            "entity": {
+                "account_id": ACCOUNT_ID,
+                "app_id": APP_ID,
+                "environment_id": ENVIRONMENT_ID,
+                "namespace": "ns",
+                "key": "doc",
+            },
             "version": 1,
             "data": {},
             "checksum": "a" * 64,
@@ -69,9 +79,9 @@ def test_export_restore_preserves_scope_and_full_integer_versions():
     envelope = {
         "format": 1,
         "entity": {
-            "account_id": "account",
-            "app_id": "app",
-            "environment_id": "env",
+            "account_id": ACCOUNT_ID,
+            "app_id": APP_ID,
+            "environment_id": ENVIRONMENT_ID,
             "namespace": "documents",
             "key": "document:123",
         },

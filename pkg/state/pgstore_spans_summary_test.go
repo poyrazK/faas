@@ -2,11 +2,13 @@ package state_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -56,8 +58,9 @@ func TestPgStoreUpdateSpansSummaryMergesAndDeduplicatesWriters(t *testing.T) {
 
 	// The composite account predicate must still prevent a different tenant's
 	// writer from replacing or appending evidence to this trace.
-	if err := store.UpdateSpansSummary(ctx, traceID, uuid.New(), []byte(`[{"span_id":"foreign"}]`)); err != nil {
-		t.Fatalf("cross-account update: %v", err)
+	// The foreign write matches no row, which the store reports as such (ADR-957).
+	if err := store.UpdateSpansSummary(ctx, traceID, uuid.New(), []byte(`[{"span_id":"foreign"}]`)); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+		t.Fatalf("cross-account update: %v, want ErrRequestTelemetryRowNotFound", err)
 	}
 	var afterForeign []byte
 	if err := pool.QueryRow(ctx, `SELECT spans_summary FROM request_telemetry WHERE trace_id = $1 AND account_id = $2`, traceID, accountID).Scan(&afterForeign); err != nil {

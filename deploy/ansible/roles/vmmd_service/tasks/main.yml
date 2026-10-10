@@ -99,6 +99,15 @@
     mode: "0644"
   notify: restart faas-vmmd
 
+- name: vmmd_service — install guest trace spans writer target (ADR-957)
+  ansible.builtin.template:
+    src: 99-faas-spans-writer.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-spans-writer.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
 # Public multi-box release gate: vmmd must receive both routing values from
 # inventory. Without this assertion an operator can bootstrap a compute box
 # that self-registers its unix socket and later repair compute_nodes by hand.

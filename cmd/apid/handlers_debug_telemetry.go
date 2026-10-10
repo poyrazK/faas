@@ -290,18 +290,19 @@ func (s *server) debugDependencyLatencyHandler(w http.ResponseWriter, r *http.Re
 	dependencies, edges, aggregationTruncated, representedRequests, spanSamples := buildDebugDependencyLatencyHistory(rows, windowStart, now)
 	truncated = truncated || aggregationTruncated
 	writeJSON(w, http.StatusOK, api.DebugDependencyLatencyResponse{
-		AppID:               app.ID,
-		Since:               echoDebugSince(sinceRaw, since),
-		WindowStart:         windowStart.Format(time.RFC3339Nano),
-		WindowEnd:           now.Format(time.RFC3339Nano),
-		RetentionClamped:    retentionClamped,
-		Complete:            !truncated,
-		Truncated:           truncated,
-		TelemetryRows:       int64(len(rows)),
-		RepresentedRequests: representedRequests,
-		SpanSamples:         spanSamples,
-		Dependencies:        dependencies,
-		Edges:               edges,
+		AppID:                app.ID,
+		Since:                echoDebugSince(sinceRaw, since),
+		WindowStart:          windowStart.Format(time.RFC3339Nano),
+		WindowEnd:            now.Format(time.RFC3339Nano),
+		RetentionClamped:     retentionClamped,
+		Complete:             !truncated,
+		Truncated:            truncated,
+		TelemetryRows:        int64(len(rows)),
+		RepresentedRequests:  representedRequests,
+		SpanSamples:          spanSamples,
+		Dependencies:         dependencies,
+		Edges:                edges,
+		DeploymentComparison: buildDebugDependencyDeploymentComparison(rows, "", "", 0),
 	})
 }
 
@@ -631,7 +632,10 @@ func debugCriticalPathDominantSegment(path *api.DebugRequestCriticalPath) (*api.
 		if dependencyType == "" {
 			dependencyType = "application"
 		}
-		name := span.Name
+		name := span.DependencyName
+		if name == "" {
+			name = span.Name
+		}
 		if name == "" {
 			name = "<unnamed>"
 		}
@@ -652,7 +656,10 @@ func debugCriticalPathIdentity(path *api.DebugRequestCriticalPath) (string, []ap
 		if dependencyType == "" {
 			dependencyType = "application"
 		}
-		name := span.Name
+		name := span.DependencyName
+		if name == "" {
+			name = span.Name
+		}
 		if name == "" {
 			name = "<unnamed>"
 		}
@@ -750,12 +757,27 @@ type debugDependencyHistoryMetrics struct {
 
 func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugDependencyLatencyItem, []api.DebugDependencyImpactEdge, bool, int64, int64) {
 	cutover := windowStart.Add(windowEnd.Sub(windowStart) / 2)
+	return buildDebugDependencyRollup(rows, func(row sqlc.ListRequestTelemetryDependencySpansRow) (bool, bool) {
+		return true, row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
+	})
+}
+
+// buildDebugDependencyRollup aggregates retained spans into dependency and
+// edge rollups. classify decides whether a row is included and whether it
+// belongs to the "current" side of the baseline/current comparison, so the
+// same machinery serves the time-split history and the deployment
+// comparison (ADR-957 §5).
+func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansRow, classify func(sqlc.ListRequestTelemetryDependencySpansRow) (include, current bool)) ([]api.DebugDependencyLatencyItem, []api.DebugDependencyImpactEdge, bool, int64, int64) {
 	aggregates := make(map[string]*debugDependencyHistoryAggregate)
 	edgeAggregates := make(map[string]*debugDependencyImpactAggregate)
 	truncated := false
 	var representedRequests int64
 	var spanSamples int64
 	for _, row := range rows {
+		include, isCurrent := classify(row)
+		if !include {
+			continue
+		}
 		weight := int64(row.Count)
 		if weight < 1 {
 			weight = 1
@@ -764,7 +786,6 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 		spans, spanTruncated := parseDebugEvidenceSpans(row.SpansSummary)
 		truncated = truncated || spanTruncated
 		spanSamples += int64(len(spans))
-		isCurrent := row.ReceivedAt.Valid && !row.ReceivedAt.Time.Before(cutover)
 		exclusives := debugDependencySpanExclusiveDurations(spans)
 		spanIndexes := make(map[string]int, len(spans))
 		for index, span := range spans {
@@ -1085,7 +1106,10 @@ func debugDependencySegment(span api.DebugTelemetrySpan) api.DebugCriticalPathSe
 	if dependencyType == "" {
 		dependencyType = "application"
 	}
-	name := span.Name
+	name := span.DependencyName
+	if name == "" {
+		name = span.Name
+	}
 	if name == "" {
 		name = "<unnamed>"
 	}
@@ -1389,6 +1413,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		CriticalPath:               criticalPath,
 		DependencyLatency:          dependencyLatency,
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
+		DependencyComparison:       s.debugEvidenceDependencyComparison(r, app, acct, request, now.Add(-retention), now),
 		Spans:                      spans,
 		SpansTruncated:             truncated,
 		Explanation:                explanation,
@@ -1438,7 +1463,10 @@ func buildDebugDependencyLatency(spans []api.DebugTelemetrySpan) ([]api.DebugReq
 		if dependencyType == "" {
 			dependencyType = "application"
 		}
-		name := span.Name
+		name := span.DependencyName
+		if name == "" {
+			name = span.Name
+		}
 		if name == "" {
 			name = "<unnamed>"
 		}
@@ -2192,6 +2220,7 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 			item.Factor = formatFloat2(f.Float64)
 		}
 	}
+	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
 	return item
 }
 
