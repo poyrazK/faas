@@ -250,3 +250,22 @@ Interactive sessions are an operator-gated preview (ADR-958). A deployment
 whose guest predates interactive sessions reports `interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
 supported yet.
+
+### Copy files out and forward ports
+
+The same fresh-VM sessions power two more commands:
+
+```sh
+gregale app my-api cp /app/dist ./dist          # directory or file
+gregale app my-api cp config/app.yaml -         # tar to stdout
+gregale app my-api port-forward 5432:db.svc.gregale:5432
+gregale app my-api port-forward 0:billing.svc.gregale:8080   # pick a free port
+```
+
+`cp` reads the path as the app's configured user, so it sees exactly what the
+app can read; relative paths start at the app's working directory. Copying
+into a VM is not offered because the VM is discarded when the session ends.
+`port-forward` listens on 127.0.0.1 and dials `HOST:PORT` from inside the
+app's network, with its egress policy, private networks and service names, so
+you can reach internal services and managed databases from your laptop. All
+local connections share one session; stop it with Ctrl-C.

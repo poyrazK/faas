@@ -2754,6 +2754,27 @@ Run a one-off command against the live deployment
 | `--poll-interval <D>` | status polling interval while attached |  |
 | `--wait-timeout <D>` | maximum attached wait |  |
 
+### app cp
+
+Copy a path out of a fresh VM of the live deployment
+
+`gregale app <slug> cp [--wait-timeout <D>] <remote-path> <local-path|->`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
+
+### app port-forward
+
+Forward a local port to HOST:PORT reached from inside the app&#39;s network
+
+`gregale app <slug> port-forward [--address <A>] [--wait-timeout <D>] [LOCAL_PORT:]HOST:PORT`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--address <A>` | local address to listen on (default 127.0.0.1) |  |
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
+
 ### app security
 
 Show posture or configure deploy enforcement

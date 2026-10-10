@@ -8,7 +8,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -35,7 +37,47 @@ const (
 	AppTaskAttachMaxMessageBytes = 64*1024 + 1
 )
 
+// Reserved guest-init built-ins for interactive sessions (ADR-958). Both run
+// without a tty: copy-out streams a tar of one path read as the app user;
+// port-forward relays apptaskmux streams to one host:port dialed from inside
+// the app's network.
+const (
+	AppTaskCopyOutCommand     = "__gregale_copy_out_v1__"
+	AppTaskPortForwardCommand = "__gregale_port_forward_v1__"
+)
+
 var ErrAppTaskAttachMessage = errors.New("api: malformed app task attach message")
+
+// IsAppTaskSessionBuiltin reports whether command names a reserved
+// interactive built-in, valid or not.
+func IsAppTaskSessionBuiltin(command []string) bool {
+	return len(command) > 0 && (command[0] == AppTaskCopyOutCommand || command[0] == AppTaskPortForwardCommand)
+}
+
+// ValidAppTaskSessionBuiltin checks a reserved built-in's exact shape.
+func ValidAppTaskSessionBuiltin(command []string, shell, tty bool) bool {
+	if shell || tty || len(command) != 2 || command[1] == "" || strings.ContainsRune(command[1], '\x00') {
+		return false
+	}
+	switch command[0] {
+	case AppTaskCopyOutCommand:
+		return len(command[1]) <= 4096
+	case AppTaskPortForwardCommand:
+		return ValidPortForwardTarget(command[1])
+	default:
+		return false
+	}
+}
+
+// ValidPortForwardTarget accepts host:port with a port in 1..65535.
+func ValidPortForwardTarget(target string) bool {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || host == "" || len(host) > 253 {
+		return false
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value >= 1 && value <= 65535
+}
 
 // AppTaskAttachPath is the gateway endpoint for one interactive task.
 func AppTaskAttachPath(slug, taskID string) string {

@@ -2,6 +2,33 @@ package api
 
 import "testing"
 
+func TestAppTaskSessionBuiltinValidation(t *testing.T) {
+	valid := []CreateAppTaskRequest{
+		{Interactive: true, Command: []string{AppTaskCopyOutCommand, "/app/dist"}},
+		{Interactive: true, Command: []string{AppTaskPortForwardCommand, "db.svc.gregale:5432"}},
+		{Interactive: true, Command: []string{AppTaskPortForwardCommand, "[fd00::1]:8080"}},
+	}
+	for _, request := range valid {
+		if _, problem := request.Resolve(); problem != nil {
+			t.Fatalf("%v rejected: %s", request.Command, problem.Detail)
+		}
+	}
+	invalid := map[string]CreateAppTaskRequest{
+		"batch":     {Command: []string{AppTaskCopyOutCommand, "/app"}},
+		"tty":       {Interactive: true, TTY: true, Command: []string{AppTaskCopyOutCommand, "/app"}},
+		"no path":   {Interactive: true, Command: []string{AppTaskCopyOutCommand}},
+		"extra arg": {Interactive: true, Command: []string{AppTaskCopyOutCommand, "/a", "/b"}},
+		"no port":   {Interactive: true, Command: []string{AppTaskPortForwardCommand, "db"}},
+		"bad port":  {Interactive: true, Command: []string{AppTaskPortForwardCommand, "db:70000"}},
+		"shell":     {Interactive: true, CommandShell: true, Command: []string{AppTaskPortForwardCommand}},
+	}
+	for name, request := range invalid {
+		if _, problem := request.Resolve(); problem == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}
+
 func TestCreateAppTaskRequestInteractiveDefaults(t *testing.T) {
 	resolved, problem := (CreateAppTaskRequest{Interactive: true, TTY: true}).Resolve()
 	if problem != nil {

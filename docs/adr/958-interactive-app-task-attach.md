@@ -55,6 +55,25 @@ loopback bindings as batch tasks. A version-1 guest rejects the version-2
 request, so an old base image fails closed with a redeploy hint instead of
 running a shell without stdin.
 
+## Session built-ins: `cp` and `port-forward`
+
+Two reserved commands run as guest-init built-ins over a non-tty session's
+stdin/stdout, so they need no vmmd or gateway change. apid accepts them only
+on interactive, non-tty, non-shell requests with exactly one argument.
+
+- `__gregale_copy_out_v1__ <path>` (`gregale app cp`): guest-init re-executes
+  itself (`/proc/self/exe`) as the deployment's user and streams a tar of the
+  path, so a copy reads exactly what the app user can. Symlinks below the path
+  are archived as links. The CLI extracts through `os.Root`, so entries cannot
+  escape the destination. Copying into a VM is not offered: the VM is
+  discarded when the session ends.
+- `__gregale_port_forward_v1__ <host:port>` (`gregale app port-forward`):
+  `pkg/apptaskmux` multiplexes every local connection over the session
+  (Open/Data/EOF/Close frames, half-close preserved). The guest dials the
+  target from inside the app's network namespace, so the app's egress policy,
+  private networks and service names apply. A session holds at most 64
+  concurrent streams.
+
 ## Gating
 
 apid admits interactive tasks only when `FAAS_INTERACTIVE_APP_TASKS=1` and the
@@ -87,7 +106,8 @@ version-2 request.
   production access policy). It can reuse this ADR's token, gateway endpoint
   and `AttachAppTask` transport by targeting a serving instance instead of a
   task instance.
-- `gregale cp` and port-forward can reuse the attach transport.
+- Copying into a live instance and forwarding to a live instance's own ports
+  belong with the live-instance follow-up.
 
 ## Rejected alternatives
 

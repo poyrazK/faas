@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"golang.org/x/sys/unix"
 )
@@ -38,6 +39,16 @@ func appTaskInteractiveHandler(log *slog.Logger) apptaskproto.InteractiveHandler
 		runtime, failure := loadAppTaskRuntime(log)
 		if failure != nil {
 			return *failure, nil
+		}
+		req := session.Request
+		if api.IsAppTaskSessionBuiltin(req.Command) {
+			if !api.ValidAppTaskSessionBuiltin(req.Command, req.CommandShell, req.TTY) {
+				return appTaskInfraFailure("builtin_invalid", "the session built-in was called with invalid arguments", 2), nil
+			}
+			if req.Command[0] == api.AppTaskPortForwardCommand {
+				return runAppTaskPortForward(ctx, session, req.Command[1])
+			}
+			return runAppTaskCopyOut(ctx, session, runtime, req.Command[1])
 		}
 		cmd, credential, failure := prepareAppTaskCommand(session.Request, runtime.manifest, runtime.secrets, runtime.apiEnv)
 		if failure != nil {

@@ -1131,6 +1131,13 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "status polling interval while attached", Value: "D"},
 				{Name: "wait-timeout", Short: "maximum attached wait", Value: "D"},
 			}},
+			{Name: "cp", Short: "Copy a path out of a fresh VM of the live deployment", Positionals: []string{"<remote-path>", "<local-path|->"}, Flags: []cliFlag{
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
+			}},
+			{Name: "port-forward", Short: "Forward a local port to HOST:PORT reached from inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
+				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
+			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{
 				{Name: "posture", Short: "show the read-only security posture"},
 				{Name: "require-signed", Short: "require signed images on deploy", Value: "true|false", ClosedSet: []string{"true", "false"}},

@@ -1056,6 +1056,10 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRestart(slug, args[2:])
 		case subExec:
 			return cmdAppExec(slug, args[2:])
+		case "cp":
+			return cmdAppCopy(slug, args[2:])
+		case "port-forward":
+			return cmdAppPortForward(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:

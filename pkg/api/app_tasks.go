@@ -142,6 +142,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	if r.Interactive && (IsServiceBindingSmokeCommand(r.Command, r.CommandShell) || IsBindingVerificationCommand(r.Command, r.CommandShell)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("platform probe commands cannot run interactively")
 	}
+	if IsAppTaskSessionBuiltin(r.Command) && (!r.Interactive || !ValidAppTaskSessionBuiltin(r.Command, r.CommandShell, r.TTY)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("copy and port-forward sessions require an interactive, non-tty request with one argument")
+	}
 	deploymentID := r.VerificationDeploymentID
 	if deploymentID != "" {
 		parsed, err := uuid.Parse(deploymentID)
