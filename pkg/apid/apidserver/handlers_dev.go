@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -104,6 +105,12 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	watch, prob := devloop.ValidateWatch(req.Watch)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	req.Watch = watch
 	limits := api.MustLimitsFor(acct.Plan)
 	lease, prob := devSessionLease(req.LeaseSeconds, limits)
 	if prob != nil {
@@ -133,6 +140,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				"Developer session shape changed", "run 'gregale dev --stop' once, then start the session again"))
 			return
 		}
+		if prob := devloop.WatchUnsupported(existing, watch); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), existing.ID, expiresAt)
 		if refreshErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
@@ -148,6 +159,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	if prob := devloop.WatchUnsupported(app, watch); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
@@ -251,6 +266,7 @@ func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	writeJSON(w, http.StatusOK, api.DevSessionResponse{
 		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Buckets: buckets,
+		Watch: devloop.LoadWatch(r.Context(), s.store, app.ID),
 	})
 }
 

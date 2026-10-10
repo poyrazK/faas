@@ -58004,6 +58004,19 @@ components:
           format: int64
           minimum: 3600
           description: How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
+        watch:
+          $ref: '#/components/schemas/DevWatch'
+
+    DevWatch:
+      description: Watch mode (ADR-1170). The environment runs this development server instead of the production build, and live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not require authentication.
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: One-line command that starts the development server, for example "npm run dev".
 
     RegisterScenarioTestRequest:
       description: Complete set of developer sessions in one isolated scenario run.
@@ -58164,6 +58177,7 @@ components:
           type: array
           description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
           items: { $ref: '#/components/schemas/DevBucketResponse' }
+        watch: { $ref: '#/components/schemas/DevWatch' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.

@@ -163,7 +163,27 @@ the builder VM. That is the only case that waits for a build.
    rebuild reason and which frameworks it comes from.
 2. **Node watch mode, explicit command.** `dev.watch.command` only; builder
    plan rewrite for Railpack Node plans; no-restart apply; RAM floor; auth
-   requirement; metrics `watch` label; metal tests.
+   requirement; metrics `watch` label; metal tests. *Implemented, apart from
+   the metrics label and metal tests:*
+   - `gregale dev --watch` / `--watch-command` and `dev.watch` (`true` or
+     `{command}`). Without a command the CLI uses `npm run dev` when
+     `package.json` has a `dev` script, which pulls part of phase 3 forward.
+   - apid validates the command and refuses watch mode with
+     `dev_watch_unsupported` for functions, developer apps under
+     `DevWatchMinRAMMB` (512 MB) and apps reachable without authentication.
+     The setting lives in `dev_watch_settings`; an upsert without `watch`
+     clears it.
+   - builderd passes the command to developer builds only (production apps,
+     PR previews and functions never get it) and keys the build cache on it.
+   - The rewrite is a Railpack config overlay, not a plan rewrite: guest-init
+     replaces the `build` step's commands with a non-executing `path`
+     command, sets the development command as `deploy.startCommand`, and adds
+     `NODE_ENV=development` and `FAAS_DEV_WATCH=1` to the deploy variables.
+     The plan Railpack then writes must classify as verbatim, or the build
+     fails with `dev_watch_unsupported`; Dockerfile and non-Node builds are
+     refused before they start.
+   - In an image with `FAAS_DEV_WATCH=1`, guest-init writes live patches and
+     acknowledges them without restarting the workload.
 3. **Framework defaults.** `dev.watch: true` resolves the command from the
    package's `dev` script or known frameworks (Next.js, Vite, Nuxt, Remix,
    SvelteKit). The rebuild explainer suggests `--watch`.

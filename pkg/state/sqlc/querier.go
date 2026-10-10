@@ -555,6 +555,7 @@ type Querier interface {
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
+	DeleteDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error)
 	DeleteEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsOverrideParams) (int64, error)
 	DeleteEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsPoliciesParams) error
@@ -1120,6 +1121,7 @@ type Querier interface {
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetDevSourceManifest(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DevSourceManifest, error)
 	GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error)
+	GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	GetEntityOutboxAcceptanceFingerprint(ctx context.Context, db DBTX, messageID string) (string, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
@@ -3796,6 +3798,8 @@ type Querier interface {
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
 	// ADR-740 developer live source patches.
 	UpsertDevSourceManifest(ctx context.Context, db DBTX, arg UpsertDevSourceManifestParams) error
+	// ADR-1170: a developer environment's watch-mode command.
+	UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error
 	UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, arg UpsertEnvironmentQueueDeliveryReceiptParams) (int64, error)
 	UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error
 	// (xmax = 0) distinguishes a declaration first installed by this deploy from
