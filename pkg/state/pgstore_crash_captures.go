@@ -125,6 +125,7 @@ func (s *PgStore) CompleteCrashCapture(ctx context.Context, p CompleteCrashCaptu
 	row, err := sqlc.New().CompleteCrashCapture(ctx, s.pool, sqlc.CompleteCrashCaptureParams{
 		StorageKey: p.StorageKey, VmstateStorageKey: p.VMStateStorageKey, FcVersion: p.FCVersion, MemBytes: p.MemBytes,
 		Now: pgTime(p.CapturedAt), ExpiresAt: pgTime(p.ExpiresAt), CaptureID: mustPgUUID(p.ID),
+		SealedKey: p.SealedKey,
 	})
 	return crashCaptureRow(row, err, ErrNotFound)
 }

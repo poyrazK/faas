@@ -1,5 +1,7 @@
 package fcvm
 
+import "github.com/onebox-faas/faas/pkg/storage"
+
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
 // Snapshot.FCVersion (ADR-005) but for the wire-protocol-capable
@@ -58,6 +60,14 @@ type Snapshot struct {
 	// runtime catalog. Ordinary app snapshots must never be selected by the
 	// dedicated execution restore path.
 	Networkless bool
+	// CaptureID and SealedKey mark an ADR-733 sealed crash capture; the
+	// Manager opens the key and sets Storage before restoring.
+	CaptureID string
+	SealedKey []byte
+	// Storage, when set, carries a sealed crash capture's objects
+	// (ADR-733): the backing identity is verified and the capture restored
+	// through it instead of the shared store.
+	Storage storage.StorageBackend
 }
 
 // Usable reports whether snap can be loaded by the given running Firecracker
@@ -214,6 +224,11 @@ type RestoreSpec struct {
 	// before Restore was entered, so the wake.restore_breakdown event can
 	// attribute the whole vmmd window rather than only the JailerVMM part.
 	Prepare WakePrepareTimings
+	// Storage, when set, carries a sealed crash capture's memory, vmstate,
+	// private drive and backing identity (a crashcrypt.Backend decrypting
+	// on read). Those objects are copied into this instance's staging and
+	// never resolved through the shared store's local paths.
+	Storage storage.StorageBackend
 }
 
 // WakePrepareTimings (ADR-192) are the Manager.Wake phases that precede the
@@ -264,6 +279,10 @@ type SnapshotSpec struct {
 	// BeforeCheckpoint requests the guest-local callback for a new terminal
 	// init capture. Warm and migration captures must leave this false.
 	BeforeCheckpoint bool
+	// Storage, when set, carries this capture's objects instead of the
+	// shared backend (ADR-733 sealed crash captures: a crashcrypt.Backend
+	// that stores only ciphertext). Local-path publication is disabled.
+	Storage storage.StorageBackend
 }
 
 // SnapshotInfo is the result of a snapshot create.

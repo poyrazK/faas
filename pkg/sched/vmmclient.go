@@ -582,6 +582,11 @@ type SnapshotRef struct {
 	// MemBytes is the snapshot's recorded guest memory length; vmmd needs it
 	// to restore companion snapshots.
 	MemBytes int64
+	// CaptureID and SealedKey mark an ADR-733 crash capture vmmd sealed at
+	// the source; the restoring vmmd opens the key and decrypts it. The key
+	// is held as a string so SnapshotRef stays comparable.
+	CaptureID string
+	SealedKey string
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -1089,6 +1094,8 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
 			MemBytes:          snap.MemBytes,
+			CaptureId:         snap.CaptureID,
+			SealedKey:         []byte(snap.SealedKey),
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1137,6 +1144,26 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 		return SnapshotBytes{}, liftErr(err)
 	}
 	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+}
+
+// WarmSnapshotSealed is WarmSnapshot for an ADR-733 crash capture on a
+// remote backend: vmmd publishes only encrypted twins and returns the
+// capture key sealed to the fleet recipient.
+func (c *VMMClient) WarmSnapshotSealed(ctx context.Context, instance, storageKey, vmstateStorageKey, captureID string) (SnapshotBytes, []byte, error) {
+	resp, err := c.cli.WarmSnapshot(ctx, &vmmdpb.WarmSnapshotRequest{
+		Instance:          instance,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
+		SealCaptureId:     captureID,
+	})
+	if err != nil {
+		return SnapshotBytes{}, nil, liftErr(err)
+	}
+	if len(resp.GetSealedKey()) == 0 {
+		// An older vmmd ignored seal_capture_id and published plaintext.
+		return SnapshotBytes{}, nil, errors.New("sched: vmmd did not seal the crash capture")
+	}
+	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, resp.GetSealedKey(), nil
 }
 
 // ResumeWarmInstance wraps the additive vmmd RPC used when the scheduler

@@ -421,6 +421,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			StorageKey:        snap.GetStorageKey(),
 			VMStateStorageKey: snap.GetVmstateStorageKey(),
 			MemBytes:          snap.GetMemBytes(),
+			CaptureID:         snap.GetCaptureId(),
+			SealedKey:         snap.GetSealedKey(),
 		}
 	}
 	return wr, nil
