@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -262,6 +263,7 @@ type server struct {
 	preflightOnce    sync.Once
 	preflightHandler *preflight.Handler
 	statusMetrics    *statusMetrics
+	devLoopMetrics   *devloop.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -510,6 +512,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
+	}
+	if ops == nil {
+		s.devLoopMetrics = nil
+	} else if s.devLoopMetrics == nil || s.devLoopMetrics.Registry() != ops.Registry() {
+		s.devLoopMetrics = devloop.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())

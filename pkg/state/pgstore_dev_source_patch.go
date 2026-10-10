@@ -139,22 +139,26 @@ func nonNilStrings(values []string) []string {
 	return values
 }
 
-func (s *PgStore) RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error {
+func (s *PgStore) RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) (DevSourcePatchAck, error) {
 	app, err := parsePgUUID(appID)
 	if err != nil {
-		return err
+		return DevSourcePatchAck{}, err
 	}
 	base, err := parsePgUUID(baseDeploymentID)
 	if err != nil {
-		return err
+		return DevSourcePatchAck{}, err
 	}
-	if _, err := sqlc.New().RecordDevSourcePatchApplied(ctx, s.pool, sqlc.RecordDevSourcePatchAppliedParams{
+	row, err := sqlc.New().RecordDevSourcePatchApplied(ctx, s.pool, sqlc.RecordDevSourcePatchAppliedParams{
 		ApplyMs: int32(applyMS), ApplyError: pgtype.Text{String: applyError, Valid: applyError != ""},
 		AppID: app, BaseDeploymentID: base, Generation: generation,
-	}); err != nil {
-		return fmt.Errorf("state: record developer patch acknowledgement: %w", err)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DevSourcePatchAck{}, nil
 	}
-	return nil
+	if err != nil {
+		return DevSourcePatchAck{}, fmt.Errorf("state: record developer patch acknowledgement: %w", err)
+	}
+	return DevSourcePatchAck{First: true, Delivery: max(row.AppliedAt.Time.Sub(row.CreatedAt.Time), 0)}, nil
 }
 
 func (s *PgStore) DevSourcePatchStatus(ctx context.Context, appID string, generation int64) (DevSourcePatchStatus, error) {

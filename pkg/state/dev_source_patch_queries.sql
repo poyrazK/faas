@@ -55,15 +55,16 @@ DELETE FROM dev_source_patches
 WHERE app_id = sqlc.arg(app_id)::uuid
   AND (expires_at <= now() OR base_deployment_id <> sqlc.arg(base_deployment_id)::uuid);
 
--- name: RecordDevSourcePatchApplied :execrows
+-- name: RecordDevSourcePatchApplied :one
 -- The first acknowledgement wins; later instances applying the same
--- generation do not move the recorded time.
+-- generation do not move the recorded time and return no row.
 UPDATE dev_source_patches
 SET applied_at = now(), apply_ms = sqlc.arg(apply_ms)::int, apply_error = sqlc.narg(apply_error)::text
 WHERE app_id = sqlc.arg(app_id)::uuid
   AND base_deployment_id = sqlc.arg(base_deployment_id)::uuid
   AND generation = sqlc.arg(generation)::bigint
-  AND applied_at IS NULL;
+  AND applied_at IS NULL
+RETURNING created_at, applied_at;
 
 -- name: GetDevSourcePatchStatus :one
 SELECT generation, created_at, applied_at, apply_ms, apply_error

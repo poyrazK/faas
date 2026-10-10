@@ -206,13 +206,14 @@ func (q *Queries) PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneD
 	return result.RowsAffected(), nil
 }
 
-const recordDevSourcePatchApplied = `-- name: RecordDevSourcePatchApplied :execrows
+const recordDevSourcePatchApplied = `-- name: RecordDevSourcePatchApplied :one
 UPDATE dev_source_patches
 SET applied_at = now(), apply_ms = $1::int, apply_error = $2::text
 WHERE app_id = $3::uuid
   AND base_deployment_id = $4::uuid
   AND generation = $5::bigint
   AND applied_at IS NULL
+RETURNING created_at, applied_at
 `
 
 type RecordDevSourcePatchAppliedParams struct {
@@ -223,20 +224,24 @@ type RecordDevSourcePatchAppliedParams struct {
 	Generation       int64
 }
 
+type RecordDevSourcePatchAppliedRow struct {
+	CreatedAt pgtype.Timestamptz
+	AppliedAt pgtype.Timestamptz
+}
+
 // The first acknowledgement wins; later instances applying the same
-// generation do not move the recorded time.
-func (q *Queries) RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (int64, error) {
-	result, err := db.Exec(ctx, recordDevSourcePatchApplied,
+// generation do not move the recorded time and return no row.
+func (q *Queries) RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (RecordDevSourcePatchAppliedRow, error) {
+	row := db.QueryRow(ctx, recordDevSourcePatchApplied,
 		arg.ApplyMs,
 		arg.ApplyError,
 		arg.AppID,
 		arg.BaseDeploymentID,
 		arg.Generation,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i RecordDevSourcePatchAppliedRow
+	err := row.Scan(&i.CreatedAt, &i.AppliedAt)
+	return i, err
 }
 
 const upsertDevSourceManifest = `-- name: UpsertDevSourceManifest :exec
