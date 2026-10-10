@@ -16,6 +16,7 @@ func TestAutomationPauseNotificationVocabularyPreservesEventsAndReplay(t *testin
 	pool := pgtest.OpenMigrated(t)
 	defer pool.Close()
 	ctx := t.Context()
+	migrateUpOnce(ctx, t, pool)
 	raw, err := migrations.FS.ReadFile("20261010071421609_automation_pause_notification_vocabulary.sql")
 	if err != nil {
 		t.Fatal(err)

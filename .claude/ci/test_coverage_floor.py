@@ -1,6 +1,7 @@
 """Regression fixtures for profiles produced by multiple test binaries."""
 import contextlib
 import io
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -112,6 +113,32 @@ class CoverageFloorTest(unittest.TestCase):
         second = self.profile("set.out", [self.block("pkg/state/store.go", 1, 1)], mode="set")
         with self.assertRaisesRegex(ValueError, "coverage modes differ"):
             coverage_floor.read_blocks([first, second])
+
+
+class StateCoverageWorkflowTest(unittest.TestCase):
+    """Exact-package coverage must include actual API adapter invocations."""
+
+    def test_complete_state_and_api_profiles_are_required(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
+        jobs = dict(re.findall(r"^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)", workflow, re.M | re.S))
+        api_job = jobs["unit-tests-pg-1"]
+        self.assertIn("STATEPKG=$(go list ./pkg/state)", api_job)
+        self.assertIn('"$PKGS" "$STATEPKG"', api_job)
+        self.assertIn('-coverpkg="$COVERPKGS"', api_job)
+        self.assertIn("normalize_go_cover_profile.py coverage/cover-shard1.out", api_job)
+        self.assertIn("name: coverage-state-api", api_job)
+        upload = api_job.split("- name: upload public API state-adapter coverage", 1)[1].split("- name: sdk-check", 1)[0]
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertNotRegex(upload, r"(?m)^\s+if:")
+        aggregate = jobs["state-coverage"]
+        self.assertIn("needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1]", aggregate)
+        command = next(line for line in aggregate.splitlines() if "coverage_floor.py --state-only" in line)
+        profiles = command.split("--state-only", 1)[1].split()
+        self.assertEqual(set(profiles), {
+            *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 5)),
+            "coverage/cover-shard2a.out", "coverage/cover-shard1.out",
+        })
+        self.assertEqual(len(profiles), 6)
 
 
 if __name__ == "__main__":
