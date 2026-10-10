@@ -58,8 +58,10 @@ permissions:
 jobs:
   canary:
     name: Production deploy canary
-    runs-on: ubuntu-latest
-    environment: production
+    # production-us admits SSH only from inside its VPC (and IAP), so the
+    # prober runs on that fleet's runner. The EU `production` fleet is retired.
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    environment: production-us
     timeout-minutes: 45
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}

@@ -10,7 +10,7 @@ on:
           Fleet to renew: the GitHub environment holding its secrets. The
           daily schedule renews every fleet.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -27,7 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         # A dispatch renews the selected fleet; the schedule renews every fleet.
-        deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production","production-us"]') }}
+        deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production-us"]') }}
     # Renewal is serialized per fleet. A fleet whose runner is offline must
     # not hold another fleet's renewal in the queue.
     concurrency:
