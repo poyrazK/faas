@@ -72,6 +72,10 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 		flight.cancel()
 		return nil, nil, fmt.Errorf("manager: boot %s: instance already live", instance)
 	}
+	if _, ok := m.qualificationInstances[instance]; ok {
+		flight.cancel()
+		return nil, nil, fmt.Errorf("manager: boot %s: qualification target already exists", instance)
+	}
 	if m.instanceFlights == nil {
 		m.instanceFlights = make(map[string]*instanceFlight)
 	}

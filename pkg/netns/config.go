@@ -115,8 +115,13 @@ type Config struct {
 	TapUID            int
 	HostBridgeIP      netip.Addr // root-ns bridge IP the netns default-routes through (HostBridgeCIDR/.1). Defaults to DefaultHostBridgeIP (10.100.0.1); multi-host deployments override per-host.
 	ServiceProxyHTTPS bool       // admit :443 only when vmmd stages the private service CA
-	HostBits          int        // prefix length for HostIP (16)
-	EgressMbit        int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	// QualificationOnly gives an isolated GitOps candidate access only to the
+	// canonical node-local service proxy (plus opt-in HTTPS) and pinned DNS.
+	// Tenant egress policy, operator exceptions, private service addresses, and
+	// the legacy proxy do not apply to candidate code.
+	QualificationOnly bool
+	HostBits          int // prefix length for HostIP (16)
+	EgressMbit        int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
 	// forward chain. Defaults to NewDefaultDenySet() when zero
 	// (pkg/fcvm/manager.go::Wake does not set it; the renderer falls
@@ -585,7 +590,11 @@ func (c Config) NftCommands() [][]string {
 	// guests a cross-VM path without opening the rest of the host namespace;
 	// replies are covered by the established/related rule above.
 	if c.HostBridgeIP.IsValid() {
-		for _, port := range []int{ServiceProxyPort, LegacyServiceProxyPort} {
+		proxyPorts := []int{ServiceProxyPort, LegacyServiceProxyPort}
+		if c.QualificationOnly {
+			proxyPorts = []int{ServiceProxyPort}
+		}
+		for _, port := range proxyPorts {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
 		}
@@ -608,15 +617,17 @@ func (c Config) NftCommands() [][]string {
 	// explicitly authorize the lateral-movement consequence. Empty
 	// OperatorExceptions emits zero rules; per-netns bytes are
 	// byte-identical to the pre-Gap-4 output.
-	for _, ex := range c.OperatorExceptions {
-		add("add", "rule", "ip", "faas", "forward",
-			"iifname", c.Tap, "ip", "saddr", ex.String(), "accept")
+	if !c.QualificationOnly {
+		for _, ex := range c.OperatorExceptions {
+			add("add", "rule", "ip", "faas", "forward",
+				"iifname", c.Tap, "ip", "saddr", ex.String(), "accept")
+		}
 	}
 	// Provider-verified private destinations must be admitted before the
 	// RFC1918 lateral-movement deny. The connector owns the readiness decision;
 	// vmmd only receives these CIDRs on a ready wake and still keeps all other
 	// RFC1918 destinations denied.
-	if len(c.PrivateNetworkFirewallRules) > 0 {
+	if !c.QualificationOnly && len(c.PrivateNetworkFirewallRules) > 0 {
 		cmds = append(cmds, c.ForwardPrivateNetworkFirewallRules(nft)...)
 		// A non-empty rule set is an explicit allowlist. Drop unmatched private
 		// egress before the general chain policy can accept it.
@@ -631,10 +642,12 @@ func (c Config) NftCommands() [][]string {
 				add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "drop")
 			}
 		}
-	} else if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
-		cmds = append(cmds, rule)
+	} else if !c.QualificationOnly {
+		if rule := c.ForwardPrivateNetworkRule(nft); rule != nil {
+			cmds = append(cmds, rule)
+		}
 	}
-	if c.privateNetworkEnabled() {
+	if !c.QualificationOnly && c.privateNetworkEnabled() {
 		// DNAT'd private ingress is now addressed to the guest tap IP;
 		// admit only the published application port on the private side.
 		if len(c.PrivateNetworkFirewallRules) > 0 {
@@ -663,7 +676,9 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
-	cmds = append(cmds, c.serviceAddressRules(nft)...)
+	if !c.QualificationOnly {
+		cmds = append(cmds, c.serviceAddressRules(nft)...)
+	}
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
 	// half of the shared DenySet. ADR-031 reorders this list so
 	// deny > allow on overlap with the per-app EgressAllowlist accept
@@ -703,8 +718,10 @@ func (c Config) NftCommands() [][]string {
 	// the SMTP deny; the v6 helper is called later, after the v6
 	// lateral-movement drop. Each rule stays inside its family chain
 	// block before that chain's terminal policy.
-	if rule := c.ForwardAllowlistRule(nft); rule != nil {
-		cmds = append(cmds, rule)
+	if !c.QualificationOnly {
+		if rule := c.ForwardAllowlistRule(nft); rule != nil {
+			cmds = append(cmds, rule)
+		}
 	}
 	if rule := c.egressDNSGateRule(nft, "ip"); rule != nil {
 		cmds = append(cmds, rule)
@@ -719,7 +736,9 @@ func (c Config) NftCommands() [][]string {
 	// ADR-361 port policy: everything not accepted above must be TCP to an
 	// egress_ports port. Allowlisted destinations were accepted above and
 	// keep ADR-031's any-port-but-25 semantics.
-	cmds = append(cmds, c.egressPortRule(nft, "ip"))
+	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressPortRule(nft, "ip"))
+	}
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
@@ -764,8 +783,10 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule6(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
-	if rule := c.ForwardPrivateNetworkRule6(nft); rule != nil {
-		cmds = append(cmds, rule)
+	if !c.QualificationOnly {
+		if rule := c.ForwardPrivateNetworkRule6(nft); rule != nil {
+			cmds = append(cmds, rule)
+		}
 	}
 	// PR-E: per-CIDR v6 lateral-movement deny rules (mirror of the v4
 	// loop above). Same observability contract: each entry's drop count
@@ -790,13 +811,17 @@ func (c Config) NftCommands() [][]string {
 	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
 	cmds = append(cmds, c.egressFlowRule(nft, "ip6"))
-	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
-		cmds = append(cmds, rule)
+	if !c.QualificationOnly {
+		if rule := c.ForwardAllowlistRule6(nft); rule != nil {
+			cmds = append(cmds, rule)
+		}
 	}
 	if rule := c.egressDNSGateRule(nft, "ip6"); rule != nil {
 		cmds = append(cmds, rule)
 	}
-	cmds = append(cmds, c.egressPortRule(nft, "ip6"))
+	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressPortRule(nft, "ip6"))
+	}
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
@@ -1165,6 +1190,9 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 //
 // Internal to NftCommands — do not invoke from anywhere else.
 func (c Config) forwardChainPolicy() string {
+	if c.QualificationOnly {
+		return nftPolicyDrop
+	}
 	if len(c.EgressAllowlist) == 0 {
 		return nftPolicyAccept
 	}

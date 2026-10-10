@@ -203,9 +203,16 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 func (w *Worker) runtimeStatus(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (string, string) {
 	status := convergenceStatus(plan)
 	verifier, ok := w.Backend.(RuntimeVerifier)
+	if status == "converged" && !ok && lease.Source.Spec.Mode == "enforce" {
+		// An intent-only backend can verify customer-owned fields, but it cannot
+		// prove the serving fleet or workload graph consumed them. Enforcement
+		// must keep the approved revision pending until runtime evidence exists.
+		return "partial", "environment_runtime_unacknowledged"
+	}
 	if status == "converged" && !ok {
 		for _, change := range plan.Changes {
-			if change.Action != "retain_unmanaged" && (change.Path == "source" || strings.HasPrefix(change.Path, "runtime/")) {
+			if change.Action != "retain_unmanaged" && (change.Path == "source" || change.Path == "source_revision" ||
+				strings.HasPrefix(change.Path, "runtime/") || strings.HasPrefix(change.Path, "service_bindings/") || strings.HasPrefix(change.Path, "queue_bindings/")) {
 				return "partial", "environment_runtime_unacknowledged"
 			}
 		}

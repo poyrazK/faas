@@ -45,18 +45,22 @@ func TestTemplateReadmesMatchMaterializationAndCLIContract(t *testing.T) {
 				}
 			}
 
-			if name == "hello-go" {
+			if name == "hello-go" || name == "mcp-go" {
 				mod, err := os.ReadFile(filepath.Join(dest, "go.mod"))
 				if err != nil {
-					t.Fatalf("hello-go materialization missing go.mod: %v", err)
+					t.Fatalf("%s materialization missing go.mod: %v", name, err)
 				}
 				goDirective := "go " + templates.GoToolchainVersion
 				if !strings.Contains(string(mod), goDirective+"\n") {
-					t.Errorf("hello-go go.mod missing patched %s directive: %q", goDirective, mod)
+					t.Errorf("%s go.mod missing patched %s directive: %q", name, goDirective, mod)
 				}
-				for _, want := range []string{"go.mod", goDirective} {
+				wants := []string{"go.mod", goDirective}
+				if name == "mcp-go" {
+					wants = append(wants, "github.com/modelcontextprotocol/go-sdk v1.8.0", "github.com/jackc/pgx/v5 v5.11.0")
+				}
+				for _, want := range wants {
 					if !strings.Contains(readme, want) {
-						t.Errorf("hello-go README missing %q", want)
+						t.Errorf("%s README missing %q", name, want)
 					}
 				}
 			}

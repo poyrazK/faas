@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ type testScenario struct {
 	Command          []string               `yaml:"command"`
 	Requests         []testHTTPRequest      `yaml:"requests"`
 	Checks           []testHTTPRequest      `yaml:"checks"`
+	Steps            []testScenarioStep     `yaml:"steps,omitempty"`
 	Setup            [][]string             `yaml:"setup"`
 	Cleanup          [][]string             `yaml:"cleanup"`
 	Postgres         bool                   `yaml:"postgres"`
@@ -56,16 +58,30 @@ type testScenario struct {
 	Timeout          string                 `yaml:"timeout"`
 	Load             *testLoadSpec          `yaml:"load"`
 	Local            *testLocalAppSpec      `yaml:"local"`
+	TCPPorts         []int                  `yaml:"tcp_ports,omitempty"`
 	Chaos            *testChaosSpec         `yaml:"chaos,omitempty"`
 }
 
+type testScenarioStep struct {
+	Name       string            `yaml:"name"`
+	Chaos      *testChaosSpec    `yaml:"chaos,omitempty"`
+	ClearChaos bool              `yaml:"clear_chaos,omitempty"`
+	Command    []string          `yaml:"command,omitempty"`
+	Requests   []testHTTPRequest `yaml:"requests,omitempty"`
+	Checks     []testHTTPRequest `yaml:"checks,omitempty"`
+	Load       *testLoadSpec     `yaml:"load,omitempty"`
+}
+
 type testService struct {
-	Source      string            `yaml:"source"`
-	Fixture     string            `yaml:"fixture"`
-	FailFirst   int               `yaml:"fail_first"`
-	Postgres    bool              `yaml:"postgres"`
-	Secrets     map[string]string `yaml:"secrets"`
-	AsyncRoutes []testAsyncRoute  `yaml:"async_routes"`
+	TCPPorts        []int             `yaml:"tcp_ports,omitempty"`
+	Upstream        string            `yaml:"upstream,omitempty"`
+	EgressAllowlist []string          `yaml:"egress_allowlist,omitempty"`
+	Source          string            `yaml:"source"`
+	Fixture         string            `yaml:"fixture"`
+	FailFirst       int               `yaml:"fail_first"`
+	Postgres        bool              `yaml:"postgres"`
+	Secrets         map[string]string `yaml:"secrets"`
+	AsyncRoutes     []testAsyncRoute  `yaml:"async_routes"`
 }
 
 type testAsyncRoute struct {
@@ -165,9 +181,11 @@ type testServiceWakeEvidence struct {
 }
 
 type testServiceHotEvidence struct {
-	RequestID  string `json:"request_id"`
-	InstanceID string `json:"instance_id"`
-	Status     int    `json:"status"`
+	RequestID  string `json:"request_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+	Status     int    `json:"status,omitempty"`
+	Transport  string `json:"transport,omitempty"`
+	NoNewWake  bool   `json:"no_new_wake,omitempty"`
 }
 
 type testRunReceipt struct {
@@ -201,16 +219,75 @@ type testRunReceipt struct {
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
+	Steps        []testScenarioStepEvidence         `json:"steps,omitempty"`
 	Load         *testLoadEvidence                  `json:"load,omitempty"`
 	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
 	Chaos        *testChaosEvidence                 `json:"chaos,omitempty"`
 	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
+type testScenarioStepEvidence struct {
+	Name         string                            `json:"name"`
+	StartedAt    time.Time                         `json:"started_at"`
+	FinishedAt   time.Time                         `json:"finished_at"`
+	DurationMS   int64                             `json:"duration_ms"`
+	Status       string                            `json:"status"`
+	Chaos        *testChaosEvidence                `json:"chaos,omitempty"`
+	FaultCleared bool                              `json:"fault_cleared,omitempty"`
+	Requests     []testHTTPRequestEvidence         `json:"requests,omitempty"`
+	Load         *testLoadEvidence                 `json:"load,omitempty"`
+	Relative     *testStagedLoadComparisonEvidence `json:"relative,omitempty"`
+	Error        string                            `json:"error,omitempty"`
+}
+
+type testStagedLoadComparisonEvidence struct {
+	BaselineStep              string                            `json:"baseline_step"`
+	Status                    string                            `json:"status"`
+	Attempts                  int                               `json:"attempts,omitempty"`
+	ElapsedMS                 int64                             `json:"elapsed_ms,omitempty"`
+	ConsecutivePasses         int                               `json:"consecutive_passes,omitempty"`
+	RequiredConsecutivePasses int                               `json:"required_consecutive_passes,omitempty"`
+	Checks                    []testStagedLoadComparisonCheck   `json:"checks,omitempty"`
+	History                   []testStagedLoadComparisonAttempt `json:"history,omitempty"`
+}
+
+type testStagedLoadComparisonAttempt struct {
+	Number            int                             `json:"number"`
+	DurationMS        int64                           `json:"duration_ms"`
+	Status            string                          `json:"status"`
+	LoadStatus        string                          `json:"load_status"`
+	ComparisonStatus  string                          `json:"comparison_status"`
+	ConsecutivePasses int                             `json:"consecutive_passes"`
+	Error             string                          `json:"error,omitempty"`
+	Checks            []testStagedLoadComparisonCheck `json:"checks,omitempty"`
+}
+
+type testStagedLoadComparisonCheck struct {
+	Step             string  `json:"step,omitempty"`
+	BaselineHTTPStep string  `json:"baseline_http_step,omitempty"`
+	CurrentHTTPStep  string  `json:"current_http_step,omitempty"`
+	Metric           string  `json:"metric"`
+	Operator         string  `json:"operator"`
+	Baseline         float64 `json:"baseline"`
+	Current          float64 `json:"current"`
+	Delta            float64 `json:"delta"`
+	Limit            float64 `json:"limit"`
+	Passed           bool    `json:"passed"`
+	Error            string  `json:"error,omitempty"`
+}
+
 type testChaosEvidence struct {
-	ExpiresAt      time.Time    `json:"expires_at"`
-	RulesInstalled int          `json:"rules_installed"`
-	Rules          []chaos.Rule `json:"rules"`
+	ExpiresAt      time.Time               `json:"expires_at"`
+	RulesInstalled int                     `json:"rules_installed"`
+	Generation     string                  `json:"-"`
+	Rules          []chaos.Rule            `json:"rules"`
+	Matches        []testChaosRuleEvidence `json:"matches,omitempty"`
+}
+
+type testChaosRuleEvidence struct {
+	Rule       chaos.Rule `json:"rule"`
+	Matches    int64      `json:"matches"`
+	MinMatches int64      `json:"min_matches,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -414,6 +491,9 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		return printErr("Unknown scenario", fmt.Errorf("%q is not declared in %s", *scenarioName, *manifestPath))
 	}
 	if chaosOverride != nil {
+		if len(scenario.Steps) > 0 {
+			return printErr("Invalid chaos plan", errors.New("gregale chaos inject cannot override a staged scenario; edit the scenario steps instead"))
+		}
 		if scenario.Chaos != nil {
 			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale chaos inject"))
 		}
@@ -424,6 +504,9 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	}
 	if scenario.Chaos != nil && *engine != "real-vm" {
 		return printErr("Invalid chaos engine", errors.New("scenario chaos requires --engine real-vm; local and simulated runs do not apply proxy faults"))
+	}
+	if len(scenario.Steps) > 0 && *engine != "real-vm" {
+		return printErr("Invalid staged scenario engine", errors.New("staged scenarios require --engine real-vm"))
 	}
 	if *engine == "real-vm" && *maxWorkloadMinutes > 0 {
 		estimate := estimateTestWorkloadMinutes(scenario, len(profiles)*(*repeat))
@@ -514,10 +597,13 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
 		}
+		if err := validateScenarioTCPService(testService{TCPPorts: scenario.TCPPorts}); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
 		if err := validateScenarioChaos(scenario); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q chaos: %w", name, err)
 		}
-		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 {
+		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 && len(scenario.Steps) == 0 {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a command, requests, or checks", name)
 		}
 		if len(scenario.Command) > 0 && scenario.Command[0] == "" {
@@ -526,6 +612,12 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		fields := fieldsForScenario(name, scenario)
 		if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestScenarioSteps(scenario, fields); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q steps: %w", name, err)
+		}
+		if scenario.Load != nil && scenario.Load.Relative != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: load.relative is only valid on a staged step", name)
 		}
 		if err := validateTestLoadSpec(scenario.Load); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
@@ -547,8 +639,11 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 				len(scenario.Project)+1+len(service) > 40 || service == scenario.Project || (spec.Source == "") == (spec.Fixture == "") {
 				return testManifest{}, "", fmt.Errorf("scenario %q service %q needs exactly one source or fixture", name, service)
 			}
-			if spec.Fixture != "" && spec.Fixture != testDeliverySinkFixture {
+			if spec.Fixture != "" && !knownScenarioFixture(spec.Fixture) {
 				return testManifest{}, "", fmt.Errorf("scenario %q service %q has unknown fixture %q", name, service, spec.Fixture)
+			}
+			if err := validateScenarioTCPService(spec); err != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q service %q: %w", name, service, err)
 			}
 			if spec.FailFirst < 0 || spec.FailFirst > 20 || (spec.FailFirst != 0 && spec.Fixture != testDeliverySinkFixture) {
 				return testManifest{}, "", fmt.Errorf("scenario %q service %q has invalid fail_first", name, service)
@@ -675,9 +770,11 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 var testSecretReferencePattern = regexp.MustCompile(`\$\{([^{}]+)\}`)
 
 func validateTestSecrets(workload string, secrets map[string]string, scenario testScenario) error {
+	tcpPorts := map[string][]int{scenario.Project: scenario.TCPPorts}
 	serviceURLs := map[string]string{scenario.Project: "https://example.test"}
 	serviceSlugs := map[string]string{scenario.Project: "example-test"}
-	for service := range scenario.Services {
+	for service, spec := range scenario.Services {
+		tcpPorts[service] = spec.TCPPorts
 		serviceURLs[service] = "https://example.test"
 		serviceSlugs[service] = "example-test"
 	}
@@ -689,14 +786,14 @@ func validateTestSecrets(workload string, secrets map[string]string, scenario te
 		if api.ValidateSecretKey(key) != nil {
 			return fmt.Errorf("workload %q has invalid secret key %q", workload, key)
 		}
-		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret"); err != nil {
+		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret", tcpPorts); err != nil {
 			return fmt.Errorf("workload %q secret %q: %w", workload, key, err)
 		}
 	}
 	return nil
 }
 
-func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string) (string, error) {
+func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, tcpPorts ...map[string][]int) (string, error) {
 	var expansionErr error
 	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
 		if expansionErr != nil {
@@ -712,6 +809,13 @@ func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]st
 			replacement, ok = runSecret, true
 		case len(parts) == 3 && parts[0] == "service" && parts[2] == "url":
 			replacement, ok = serviceURLs[parts[1]]
+		case len(parts) == 3 && parts[0] == "service" && parts[2] == "host":
+			_, ok = serviceSlugs[parts[1]]
+			replacement = parts[1] + ".svc.gregale"
+		case len(parts) == 3 && parts[0] == "service" && parts[2] == "port":
+			if len(tcpPorts) > 0 && len(tcpPorts[0][parts[1]]) == 1 {
+				replacement, ok = strconv.Itoa(tcpPorts[0][parts[1]][0]), true
+			}
 		case len(parts) == 3 && parts[0] == "service" && parts[2] == "slug":
 			replacement, ok = serviceSlugs[parts[1]]
 		case len(parts) == 3 && parts[0] == "bucket" && parts[2] == "name":
@@ -984,6 +1088,14 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	registered = true
 	for _, workload := range workloads {
+		tcpSpec := scenario.Services[workload.name]
+		if workload.name == scenario.Project {
+			tcpSpec = testService{TCPPorts: scenario.TCPPorts}
+		}
+		if err := configureScenarioTCP(ctx, client, workload.session.App.Slug, tcpSpec); err != nil {
+			receipt.Error = fmt.Sprintf("configure TCP service %s: %v", workload.name, err)
+			return
+		}
 		mode := ""
 		if workload.name == scenario.Project {
 			mode = scenario.ConsumerAuthMode
@@ -1040,10 +1152,12 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+bucket.Name)
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_PREFIX_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+binding.Prefix)
 	}
+	tcpPorts := make(map[string][]int, len(workloads))
 	serviceURLs := make(map[string]string, len(workloads))
 	serviceSlugs := make(map[string]string, len(workloads))
 	serviceAppIDs := make(map[string]string, len(workloads))
 	for _, workload := range workloads {
+		tcpPorts[workload.name] = scenarioTCPPorts(scenario, workload.name)
 		appURL := canonicalAppURL(workload.session.App)
 		parsed, parseErr := url.Parse(appURL)
 		if parseErr != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
@@ -1069,13 +1183,25 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				return
 			}
 		}
+		if fixture := scenario.Services[workload.name]; fixture.Fixture == testTCPRelayFixture || fixture.Fixture == testTCPEchoFixture {
+			values := map[string]string{"GREGALE_TEST_TCP_PORT": strconv.Itoa(fixture.TCPPorts[0])}
+			if fixture.Fixture == testTCPRelayFixture {
+				values["GREGALE_TEST_TCP_UPSTREAM"] = fixture.Upstream
+			}
+			for key, value := range values {
+				if err := client.SetSecret(ctx, workload.session.App.Slug, key, value); err != nil {
+					receipt.Error = fmt.Sprintf("set TCP fixture configuration for %s: %v", workload.name, err)
+					return
+				}
+			}
+		}
 		keys := make([]string, 0, len(secrets))
 		for key := range secrets {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID, runSecret)
+			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID, runSecret, tcpPorts)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("resolve secret %s for %s: %v", key, workload.name, err)
 				return
@@ -1221,7 +1347,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			serviceRequestBaseline[workload.name] = seenRequests
 		}
 	}
-	if scenario.Chaos != nil {
+	if scenario.Chaos != nil && len(scenario.Steps) == 0 {
 		plan, err := scenario.Chaos.plan()
 		if err != nil {
 			receipt.Error = fmt.Sprintf("prepare chaos plan: %v", err)
@@ -1236,102 +1362,117 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			receipt.Error = fmt.Sprintf("install scenario chaos plan: %v", err)
 			return
 		}
-		receipt.Chaos = &testChaosEvidence{
-			ExpiresAt: installed.ExpiresAt, RulesInstalled: installed.RulesInstalled,
-			Rules: append([]chaos.Rule(nil), plan.Rules...),
-		}
+		receipt.Chaos = newTestChaosEvidence(scenario.Chaos, plan, installed)
+		defer func() {
+			evidenceCtx, evidenceCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer evidenceCancel()
+			if err := captureTestChaosMatches(evidenceCtx, client, receipt.RunID, receipt.Chaos); err != nil {
+				if receipt.Error != "" {
+					receipt.Error += "; "
+				}
+				receipt.Error += err.Error()
+				receipt.Status = "failed"
+			}
+		}()
 	}
 	recorder.reset()
-	advancePhase("trigger")
 	captures := make(map[string]string)
-	if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 {
-		triggerOutputPath := ""
-		if len(scenario.Trigger) > 0 && len(scenario.WaitFor.Invocations) > 0 {
-			output, err := os.CreateTemp("", "gregale-test-trigger-*.json")
-			if err != nil {
-				receipt.Error = fmt.Sprintf("create trigger output: %v", err)
-				return
-			}
-			triggerOutputPath = output.Name()
-			_ = output.Close()
-			defer func() { _ = os.Remove(triggerOutputPath) }()
-			env = append(env, "GREGALE_TEST_TRIGGER_OUTPUT="+triggerOutputPath)
+	if len(scenario.Steps) > 0 {
+		advancePhase("staged_steps")
+		if err := runTestScenarioSteps(ctx, client, sourceDir, proxy.URL, env, consumerEnv, receipt.RunID, scenario.Steps, captures, &receipt); err != nil {
+			receipt.Error = err.Error()
 		}
-		if len(scenario.Trigger) > 0 {
-			if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
-				receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+	} else {
+		advancePhase("trigger")
+		if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 {
+			triggerOutputPath := ""
+			if len(scenario.Trigger) > 0 && len(scenario.WaitFor.Invocations) > 0 {
+				output, err := os.CreateTemp("", "gregale-test-trigger-*.json")
+				if err != nil {
+					receipt.Error = fmt.Sprintf("create trigger output: %v", err)
+					return
+				}
+				triggerOutputPath = output.Name()
+				_ = output.Close()
+				defer func() { _ = os.Remove(triggerOutputPath) }()
+				env = append(env, "GREGALE_TEST_TRIGGER_OUTPUT="+triggerOutputPath)
+			}
+			if len(scenario.Trigger) > 0 {
+				if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
+					receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+			}
+			var requestEvidence []testHTTPRequestEvidence
+			requestEvidence, err = runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Requests, captures)
+			receipt.Requests = append(receipt.Requests, requestEvidence...)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("application request: %v", err)
 				receipt.captureWakeEvidence(recorder)
 				return
 			}
+			advancePhase("completion")
+			triggerValues := make(map[string]string)
+			if triggerOutputPath != "" {
+				triggerValues, err = readTestTriggerOutput(triggerOutputPath)
+				if err != nil {
+					receipt.Error = fmt.Sprintf("read application trigger output: %v", err)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+			}
+			for key, value := range captures {
+				if _, exists := triggerValues[key]; exists {
+					receipt.Error = fmt.Sprintf("trigger output and HTTP capture both define %s", key)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+				triggerValues[key] = value
+			}
+			for _, condition := range scenario.WaitFor.Invocations {
+				evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
+				receipt.Invocations = append(receipt.Invocations, evidence)
+				if err != nil {
+					receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+			}
+			slugs := make([]string, 0, len(workloads))
+			for _, workload := range workloads {
+				slugs = append(slugs, workload.session.App.Slug)
+			}
+			outputs, err := waitForTestOutputs(ctx, client, slugs, scenario.WaitFor, bucketByName, receipt.RunID)
+			receipt.Outputs = outputs
+			if err != nil {
+				receipt.Error = fmt.Sprintf("wait for application output: %v", err)
+				receipt.captureWakeEvidence(recorder)
+				return
+			}
+			receipt.QueueIdle = scenario.WaitFor.QueueIdle
+			for _, condition := range scenario.WaitFor.Deliveries {
+				serviceURL := serviceURLs[condition.Service]
+				serviceSlug := serviceSlugs[condition.Service]
+				evidence, err := waitForTestDelivery(ctx, client, serviceSlug, serviceURL, fixtureTokens[condition.Service], profile,
+					serviceWakeBaseline[condition.Service], condition)
+				receipt.Deliveries = append(receipt.Deliveries, evidence)
+				if err != nil {
+					receipt.Error = fmt.Sprintf("wait for delivery sink %s: %v", condition.Service, err)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+			}
 		}
-		var requestEvidence []testHTTPRequestEvidence
-		requestEvidence, err = runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Requests, captures)
+		advancePhase("assertions")
+		requestEvidence, err := runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Checks, captures)
 		receipt.Requests = append(receipt.Requests, requestEvidence...)
 		if err != nil {
-			receipt.Error = fmt.Sprintf("application request: %v", err)
-			receipt.captureWakeEvidence(recorder)
-			return
-		}
-		advancePhase("completion")
-		triggerValues := make(map[string]string)
-		if triggerOutputPath != "" {
-			triggerValues, err = readTestTriggerOutput(triggerOutputPath)
-			if err != nil {
-				receipt.Error = fmt.Sprintf("read application trigger output: %v", err)
-				receipt.captureWakeEvidence(recorder)
-				return
+			receipt.Error = fmt.Sprintf("application check: %v", err)
+		} else if len(scenario.Command) > 0 {
+			if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
+				receipt.Error = fmt.Sprintf("application assertion command: %v", err)
 			}
-		}
-		for key, value := range captures {
-			if _, exists := triggerValues[key]; exists {
-				receipt.Error = fmt.Sprintf("trigger output and HTTP capture both define %s", key)
-				receipt.captureWakeEvidence(recorder)
-				return
-			}
-			triggerValues[key] = value
-		}
-		for _, condition := range scenario.WaitFor.Invocations {
-			evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
-			receipt.Invocations = append(receipt.Invocations, evidence)
-			if err != nil {
-				receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
-				receipt.captureWakeEvidence(recorder)
-				return
-			}
-		}
-		slugs := make([]string, 0, len(workloads))
-		for _, workload := range workloads {
-			slugs = append(slugs, workload.session.App.Slug)
-		}
-		outputs, err := waitForTestOutputs(ctx, client, slugs, scenario.WaitFor, bucketByName, receipt.RunID)
-		receipt.Outputs = outputs
-		if err != nil {
-			receipt.Error = fmt.Sprintf("wait for application output: %v", err)
-			receipt.captureWakeEvidence(recorder)
-			return
-		}
-		receipt.QueueIdle = scenario.WaitFor.QueueIdle
-		for _, condition := range scenario.WaitFor.Deliveries {
-			serviceURL := serviceURLs[condition.Service]
-			serviceSlug := serviceSlugs[condition.Service]
-			evidence, err := waitForTestDelivery(ctx, client, serviceSlug, serviceURL, fixtureTokens[condition.Service], profile,
-				serviceWakeBaseline[condition.Service], condition)
-			receipt.Deliveries = append(receipt.Deliveries, evidence)
-			if err != nil {
-				receipt.Error = fmt.Sprintf("wait for delivery sink %s: %v", condition.Service, err)
-				receipt.captureWakeEvidence(recorder)
-				return
-			}
-		}
-	}
-	advancePhase("assertions")
-	requestEvidence, err := runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Checks, captures)
-	receipt.Requests = append(receipt.Requests, requestEvidence...)
-	if err != nil {
-		receipt.Error = fmt.Sprintf("application check: %v", err)
-	} else if len(scenario.Command) > 0 {
-		if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
-			receipt.Error = fmt.Sprintf("application assertion command: %v", err)
 		}
 	}
 	receipt.captureWakeEvidence(recorder)
@@ -1359,20 +1500,26 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	} else {
 		receipt.ServiceHot = make(map[string]testServiceHotEvidence, len(workloads)-1)
 		for _, workload := range workloads[1:] {
-			evidence, err := verifyTestServiceHot(ctx, client, workload.session.App.Slug,
-				serviceWakeBaseline[workload.name], serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+			var evidence testServiceHotEvidence
+			var err error
+			if len(scenario.Services[workload.name].TCPPorts) > 0 {
+				evidence, err = verifyTestServiceTCPHot(ctx, client, workload.session.App.Slug, serviceWakeBaseline[workload.name])
+			} else {
+				evidence, err = verifyTestServiceHot(ctx, client, workload.session.App.Slug,
+					serviceWakeBaseline[workload.name], serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+			}
 			if err != nil {
 				if receipt.Error != "" {
 					receipt.Error += "; "
 				}
 				receipt.Error += fmt.Sprintf("service %s hot evidence: %v", workload.name, err)
 			}
-			if evidence.RequestID != "" {
+			if evidence.RequestID != "" || evidence.NoNewWake {
 				receipt.ServiceHot[workload.name] = evidence
 			}
 		}
 	}
-	if receipt.Error == "" {
+	if receipt.Error == "" && receipt.CleanupError == "" {
 		receipt.Status = "passed"
 	}
 	advancePhase("cleanup")
@@ -1385,6 +1532,281 @@ func (r *testRunReceipt) addCleanupError(message string) {
 	}
 	r.CleanupError += message
 	r.Status = "failed"
+}
+
+func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseURL string, env, consumerEnv []string, runID string, steps []testScenarioStep, captures map[string]string, receipt *testRunReceipt) error {
+	faultActive := false
+	loadEvidenceByStep := make(map[string]*testLoadEvidence, len(steps))
+	defer func() {
+		if !faultActive {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		if err := client.ClearScenarioTestChaos(cleanupCtx, runID); err != nil {
+			receipt.addCleanupError(fmt.Sprintf("clear scenario chaos plan: %v", err))
+		}
+	}()
+
+	for i, step := range steps {
+		evidence := testScenarioStepEvidence{Name: step.Name, StartedAt: time.Now().UTC(), Status: "failed"}
+		stepErr := func() error {
+			if step.Chaos != nil {
+				plan, err := step.Chaos.plan()
+				if err != nil {
+					return fmt.Errorf("prepare chaos plan: %w", err)
+				}
+				installed, err := client.InjectScenarioTestChaos(ctx, runID, api.InjectScenarioTestChaosRequest{
+					DurationMS: plan.DurationMS,
+					Rules:      scenarioChaosAPIRules(plan.Rules),
+				})
+				if err != nil {
+					return fmt.Errorf("install scenario chaos plan: %w", err)
+				}
+				faultActive = true
+				evidence.Chaos = newTestChaosEvidence(step.Chaos, plan, installed)
+			}
+			if step.ClearChaos {
+				if err := client.ClearScenarioTestChaos(ctx, runID); err != nil {
+					return fmt.Errorf("clear scenario chaos plan: %w", err)
+				}
+				faultActive = false
+				evidence.FaultCleared = true
+			}
+			stepEnv := withTestCommandEnv(env,
+				"GREGALE_TEST_STEP", step.Name,
+				"GREGALE_TEST_STEP_INDEX", strconv.Itoa(i+1),
+			)
+			if len(step.Command) > 0 {
+				if err := runTestCommand(ctx, sourceDir, stepEnv, step.Command); err != nil {
+					return fmt.Errorf("command: %w", err)
+				}
+			}
+			if step.Load != nil {
+				var err error
+				evidence.Load, evidence.Relative, err = runTestScenarioStepLoad(ctx, baseURL, runID,
+					consumerEnv, step, captures, loadEvidenceByStep)
+				if err != nil {
+					return err
+				}
+				loadEvidenceByStep[step.Name] = evidence.Load
+				return nil
+			}
+			for _, requests := range [][]testHTTPRequest{step.Requests, step.Checks} {
+				requestEvidence, err := runTestHTTPRequests(ctx, baseURL, runID, consumerEnv, requests, captures)
+				evidence.Requests = append(evidence.Requests, requestEvidence...)
+				receipt.Requests = append(receipt.Requests, requestEvidence...)
+				if err != nil {
+					return fmt.Errorf("HTTP assertion: %w", err)
+				}
+			}
+			return nil
+		}()
+		if evidence.Chaos != nil {
+			evidenceCtx, evidenceCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			captureErr := captureTestChaosMatches(evidenceCtx, client, runID, evidence.Chaos)
+			evidenceCancel()
+			if captureErr != nil {
+				if stepErr != nil {
+					stepErr = fmt.Errorf("%w; %w", stepErr, captureErr)
+				} else {
+					stepErr = captureErr
+				}
+			}
+		}
+		evidence.FinishedAt = time.Now().UTC()
+		evidence.DurationMS = evidence.FinishedAt.Sub(evidence.StartedAt).Milliseconds()
+		if stepErr != nil {
+			evidence.Error = stepErr.Error()
+			receipt.Steps = append(receipt.Steps, evidence)
+			return fmt.Errorf("step %q: %w", step.Name, stepErr)
+		}
+		evidence.Status = "passed"
+		receipt.Steps = append(receipt.Steps, evidence)
+	}
+	return nil
+}
+
+func runTestScenarioStepLoad(ctx context.Context, baseURL, runID string, consumerEnv []string, step testScenarioStep, captures map[string]string, priorLoads map[string]*testLoadEvidence) (*testLoadEvidence, *testStagedLoadComparisonEvidence, error) {
+	loadScenario := testScenario{Requests: step.Requests, Checks: step.Checks, Load: step.Load}
+	load, err := resolveTestLoadConfig(loadScenario, testLoadOverrides{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare SLO load: %w", err)
+	}
+	httpSteps := append(append([]testHTTPRequest{}, step.Requests...), step.Checks...)
+	relative := step.Load.Relative
+	if relative == nil {
+		report, err := runTestLoadWithCaptures(ctx, baseURL, runID, consumerEnv, httpSteps, nil, captures, load)
+		if err != nil {
+			return report, nil, fmt.Errorf("SLO load: %w", err)
+		}
+		return report, nil, nil
+	}
+	baseline := priorLoads[relative.CompareTo]
+	if baseline == nil {
+		return nil, nil, fmt.Errorf("relative SLO baseline step %q has no load evidence", relative.CompareTo)
+	}
+	comparison := &testStagedLoadComparisonEvidence{BaselineStep: relative.CompareTo, Status: "failed"}
+	retryTimeout, interval := time.Duration(0), time.Second
+	requiredConsecutivePasses := 1
+	var retryDeadline time.Time
+	if relative.Retry != nil {
+		retryTimeout, _ = time.ParseDuration(relative.Retry.Timeout)
+		if relative.Retry.ConsecutivePasses != nil {
+			requiredConsecutivePasses = *relative.Retry.ConsecutivePasses
+		}
+		if relative.Retry.Interval != "" {
+			interval, _ = time.ParseDuration(relative.Retry.Interval)
+		}
+		retryDeadline = time.Now().Add(retryTimeout)
+	}
+	comparison.RequiredConsecutivePasses = requiredConsecutivePasses
+	recoveryStarted := time.Now()
+	var lastLoadErr error
+	var lastReport *testLoadEvidence
+	totalRequests, consecutivePasses := 0, 0
+	for attempt := 1; ; attempt++ {
+		if totalRequests >= testLoadMaxRequests {
+			return lastReport, comparison, testStagedLoadRetryFailure(comparison, errors.New("recovery retry reached the total HTTP-step limit"))
+		}
+		attemptStarted := time.Now()
+		attemptCtx := ctx
+		cancel := func() {}
+		attemptRunID := runID
+		if relative.Retry != nil {
+			attemptCtx, cancel = context.WithDeadline(ctx, retryDeadline)
+			attemptRunID = fmt.Sprintf("%s-%s-attempt-%d", runID, step.Name, attempt)
+		}
+		attemptLoad := *load
+		attemptLoad.RequestLimit = testLoadMaxRequests - totalRequests
+		report, loadErr := runTestLoadWithCaptures(attemptCtx, baseURL, attemptRunID, consumerEnv, httpSteps, nil, captures, &attemptLoad)
+		cancel()
+		if report == nil {
+			return nil, comparison, errors.New("SLO load returned no evidence")
+		}
+		totalRequests += report.Requests
+		lastReport = report
+		check := compareTestStagedLoadRelative(relative.CompareTo, baseline, report, relative)
+		comparison.Checks = check.Checks
+		comparison.Attempts = attempt
+		comparison.ElapsedMS = time.Since(recoveryStarted).Milliseconds()
+		attemptPassed := loadErr == nil && check.Status == "passed"
+		if attemptPassed {
+			consecutivePasses++
+		} else {
+			consecutivePasses = 0
+		}
+		comparison.ConsecutivePasses = consecutivePasses
+		attemptEvidence := testStagedLoadComparisonAttempt{
+			Number: attempt, DurationMS: time.Since(attemptStarted).Milliseconds(),
+			Status: "failed", LoadStatus: report.Status, ComparisonStatus: check.Status,
+			ConsecutivePasses: consecutivePasses, Checks: check.Checks,
+		}
+		if loadErr != nil {
+			attemptEvidence.Error = loadErr.Error()
+		}
+		if attemptPassed {
+			attemptEvidence.Status = "passed"
+		}
+		if attemptPassed && consecutivePasses >= requiredConsecutivePasses {
+			comparison.Status = "passed"
+			comparison.ElapsedMS = time.Since(recoveryStarted).Milliseconds()
+			comparison.History = append(comparison.History, attemptEvidence)
+			return report, comparison, nil
+		}
+		comparison.Status = "failed"
+		if attemptPassed {
+			comparison.Status = "waiting"
+		}
+		comparison.History = append(comparison.History, attemptEvidence)
+		lastLoadErr = loadErr
+		if relative.Retry == nil {
+			if loadErr != nil {
+				return report, comparison, fmt.Errorf("SLO load: %w", loadErr)
+			}
+			return report, comparison, errors.New(testStagedLoadComparisonFailure(comparison))
+		}
+		if ctx.Err() != nil {
+			comparison.ElapsedMS = time.Since(recoveryStarted).Milliseconds()
+			comparison.Status = "failed"
+			return report, comparison, fmt.Errorf("recovery wait: %w", ctx.Err())
+		}
+		comparison.ElapsedMS = time.Since(recoveryStarted).Milliseconds()
+		remaining := time.Until(retryDeadline)
+		if remaining <= 0 {
+			return report, comparison, testStagedLoadRetryFailure(comparison, lastLoadErr)
+		}
+		if !testStagedRelativeLoadRetryable(report) {
+			if loadErr != nil {
+				return report, comparison, fmt.Errorf("SLO load: %w", loadErr)
+			}
+			return report, comparison, errors.New(testStagedLoadComparisonFailure(comparison))
+		}
+		if attempt >= testLoadRelativeMaxAttempts {
+			return report, comparison, testStagedLoadRetryFailure(comparison, lastLoadErr)
+		}
+		wait := interval
+		if wait > remaining {
+			wait = remaining
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return report, comparison, fmt.Errorf("recovery wait: %w", ctx.Err())
+		case <-timer.C:
+		}
+		if wait == remaining || time.Until(retryDeadline) <= 0 {
+			comparison.ElapsedMS = time.Since(recoveryStarted).Milliseconds()
+			return report, comparison, testStagedLoadRetryFailure(comparison, lastLoadErr)
+		}
+	}
+}
+
+func testStagedRelativeLoadRetryable(report *testLoadEvidence) bool {
+	if report == nil {
+		return false
+	}
+	switch report.StopReason {
+	case "canceled", "scenario_timeout", "time_limit", "request_limit", "dropped_arrivals":
+		return false
+	default:
+		return true
+	}
+}
+
+func testStagedLoadRetryFailure(comparison *testStagedLoadComparisonEvidence, loadErr error) error {
+	comparison.Status = "failed"
+	message := fmt.Sprintf("recovery SLO did not pass after %d attempt(s) in %dms", comparison.Attempts, comparison.ElapsedMS)
+	incompleteStreak := comparison.ConsecutivePasses > 0 && comparison.ConsecutivePasses < comparison.RequiredConsecutivePasses
+	if incompleteStreak {
+		message += fmt.Sprintf("; only %d of %d consecutive passing attempts completed", comparison.ConsecutivePasses, comparison.RequiredConsecutivePasses)
+	}
+	if loadErr != nil {
+		return fmt.Errorf("%s; latest load attempt: %w", message, loadErr)
+	}
+	if incompleteStreak {
+		return errors.New(message)
+	}
+	return fmt.Errorf("%s: %s", message, testStagedLoadComparisonFailure(comparison))
+}
+
+func withTestCommandEnv(env []string, pairs ...string) []string {
+	out := make([]string, 0, len(env)+len(pairs)/2)
+	keys := make(map[string]bool, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		keys[pairs[i]] = true
+	}
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !keys[key] {
+			out = append(out, entry)
+		}
+	}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		out = append(out, pairs[i]+"="+pairs[i+1])
+	}
+	return out
 }
 
 func (r *testRunReceipt) captureWakeEvidence(recorder *testProxyRecorder) {

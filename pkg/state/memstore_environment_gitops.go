@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -268,20 +269,20 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 		var verified environmentsync.Plan
 		_ = json.Unmarshal(plan, &verified)
 		if memory.source.IntentVersion != verified.ObservedVersion {
-			return ErrConflict
+			return fmt.Errorf("%w: GitOps intent changed after the convergence snapshot", ErrConflict)
 		}
 		for _, effect := range memory.effects {
 			if effect.CompletedAt == nil {
-				return ErrConflict
+				return fmt.Errorf("%w: GitOps fleet effect is still pending", ErrConflict)
 			}
 		}
 		for _, effect := range memory.runtime {
 			if effect.CompletedAt == nil {
-				return ErrConflict
+				return fmt.Errorf("%w: GitOps runtime effect is still pending", ErrConflict)
 			}
 		}
 		if !gitOpsRuntimeReady(m.gitOpsRuntimeTargetsLocked(memory)) {
-			return ErrConflict
+			return fmt.Errorf("%w: GitOps runtime targets are not fresh", ErrConflict)
 		}
 	}
 	completed := now.UTC()
@@ -295,6 +296,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	run.Status, run.Plan, run.Steps, run.ErrorCode, run.CompletedAt = status, append(json.RawMessage(nil), plan...), append(json.RawMessage(nil), steps...), errorCode, &completed
 	memory.runs[run.ID] = run
 	pruneGitOpsMemoryReports(memory, now)
+	overrides := make([]environmentsync.Override, 0, len(memory.overrides))
+	for _, override := range memory.overrides {
+		overrides = append(overrides, override)
+	}
+	next = gitOpsNextAttempt(lease, plan, memory.source.IntentVersion, overrides, now, next)
 	memory.lease, memory.next = nil, next.UTC()
 	if status == "converged" {
 		memory.source.AppliedRevisionID = memory.source.ApprovedRevisionID

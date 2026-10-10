@@ -45,6 +45,9 @@ class EdgeRuleJWTAction:
     """Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
     app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
     rejected before the request reaches the guest."""
+    require_exp: bool | Unset = UNSET
+    """Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token
+    minted without one never expires unless this is set."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +74,8 @@ class EdgeRuleJWTAction:
 
         platform_tenant_external_ref_claim = self.platform_tenant_external_ref_claim
 
+        require_exp = self.require_exp
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -88,6 +93,8 @@ class EdgeRuleJWTAction:
             field_dict["mcp"] = mcp
         if platform_tenant_external_ref_claim is not UNSET:
             field_dict["platform_tenant_external_ref_claim"] = platform_tenant_external_ref_claim
+        if require_exp is not UNSET:
+            field_dict["require_exp"] = require_exp
 
         return field_dict
 
@@ -126,6 +133,8 @@ class EdgeRuleJWTAction:
 
         platform_tenant_external_ref_claim = d.pop("platform_tenant_external_ref_claim", UNSET)
 
+        require_exp = d.pop("require_exp", UNSET)
+
         edge_rule_jwt_action = cls(
             issuer=issuer,
             jwks_url=jwks_url,
@@ -134,6 +143,7 @@ class EdgeRuleJWTAction:
             required_claims=required_claims,
             mcp=mcp,
             platform_tenant_external_ref_claim=platform_tenant_external_ref_claim,
+            require_exp=require_exp,
         )
 
         edge_rule_jwt_action.additional_properties = d

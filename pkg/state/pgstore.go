@@ -4329,6 +4329,28 @@ func derefString(s *string) string {
 	return *s
 }
 
+// edgeRuleMatchArg renders a match condition for a jsonb parameter; nil is
+// SQL NULL.
+func edgeRuleMatchArg(m *api.EdgeRuleMatchExpr) any {
+	if m == nil {
+		return nil
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// derefTimePtr unwraps a tri-state **time.Time update field: the caller's
+// CASE guard decides whether the column is touched; nil inner means NULL.
+func derefTimePtr(t **time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
 func appSecurityPolicyValue(p *api.AppSecurityPolicy) string {
 	if p == nil || !p.Valid() {
 		return string(api.AppSecurityPolicyOff)
@@ -6795,7 +6817,7 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
-	if d.EnvironmentWorkloadHeld() {
+	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
@@ -7646,11 +7668,12 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 	return n, nil
 }
 
-// UpdateDeploymentMinInstances overwrites deployments.min_instances.
+// UpdateDeploymentMinInstances updates deployments.min_instances for ordinary
+// deployments. GitOps-managed deployment inputs remain frozen after activation.
 // Issue #557 closure / ADR-072 — the PATCH route at
 // /v1/deployments/{id} writes through this method. Returns the
-// fresh Deployment row (via the canonical scanDeployment) so the
-// handler can build the response without a second round-trip.
+// fresh Deployment row (via the canonical scanDeployment) so the handler can
+// build the response without a second round-trip.
 //
 // The caller (apid) validates the value against the parent app's
 // plan ceiling (api.Plan.MaxMinInstances) before reaching this
@@ -7659,14 +7682,18 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, min int) (Deployment, error) {
 	row := s.pool.QueryRow(ctx, `
 		update deployments set min_instances = $2
-		 where id = $1
+		 where id = $1 and (environment_workload_runtime is null or min_instances = $2)
 		 returning `+deploymentSelectColumnsWithRootfs, id, min)
 	d, err := scanDeployment(row)
 	if err != nil {
-		// pgx returns ErrNoRows when the UPDATE matches zero rows;
-		// translate to the store's canonical not-found error so the
-		// handler emits RFC 7807 not_found.
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) {
+			var managed bool
+			if checkErr := s.pool.QueryRow(ctx, `select environment_workload_runtime is not null from deployments where id=$1`, id).Scan(&managed); checkErr != nil {
+				return Deployment{}, mapErr(checkErr)
+			}
+			if managed {
+				return Deployment{}, ErrInvalidArgument
+			}
 			return Deployment{}, ErrNotFound
 		}
 		return Deployment{}, err
@@ -7791,6 +7818,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if activeCanary {
 		return Deployment{}, ErrTrafficChangeDuringCanary
+	}
+	var managedWorkload bool
+	if err := tx.QueryRow(ctx, `select exists (
+		select 1 from deployments where app_id=$1 and environment_workload_runtime is not null
+	)`, appID).Scan(&managedWorkload); err != nil {
+		return Deployment{}, fmt.Errorf("state: check managed workload before traffic update: %w", err)
+	}
+	if managedWorkload {
+		return Deployment{}, ErrConflict
 	}
 
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
@@ -8003,6 +8039,13 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
+	}
+	managedWorkload, err := environmentGitOpsManagedForAppTx(ctx, tx, dep.AppID)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: check managed workload before canary advance: %w", err)
+	}
+	if managedWorkload {
+		return Deployment{}, 0, ErrConflict
 	}
 	// Use the database clock both for the gate and the new stage anchor. That
 	// keeps future worker checks correct when APID and meterd host clocks drift.
@@ -8706,7 +8749,12 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
-		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
+		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')
+		   and not ($2 = 'live' and status <> 'live' and exists (
+		     select 1 from deployments managed where managed.app_id=deployments.app_id
+		       and managed.scope=deployments.scope and managed.environment_workload_runtime is not null))
+		   and not (environment_workload_runtime is not null and status = 'live' and $2 not in ('live', 'failed'))`,
+		id, string(status), nullString(errMsg))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -8725,6 +8773,17 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // deployment failed so readers can never observe failed traffic or a split
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
+	var held bool
+	var failedTraffic int
+	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// A held GitOps candidate has never been allowed to serve traffic. Its
+	// failure must leave the existing release untouched; attempting to zero
+	// and restore the live sibling would bypass the serving-transition fence.
+	if held && failedTraffic == 0 {
+		return nil
+	}
 	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
 		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID),
 	})
@@ -9322,7 +9381,7 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	rows, err := tx.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
 		 where app_id = $1::uuid
-		 order by priority asc, created_at desc`, dep.AppID)
+		 order by priority asc, created_at asc, id asc`, dep.AppID)
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
 	}
@@ -9432,6 +9491,15 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	// Graph activation owns deployment promotion for every managed workload in
+	// the scope, including after the temporary hold has been lifted.
+	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
+	if err != nil {
+		return fmt.Errorf("state: check managed workload before deployment promotion: %w", err)
+	}
+	if managed {
+		return ErrConflict
 	}
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
@@ -10855,7 +10923,11 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
 	}
-	if target.EnvironmentWorkloadHeld() {
+	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, target.AppID, target.Scope)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: check managed workload before rollback preparation: %w", err)
+	}
+	if managed {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
@@ -10909,12 +10981,22 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 	tag, err := s.pool.Exec(ctx,
 		`update deployments
 		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
-		  where id = $1`,
+		  where id = $1 AND NOT (environment_workload_runtime IS NOT NULL AND status = 'live'
+		    AND ROW(rootfs_path,rootfs_key,rootfs_bytes) IS DISTINCT FROM ROW($2::text,$3::text,$4::bigint))`,
 		id, nullString(path), nullString(key), bytes)
 	if err != nil {
 		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
+		var immutable bool
+		if err := s.pool.QueryRow(ctx, `select status='live' and environment_workload_runtime is not null
+			and ROW(rootfs_path,rootfs_key,rootfs_bytes) IS DISTINCT FROM ROW($2::text,$3::text,$4::bigint)
+			from deployments where id=$1`, id, nullString(path), nullString(key), bytes).Scan(&immutable); err != nil {
+			return mapErr(err)
+		}
+		if immutable {
+			return ErrInvalidStateTransition
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -11778,12 +11860,20 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 	tag, err := s.pool.Exec(ctx,
 		`update deployments
 		    set source_url = $2, commit_sha = $3
-		  where id = $1`,
+		  where id = $1 and (environment_workload_runtime is null OR
+		    ROW(source_url,commit_sha) IS NOT DISTINCT FROM ROW($2::text,$3::text))`,
 		id, nullString(sourceURL), nullString(commitSHA))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var managed bool
+		if err := s.pool.QueryRow(ctx, `select environment_workload_runtime is not null from deployments where id=$1`, id).Scan(&managed); err != nil {
+			return mapErr(err)
+		}
+		if managed {
+			return ErrInvalidArgument
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -13777,7 +13867,7 @@ func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, err
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
        cors_preset_id, validate_mode, created_at, updated_at, match_headers,
-       manifest_key`
+       manifest_key, name, description, expires_at, match_expr, mode`
 
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
@@ -13824,13 +13914,28 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 		matchHeadersBytes []byte
 		corsPresetID      *string
 		manifestKey       *string
+		name, description *string
+		matchExprBytes    []byte
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.MatchHost, &r.MatchPath,
 		&matchMethods, &r.Priority, &r.Enabled, &kind, &actionBytes,
 		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes, &manifestKey,
+		&name, &description, &r.ExpiresAt, &matchExprBytes, &r.Mode,
 	); err != nil {
 		return EdgeRule{}, err
+	}
+	if name != nil {
+		r.Name = *name
+	}
+	if description != nil {
+		r.Description = *description
+	}
+	if len(matchExprBytes) > 0 {
+		r.Match = new(api.EdgeRuleMatchExpr)
+		if err := json.Unmarshal(matchExprBytes, r.Match); err != nil {
+			return EdgeRule{}, fmt.Errorf("state: decode edge_rules.match_expr for %s: %w", r.ID, err)
+		}
 	}
 	r.Kind = EdgeRuleKind(kind)
 	r.MatchMethods = matchMethods
@@ -13886,11 +13991,14 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			cors_preset_id, validate_mode, match_headers, manifest_key
+			cors_preset_id, validate_mode, match_headers, manifest_key,
+			name, description, expires_at, match_expr, mode
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, '')
+			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, ''),
+			nullif(btrim($14), ''), nullif($15, ''), $16::timestamptz, $17::jsonb,
+			coalesce(nullif($18, ''), 'enforce')
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -13908,6 +14016,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		in.ValidateMode,
 		matchHeadersBytes,
 		in.ManifestKey,
+		in.Name, in.Description, in.ExpiresAt, edgeRuleMatchArg(in.Match), in.Mode,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -14039,11 +14148,14 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			validate_mode, match_headers, manifest_key
+			validate_mode, match_headers, manifest_key,
+			name, description, expires_at, match_expr, mode
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, '')
+			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, ''),
+			nullif(btrim($13), ''), nullif($14, ''), $15::timestamptz, $16::jsonb,
+			coalesce(nullif($17, ''), 'enforce')
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -14053,6 +14165,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		in.ValidateMode,
 		matchHeadersBytes,
 		in.ManifestKey,
+		in.Name, in.Description, in.ExpiresAt, edgeRuleMatchArg(in.Match), in.Mode,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -14067,7 +14180,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 func (s *PgStore) ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
-		 where account_id = $1 order by priority asc, created_at desc`, accountID)
+		 where account_id = $1 order by priority asc, created_at asc, id asc`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -14078,7 +14191,7 @@ func (s *PgStore) ListEdgeRulesForAccount(ctx context.Context, accountID string)
 func (s *PgStore) ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
-		 where app_id = $1 order by priority asc, created_at desc`, appID)
+		 where app_id = $1 order by priority asc, created_at asc, id asc`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -14874,7 +14987,12 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			action        = case when $7 then $8::jsonb else action end,
 			cors_preset_id = case when $10 then $11::uuid else cors_preset_id end,
 			validate_mode = coalesce(nullif($9, ''), validate_mode),
-			match_headers = case when $12 then $13::jsonb else match_headers end
+			match_headers = case when $12 then $13::jsonb else match_headers end,
+			name          = case when $14 then nullif(btrim($15), '') else name end,
+			description   = case when $16 then nullif($17, '') else description end,
+			expires_at    = case when $18 then $19::timestamptz else expires_at end,
+			match_expr    = case when $20 then $21::jsonb else match_expr end,
+			mode          = coalesce(nullif($22, ''), mode)
 		where id = $1
 		returning `+edgeRuleSelectCols,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
@@ -14893,6 +15011,10 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// the "customer cleared the preset" signal or
 		// a UUID for the "set preset" signal.
 		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
+		p.Name != nil, derefString(p.Name), p.Description != nil, derefString(p.Description),
+		p.ExpiresAt != nil, derefTimePtr(p.ExpiresAt),
+		p.Match != nil || p.ClearMatch, edgeRuleMatchArg(p.Match),
+		derefString(p.Mode),
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -14956,12 +15078,13 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 	rows, err := s.pool.Query(ctx, `
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
+		   and (expires_at is null or expires_at > now())
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
 		   	or $1 like replace(replace(match_host, '*', '%'), '?', '_')
 		   )
-		 order by priority asc, created_at asc
+		 order by priority asc, created_at asc, id asc
 	`, host)
 	if err != nil {
 		return nil, err
@@ -15680,6 +15803,17 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
 		return err
 	}
+	if _, err := s.completeInvocationTx(ctx, tx, id, attempt, result, claim != nil, classification...); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: invocations complete commit: %w", err)
+	}
+	return nil
+}
+
+func (s *PgStore) completeInvocationTx(ctx context.Context, tx pgx.Tx, id string, attempt int, result json.RawMessage,
+	allowUnkeyedAttempt bool, classification ...InvocationWorkClassification) (Invocation, error) {
 	var accountID string
 	var quotaReserved bool
 	var decisionJSON any
@@ -15694,7 +15828,7 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			select id, account_id, quota_reserved
 			  from invocations
 			 where id = $1 and state = 'dispatching'
-			   and ($7::boolean or ((work_policy_name is null and $3 = 0
+			   and (($7::boolean and attempts=$3 and $3>0) or ((work_policy_name is null and $3 = 0
                  and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))
              or (attempts=$3 and $3>0 and (work_policy_name is not null
                  or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)))))
@@ -15712,32 +15846,29 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, claim != nil).Scan(&accountID, &quotaReserved); err != nil {
+		  returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, allowUnkeyedAttempt).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return Invocation{}, ErrNotFound
 		}
-		return err
+		return Invocation{}, err
 	}
 	invocation, err := scanInvocation(tx.QueryRow(ctx,
 		`select `+invocationSelectCols+` from invocations where id = $1`, id))
 	if err != nil {
-		return fmt.Errorf("state: invocations complete destination lookup: %w", err)
+		return Invocation{}, fmt.Errorf("state: invocations complete destination lookup: %w", err)
 	}
 	if err := operationTransitionTx(ctx, tx, invocation, false); err != nil {
-		return err
+		return Invocation{}, err
 	}
 	if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
-		return err
+		return Invocation{}, err
 	}
 	if quotaReserved {
 		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-			return err
+			return Invocation{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: invocations complete commit: %w", err)
-	}
-	return nil
+	return invocation, nil
 }
 
 // decrementAccountAsyncInflightTx is the tx-bound variant of
@@ -24650,7 +24781,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
 	coalesce(environment_workload_runtime::text,''),
-	secret_reload_signal`
+	environment_workload_held, secret_reload_signal`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24710,7 +24841,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
 	coalesce(d.environment_workload_runtime::text,''),
-	d.secret_reload_signal`
+	d.environment_workload_held, d.secret_reload_signal`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24732,6 +24863,7 @@ var _ = deploymentSelectColumnsQualified
 // the SELECT projection so the destination count matches.
 func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *string, rootfsBytes *int64) error {
 	var kind, statusStr string
+	var environmentWorkloadHeld bool
 	var secretReloadSignal *string
 	var scanStatus *string
 	var scannedAt *time.Time
@@ -24829,11 +24961,11 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
-		&d.EnvironmentWorkloadRuntime,
-		&secretReloadSignal,
+		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal,
 	); err != nil {
 		return mapErr(err)
 	}
+	d.EnvironmentWorkloadHeldValue = &environmentWorkloadHeld
 	// production-us rc.242: this column was never read, so every PgStore
 	// deployment had SecretReloadSignalKnown=false while the runtime-value
 	// SQL projection reports secret_reload_signal IS NOT NULL. schedd's
@@ -25392,6 +25524,10 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "environment_gitops_job_managed":
+				return ErrEnvironmentGitManaged
+			case "environment_gitops_job_link_contract":
+				return ErrConflict
 			case "event_delivery_capacity":
 				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
 			case "checked_rollback_required":

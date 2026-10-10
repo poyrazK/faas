@@ -47,6 +47,37 @@ func TestExecutionWirePreservesEveryField(t *testing.T) {
 	}
 }
 
+func TestCaptureExecutionWireCannotEraseRestoreAuthority(t *testing.T) {
+	frame := wireFrame()
+	frame.CaptureInstanceID = uuid.NewString()
+	if _, err := ExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("capture protocol discarded restore identity", err)
+	}
+}
+
+func TestRestoreExecutionWireRequiresAndPreservesSeparateCapture(t *testing.T) {
+	frame := wireFrame()
+	frame.CaptureInstanceID = uuid.NewString()
+	encoded, err := RestoreExecutionToProto(frame)
+	if err != nil || encoded.GetCaptureInstanceId() != frame.CaptureInstanceID {
+		t.Fatal("restore profile lost the capture identity", err)
+	}
+	actual, err := RestoreExecutionFromProto(encoded)
+	if err != nil || actual != frame {
+		t.Fatal("restore frame changed across wire", err)
+	}
+	if _, err := ExecutionFromProto(encoded); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("ordinary capture decoder accepted restore authority", err)
+	}
+	if _, err := ExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("ordinary capture encoder accepted restore authority", err)
+	}
+	frame.CaptureInstanceID = frame.InstanceID
+	if _, err := RestoreExecutionToProto(frame); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("restore accepted the target as its own capture", err)
+	}
+}
+
 func TestExecutionWireRejectsIncompleteOrUnknownAuthority(t *testing.T) {
 	for _, failure := range []string{"nil", "version", "artifact", "frame_unknown", "artifact_unknown", "cleanup", "negative_memory", "hash", "generation", "kind"} {
 		t.Run(failure, func(t *testing.T) {
@@ -124,5 +155,19 @@ func TestNativeRetirementWireRefusesGenericAbsence(t *testing.T) {
 				t.Fatal("absence acknowledged retirement", err)
 			}
 		})
+	}
+	noEffects := state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeEffectsAbsent, ReceiptID: uuid.NewString(),
+		KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true}
+	encoded, err := NativeRetirementToProto(noEffects)
+	if err != nil {
+		t.Fatal("physical no-effects proof rejected", err)
+	}
+	decoded, err := NativeRetirementFromProto(encoded)
+	if err != nil || decoded != noEffects {
+		t.Fatalf("no-effects proof changed across wire: %+v %v", decoded, err)
+	}
+	encoded.NativeGeneration = uuid.NewString()
+	if _, err := NativeRetirementFromProto(encoded); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("no-effects proof accepted a fabricated native generation", err)
 	}
 }

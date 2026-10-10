@@ -104,13 +104,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Extract the digest-pinned PostgREST runtime
+      - name: Download the checksum-pinned PostgREST runtime
         run: |
-          docker pull postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e
-          container_id=$(docker create postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e)
-          trap 'docker rm "$container_id"' EXIT
-          docker cp "$container_id:/bin/postgrest" "$DATA_API_POSTGREST_BIN"
-          chmod +x "$DATA_API_POSTGREST_BIN"
+          archive="$RUNNER_TEMP/postgrest-v14.3-linux-static-x86-64.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 2 \
+            --output "$archive" \
+            https://github.com/PostgREST/postgrest/releases/download/v14.3/postgrest-v14.3-linux-static-x86-64.tar.xz
+          echo "3d619a36f0532c736857a5d6ead168b2864e2a383ab167d67acdd3d38e97508e  $archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/postgrest" "$DATA_API_POSTGREST_BIN"
       - name: Locate Chromium for real browser acceptance
         run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract

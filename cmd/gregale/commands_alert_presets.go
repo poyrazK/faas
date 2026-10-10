@@ -108,6 +108,7 @@ func cmdAlertPresetList(args []string) int {
 // sextuple comes from the catalog server-side.
 func cmdAlertPresetEnable(args []string) int {
 	fs := newFlagSet("alerts preset enable", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose and review an alert preset with hidden signing-secret input")
 	slug := fs.String("app", "", "app slug (required)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
@@ -117,6 +118,18 @@ func cmdAlertPresetEnable(args []string) int {
 	enabled := fs.Bool(flagNameEnabled, true, "whether the instantiated rule is enabled")
 	if err := fs.Parse(args); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive preset flags", fmt.Errorf("use alerts preset enable --interactive with optional --app; choose the preset and webhook in the flow"))
+		}
+		return cmdAlertPresetEnableInteractive(*slug)
 	}
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")

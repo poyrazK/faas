@@ -32,25 +32,29 @@ func (v *JailerVMM) withNativeFrozenSnapshotDrive(ctx context.Context, lease Lea
 		return errors.New("native snapshot output: anonymous frozen-drive producer is unavailable")
 	}
 	return v.withNativeSnapshotDriveInput(ctx, lease, func(input *os.File) (err error) {
-		output, err := backend.FreezeSnapshotDrive(ctx, input, directory)
-		if err != nil {
-			if output != nil {
-				err = errors.Join(err, output.Close())
-			}
-			return err
-		}
-		if output == nil {
-			return errors.New("native snapshot output: producer returned no frozen descriptor")
-		}
-		defer func() { err = errors.Join(err, output.Close()) }()
-		if err := checkNativeFrozenSnapshotDrive(input, output); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return errors.Join(consume(output), ctx.Err())
+		return withNativeFrozenDrive(ctx, backend, input, directory, consume)
 	})
+}
+
+func withNativeFrozenDrive(ctx context.Context, backend nativeSnapshotFrozenDriveBackend, input *os.File, directory string, consume func(*os.File) error) (err error) {
+	output, err := backend.FreezeSnapshotDrive(ctx, input, directory)
+	if err != nil {
+		if output != nil {
+			err = errors.Join(err, output.Close())
+		}
+		return err
+	}
+	if output == nil {
+		return errors.New("native snapshot output: producer returned no frozen descriptor")
+	}
+	defer func() { err = errors.Join(err, output.Close()) }()
+	if err := checkNativeFrozenSnapshotDrive(input, output); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(consume(output), ctx.Err())
 }
 
 func checkNativeFrozenSnapshotDrive(input, output *os.File) error {

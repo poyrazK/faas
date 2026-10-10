@@ -38,7 +38,7 @@ func RetryStageStateAt(requested StageName, startedAt time.Time) StageState {
 // their first rung with a new soak timer, service rollouts restart their
 // readiness gate, and prior wake/scan/failure state stays on the old row.
 func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
-	if src.EnvironmentWorkloadHeld() {
+	if src.EnvironmentWorkloadManaged() {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if src.Status != DeployFailed {

@@ -113,6 +113,7 @@ type workloadSpec struct {
 	ReadinessProbe  *api.SidecarProbe        `json:"readiness_probe,omitempty"`
 	Type            string                   `json:"type"` // "main" | "init" | "sidecar"
 	runtimeSecrets  *runtimeSecretsState
+	preloadedEnv    map[string]string
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -154,6 +155,7 @@ type workloadRuntime struct {
 	sup            *Supervisor
 	state          *workloadDependencyState
 	secretManifest *api.AppManifest
+	sidecarEnv     map[string]string
 }
 
 // discoverRoster reads the workload roster from the merged
@@ -306,6 +308,18 @@ func validSidecarWorkloadName(name string) bool {
 // guest-init execs those values verbatim. Older sidecar layers
 // fall back to /usr/local/bin/start.sh or the roster command.
 func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy) error {
+	return runWorkloadsWithQualificationReceipt(mainManifest, roster, secrets, apiEnv, log, sidecarProxy, nil)
+}
+
+type qualificationConfigReceiptControl struct {
+	token  string
+	macKey []byte
+}
+
+func runWorkloadsWithQualificationReceipt(mainManifest api.AppManifest, roster workloadRoster, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, receiptControl *qualificationConfigReceiptControl) (result error) {
+	if receiptControl != nil {
+		defer clear(receiptControl.macKey)
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -338,6 +352,14 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 			return err
 		}
 		runtimes[sc.Name] = runtime
+	}
+	if receiptControl != nil && receiptControl.token != "" {
+		emitQualificationConfigReceipt(log, "main", receiptControl.token, receiptControl.macKey, apiEnv, secrets, nil)
+		for _, sc := range roster.Sidecars {
+			runtime := runtimes[sc.Name]
+			emitQualificationConfigReceipt(log, sc.Name, receiptControl.token, receiptControl.macKey, apiEnv, nil, runtime.sidecarEnv)
+		}
+		clear(receiptControl.macKey)
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -814,9 +836,13 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 	// main upper by vmmd. They win over image defaults (and over the legacy
 	// shared env fallback), but main-workload secrets/API env never leak into
 	// the new sidecar manifest path.
-	sidecarEnv, envErr := loadSidecarEnvAt(root, spec.Name)
-	if envErr != nil && !isNotExist(envErr) {
-		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
+	sidecarEnv := spec.preloadedEnv
+	if sidecarEnv == nil {
+		var envErr error
+		sidecarEnv, envErr = loadSidecarEnvAt(root, spec.Name)
+		if envErr != nil && !isNotExist(envErr) {
+			return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
+		}
 	}
 	env, startupSnapshot := applySidecarRuntimeEnvSnapshot(env, sidecarEnv, spec)
 	// Sidecars keep their own customer env boundary, but share the platform

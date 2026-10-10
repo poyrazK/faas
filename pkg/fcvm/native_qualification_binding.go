@@ -37,33 +37,54 @@ func validateNativeQualificationLease(frame state.EnvironmentQualificationExecut
 // take the same incoming lock even before a request exists, so claim cannot
 // interleave with their physical publication. Noncanonical UUID spellings
 // reach the same lock; only the exact original spelling can carry authority.
-func (j *nativeLaunchJournal) lockQualificationProducer(ctx context.Context, instance string) (*os.File, *nativeQualificationRecord, error) {
+func (j *nativeLaunchJournal) lockQualificationProducer(ctx context.Context, instance string) (*os.File, *nativeQualificationProducer, error) {
 	permit, permitted := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord)
+	restorePermit, restoring := ctx.Value(nativeQualificationRestoreContextKey{}).(nativeQualificationRestoreRecord)
 	id, err := uuid.Parse(instance)
 	if err != nil || id == uuid.Nil {
-		if permitted {
+		if permitted || restoring {
 			return nil, nil, errors.New("native qualification: producer has no original instance identity")
 		}
 		return nil, nil, ctx.Err()
 	}
 	q := j.qualifications(permit.Execution.NodeID)
+	if restoring {
+		q = j.qualifications(restorePermit.Execution.NodeID)
+	}
 	lock, err := q.lock(ctx, id.String())
 	if err != nil {
 		return nil, nil, err
 	}
-	fail := func(err error) (*os.File, *nativeQualificationRecord, error) {
+	fail := func(err error) (*os.File, *nativeQualificationProducer, error) {
 		return nil, nil, errors.Join(err, lock.Close())
 	}
 	path, _ := q.path(id.String())
+	restorePath, _ := q.restores().path(id.String())
+	if _, err := os.Lstat(restorePath); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return fail(err)
+		}
+		if !restoring || permitted {
+			return fail(errors.New("native qualification restore: reserved target requires its original producer"))
+		}
+		if err := q.requireProfileAbsent(instance, false); err != nil {
+			return fail(err)
+		}
+		producer, err := q.restores().producer(ctx, instance, restorePermit)
+		if err != nil {
+			return fail(err)
+		}
+		return lock, producer, nil
+	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		if permitted {
+		if permitted || restoring {
 			return fail(errors.New("native qualification: producer has no durable incoming authority"))
 		}
 		return lock, nil, nil
 	} else if err != nil {
 		return fail(err)
 	}
-	if !permitted {
+	if !permitted || restoring {
 		return fail(errors.New("native qualification: reserved instance requires its original attempt"))
 	}
 	record, err := q.read(instance)
@@ -74,7 +95,7 @@ func (j *nativeLaunchJournal) lockQualificationProducer(ctx context.Context, ins
 		record.Execution.InstanceID != instance || !record.CreateStarted || record.Revoked || !q.clock().Before(record.Deadline) {
 		return fail(errors.New("native qualification: producer authority changed, expired or revoked"))
 	}
-	return lock, &record, nil
+	return lock, &nativeQualificationProducer{Execution: record.Execution, NativeGeneration: record.NativeGeneration, NativeLease: record.NativeLease, capture: &record}, nil
 }
 
 func (j *nativeLaunchJournal) checkQualificationProducer(ctx context.Context, instance string) error {
@@ -104,6 +125,35 @@ func (j *nativeQualificationJournal) bindNative(ctx context.Context, record nati
 	lease.processGeneration = 0
 	record.NativeGeneration, record.NativeLease = uuid.NewString(), lease
 	return record, j.write(record)
+}
+
+// noNativeEffectsRetirement proves the incoming attempt was durably revoked
+// and never acquired a physical owner. The caller separately joins Manager
+// operations and releases any allocator reservation before returning it.
+func (j *nativeQualificationJournal) noNativeEffectsRetirement(ctx context.Context, frame state.EnvironmentQualificationExecution) (proof state.EnvironmentQualificationRetirement, result error) {
+	lock, err := j.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	record, err := j.read(frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	if record.Execution != frame || !record.Revoked {
+		return proof, state.ErrConflict
+	}
+	physicalLock, err := j.owner.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, physicalLock.Close()) }()
+	if _, err := j.owner.read(frame.InstanceID); !errors.Is(err, os.ErrNotExist) {
+		return proof, errors.Join(err, state.ErrConflict)
+	}
+	proof = state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeEffectsAbsent, ReceiptID: record.Generation,
+		KernelBootID: record.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}
+	return proof, ctx.Err()
 }
 
 // Any existing physical spelling, including a damaged record, prevents a
@@ -160,7 +210,7 @@ func (j *nativeQualificationJournal) recoveryLeases(ctx context.Context, physica
 	}
 	var leases []Lease
 	for _, entry := range entries {
-		if entry.Name() == "captures" {
+		if entry.Name() == "captures" || entry.Name() == "restores" {
 			// Receipts carry no native allocation authority. Validate their
 			// original identity after the incoming inventory.
 			continue
@@ -197,5 +247,9 @@ func (j *nativeQualificationJournal) recoveryLeases(ctx context.Context, physica
 			leases = append(leases, record.NativeLease)
 		}
 	}
-	return leases, errors.Join(ctx.Err(), j.validateCaptures(ctx))
+	if err := j.validateCaptures(ctx); err != nil {
+		return nil, err
+	}
+	restores, err := j.restores().recoveryLeases(ctx, physical)
+	return append(leases, restores...), errors.Join(ctx.Err(), err)
 }

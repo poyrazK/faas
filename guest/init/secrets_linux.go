@@ -24,7 +24,7 @@ import (
 	"os"
 )
 
-// secretsEnvPath is the vmmd-written file inside the per-app drive1
+// secretsEnvPath is the vmmd-written file inside the per-instance drive1
 // (mirrors pkg/fcvm/vmm.go::secretsEnvPath — keeping them in sync is a
 // build-time invariant tested by the G2 e2e).
 const secretsEnvPath = "/etc/faas/secrets.env"

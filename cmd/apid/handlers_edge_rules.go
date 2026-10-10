@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -84,9 +85,30 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Kind:         string(r.Kind),
 		ValidateMode: mode,
 		Action:       actionBytes,
+		Name:         r.Name,
+		Description:  r.Description,
+		ExpiresAt:    r.ExpiresAt,
+		Expired:      r.EdgeRuleExpired(time.Now()),
+		Match:        r.Match,
+		Mode:         edgeRuleResponseMode(r.Mode),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+func edgeRuleResponseMode(mode string) string {
+	if mode == "" {
+		return api.EdgeRuleModeEnforce
+	}
+	return mode
+}
+
+func utcTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 // validateEdgeRuleAction dispatches the kind-specific Validate()
@@ -310,6 +332,7 @@ func (s *server) listEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acc
 	for _, rule := range rules {
 		out = append(out, edgeRuleResponse(rule))
 	}
+	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -397,6 +420,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateEdgeRuleMatchLists(r.Context(), acct.ID, req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -424,6 +451,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; no rule was created"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, app.ID) {
+		convergence.abort(r.Context())
+		return
+	}
 	row, err := s.store.CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
 		AccountID:    acct.ID,
 		AppID:        app.ID,
@@ -443,6 +474,11 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		// back-compat window (D2). Empty result is fine —
 		// the SQL coalesce forces 'block' on insert.
 		ValidateMode: resolveValidateMode(req.Kind, req.ValidateMode, req.Action),
+		Name:         req.Name,
+		Description:  req.Description,
+		ExpiresAt:    utcTimePtr(req.ExpiresAt),
+		Match:        req.Match,
+		Mode:         req.Mode,
 	}, limits)
 	if err != nil {
 		convergence.abort(r.Context())
@@ -487,6 +523,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
 	writeJSON(w, http.StatusCreated, edgeRuleResponse(row))
 }
 
@@ -513,6 +550,15 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	}
 	if len(req.MatchPath) > 2048 {
 		return api.ErrValidation(fmt.Sprintf("match_path exceeds 2048 chars (got %d)", len(req.MatchPath)))
+	}
+	if prob := api.ValidateEdgeRuleMetadata(&req.Name, &req.Description, req.ExpiresAt, time.Now()); prob != nil {
+		return prob
+	}
+	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
+		return prob
+	}
+	if prob := api.ValidateEdgeRuleMode(req.Mode); prob != nil {
+		return prob
 	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
@@ -595,6 +641,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
 				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 				MCP:                            a.MCP,
+				RequireExp:                     a.RequireExp,
 			}
 		}
 	case state.EdgeRuleKindIP:
@@ -668,6 +715,8 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				JWTClaimName:      a.JWTClaimName,
 				MaxKeysPerRule:    a.MaxKeysPerRule,
 				MissingKeyPolicy:  a.MissingKeyPolicy,
+				KeyFields:         a.KeyFields,
+				CountStatuses:     a.CountStatuses,
 			}
 		}
 	case state.EdgeRuleKindGeo:
@@ -847,6 +896,32 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	if req.ExpiresAt != nil && req.ClearExpiresAt {
+		api.WriteProblem(w, api.ErrValidation("expires_at and clear_expires_at are mutually exclusive"))
+		return
+	}
+	if prob := api.ValidateEdgeRuleMetadata(req.Name, req.Description, req.ExpiresAt, time.Now()); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if req.Match != nil && req.ClearMatch {
+		api.WriteProblem(w, api.ErrValidation("match and clear_match are mutually exclusive"))
+		return
+	}
+	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.validateEdgeRuleMatchLists(r.Context(), acct.ID, req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if req.Mode != nil {
+		if prob := api.ValidateEdgeRuleMode(*req.Mode); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
@@ -912,6 +987,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
+		convergence.abort(r.Context())
+		return
+	}
 	updated, err := s.store.UpdateEdgeRule(r.Context(), id, edgeRuleUpdateParamsFrom(req, row.Kind))
 	if err != nil {
 		convergence.abort(r.Context())
@@ -942,6 +1021,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, updated.AppID)
 	writeJSON(w, http.StatusOK, edgeRuleResponse(updated))
 }
 
@@ -959,6 +1039,20 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		MatchHeaders: req.MatchHeaders,
 		Priority:     req.Priority,
 		Enabled:      req.Enabled,
+		Name:         req.Name,
+		Description:  req.Description,
+		Match:        req.Match,
+		ClearMatch:   req.ClearMatch,
+		Mode:         req.Mode,
+	}
+	switch {
+	case req.ClearExpiresAt:
+		var cleared *time.Time
+		out.ExpiresAt = &cleared
+	case req.ExpiresAt != nil:
+		expiresAt := req.ExpiresAt.UTC()
+		set := &expiresAt
+		out.ExpiresAt = &set
 	}
 	if req.Action != nil {
 		decoded := actionFromBody(string(kind), *req.Action)
@@ -1038,6 +1132,10 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
+		convergence.abort(r.Context())
+		return
+	}
 	if err := s.store.DeleteEdgeRule(r.Context(), id); err != nil {
 		convergence.abort(r.Context())
 		api.WriteProblem(w, api.ErrCapacity("could not delete edge rule"))
@@ -1061,6 +1159,7 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

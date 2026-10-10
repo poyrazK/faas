@@ -73,6 +73,14 @@ func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(co
 }
 
 func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) ([]environmentgitops.Step, error) {
+	if creator, ok := b.intent.(state.EnvironmentGitOpsWorkloadCreationStore); ok {
+		steps, err := creator.PrepareEnvironmentGitOpsWorkloads(ctx, lease, plan)
+		if err != nil || len(steps) != 0 {
+			// Reservation changes physical identity and the plan hash. The worker
+			// rereads before a subsequent attempt changes routes or other intent.
+			return steps, err
+		}
+	}
 	var definition api.EnvironmentDefinition
 	if json.Unmarshal(lease.Revision.Definition, &definition) != nil {
 		return nil, state.ErrInvalidArgument

@@ -117,7 +117,10 @@ func (m *MemStore) RuntimeConfigReceiptRequired(_ context.Context, appID, scope 
 
 func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeConfigInputs) bool {
 	boundary, _ := m.environmentRuntimeChangedAtLocked(appID, inputs.Scope)
-	if boundary.After(inputs.Boundary) {
+	// PostgreSQL stores these timestamps at microsecond precision. Match that
+	// precision in memory so persisted restore receipts remain fresh when the
+	// source change stamp had sub-microsecond bits that were truncated on write.
+	if boundary.Truncate(time.Microsecond).After(inputs.Boundary.Truncate(time.Microsecond)) {
 		return false
 	}
 	variables := map[string]string{}

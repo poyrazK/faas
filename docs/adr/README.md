@@ -742,5 +742,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+- [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution
+
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)

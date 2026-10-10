@@ -102,6 +102,27 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def validate_native_rollout_report(receipt, commit):
+    try:
+        report = json.loads(receipt.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return
+    if not isinstance(report, dict) or report.get("scope") != "native-mcp-hosting-rollout":
+        return
+    if report.get("status") != "passed" or report.get("native_observations") is not True:
+        raise ValueError("native rollout report did not pass with native observations")
+    if report.get("reviewed_commit") != commit:
+        raise ValueError("native rollout report commit does not match the evidence manifest")
+    provenance = report.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("source_revision") != commit or provenance.get("binary_revision") != commit or provenance.get("binary_modified") is not False:
+        raise ValueError("native rollout report lacks matching clean source and binary provenance")
+    for field in ("binary_sha256", "plan_sha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", report.get(field, "")):
+            raise ValueError(f"native rollout report lacks a valid {field}")
+    if report.get("scenario") not in {"rollout", "interrupt", "bad-candidate", "stale-observer"}:
+        raise ValueError("native rollout report has an unknown scenario")
+
+
 def record(args):
     root, manifest, evidence, by_name = load_manifest(args.directory)
     if args.name not in CHECKER.REQUIRED:
@@ -109,6 +130,8 @@ def record(args):
     if not args.target.strip():
         raise ValueError("--target must identify the test app, native host/build, or client version")
     relative, receipt = artifact_path(root, args.artifact)
+    if args.status == "passed":
+        validate_native_rollout_report(receipt, evidence["commit"])
     record = by_name[args.name]
     record.update({
         "status": args.status,

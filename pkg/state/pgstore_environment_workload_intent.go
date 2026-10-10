@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -14,9 +15,12 @@ import (
 var _ EnvironmentWorkloadIntentStore = (*PgStore)(nil)
 
 func workloadIntentFromSQL(row sqlc.AppEnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
-	out := EnvironmentWorkloadIntent{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), EnvironmentID: pgUUIDString(row.EnvironmentID), SourceRevision: row.SourceRevision.String, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	out := EnvironmentWorkloadIntent{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), EnvironmentID: pgUUIDString(row.EnvironmentID), JobID: pgUUIDString(row.JobID), SourceRevision: row.SourceRevision.String, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
 	_ = json.Unmarshal(row.Source, &out.Source)
 	_ = json.Unmarshal(row.Runtime, &out.Runtime)
+	_ = json.Unmarshal(row.ServiceBindings, &out.ServiceBindings)
+	_ = json.Unmarshal(row.Schedule, &out.Schedule)
+	_ = json.Unmarshal(row.Variables, &out.Variables)
 	return cloneWorkloadIntent(out)
 }
 
@@ -26,7 +30,17 @@ func putWorkloadIntentTx(ctx context.Context, tx sqlc.DBTX, row EnvironmentWorkl
 		source, _ = json.Marshal(row.Source)
 	}
 	runtime, _ := json.Marshal(cloneWorkloadIntent(row).Runtime)
-	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), Source: source, Runtime: runtime, SourceRevision: row.SourceRevision})
+	bindings, _ := json.Marshal(cloneWorkloadIntent(row).ServiceBindings)
+	variablesValue := cloneWorkloadIntent(row).Variables
+	if variablesValue == nil {
+		variablesValue = map[string]string{}
+	}
+	variables, _ := json.Marshal(variablesValue)
+	var schedule []byte
+	if row.Schedule != nil {
+		schedule, _ = json.Marshal(row.Schedule)
+	}
+	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), JobID: mustPgUUID(row.JobID), Source: source, Runtime: runtime, SourceRevision: row.SourceRevision, ServiceBindings: bindings, Schedule: schedule, Variables: variables})
 	if err != nil {
 		return row, mapErr(err)
 	}
@@ -39,6 +53,26 @@ func (s *PgStore) EnvironmentWorkloadIntent(ctx context.Context, accountID, appI
 		return EnvironmentWorkloadIntent{}, mapErr(err)
 	}
 	return workloadIntentFromSQL(row), nil
+}
+
+func (s *PgStore) EnvironmentWorkloadIntentByJob(ctx context.Context, accountID, jobID string) (EnvironmentWorkloadIntent, error) {
+	if _, err := uuid.Parse(accountID); err != nil {
+		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
+	}
+	if _, err := uuid.Parse(jobID); err != nil {
+		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
+	}
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `SELECT to_jsonb(w) FROM app_environment_workload_intents w
+WHERE w.account_id=$1::uuid AND w.job_id=$2::uuid`, accountID, jobID).Scan(&raw)
+	if err != nil {
+		return EnvironmentWorkloadIntent{}, mapErr(err)
+	}
+	var row EnvironmentWorkloadIntent
+	if err := json.Unmarshal(raw, &row); err != nil {
+		return EnvironmentWorkloadIntent{}, err
+	}
+	return cloneWorkloadIntent(row), nil
 }
 
 func (s *PgStore) PutEnvironmentWorkloadIntent(ctx context.Context, row EnvironmentWorkloadIntent) (EnvironmentWorkloadIntent, error) {
@@ -56,6 +90,8 @@ func (s *PgStore) PutEnvironmentWorkloadIntent(ctx context.Context, row Environm
 		return row, mapErr(err)
 	}
 	var scope struct {
+		Type          AppType       `json:"type"`
+		Runtime       string        `json:"runtime"`
 		Manifest      AppManifest   `json:"manifest"`
 		WorkloadClass WorkloadClass `json:"workload_class"`
 		Environment   string        `json:"environment"`
@@ -69,9 +105,23 @@ func (s *PgStore) PutEnvironmentWorkloadIntent(ctx context.Context, row Environm
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return row, mapErr(err)
 	}
-	row, err = validateWorkloadIntentWrite(row, workloadIntentFromSQL(prior), App{Manifest: scope.Manifest, WorkloadClass: scope.WorkloadClass}, scope.Environment, scope.Plan)
+	row, err = validateWorkloadIntentWrite(row, workloadIntentFromSQL(prior), App{Type: scope.Type, Runtime: scope.Runtime, Manifest: scope.Manifest, WorkloadClass: scope.WorkloadClass}, scope.Environment, scope.Plan)
 	if err != nil {
 		return row, err
+	}
+	previous := workloadIntentFromSQL(prior)
+	if row.JobID != previous.JobID || previous.JobID != "" && len(workloadIntentChangedPaths(previous, row)) != 0 {
+		return row, ErrEnvironmentGitManaged
+	}
+	if len(row.ServiceBindings) != 0 {
+		count, err := q.CountAppEnvironmentIntent(ctx, tx, sqlc.CountAppEnvironmentIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID)})
+		if err != nil {
+			return row, mapErr(err)
+		}
+		limits, _ := api.LimitsFor(scope.Plan)
+		if int(count)-len(workloadIntentFromSQL(prior).ServiceBindings)+len(row.ServiceBindings) > limits.EnvVarsMax {
+			return row, ErrConflict
+		}
 	}
 	row, err = putWorkloadIntentTx(ctx, tx, row)
 	if err != nil {
