@@ -341,7 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # A PR touching pkg/state runs a third of its race tests (~10-12 min)
+    # beside its other packages after a cold compile; 20 min cancels it.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
