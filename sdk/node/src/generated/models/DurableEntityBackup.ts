@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DurableEntityStateExport } from './DurableEntityStateExport.js';
+/**
+ * Private application-state export captured in a retained hourly backup slot.
+ */
 export type DurableEntityBackup = {
   /**
    * UTC hourly slot start.

@@ -10,6 +10,8 @@ T = TypeVar("T", bound="DurableEntityRestoreResponse")
 
 @_attrs_define
 class DurableEntityRestoreResponse:
+    """Acknowledged business version and whether an existing restore receipt was replayed."""
+
     version: int
     replayed: bool
 

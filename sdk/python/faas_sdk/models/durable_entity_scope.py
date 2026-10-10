@@ -14,6 +14,8 @@ T = TypeVar("T", bound="DurableEntityScope")
 
 @_attrs_define
 class DurableEntityScope:
+    """Immutable account, application, environment and optional customer identity of a logical entity."""
+
     account_id: UUID
     app_id: UUID
     environment_id: UUID

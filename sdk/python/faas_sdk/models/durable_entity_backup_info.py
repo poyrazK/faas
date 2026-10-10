@@ -11,6 +11,8 @@ T = TypeVar("T", bound="DurableEntityBackupInfo")
 
 @_attrs_define
 class DurableEntityBackupInfo:
+    """Backup identifier, capture slot and business version without application data."""
+
     id: str
     captured_at: datetime.datetime
     version: int

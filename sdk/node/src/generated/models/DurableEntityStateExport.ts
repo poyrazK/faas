@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DurableEntityScope } from './DurableEntityScope.js';
+/**
+ * Checksummed committed application data with immutable entity identity; excludes recovery and delivery history.
+ */
 export type DurableEntityStateExport = {
   format: 1;
   entity: DurableEntityScope;

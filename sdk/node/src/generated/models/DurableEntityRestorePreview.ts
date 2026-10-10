@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Read-only comparison of candidate and current state; compatibility remains unverified.
+ */
 export type DurableEntityRestorePreview = {
   current_version: number;
   source_version: number;

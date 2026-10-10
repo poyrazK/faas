@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Immutable account, application, environment and optional customer identity of a logical entity.
+ */
 export type DurableEntityScope = {
   account_id: string;
   app_id: string;

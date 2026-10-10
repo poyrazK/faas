@@ -131,7 +131,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,7 +176,8 @@ def sync(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,7 +216,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -256,7 +259,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

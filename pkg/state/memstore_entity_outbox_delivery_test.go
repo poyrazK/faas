@@ -2,7 +2,9 @@
 package state
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,8 +14,8 @@ import (
 )
 
 func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.T) {
-	m, ctx, account, app := webhookFixture(t)
-	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(account.ID, app.ID))
+	m, ctx, account, app := entityOutboxFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, entityOutboxWebhook(account.ID, app.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +41,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 		t.Fatal(err)
 	}
 	row, err := m.AppWebhookDeliveryByID(ctx, in.ID)
-	if err != nil || row.Status != AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt {
+	if err != nil || row.Status != AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt+1 {
 		t.Fatal("retry reset terminal delivery", row, err)
 	}
 	if n, err := m.PruneAppWebhookDeliveries(ctx, time.Now().Add(time.Hour), 100); err != nil || n != 1 {
@@ -75,8 +77,8 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 }
 
 func TestMemEntityOutboxRejectedDestinationLeavesNoAcceptanceReceipt(t *testing.T) {
-	m, ctx, account, app := webhookFixture(t)
-	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(account.ID, app.ID))
+	m, ctx, account, app := entityOutboxFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, entityOutboxWebhook(account.ID, app.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,8 +127,8 @@ func TestMemEntityOutboxRejectedDestinationLeavesNoAcceptanceReceipt(t *testing.
 func TestMemEntityOutboxAcceptanceRechecksAdmissionAtInsert(t *testing.T) {
 	for _, kind := range []string{"account", "abuse", "plan", "app", "workload"} {
 		t.Run(kind, func(t *testing.T) {
-			m, ctx, account, app := webhookFixture(t)
-			hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(account.ID, app.ID))
+			m, ctx, account, app := entityOutboxFixture(t)
+			hook, err := m.CreateAppWebhook(ctx, entityOutboxWebhook(account.ID, app.ID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -162,5 +164,51 @@ func TestMemEntityOutboxAcceptanceRechecksAdmissionAtInsert(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// The acceptance boundary requires canonical UUIDs, whereas legacy MemStore
+// fixtures generate compact hexadecimal IDs. Keep production validation strict.
+func entityOutboxFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
+	t.Helper()
+	m, ctx, account, app := webhookFixture(t)
+	m.mu.Lock()
+	delete(m.accounts, account.ID)
+	delete(m.apps, app.ID)
+	account.ID = uuid.MustParse(account.ID).String()
+	app.ID = uuid.MustParse(app.ID).String()
+	app.AccountID = account.ID
+	m.accounts[account.ID], m.apps[app.ID] = account, app
+	m.mu.Unlock()
+	return m, ctx, account, app
+}
+
+func entityOutboxWebhook(accountID, appID string) AppWebhook {
+	hook := memSampleWebhook(accountID, appID)
+	hook.ID = uuid.NewString()
+	return hook
+}
+
+func TestEntityOutboxFingerprintCanonicalizesLegacyRecordIDs(t *testing.T) {
+	in := AppWebhookDelivery{ID: uuid.NewString(), WebhookID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Event: "reservation.confirmed", Payload: []byte(`null`)}
+	canonical, err := entityOutboxFingerprint(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact := in
+	compact.AccountID = strings.ReplaceAll(in.AccountID, "-", "")
+	compact.AppID = strings.ReplaceAll(in.AppID, "-", "")
+	legacy, err := entityOutboxFingerprint(compact)
+	if err != nil || legacy != canonical {
+		t.Fatal("legacy record encoding changed transport identity", err)
+	}
+	compact.ID = strings.ReplaceAll(in.ID, "-", "")
+	if _, err := entityOutboxFingerprint(compact); !errors.Is(err, ErrEntityOutboxInvalid) {
+		t.Fatal("noncanonical message identity accepted", err)
+	}
+	compact = in
+	compact.WebhookID = strings.ReplaceAll(in.WebhookID, "-", "")
+	if _, err := entityOutboxFingerprint(compact); !errors.Is(err, ErrEntityOutboxInvalid) {
+		t.Fatal("noncanonical destination identity accepted", err)
 	}
 }

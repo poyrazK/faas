@@ -5,6 +5,9 @@
 import type { DurableEntityAlarmInspection } from './DurableEntityAlarmInspection.js';
 import type { DurableEntityOutboxInspection } from './DurableEntityOutboxInspection.js';
 import type { DurableEntityScope } from './DurableEntityScope.js';
+/**
+ * Metadata-only observation of entity state, recovery work and retained head-delivery history.
+ */
 export type DurableEntityInspectResponse = {
   /**
    * Opaque comparison value that changes on any manifest write; not ownership authority.

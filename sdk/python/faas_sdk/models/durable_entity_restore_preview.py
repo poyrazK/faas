@@ -20,6 +20,8 @@ T = TypeVar("T", bound="DurableEntityRestorePreview")
 
 @_attrs_define
 class DurableEntityRestorePreview:
+    """Read-only comparison of candidate and current state; compatibility remains unverified."""
+
     current_version: int
     source_version: int
     expected_version_matches: bool

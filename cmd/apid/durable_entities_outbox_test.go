@@ -18,7 +18,7 @@ import (
 
 func entityOutboxHook(t *testing.T, e entityHTTPEnv, app state.App) state.AppWebhook {
 	t.Helper()
-	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{AccountID: e.acct.ID, AppID: app.ID, TargetURL: "https://receiver.example.test/" + uuid.NewString(), SecretSealed: []byte("sealed"), Enabled: true, RetryPolicy: state.AppWebhookRetryDefault})
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{ID: uuid.NewString(), AccountID: e.acct.ID, AppID: app.ID, TargetURL: "https://receiver.example.test/" + uuid.NewString(), SecretSealed: []byte("sealed"), Enabled: true, RetryPolicy: state.AppWebhookRetryDefault})
 	if err != nil {
 		t.Fatal(err)
 	}

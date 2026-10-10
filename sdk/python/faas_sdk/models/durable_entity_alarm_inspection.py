@@ -14,6 +14,8 @@ T = TypeVar("T", bound="DurableEntityAlarmInspection")
 
 @_attrs_define
 class DurableEntityAlarmInspection:
+    """Observed alarm timing and bounded recovery attempt metadata."""
+
     attempts: int
     exhausted: bool
     alarm_at: datetime.datetime | Unset = UNSET

@@ -176,6 +176,11 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 				case "tenant":
 					_, err = e.store.SetPlatformTenantStatus(t.Context(), e.acct.ID, request.PlatformTenantID, state.PlatformTenantSuspended)
 				case "environment":
+					// Current environment deletion fences admitted invocations.
+					// Cancel the simulated guest before replacing its scope.
+					if err = e.store.CancelInvocation(t.Context(), dispatch.currentInvocationID); err != nil {
+						t.Fatal(err)
+					}
 					dep, loadErr := e.store.LiveDeploymentForScope(t.Context(), app.ID, "staging")
 					if loadErr != nil {
 						t.Fatal(loadErr)

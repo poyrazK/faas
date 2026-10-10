@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DurableEntityStateExport } from './DurableEntityStateExport.js';
+/**
+ * Candidate export and comparison identity used for restore preview, validation or fenced publication.
+ */
 export type DurableEntityRestoreRequest = {
   namespace: string;
   key: string;

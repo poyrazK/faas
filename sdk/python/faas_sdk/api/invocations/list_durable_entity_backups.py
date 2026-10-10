@@ -118,7 +118,8 @@ def sync_detailed(
 ) -> Response[DurableEntityBackupPage | Problem]:
     """List retained backup metadata.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -170,7 +171,8 @@ def sync(
 ) -> DurableEntityBackupPage | Problem | None:
     """List retained backup metadata.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -217,7 +219,8 @@ async def asyncio_detailed(
 ) -> Response[DurableEntityBackupPage | Problem]:
     """List retained backup metadata.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -267,7 +270,8 @@ async def asyncio(
 ) -> DurableEntityBackupPage | Problem | None:
     """List retained backup metadata.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.

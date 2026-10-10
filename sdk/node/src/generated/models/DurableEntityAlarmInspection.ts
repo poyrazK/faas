@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Observed alarm timing and bounded recovery attempt metadata.
+ */
 export type DurableEntityAlarmInspection = {
   alarm_at?: string;
   attempts: number;

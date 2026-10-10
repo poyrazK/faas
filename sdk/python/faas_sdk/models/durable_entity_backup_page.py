@@ -16,6 +16,8 @@ T = TypeVar("T", bound="DurableEntityBackupPage")
 
 @_attrs_define
 class DurableEntityBackupPage:
+    """Bounded page of retained backup metadata with an optional continuation cursor."""
+
     items: list[DurableEntityBackupInfo]
     next_cursor: str | Unset = UNSET
 

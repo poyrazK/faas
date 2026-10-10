@@ -17,15 +17,20 @@ T = TypeVar("T", bound="DurableEntityInspectResponse")
 
 @_attrs_define
 class DurableEntityInspectResponse:
+    """Metadata-only observation of entity state, recovery work and retained head-delivery history."""
+
     recovery_revision: str
     """Opaque comparison value that changes on any manifest write; not ownership authority."""
     entity: DurableEntityScope
+    """Immutable account, application, environment and optional customer identity of a logical entity."""
     version: int
     """Business state uint64 version; zero means no transition has committed."""
     state_committed: bool
     """Whether a business transition has committed; does not imply delivery."""
     alarm: DurableEntityAlarmInspection
+    """Observed alarm timing and bounded recovery attempt metadata."""
     outbox: DurableEntityOutboxInspection
+    """Pending outgoing work and retry metadata for the current queue head."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

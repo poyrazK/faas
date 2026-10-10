@@ -19,6 +19,8 @@ T = TypeVar("T", bound="DurableEntityOutboxInspection")
 
 @_attrs_define
 class DurableEntityOutboxInspection:
+    """Pending outgoing work and retry metadata for the current queue head."""
+
     pending: int
     attempts: int
     exhausted: bool

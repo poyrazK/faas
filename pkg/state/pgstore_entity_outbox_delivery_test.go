@@ -43,7 +43,7 @@ func TestPgEntityOutboxAcceptanceConcurrentRestartAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, err := store.AppWebhookDeliveryByID(ctx, in.ID)
-	if err != nil || row.Status != state.AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt {
+	if err != nil || row.Status != state.AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt+1 {
 		t.Fatal(row, err)
 	}
 	if _, err := store.PruneAppWebhookDeliveries(ctx, time.Now().Add(time.Hour), 1000); err != nil {

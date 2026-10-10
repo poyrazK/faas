@@ -58,7 +58,7 @@ func (p *entityConfigProvider) ListObjects(ctx context.Context, _, prefix, curso
 }
 
 func (p *entityConfigProvider) DeleteObject(ctx context.Context, _, key string) error {
-	if !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/alarms/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/outbox/") {
+	if !strings.HasPrefix(key, "gregale/durable-entity-backups/v1/probes/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/alarms/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/outbox/") {
 		return errors.New("configuration probe touched real state")
 	}
 	p.deletes++

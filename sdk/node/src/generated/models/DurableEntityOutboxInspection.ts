@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DurableEntityHeadDelivery } from './DurableEntityHeadDelivery.js';
+/**
+ * Pending outgoing work and retry metadata for the current queue head.
+ */
 export type DurableEntityOutboxInspection = {
   pending: number;
   head_id?: string;

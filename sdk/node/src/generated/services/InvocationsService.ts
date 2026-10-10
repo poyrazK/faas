@@ -163,7 +163,7 @@ export class InvocationsService {
   }
   /**
    * List retained backup metadata.
-   * Owner diagnostic preview requiring apps:read or admin and MFA where
+   * This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
    * applicable. Requires durable entity app enablement. Private, no-store.
    * No ownership acquisition, guest execution or writes. Backup listing is
    * bounded and metadata-only; backup reads contain sensitive application data.
@@ -171,7 +171,7 @@ export class InvocationsService {
    * preserved pending work. Compatibility is always unverified; schema equality
    * does not validate application data. Preview grants no restore authority.
    *
-   * @returns DurableEntityBackupPage Observational result; subsequent restore still requires a fenced commit.
+   * @returns DurableEntityBackupPage Backup listing observation. Observational result; subsequent restore still requires a fenced commit.
    * @throws ApiError
    */
   public static listDurableEntityBackups({
@@ -186,10 +186,25 @@ export class InvocationsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Entity namespace for backup listing.
+     */
     namespace: string,
+    /**
+     * Logical entity key for backup listing.
+     */
     key: string,
+    /**
+     * Registered environment for backup listing; defaults to production.
+     */
     environment?: string,
+    /**
+     * Optional account-owned customer scope for backup listing.
+     */
     platformTenantId?: string,
+    /**
+     * Opaque continuation cursor from the previous backup page.
+     */
     cursor?: string,
   }): CancelablePromise<DurableEntityBackupPage> {
     return __request(OpenAPI, {
@@ -215,14 +230,14 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
-        504: `Observation deadline elapsed. Retry the read.`,
+        503: `Backup listing observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Backup listing observation. Observation deadline elapsed. Retry the read.`,
       },
     });
   }
   /**
    * Read one private application-state backup.
-   * Owner diagnostic preview requiring apps:read or admin and MFA where
+   * This backup retrieval operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
    * applicable. Requires durable entity app enablement. Private, no-store.
    * No ownership acquisition, guest execution or writes. Backup listing is
    * bounded and metadata-only; backup reads contain sensitive application data.
@@ -230,7 +245,7 @@ export class InvocationsService {
    * preserved pending work. Compatibility is always unverified; schema equality
    * does not validate application data. Preview grants no restore authority.
    *
-   * @returns DurableEntityBackup Observational result; subsequent restore still requires a fenced commit.
+   * @returns DurableEntityBackup Backup retrieval observation. Observational result; subsequent restore still requires a fenced commit.
    * @throws ApiError
    */
   public static getDurableEntityBackup({
@@ -245,10 +260,25 @@ export class InvocationsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Entity namespace for backup retrieval.
+     */
     namespace: string,
+    /**
+     * Logical entity key for backup retrieval.
+     */
     key: string,
+    /**
+     * Identifier of the retained backup to retrieve.
+     */
     backupId: string,
+    /**
+     * Registered environment for backup retrieval; defaults to production.
+     */
     environment?: string,
+    /**
+     * Optional account-owned customer scope for backup retrieval.
+     */
     platformTenantId?: string,
   }): CancelablePromise<DurableEntityBackup> {
     return __request(OpenAPI, {
@@ -274,14 +304,14 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
-        504: `Observation deadline elapsed. Retry the read.`,
+        503: `Backup retrieval observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Backup retrieval observation. Observation deadline elapsed. Retry the read.`,
       },
     });
   }
   /**
    * Preview a restore without writes or execution.
-   * Owner diagnostic preview requiring apps:read or admin and MFA where
+   * This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
    * applicable. Requires durable entity app enablement. Private, no-store.
    * No ownership acquisition, guest execution or writes. Backup listing is
    * bounded and metadata-only; backup reads contain sensitive application data.
@@ -289,7 +319,7 @@ export class InvocationsService {
    * preserved pending work. Compatibility is always unverified; schema equality
    * does not validate application data. Preview grants no restore authority.
    *
-   * @returns DurableEntityRestorePreview Observational result; subsequent restore still requires a fenced commit.
+   * @returns DurableEntityRestorePreview Restore preview observation. Observational result; subsequent restore still requires a fenced commit.
    * @throws ApiError
    */
   public static previewDurableEntityRestore({
@@ -321,8 +351,8 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
-        504: `Observation deadline elapsed. Retry the read.`,
+        503: `Restore preview observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Restore preview observation. Observation deadline elapsed. Retry the read.`,
       },
     });
   }
@@ -349,9 +379,21 @@ export class InvocationsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Entity namespace for state export.
+     */
     namespace: string,
+    /**
+     * Logical entity key for state export.
+     */
     key: string,
+    /**
+     * Registered environment for state export; defaults to production.
+     */
     environment?: string,
+    /**
+     * Optional account-owned customer scope for state export.
+     */
     platformTenantId?: string,
   }): CancelablePromise<DurableEntityStateExport> {
     return __request(OpenAPI, {
@@ -376,8 +418,8 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Preview unavailable, busy ownership, storage failure or uncertain outcome. Retry restore with identical request ID and body.`,
-        504: `Deadline elapsed. Retry restore with identical request ID and body.`,
+        503: `State export preview is unavailable, ownership is busy or storage failed. Retry the export read.`,
+        504: `State export deadline elapsed. Retry the export read.`,
       },
     });
   }

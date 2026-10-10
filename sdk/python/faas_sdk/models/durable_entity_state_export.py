@@ -19,8 +19,11 @@ T = TypeVar("T", bound="DurableEntityStateExport")
 
 @_attrs_define
 class DurableEntityStateExport:
+    """Checksummed committed application data with immutable entity identity; excludes recovery and delivery history."""
+
     format_: DurableEntityStateExportFormat
     entity: DurableEntityScope
+    """Immutable account, application, environment and optional customer identity of a logical entity."""
     version: int
     data: Any
     """Opaque application JSON, including any application schema envelope."""

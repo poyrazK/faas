@@ -15,6 +15,8 @@ T = TypeVar("T", bound="DurableEntityRetryResponse")
 
 @_attrs_define
 class DurableEntityRetryResponse:
+    """Acknowledged recovery metadata reset for one exhausted alarm or outgoing message."""
+
     version: int
     target: DurableEntityRetryResponseTarget
     rearmed: bool

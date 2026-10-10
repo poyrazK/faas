@@ -15,9 +15,13 @@ T = TypeVar("T", bound="DurableEntityBackup")
 
 @_attrs_define
 class DurableEntityBackup:
+    """Private application-state export captured in a retained hourly backup slot."""
+
     captured_at: datetime.datetime
     """UTC hourly slot start."""
     export: DurableEntityStateExport
+    """Checksummed committed application data with immutable entity identity; excludes recovery and delivery
+    history."""
 
     def to_dict(self) -> dict[str, Any]:
         captured_at = self.captured_at.isoformat()

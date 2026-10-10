@@ -17,11 +17,15 @@ T = TypeVar("T", bound="DurableEntityRestoreRequest")
 
 @_attrs_define
 class DurableEntityRestoreRequest:
+    """Candidate export and comparison identity used for restore preview, validation or fenced publication."""
+
     namespace: str
     key: str
     request_id: str
     expected_version: int
     export: DurableEntityStateExport
+    """Checksummed committed application data with immutable entity identity; excludes recovery and delivery
+    history."""
     environment: str | Unset = UNSET
     platform_tenant_id: str | Unset = UNSET
     validation_bundle_sha256: str | Unset = UNSET

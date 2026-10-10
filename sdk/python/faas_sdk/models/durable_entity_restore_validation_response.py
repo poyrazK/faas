@@ -17,6 +17,8 @@ T = TypeVar("T", bound="DurableEntityRestoreValidationResponse")
 
 @_attrs_define
 class DurableEntityRestoreValidationResponse:
+    """Application validator verdict and deployment pin; does not reserve or commit entity state."""
+
     valid: bool
     deployment_id: UUID
     expected_version: int

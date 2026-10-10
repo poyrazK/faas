@@ -107,7 +107,8 @@ def sync_detailed(
 ) -> Response[DurableEntityRestorePreview | Problem]:
     """Preview a restore without writes or execution.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -117,7 +118,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +149,8 @@ def sync(
 ) -> DurableEntityRestorePreview | Problem | None:
     """Preview a restore without writes or execution.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -157,7 +160,8 @@ def sync(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,7 +186,8 @@ async def asyncio_detailed(
 ) -> Response[DurableEntityRestorePreview | Problem]:
     """Preview a restore without writes or execution.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -192,7 +197,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,7 +226,8 @@ async def asyncio(
 ) -> DurableEntityRestorePreview | Problem | None:
     """Preview a restore without writes or execution.
 
-     Owner diagnostic preview requiring apps:read or admin and MFA where
+     This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and
+    MFA where
     applicable. Requires durable entity app enablement. Private, no-store.
     No ownership acquisition, guest execution or writes. Backup listing is
     bounded and metadata-only; backup reads contain sensitive application data.
@@ -230,7 +237,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (DurableEntityRestoreRequest):
+        body (DurableEntityRestoreRequest): Candidate export and comparison identity used for
+            restore preview, validation or fenced publication.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

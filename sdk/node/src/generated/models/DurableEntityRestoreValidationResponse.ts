@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application validator verdict and deployment pin; does not reserve or commit entity state.
+ */
 export type DurableEntityRestoreValidationResponse = {
   bundle_sha256?: string;
   isolation?: 'networkless';
