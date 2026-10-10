@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/corazawaf/coraza/v3"
-	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -35,17 +34,24 @@ const (
 const maxTrackedApps = 10000
 
 // Inspector is the node-wide WAF worker pool. Submit never blocks: a sample
-// above the app's budget is sampled out, and one that finds the queue full
-// is dropped. Both are counted.
+// from an app that has used its share of worker time is sampled out, and one
+// that finds the queue full is dropped. Both are counted.
 type Inspector struct {
 	obs   Observer
 	log   *slog.Logger
-	queue chan gateway.WAFSample
+	queue chan job
+	now   func() time.Time
 
 	budgetMu sync.Mutex
-	budgets  map[string]*rate.Limiter
+	budgets  map[string]*workerBudget
 
 	engines [api.MaxEdgeWAFParanoiaLevel + 1]lazyEngine
+}
+
+// job is a queued sample with the worker time charged for it on admission.
+type job struct {
+	sample     gateway.WAFSample
+	estimateMs float64
 }
 
 type lazyEngine struct {
@@ -62,8 +68,9 @@ func New(obs Observer, log *slog.Logger) *Inspector {
 	return &Inspector{
 		obs:     obs,
 		log:     log,
-		queue:   make(chan gateway.WAFSample, api.EdgeWAFQueueDepth),
-		budgets: map[string]*rate.Limiter{},
+		queue:   make(chan job, api.EdgeWAFQueueDepth),
+		now:     time.Now,
+		budgets: map[string]*workerBudget{},
 	}
 }
 
@@ -79,8 +86,8 @@ func (i *Inspector) Run(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case s := <-i.queue:
-					i.inspect(s)
+				case j := <-i.queue:
+					i.settle(j, i.inspect(j.sample))
 				}
 			}
 		}()
@@ -90,36 +97,43 @@ func (i *Inspector) Run(ctx context.Context) {
 
 // Submit implements gateway.WAFInspector.
 func (i *Inspector) Submit(s gateway.WAFSample) {
-	if !i.allow(s.AppID, budgetTokens(len(s.Body))) {
+	j := job{sample: s, estimateMs: estimateMs(s.ParanoiaLevel, len(s.Body))}
+	if !i.admit(s.AppID, j.estimateMs) {
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeSampledOut, 0)
 		return
 	}
 	select {
-	case i.queue <- s:
+	case i.queue <- j:
 	default:
+		i.settle(j, 0)
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeDropped, 0)
 	}
 }
 
-// budgetTokens prices one sample against its app's budget by body size, so
-// a rule inspecting large bodies cannot buy more worker CPU than one
-// inspecting small ones.
-func budgetTokens(bodyBytes int) int {
-	return 1 + bodyBytes/api.EdgeWAFBodyBytesPerBudgetToken
-}
-
-func (i *Inspector) allow(appID string, tokens int) bool {
+func (i *Inspector) admit(appID string, estimateMs float64) bool {
 	i.budgetMu.Lock()
 	defer i.budgetMu.Unlock()
-	lim, ok := i.budgets[appID]
+	now := i.now()
+	b, ok := i.budgets[appID]
 	if !ok {
 		if len(i.budgets) >= maxTrackedApps {
-			i.budgets = map[string]*rate.Limiter{}
+			i.budgets = map[string]*workerBudget{}
 		}
-		lim = rate.NewLimiter(rate.Limit(api.EdgeWAFInspectionsPerAppPerSecond), api.EdgeWAFInspectionsPerAppBurst)
-		i.budgets[appID] = lim
+		b = newWorkerBudget(now)
+		i.budgets[appID] = b
 	}
-	return lim.AllowN(time.Now(), tokens)
+	return b.admit(now, estimateMs)
+}
+
+// settle trues up an admitted sample's charge to the worker time it used. A
+// budget forgotten by a map reset is not recreated: the overrun is lost, as
+// the reset already granted the app a fresh burst.
+func (i *Inspector) settle(j job, elapsed time.Duration) {
+	i.budgetMu.Lock()
+	defer i.budgetMu.Unlock()
+	if b, ok := i.budgets[j.sample.AppID]; ok {
+		b.settle(i.now(), j.estimateMs, float64(elapsed)/float64(time.Millisecond))
+	}
 }
 
 func (i *Inspector) engine(paranoiaLevel int) (coraza.WAF, error) {
@@ -136,23 +150,25 @@ func (i *Inspector) engine(paranoiaLevel int) (coraza.WAF, error) {
 	return e.waf, e.err
 }
 
-func (i *Inspector) inspect(s gateway.WAFSample) {
+// inspect evaluates one sample and returns the worker time it took.
+func (i *Inspector) inspect(s gateway.WAFSample) time.Duration {
 	waf, err := i.engine(s.ParanoiaLevel)
 	if err != nil {
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeError, 0)
-		return
+		return 0
 	}
 	start := time.Now()
 	res, err := evaluate(waf, s)
-	elapsed := time.Since(start).Seconds()
+	took := time.Since(start)
+	elapsed := took.Seconds()
 	if err != nil {
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeError, elapsed)
 		i.log.Warn("edge waf inspection failed", "app_id", s.AppID, "edge_rule_id", s.RuleID, "request_id", s.RequestID, "err", err)
-		return
+		return took
 	}
 	if !res.Detected {
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeClean, elapsed)
-		return
+		return took
 	}
 	i.obs.ObserveWAFInspection(s.AppID, OutcomeDetected, elapsed)
 	for _, c := range res.Categories {
@@ -169,6 +185,7 @@ func (i *Inspector) inspect(s gateway.WAFSample) {
 		"score", res.Score, "threshold", s.AnomalyThreshold,
 		"crs_rule_ids", res.RuleIDs, "categories", res.Categories,
 		"body_truncated", s.BodyTruncated)
+	return took
 }
 
 func pathOnly(uri string) string {

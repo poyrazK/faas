@@ -151,8 +151,8 @@ differs from the proposal:
 - **Body cap: default 8 KiB, maximum 64 KiB** (`inspect_body_bytes`), not a
   64 KiB default, because body inspection dominates the cost (measured in
   amendment 2; an earlier estimate of ~3 µs per byte was wrong by 10-30x).
-  Each sample is charged against its app's inspection budget at one token
-  plus one per 8 KiB of body. Amendment 2 shows this undercharges bodies.
+  Each app's inspections are budgeted in worker milliseconds (amendment 2,
+  item 3), so a larger cap buys fewer inspections, not more CPU.
 - **Signals.** `gateway_waf_inspections_total{app,outcome}`,
   `gateway_waf_detections_total{app,category}` and
   `gateway_waf_rule_matches_total{app,rule_id}`. `rule_id` is limited to CRS
@@ -207,10 +207,15 @@ Consequences:
    inspects on the order of 10-20 body-carrying requests per second in
    total, so detection counts are a sample. The summary and docs already
    report `not_inspected`; the docs must say plainly that it is a sample.
-3. **Budget pricing undercharges bodies.** An 8 KiB body costs 25-100x a
-   headers-only inspection but is charged 2 tokens. The per-app budget
-   should be priced in worker time (for example, admit on available budget
-   and charge measured CPU milliseconds afterwards), so one app sending
-   large bodies cannot take the whole pool.
+3. **Budget pricing undercharged bodies.** An 8 KiB body costs 25-100x a
+   headers-only inspection but was charged 2 tokens. Done (2026-10-10): the
+   per-app budget is now worker time, 400 ms per second (20% of the
+   2-worker pool) with a 2000 ms burst. A sample is admitted while the
+   app's balance is positive, charged an estimate from the table above
+   (2 ms plus 25 µs per body byte, doubled at PL2), and trued up to its
+   measured time after inspection. Overruns become debt of up to one burst;
+   dropped samples are refunded. Headers-only traffic gets ~200
+   inspections/s per app and 8 KiB JSON ~2/s, instead of 20/s for both.
 
-These are open decisions for the product owner before step 1 leaves preview.
+Items 1 and 2 are open decisions for the product owner before step 1
+leaves preview.

@@ -4718,22 +4718,21 @@ const (
 	EdgeWAFDefaultInspectBodyBytes = 8 * 1024
 	// MaxEdgeWAFInspectBodyBytes bounds a rule's inspect_body_bytes.
 	MaxEdgeWAFInspectBodyBytes = 64 * 1024
-	// EdgeWAFBodyBytesPerBudgetToken prices body inspection against the
-	// per-app budget: a sample costs one token plus one per this many
-	// body bytes, so a rule inspecting 64 KiB bodies gets fewer
-	// inspections per second than one inspecting 8 KiB bodies.
-	EdgeWAFBodyBytesPerBudgetToken = 8 * 1024
 	// EdgeWAFWorkers is the node-wide number of inspection goroutines,
 	// which is the WAF's hard CPU ceiling on a gateway node.
 	EdgeWAFWorkers = 2
 	// EdgeWAFQueueDepth bounds samples waiting for a worker. A full
 	// queue drops the sample and counts it; it never blocks a request.
 	EdgeWAFQueueDepth = 256
-	// EdgeWAFInspectionsPerAppPerSecond and EdgeWAFInspectionsPerAppBurst
-	// bound one app's share of the worker pool. Requests above the rate
-	// are not inspected (outcome "sampled_out").
-	EdgeWAFInspectionsPerAppPerSecond = 20
-	EdgeWAFInspectionsPerAppBurst     = 40
+	// EdgeWAFWorkerMsPerAppPerSecond and EdgeWAFWorkerMsPerAppBurst
+	// bound one app's share of the worker pool in worker milliseconds
+	// (ADR-831 amendment 2), because one inspection costs from ~2 ms
+	// (headers only) to ~1 s (64 KiB of JSON at PL2). 400 ms/s is 20%
+	// of the 2-worker pool. A sample is admitted while the app's balance
+	// is positive and charged its measured time afterwards; samples above
+	// the budget are not inspected (outcome "sampled_out").
+	EdgeWAFWorkerMsPerAppPerSecond = 400
+	EdgeWAFWorkerMsPerAppBurst     = 2000
 	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
 	// OWASP CRS paranoia level a rule may select.
 	EdgeWAFDefaultParanoiaLevel = 1
