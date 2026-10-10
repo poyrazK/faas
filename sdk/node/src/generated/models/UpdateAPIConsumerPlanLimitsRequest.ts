@@ -9,7 +9,7 @@ export type UpdateAPIConsumerPlanLimitsRequest = {
   max_requests_per_minute: number;
   max_units_per_month: number;
   /**
-   * Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month.
+   * Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them.
    */
   alert_thresholds_percent?: Array<number>;
 };

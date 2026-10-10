@@ -20,8 +20,8 @@ class UpdateAPIConsumerPlanLimitsRequest:
     max_requests_per_minute: int
     max_units_per_month: int
     alert_thresholds_percent: list[int] | Unset = UNSET
-    """Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC
-    month (ADR-849). Requires max_units_per_month."""
+    """Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current
+    thresholds; send an empty list to remove them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

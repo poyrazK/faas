@@ -49642,7 +49642,7 @@ components:
           type: array
           maxItems: 5
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
-          description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month."
+          description: "Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
