@@ -914,6 +914,136 @@ customer/business reference and workflow instance's explanation and history.
 Apply the additive platform index migration
 `20261008222056620_customer_operation_workflow_attention.sql` when deploying.
 
+### Assign blocker ownership and a next action
+
+A reported blocker can include optional `owner` and `next_action` fields.
+`owner` is a public application-assigned person or team identifier, limited to
+128 UTF-8 bytes. `next_action` is public resolution guidance, limited to 512
+UTF-8 bytes. Neither accepts control characters. Empty or omitted ownership
+means unassigned. Keep secrets and private contact details out of these fields:
+customer-scoped reads and dashboards expose them.
+
+Authorize assignment changes in the application and lock the business row, then
+publish the complete replacement blocker list in the same transaction:
+
+```javascript
+// Keep every other active blocker in remainingBlockers.
+tx.workflowBlockers('order-fulfillment', lockedOrder.workflow_instance_id,
+  lockedOrder.status, [...remainingBlockers, {
+    code: 'payment-pending', operation: 'fulfill-order',
+    description: 'Payment confirmation has not arrived.',
+    owner: 'billing-team', next_action: 'Check the payment provider receipt.',
+  }]);
+```
+
+Use the equivalent `OperationWorkflowBlocker.Owner` / `NextAction` fields in Go
+or `OperationWorkflowBlocker(owner=..., next_action=...)` in Python. The existing
+`WorkflowBlockers` / `workflow_blockers` helpers report assignment without
+changing business state. Reassignment preserves `first_observed_at` for the
+same active target/code, so assigning work does not reset its age. Ownership is
+part of the revisioned blocker snapshot; a later replacement that omits it
+clears the assignment. Upgrade all writers before relying on these fields:
+older SDKs may discard them when republishing metadata.
+
+The attention queue, workflow detail, and retained history show ownership and
+next actions; the CLI attention output includes populated assignment fields.
+These observations identify responsibility, not a verified platform principal
+or permission to execute an action. The application remains responsible for
+checking current business rows and authorizing the suggested step.
+
+When the blocker is actually resolved, report the existing source-linked
+resolution fact and optional `resolved_by` (a public identifier of at most 128
+UTF-8 bytes without control characters). The report timestamp provides the
+resolution time. Clearing a blocker alone is not proof that it was resolved;
+resolution attribution is application-reported, not verified operator identity.
+No new platform or application-schema migration is required for these fields.
+
+### Find work by owner
+
+The workflow attention queue and summary accept `owner` (an exact,
+case-sensitive public identifier) or `unassigned=true`. These selectors are
+mutually exclusive. Empty and absent blocker owners both mean unassigned;
+workflows without blockers are not unassigned work. Identifiers retain their
+128 UTF-8 byte limit and may not contain control characters.
+
+```sh
+gregale customer-operations attention --app orders --scope production --owner billing-team
+gregale customer-operations attention --app orders --scope production --unassigned
+gregale customer-operations attention-summary --app orders --scope production --group-by owner
+```
+
+The account and customer-self attention endpoints accept the same query
+parameters. Go uses `OperationWorkflowAttentionOptions{Owner: "billing-team"}`
+or `{Unassigned: true}`; the Node customer client uses `owner` / `unassigned`
+and `groupBy: 'owner'`. Generated Python attention clients accept `owner`,
+`unassigned`, and the owner grouping value.
+
+Owner selection, blocker code, and target Operation must match one blocker,
+rather than different blockers in the same workflow. Queue entries retain the
+complete workflow snapshot for context. In summaries with owner selection,
+blocker counts and ages cover only matching blockers. `group_by=owner` likewise
+counts only matching blockers for each owner; the empty group `value` represents
+unassigned work. A real owner named `unassigned` remains a distinct group.
+
+Each group reports workflow and blocker counts, overdue workflow counts, and
+oldest known blocker age. Overdue status belongs to the workflow deadline,
+not a separate owner deadline. A workflow shared by two owners counts in each
+owner group, so group workflow counts must not be summed. Totals remain unique
+matching workflows; stale or dependency-only workflows without blockers can
+appear in unfiltered totals without belonging to an owner group.
+
+Dashboard group links open the scoped owner queue; each row links to its
+workflow explanation and resolution history. Queue and summary pagination bind
+both ownership selectors and all other filters. Changing a filter requires a
+fresh cursor. Assignment is still controlled and authorized by the application.
+
+### Declare blocker escalation policies
+
+Declare `blocker_escalations` on an application workflow, keyed by blocker code:
+
+```yaml
+blocker_escalations:
+  payment-pending:
+    after_seconds: 3600
+    owner: billing-escalation-team
+```
+
+The resolved Operation workflow steps carry the same map. Policies are part of
+the pinned definition and workflow version; keep every participating step's
+policy declaration identical and publish a new contract version when changing
+its meaning. Each workflow supports at most 32 policies. Thresholds are whole
+seconds from 1 to 315360000 (ten years); the public recommended recipient follows
+the 128 UTF-8 byte owner bound and cannot be empty or contain control characters.
+
+At the attention cursor's evaluation time, Gregale compares the active blocker's
+`first_observed_at` plus `after_seconds` with that time. Reaching the threshold
+produces an `escalations` finding with blocker code, target Operation,
+recommended recipient, threshold, and `escalated_at` (when the threshold was
+reached). An omitted observation time stays unknown; publication time is not
+used as a substitute. Terminal workflows do not produce escalation findings.
+Reassignment preserves age, so it does not postpone escalation. Clearing the
+blocker removes it from the current escalation queue; retained resolution history
+remains available through the existing workflow links.
+
+```sh
+gregale customer-operations attention --app orders --scope production --reason escalated
+gregale customer-operations attention-summary --app orders --scope production --reason escalated --group-by owner
+```
+
+Account and customer-self attention endpoints and SDKs accept `reason=escalated`.
+When combined with owner, code, or target filters, one escalated blocker must
+match those selectors. Owner-grouped summaries expose `escalated_workflow_count`
+and `escalated_blocker_count` for that assignee's blockers. The escalation
+recipient is a recommendation and does not replace the assignee. Queue entries
+retain full context; escalated-only summaries count only matching escalated
+blockers. The dashboard displays the recommended recipient and threshold time.
+
+Gregale observes and recommends; the application decides how to contact a team,
+authorize changes, or execute a business action. No notifications are sent by
+this feature and no new platform or application-schema migration is required.
+The evaluation time stays fixed across cursor pages, while retained observations
+may change; refresh the queue to include thresholds crossed since the first page.
+
 ### Explain blocker resolutions
 
 When clearing a reported blocker, the application can include an explicit
@@ -923,6 +1053,7 @@ When clearing a reported blocker, the application can include an explicit
 | --- | --- |
 | `code`, `operation` | The prior blocker code and target Operation name. |
 | `description` | Public explanation of why that blocker was cleared. |
+| `resolved_by` | Optional public application-reported resolver or team identifier. |
 | `blocker_operation_id` | Operation that published the source blocker report. |
 | `blocker_report_id` | Exact source report identity. |
 | `blocker_revision` | Source state revision, strictly earlier than the new report. |
@@ -944,6 +1075,7 @@ tx.workflowBlockers('order-fulfillment', lockedOrder.workflow_instance_id, locke
     code: 'payment-pending',
     operation: 'fulfill-order',
     description: 'Payment confirmation received.',
+    resolved_by: 'billing-team',
     blocker_operation_id: priorState.operation_id,
     blocker_report_id: priorState.report_id,
     blocker_revision: priorState.revision,
@@ -2099,3 +2231,200 @@ external reversal inside the SQL transaction. A pending or required report does
 not imply that reversal occurred. Receipt replay republishes queued observations
 without rerunning the callback or repeating external actions. Report only public
 customer-visible recovery metadata. No migration or new endpoint is required.
+
+
+### Blocker acknowledgement and follow-up
+
+Applications can report `acknowledged_at` and `acknowledged_by` together on an
+active blocker, with an optional `follow_up_at` deadline. Actor identifiers use
+the existing public actor bounds. All times are finite RFC3339 timestamps;
+acknowledgement must follow the known first observation and cannot be later than
+the report. Follow-up must be at or after acknowledgement. A past follow-up
+is valid and immediately overdue at the queue evaluation time.
+
+These fields are application observations, not verified platform identities.
+Publish the full replacement blocker list through the application's business
+transaction and outbox. Preserve acknowledgement metadata on subsequent updates;
+clearing it explicitly returns the blocker to the unacknowledged queue. Upgrade
+all writers before relying on these optional fields.
+
+`reason=unacknowledged` selects blockers without acknowledgement;
+`reason=follow_up_overdue` selects deadlines reached at the fixed queue evaluation
+time. Owner, code, target and reason must match the same blocker. Summaries expose
+`unacknowledged_blocker_count` and `follow_up_overdue_blocker_count`, including per
+owner groups. Older blockers with no acknowledgement fields count as
+unacknowledged. Refresh the queue to observe newly elapsed follow-up deadlines.
+
+Acknowledgement neither resolves a blocker nor resets its first observation or
+escalation threshold. Existing revision history retains acknowledgement changes.
+No notification, reassignment or business action is performed by Gregale.
+
+
+### Business impact and priority queues
+
+Applications may add `priority` (`low`, `normal`, `high`, or `urgent`) and
+`business_impact` to each reported blocker. The impact is public UTF-8 text,
+limited to 512 bytes without control characters. Omitted priority is treated as
+`normal` for queues and counts. The application determines business urgency;
+Gregale does not infer urgency from customer identity or financial information.
+
+For example, a shipping blocker can report `priority: urgent` and
+`business_impact: Order cannot ship; customer promised delivery tomorrow`.
+Set the workflow's existing `deadline_at` to the promised business deadline.
+Publish this metadata through the normal application transaction and outbox,
+preserving the entire replacement blocker list and its acknowledgement fields.
+Priority changes preserve blocker age, escalation timing, and acknowledgement.
+They grant no execution authority and trigger no notifications.
+
+Use `priority=urgent` on attention queues and summaries. Priority, owner,
+unassigned, code, target and blocker-specific attention reason must match the
+same blocker. Workflows with no blockers do not match a priority filter. Queue
+entries still return their full reported blocker snapshot. Summary totals and
+per-owner groups expose `low_blocker_count`, `normal_blocker_count`,
+`high_blocker_count`, and `urgent_blocker_count` for the selected blockers.
+
+Use `sort=deadline` to list the earliest workflow business deadline first;
+workflows without deadlines appear last. Equal deadlines use descending update
+time and workflow identity as deterministic tie-breakers. `sort=updated_at` is
+the default. Summary groups keep their existing alphabetical group ordering.
+Cursors bind both priority and sort order as well as the existing access scope
+and filters. Refresh from the first page after changing filters or metadata;
+this is an evaluated retained-state view, not a database snapshot across writes.
+
+SDK transaction helpers, CLI flags `--priority` / `--sort`, dashboard filters,
+and revision history retain and display this application-reported context.
+All writers must preserve these optional fields before relying on them.
+
+
+### Verify cleared blockers with retained business evidence
+
+Clearing a blocker and confirming its resolution are separate observations.
+Applications can opt a resolution into verification by reporting paired
+`verification_milestone_id` and `verification_milestone_name`, with an optional
+`verification_operation_id` and `verification_owner`. The evidence Operation
+defaults to the Operation publishing the resolution. Allocate an exact milestone
+ID in the application transaction; publish it with the business confirmation
+(e.g. `payment-confirmed` or `inventory-reserved`) in the same transaction or a
+later publication. If confirmation will occur in another Operation, report that
+Operation's exact ID as well. These public owner identifiers use the existing
+128-byte actor limits; they do not verify platform identity.
+
+Gregale checks the exact Operation, milestone ID and name. Evidence must be
+retained in the same account, app, customer, environment, business subject,
+workflow instance, and the resolution report's contract version. Its pinned
+workflow mapping must identify that instance. Matching a milestone name alone,
+a fact in another customer's workflow, or a fact in another contract version
+cannot verify the resolution. This is evidence presence, not independent
+validation of the application's business conclusion. Applications decide whether
+the chosen fact establishes a fix.
+
+Until matching proof is retained, the finding is `awaiting_verification`; with
+matching proof it is `verified`, with `verified_at` equal to proof publication
+time. Absence, expiry, or a mismatched reference remain awaiting verification.
+A resolution without verification fields remains a legacy resolution and does
+not create a new obligation. The existing source-report ownership and revision
+checks continue to apply when admitting resolutions.
+
+Obligations come from retained resolution history, so later state reports and
+terminal workflow states do not silently clear them. Identical repeated claims
+collapse by original blocker occurrence and exact evidence reference; the earliest
+revision supplies immutable verification ownership. Different evidence references
+are distinct claims. Use an accurate reference and owner when publishing the
+resolution. Upgrade all writers before relying on these optional fields.
+
+`reason=awaiting_verification` selects pending obligations and accepts the same
+owner/unassigned, blocker-code and target filters against one resolution. Pending
+ownership is `verification_owner`, separately from the active blocker owner or
+`resolved_by`. Priority filters continue to select active blockers; pending
+obligations have no priority and do not match a priority filter. Default attention
+queues include retained workflows with pending verification even if otherwise
+unblocked or terminal. Summary totals and owner/code/target groups expose
+`awaiting_verification_workflow_count` and
+`awaiting_verification_resolution_count`; cleared blockers do not become active
+blockers again in these summaries.
+
+Attention entries and selected workflow-instance views expose a preview of up to
+16 findings, with matching pending items first, and exact
+`awaiting_verification_count` / `resolution_verification_count` totals over all
+retained distinct obligations. Selected workflow-instance history pages include
+`resolution_verifications` for each report so older obligations remain inspectable
+beyond the preview. Queue evaluation time freezes which published claims and
+proofs can participate across cursor pages; refresh to observe newly published
+confirmation. Retention and state changes still make this an evaluated retained
+view rather than a transactionally frozen database snapshot.
+
+The dashboard and CLI display proof identity and status. Pending proof marks the
+observational workflow decision as needing attention, including terminal workflows.
+It does not re-block an Operation, change workflow state, grant action authority,
+or alter readiness enforcement. No notification or business action is performed,
+and the existing JSON storage needs no migration.
+
+### Inspect workflow bottlenecks
+
+Selecting a workflow and instance in the business milestone view returns `workflow_instance.bottlenecks`, also shown in the dashboard and CLI. Analytics read the latest 1,024 retained reports independently of visible history pagination. Each breakdown returns the 32 longest duration groups, with separate truncation flags; scalar totals include every group in the window.
+
+State time and blocked time use application `occurred_at` timestamps between consecutive revisions. Metadata updates preserve elapsed time. Terminal states stop the clock. Blocked time counts each interval once, while breakdowns attribute that interval to each reported blocker code, Operation, owner and contract version. Concurrent blockers therefore overlap. Ownership changes take effect at the next reported snapshot; `first_observed_at` does not invent earlier ownership history.
+
+Verification wait uses resolution report publication through proof publication, or evaluation time while pending. Proof already retained before the resolution has zero wait. Wait is grouped by the original verification owner, and concurrent obligations can overlap. A resolution whose original report falls outside the retained window contributes an unknown-start count instead of an inferred duration.
+
+`history_complete` describes coverage from revision 1 to the selected current report. `incomplete_reasons` identifies retention gaps, duplicate revisions, inconsistent or future event times, contract changes, state discontinuities and missing verification starts. Intervals across uncertain boundaries are excluded. These figures measure observed history, not business time before the first report. Nonterminal tails extend to `evaluated_at`; results can change as retention expires or new reports arrive. Durations are whole seconds, and rounded breakdowns may not sum exactly to scalar totals.
+
+### Compare workflow performance across instances
+
+`GET /v1/apps/{slug}/workflow-performance/summary` compares retained instances for an explicit `scope` and `workflow`. Account readers with MFA can optionally select `tenant_id`. Customer readers use `GET /v1/platform-tenant-self/workflow-performance/summary` with explicit `app_id`, `scope` and `workflow`; ownership comes from their credentials and tenant overrides are rejected. These read-only endpoints support no pagination or date-range selector.
+
+The dashboard's **Workflow performance** view is available from customer operations and a selected workflow's bottleneck panel. Completed and ongoing cohorts are calculated separately. Each considers the latest 100 matching retained instances, ordered by current report update time with a stable identity tie-breaker. `matching_workflow_count` covers all matches; `sampled_workflow_count` and `cohort_truncated` describe the selected sample. Completed means the latest reported state is terminal, independently of outcome or pending verification.
+
+Only instances with `history_complete` enter duration distributions. Missing or inconsistent histories, contract changes and histories exceeding the latest 1,024 reports are excluded and counted explicitly. An excluded instance does not get replaced by an older complete instance. Exclusion reasons can overlap; their counts need not sum to the excluded count. This is a recent retained sample, not a population estimate or historical archive. If every sampled instance is incomplete, distributions have `workflow_count: 0` and zero-valued durations; the dashboard shows that no comparison is available.
+
+Each eligible instance contributes one accumulated duration to state-time, blocked-time and verification-wait totals, including zero blocker/verification values. Breakdowns contribute one accumulated duration per instance that reported that state, blocker tuple or verification owner; absent groups do not introduce zero samples. Repeated visits to a state and recurring blockers accumulate within an instance. States and blockers preserve contract version; blockers preserve Operation, code and owner. Verification owner groups sum observed waits for that owner within each workflow, with pending obligation counts. A terminal workflow can still accrue verification wait while proof is pending. Concurrent blockers and obligations overlap.
+
+Distributions expose `workflow_count`, `total_seconds`, `p50_seconds` and `p95_seconds`. Both percentiles use nearest rank (the sorted value at ceiling of percentile times count), including the lower central value for an even-sized p50 sample. Ongoing time measures elapsed observation through `evaluated_at`; it does not predict completion. The 32 groups with the largest total seconds appear for each dimension, with deterministic identity ties and separate truncation flags. Cohort totals include every group before truncation. Refreshing may change results as reports arrive, states reopen or retention expires.
+
+### Investigate performance contributors
+
+Performance tables link to ranked contributing instances. Account readers use `GET /v1/apps/{slug}/workflow-performance/instances`; customer readers use `GET /v1/platform-tenant-self/workflow-performance/instances`. Both require the same explicit app/environment/workflow selection as summaries, plus `cohort=completed|ongoing` and a `dimension`:
+
+- `state_time`, `blocked_time`, or `verification_wait` selects the overall measure and rejects group selectors.
+- `state` requires exact `state` and `contract_version`.
+- `blocker` requires exact `operation`, `code`, `contract_version`, and either `owner` or `unassigned=true`.
+- `verification_owner` requires either `owner` or `unassigned=true`.
+
+Pass the summary's opaque `cohort_token` to retain its evaluation time and verify the same sampled instances, matching counts, history and verification evidence. Tokens bind account/customer role and app/environment/workflow/customer selectors. If current instance updates, retention expiry or missing evidence change that cohort, the API returns `409` with problem code `workflow_performance_cohort_changed`; refresh the summary. New evidence published after the evaluation time is excluded from that evaluated view. A token verifies retained evidence rather than storing a database snapshot. Without a token the endpoint evaluates a fresh cohort and returns a token for that view.
+
+The response includes all complete-history contributors to the selected group, at most 100, sorted by observed seconds descending with stable identity ties. No pagination is supported. Its `duration` distribution uses exactly those items and reproduces the corresponding summary measure when the cohort token remains valid. Overall dimensions include eligible zero values; exact groups include instances that reported that group. Matching/sample/coverage counts describe the whole selected cohort before filtering to contributors, and incomplete instances remain excluded.
+
+Each contributor exposes its business subject, reported current state, application blockers with public owner and next action, and a pending-first verification preview of up to 16 obligations with exact retained counts. Customer responses omit tenant identifiers. The dashboard links to workflow history and the reporting Operation. Historical blockers or owners that contributed elapsed time may differ from the displayed current snapshot. Workflow history links open the current retained view; they do not freeze the earlier performance evaluation.
+
+### Observe business state SLA budgets
+
+Workflow manifests can declare optional `state_sla_budgets`, for example `payment-approval: 30m`. Definition APIs expose the equivalent `state_sla_budget_seconds` map. Budgets must be positive whole seconds, at most ten years, and name declared nonterminal states. All steps of one workflow definition must agree. Publish a new workflow contract version when changing budgets; retained Operations continue to use their pinned declarations.
+
+A selected workflow, performance contributor, or attention entry can expose `state.sla`: the budget, evaluation time, status (`within_budget`, `at_risk`, `breached`, or `unknown`), and current-visit coverage. When entry is known, it also includes observed entry/due times, whole elapsed/breached seconds and remaining seconds rounded up. A breach starts at the due time, including exact equality. Terminal states have no current SLA.
+
+The clock starts at the first report of the current state visit. Consecutive metadata updates in the same state preserve that clock; leaving the state and later returning starts a new visit. Retained history must establish entry from revision 1 or a contiguous preceding different state. Revision gaps/duplicates, inconsistent event times, changed contract versions or different budgets or warning thresholds during a visit make its entry unknown. Reads examine up to 1,024 retained reports plus one boundary witness; absence does not imply a breach. The clock measures application-reported occurrence times and does not infer business time before the first observation.
+
+Use `reason=sla_breached` in the attention API, dashboard or CLI. A known breach joins the default attention queue even without blockers. Existing owner/code/target selectors retain their matching rules; an SLA does not invent an owner. Queue summaries report breached workflows and unknown current entries among the matching queue. Unknown SLA status alone does not place a workflow in the default queue.
+
+Performance cohorts expose configured, evaluated, breached and unknown SLA workflow counts, plus evaluated/breached visit counts for each state/contract group. Completed workflows retain breaches from earlier visits. Evaluation requires complete whole-workflow history under the existing cohort coverage rules and consistent budgets within each visit. Configured means the pinned contract or observed history declares a budget, even if no budgeted state was visited. Evaluated means the observed run was examined; each workflow counts once as breached if any evaluated budgeted visit reached its budget. Incomplete histories and ambiguous policy changes contribute unknown counts, rather than inferred violations. Consequently a current state visit can have a known breach while the whole workflow remains unknown in performance comparisons. State visit counts may exceed workflow counts when workflows revisit a state.
+
+Budgets provide observations for application decisions. They do not reject transitions, change readiness, reassign work, invoke recovery, or send notifications.
+
+### Warn before a state SLA breach
+
+Add optional `state_sla_warning_percent` to the workflow contract alongside its budgets:
+
+```yaml
+state_sla_budgets:
+  payment-approval: 30m
+state_sla_warning_percent:
+  payment-approval: 80
+```
+
+The API uses the same `state_sla_warning_percent` map with `state_sla_budget_seconds`. Each threshold must be a whole percentage from 1 through 99 and reference a state with a positive SLA budget. At most 32 states can be configured. Steps within one definition must agree; change the workflow contract version when changing thresholds. Omitted states keep their existing behavior without an early warning.
+
+For a known current visit, `warning_at` is the observed entry time plus the budget multiplied by `warning_percent / 100`. A 30-minute budget at 80% warns at 24 minutes with 6 minutes left. Threshold arithmetic preserves fractional seconds; it does not round to whole elapsed seconds to determine status. Exact warning-time equality starts `at_risk`; exact due-time equality starts `breached`, which replaces the risk status. Metadata updates preserve both times. Terminal states have no current SLA. Unknown history exposes the configured percentage but omits the warning time and never implies risk.
+
+Use `reason=sla_at_risk` in the attention API, dashboard or CLI to select known visits that reached their warning threshold and have not yet breached. These visits also enter the default attention queue. Summaries include `sla_at_risk_workflow_count` separately from breached and unknown counts, respecting the existing scope, customer, workflow, owner, code, target-operation and priority filters. SLA risk does not invent blocker ownership or urgency. Cursor pages evaluate warning and due times at the original queue evaluation time; refresh to observe elapsed-time changes.
+
+Selected workflow views and performance contributors expose the warning percentage/time alongside due time and remaining seconds. Historical performance breach counts remain breach counts; early warnings are current-visit observations. Warnings do not enforce readiness, send notifications, or perform application actions.

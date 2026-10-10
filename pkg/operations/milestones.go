@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -67,6 +68,9 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	positions := make(map[string]map[int]bool)
 	workflowStates := make(map[string][]string)
 	workflowTerminalStates := make(map[string][]string)
+	workflowEscalations := make(map[string]map[string]api.OperationWorkflowBlockerEscalationPolicy)
+	workflowStateSLA := make(map[string]map[string]int64)
+	workflowStateSLAWarnings := make(map[string]map[string]int64)
 	workflowStateStaleAfter := make(map[string]map[string]int64)
 	workflowTransitions := make(map[string][]api.OperationWorkflowTransition)
 	workflowTransitionsDeclared := make(map[string]bool)
@@ -103,6 +107,32 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			terminalSet[state] = true
 		}
 		spec.WorkflowSteps[i].TerminalStates = terminalStates
+		budgets := spec.WorkflowSteps[i].StateSLABudgetSeconds
+		if len(budgets) > api.OperationWorkflowStatesMax {
+			return fmt.Errorf("workflow SLA budget list exceeds its limit")
+		}
+		for state, seconds := range budgets {
+			if api.ValidateOperationWorkflowStateName(state) != nil || !stateSet[state] || terminalSet[state] || seconds < 1 || seconds > api.OperationWorkflowStateSLAMaxSeconds {
+				return fmt.Errorf("workflow SLA budget is invalid or references a terminal or undeclared state")
+			}
+		}
+		spec.WorkflowSteps[i].StateSLABudgetSeconds = maps.Clone(budgets)
+		if len(budgets) == 0 {
+			spec.WorkflowSteps[i].StateSLABudgetSeconds = nil
+		}
+		warnings := spec.WorkflowSteps[i].StateSLAWarningPercent
+		if len(warnings) > api.OperationWorkflowStatesMax {
+			return fmt.Errorf("workflow SLA warning list exceeds its limit")
+		}
+		for state, percent := range warnings {
+			if budgets[state] < 1 || percent < api.OperationWorkflowStateSLAWarningMinPercent || percent > api.OperationWorkflowStateSLAWarningMaxPercent {
+				return fmt.Errorf("workflow SLA warning requires a budgeted state and a whole percentage from 1 to 99")
+			}
+		}
+		spec.WorkflowSteps[i].StateSLAWarningPercent = maps.Clone(warnings)
+		if len(warnings) == 0 {
+			spec.WorkflowSteps[i].StateSLAWarningPercent = nil
+		}
 		staleAfter := spec.WorkflowSteps[i].StateStaleAfterSeconds
 		if len(staleAfter) > api.OperationWorkflowStatesMax {
 			return fmt.Errorf("operation workflow state staleness threshold list exceeds its limit")
@@ -118,6 +148,13 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			canonicalStaleAfter = nil
 		}
 		spec.WorkflowSteps[i].StateStaleAfterSeconds = canonicalStaleAfter
+		if err := ValidateWorkflowBlockerEscalations(spec.WorkflowSteps[i].BlockerEscalations); err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].BlockerEscalations = maps.Clone(spec.WorkflowSteps[i].BlockerEscalations)
+		if len(spec.WorkflowSteps[i].BlockerEscalations) == 0 {
+			spec.WorkflowSteps[i].BlockerEscalations = nil
+		}
 		transitions := append([]api.OperationWorkflowTransition(nil), spec.WorkflowSteps[i].Transitions...)
 		if len(transitions) > api.OperationWorkflowTransitionsMax {
 			return fmt.Errorf("operation workflow transition list exceeds its limit")
@@ -282,6 +319,27 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			}
 		} else {
 			workflowTerminalStates[step.Workflow] = append([]string(nil), step.TerminalStates...)
+		}
+		if prior, exists := workflowEscalations[step.Workflow]; exists {
+			if !maps.Equal(prior, step.BlockerEscalations) {
+				return fmt.Errorf("workflow blocker escalation policies must match across steps")
+			}
+		} else {
+			workflowEscalations[step.Workflow] = step.BlockerEscalations
+		}
+		if prior, exists := workflowStateSLA[step.Workflow]; exists {
+			if !maps.Equal(prior, step.StateSLABudgetSeconds) {
+				return fmt.Errorf("workflow SLA budgets must match across steps")
+			}
+		} else {
+			workflowStateSLA[step.Workflow] = maps.Clone(step.StateSLABudgetSeconds)
+		}
+		if prior, exists := workflowStateSLAWarnings[step.Workflow]; exists {
+			if !maps.Equal(prior, step.StateSLAWarningPercent) {
+				return fmt.Errorf("workflow SLA warning thresholds must match across steps")
+			}
+		} else {
+			workflowStateSLAWarnings[step.Workflow] = maps.Clone(step.StateSLAWarningPercent)
 		}
 		if prior, exists := workflowStateStaleAfter[step.Workflow]; exists {
 			if !sameWorkflowStateStaleAfter(prior, step.StateStaleAfterSeconds) {
@@ -655,12 +713,45 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	blockers := append([]api.OperationWorkflowBlocker(nil), report.Blockers...)
 	seenBlockers := make(map[string]bool, len(blockers))
 	for i, blocker := range blockers {
+		switch blocker.Priority {
+		case "", "low", "normal", "high", "urgent":
+		default:
+			return report, "", fmt.Errorf("invalid workflow blocker priority")
+		}
+		if !validWorkflowBlockerText(blocker.BusinessImpact, api.OperationWorkflowBlockerImpactMaxBytes) {
+			return report, "", fmt.Errorf("invalid public workflow blocker business impact")
+		}
+
+		if !validWorkflowBlockerText(blocker.Owner, api.OperationWorkflowBlockerActorMaxBytes) || !validWorkflowBlockerText(blocker.NextAction, api.OperationWorkflowBlockerActionMaxBytes) {
+			return report, "", fmt.Errorf("workflow blocker owner or next action has invalid public fields")
+		}
 		if blocker.FirstObservedAt != "" {
 			first, err := time.Parse(time.RFC3339Nano, blocker.FirstObservedAt)
 			if err != nil || first.UTC().Year() < 1 || first.UTC().Year() > 9999 || first.After(report.OccurredAt) {
 				return report, "", fmt.Errorf("blocker first observation must be a valid timestamp at or before the report")
 			}
 			blockers[i].FirstObservedAt = first.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+
+		if !validWorkflowBlockerText(blocker.AcknowledgedBy, api.OperationWorkflowBlockerActorMaxBytes) || (blocker.AcknowledgedAt == "") != (blocker.AcknowledgedBy == "") || blocker.FollowUpAt != "" && blocker.AcknowledgedAt == "" {
+			return report, "", fmt.Errorf("invalid blocker acknowledgement or follow-up")
+		}
+		var acknowledged time.Time
+		if blocker.AcknowledgedAt != "" {
+			var err error
+			acknowledged, err = time.Parse(time.RFC3339Nano, blocker.AcknowledgedAt)
+			first, _ := time.Parse(time.RFC3339Nano, blocker.FirstObservedAt)
+			if err != nil || acknowledged.UTC().Year() < 1 || acknowledged.UTC().Year() > 9999 || !first.IsZero() && acknowledged.Before(first) || acknowledged.After(report.OccurredAt) {
+				return report, "", fmt.Errorf("invalid blocker acknowledgement time")
+			}
+			blockers[i].AcknowledgedAt = acknowledged.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+		if blocker.FollowUpAt != "" {
+			due, err := time.Parse(time.RFC3339Nano, blocker.FollowUpAt)
+			if err != nil || due.UTC().Year() < 1 || due.UTC().Year() > 9999 || due.Before(acknowledged) {
+				return report, "", fmt.Errorf("follow-up must be at or after acknowledgement")
+			}
+			blockers[i].FollowUpAt = due.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
 		}
 		key := blocker.Operation + "\x00" + blocker.Code
 		if len(blocker.Code) == 0 || len(blocker.Code) > 64 || !operationName.MatchString(blocker.Code) ||
@@ -685,6 +776,27 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	resolutions := append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...)
 	seenResolutions := make(map[string]bool, len(resolutions))
 	for _, resolution := range resolutions {
+		if !validWorkflowBlockerText(resolution.VerificationOwner, api.OperationWorkflowBlockerActorMaxBytes) || (resolution.VerificationMilestoneID == "") != (resolution.VerificationMilestoneName == "") || resolution.VerificationMilestoneID == "" && (resolution.VerificationOperationID != "" || resolution.VerificationOwner != "") {
+			return report, "", fmt.Errorf("invalid resolution verification requirement")
+		}
+		if resolution.VerificationMilestoneID != "" {
+			if len(resolution.VerificationMilestoneName) > api.OperationNameMaxBytes || !operationName.MatchString(resolution.VerificationMilestoneName) {
+				return report, "", fmt.Errorf("invalid resolution verification milestone name")
+			}
+			for _, value := range []string{resolution.VerificationMilestoneID, resolution.VerificationOperationID} {
+				if value == "" {
+					continue
+				}
+				id, err := uuid.Parse(value)
+				if err != nil || id == uuid.Nil || id.String() != value {
+					return report, "", fmt.Errorf("invalid resolution verification identity")
+				}
+			}
+		}
+
+		if !validWorkflowBlockerText(resolution.ResolvedBy, api.OperationWorkflowBlockerActorMaxBytes) {
+			return report, "", fmt.Errorf("workflow resolution attribution has invalid public fields")
+		}
 		sourceOperation, opErr := uuid.Parse(resolution.BlockerOperationID)
 		sourceReport, reportErr := uuid.Parse(resolution.BlockerReportID)
 		key := resolution.Operation + "\x00" + resolution.Code
@@ -753,4 +865,21 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	raw, _ := json.Marshal(fingerprintReport)
 	fingerprint, err := InputFingerprint(raw)
 	return report, fingerprint, err
+}
+
+// Optional assignment fields are public observations, not platform principals.
+func validWorkflowBlockerText(value string, maxBytes int) bool {
+	return len(value) <= maxBytes && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
+func ValidateWorkflowBlockerEscalations(policies map[string]api.OperationWorkflowBlockerEscalationPolicy) error {
+	if len(policies) > api.OperationWorkflowBlockerEscalationsMax {
+		return fmt.Errorf("workflow blocker escalation policy count exceeds its limit")
+	}
+	for code, policy := range policies {
+		if api.ValidateOperationWorkflowStateName(code) != nil || policy.AfterSeconds < 1 || policy.AfterSeconds > api.OperationWorkflowBlockerEscalationMaxSeconds || policy.Owner == "" || !validWorkflowBlockerText(policy.Owner, api.OperationWorkflowBlockerActorMaxBytes) {
+			return fmt.Errorf("invalid workflow blocker escalation policy")
+		}
+	}
+	return nil
 }

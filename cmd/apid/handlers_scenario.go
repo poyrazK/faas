@@ -101,5 +101,54 @@ func (s *server) injectScenarioTestChaos(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrCapacity("install scenario chaos plan"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.InjectScenarioTestChaosResponse{ExpiresAt: lease.ExpiresAt, RulesInstalled: len(lease.Rules)})
+	writeJSON(w, http.StatusOK, api.InjectScenarioTestChaosResponse{
+		ExpiresAt: lease.ExpiresAt, RulesInstalled: len(lease.Rules), Generation: lease.Generation,
+	})
+}
+
+func (s *server) getScenarioTestChaosMatches(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("run_id")
+	if !validDevWorkspaceID(runID) || runID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid run ID", "run_id must be 32 lowercase hexadecimal characters"))
+		return
+	}
+	evidence, err := s.store.ScenarioTestChaosMatchEvidence(r.Context(), acct.ID, runID)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid run ID", err.Error()))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no live scenario test run")
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("read scenario chaos matches"))
+		return
+	}
+	matches := make([]api.ScenarioTestChaosMatch, len(evidence.Matches))
+	for i, match := range evidence.Matches {
+		matches[i] = api.ScenarioTestChaosMatch{RuleID: match.RuleID, Count: match.Count}
+	}
+	writeJSON(w, http.StatusOK, api.ScenarioTestChaosMatchesResponse{Generation: evidence.Generation, Matches: matches})
+}
+
+func (s *server) clearScenarioTestChaos(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("run_id")
+	if !validDevWorkspaceID(runID) || runID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid run ID", "run_id must be 32 lowercase hexadecimal characters"))
+		return
+	}
+	if err := s.store.ClearScenarioTestChaosPlan(r.Context(), acct.ID, runID); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid run ID", err.Error()))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no live scenario test run")
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("clear scenario chaos plan"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

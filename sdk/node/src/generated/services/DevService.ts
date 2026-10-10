@@ -17,6 +17,7 @@ import type { ListDevBridgesResponse } from '../models/ListDevBridgesResponse.js
 import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
 import type { RegisterScenarioTestRequest } from '../models/RegisterScenarioTestRequest.js';
 import type { ReplayDevBridgeWebhookRequest } from '../models/ReplayDevBridgeWebhookRequest.js';
+import type { ScenarioTestChaosMatchesResponse } from '../models/ScenarioTestChaosMatchesResponse.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -431,7 +432,7 @@ export class DevService {
     });
   }
   /**
-   * Install a bounded request-level fault plan for an isolated scenario run.
+   * Install a bounded fault plan for an isolated scenario run.
    * Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
    * @returns InjectScenarioTestChaosResponse Fault plan installed.
    * @throws ApiError
@@ -454,6 +455,60 @@ export class DevService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Clear the active fault plan for an isolated scenario run.
+   * Removes the run's active faults immediately. The run must still have at least one live registered member.
+   * @returns void
+   * @throws ApiError
+   */
+  public static clearScenarioTestChaos({
+    runId,
+  }: {
+    /**
+     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     */
+    runId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dev/test-runs/{run_id}/chaos',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read fault-match counts for the current scenario plan.
+   * Returns run-scoped counts of HTTP requests and TCP connections matched by the current or most recently cleared fault plan.
+   * @returns ScenarioTestChaosMatchesResponse Fault-match evidence for the current plan generation.
+   * @throws ApiError
+   */
+  public static getScenarioTestChaosMatches({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
+     */
+    runId: string,
+  }): CancelablePromise<ScenarioTestChaosMatchesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/test-runs/{run_id}/chaos/matches',
+      path: {
+        'run_id': runId,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

@@ -762,6 +762,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-942: Scheduled durable entity backups and restore preview](942-durable-entity-scheduled-backups-and-restore-preview.md)
 
 - [ADR-943: Application-validated durable entity restore](943-durable-entity-application-validated-restore.md)
+
+- [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution
+
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
 

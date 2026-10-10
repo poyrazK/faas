@@ -2,7 +2,7 @@
 # §4.9). The base is content-addressed and staged once as drive0; app images
 # still contribute only their dependency/code delta as drive1.
 # Content-addressed, staged to /srv/fc/base/runner-node22.ext4.
-FROM node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c
+FROM public.ecr.aws/docker/library/node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 # `make images-lock-update` is the only way to bump the digest.
 # This runtime is intentionally self-contained rather than composed over the
