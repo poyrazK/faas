@@ -5,7 +5,7 @@ HTTP at `/mcp`, exposes three tools, a static resource, a resource template and 
 prompt, and reports readiness at `/healthz`. It starts in open mode and rejects
 browser `Origin` headers unless you add the exact origin to `allowed_origins`.
 
-The generated `go.mod` declares `go 1.25.13`,
+The generated `go.mod` declares `go 1.26.9`,
 `github.com/modelcontextprotocol/go-sdk v1.8.0`, and
 `github.com/jackc/pgx/v5 v5.11.0` for PostgreSQL-backed Tasks.
 

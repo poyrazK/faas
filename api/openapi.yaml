@@ -15042,7 +15042,7 @@ paths:
       parameters:
         - name: fresh
           in: query
-          description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+          description: For isolated previews, invalidate snapshots after drain so the next request cold-boots from the artifact. Production apps reject fresh parking.
           schema: { type: boolean, default: false }
       requestBody:
         required: false
@@ -15055,10 +15055,10 @@ paths:
                 expected_deployment_id:
                   type: string
                   format: uuid
-                  description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
+                  description: The deployment UUID to compare atomically before parking. A stale or absent current deployment returns 409 without parking; reuse this UUID on drain retries.
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
-        '204': { description: Parked. }
+        '204': { description: All matching instances were parked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -15094,7 +15094,7 @@ paths:
                   description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
       responses:
         '400': { $ref: '#/components/responses/ValidationFailed' }
-        '204': { description: Parked. }
+        '204': { description: Parked only when the deployment UUID matched. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }

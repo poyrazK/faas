@@ -2008,12 +2008,11 @@ func TestMCPGoTarGzContainsMaterializedSourcesAndModule(t *testing.T) {
 	if err := templates.TarGz("mcp-go", archivePath); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Open(archivePath)
+	archive, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
-	gzipReader, err := gzip.NewReader(file)
+	gzipReader, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		t.Fatal(err)
 	}
