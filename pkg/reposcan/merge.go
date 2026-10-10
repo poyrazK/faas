@@ -62,6 +62,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 		serviceBindingPolicy      ServiceBindingPolicy
 		serviceBindingTransport   ServiceBindingTransport
+		serviceWakeAhead          api.ServiceWakeAhead
 		serviceReliability        map[string]api.ServiceReliabilityPolicy
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
 		allowedServiceCallers     *[]string
@@ -84,6 +85,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 		serviceBindingPolicySet      bool
 		serviceBindingTransportSet   bool
+		serviceWakeAheadSet          bool
 		previewServiceCallsPolicySet bool
 		allowedServiceCallersSet     bool
 		allowedServiceCallScopesSet  bool
@@ -174,6 +176,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.serviceBindingTransport = s.serviceBindingTransport
 			b.serviceBindingTransportSet = true
 		}
+		if !b.serviceWakeAheadSet && s.serviceWakeAhead != "" {
+			b.serviceWakeAhead = s.serviceWakeAhead
+			b.serviceWakeAheadSet = true
+		}
 		if b.serviceReliability == nil && s.serviceReliability != nil {
 			b.serviceReliability = s.serviceReliability
 		}
@@ -251,6 +257,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 			ServiceBindingPolicy:      b.serviceBindingPolicy,
 			ServiceBindingTransport:   b.serviceBindingTransport,
+			ServiceWakeAhead:          b.serviceWakeAhead,
 			ServiceReliability:        b.serviceReliability,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
 			AllowedServiceCallers:     b.allowedServiceCallers,

@@ -77,6 +77,40 @@ func NormalizeServiceBindingTransport(raw ServiceBindingTransport) (ServiceBindi
 	}
 }
 
+// ServiceWakeAhead controls whether waking a caller also starts restores for
+// its declared service bindings (ADR-950). The empty persisted value is off:
+// ADR-196 refused speculative wake-ahead by default, so only a caller that
+// opts in spends RAM on dependencies it may not reach.
+type ServiceWakeAhead string
+
+const (
+	ServiceWakeAheadOff      ServiceWakeAhead = "off"
+	ServiceWakeAheadDeclared ServiceWakeAhead = "declared"
+)
+
+// Effective returns the runtime mode. Unknown non-empty values fail closed to
+// off: an older gateway must never admit speculative instances for a setting
+// it does not understand.
+func (w ServiceWakeAhead) Effective() ServiceWakeAhead {
+	if w == ServiceWakeAheadDeclared {
+		return ServiceWakeAheadDeclared
+	}
+	return ServiceWakeAheadOff
+}
+
+// NormalizeServiceWakeAhead validates and canonicalizes a requested mode. An
+// omitted setting is the empty value so updates can preserve the current mode.
+func NormalizeServiceWakeAhead(raw ServiceWakeAhead) (ServiceWakeAhead, error) {
+	switch normalized := ServiceWakeAhead(strings.ToLower(strings.TrimSpace(string(raw)))); normalized {
+	case "":
+		return "", nil
+	case ServiceWakeAheadOff, ServiceWakeAheadDeclared:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("service wake-ahead must be off or declared")
+	}
+}
+
 // AppServiceBinding is one declared dependency from the returned app to
 // another app in the same account. Binding is the platform-owned
 // environment key injected into the caller; Service is the target app's

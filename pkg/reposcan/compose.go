@@ -44,6 +44,7 @@ type composeCandidate struct {
 
 	ServiceBindingPolicy      string                                  `yaml:"x-gregale-service-policy"`
 	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
+	ServiceWakeAhead          string                                  `yaml:"x-gregale-service-wake-ahead"`
 	ServiceReliability        map[string]api.ServiceReliabilityPolicy `yaml:"x-gregale-service-reliability"`
 	PreviewServiceCallsPolicy string                                  `yaml:"x-gregale-preview-calls"`
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
@@ -203,6 +204,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && serviceBindingTransport != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a deployable workload", src, name)
 		}
+		serviceWakeAhead, wakeAheadErr := api.NormalizeServiceWakeAhead(api.ServiceWakeAhead(s.ServiceWakeAhead))
+		if wakeAheadErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: x-gregale-service-wake-ahead must be off or declared", src, name)
+		}
+		if !hasWorkload && serviceWakeAhead != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-wake-ahead requires a deployable workload", src, name)
+		}
 		reliability, reliabilityErr := api.NormalizeServiceReliabilityPolicies(s.ServiceReliability, api.ServiceBindingsForTargets(dependencyNames(s.DependsOn)))
 		if reliabilityErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, reliabilityErr)
@@ -305,6 +313,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 
 			serviceBindingPolicy:      serviceBindingPolicy,
 			serviceBindingTransport:   serviceBindingTransport,
+			serviceWakeAhead:          serviceWakeAhead,
 			serviceReliability:        reliability,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
 			allowedServiceCallers:     allowedCallers,

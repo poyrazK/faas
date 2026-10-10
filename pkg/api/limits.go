@@ -8897,6 +8897,18 @@ const (
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
+	// ServiceWakeAheadMaxTargets bounds how many declared dependencies one
+	// caller wake may restore speculatively (ADR-950). Bindings past the cap
+	// still wake on demand when they are actually called.
+	ServiceWakeAheadMaxTargets = 8
+	// ServiceWakeAheadTimeout bounds one detached wake-ahead restore. It
+	// matches the gateway's 30 s wake hold: a speculative restore never waits
+	// longer than a real caller would.
+	ServiceWakeAheadTimeout = 30 * time.Second
+	// ServiceWakeAheadInflightPerNodeMax caps concurrent wake-ahead restores
+	// launched by one gateway process across all accounts. Excess requests
+	// are skipped, never queued, so speculation cannot crowd the wake path.
+	ServiceWakeAheadInflightPerNodeMax = 64
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service

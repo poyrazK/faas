@@ -9,6 +9,7 @@ import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+import type { ServiceWakeAhead } from './ServiceWakeAhead.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -52,6 +53,10 @@ export type PlanWorkload = {
    * Canonical URL transport selected by Compose `x-gregale-service-transport`. Omitted preserves the established transport; new workloads default to `http`.
    */
   service_binding_transport?: ServiceBindingTransport;
+  /**
+   * Dependency wake-ahead mode selected by Compose `x-gregale-service-wake-ahead`. It is source-owned: omitted is `off`.
+   */
+  service_wake_ahead?: ServiceWakeAhead;
   /**
    * Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`.
    */

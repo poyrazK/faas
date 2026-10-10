@@ -3679,10 +3679,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// the public path (H4-68), tuned per app by kind=circuit_breaker.
 		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
 		handler.WithCircuitBreaker(breaker)
+		serviceResolver := newServiceProxyResolver(pgStore)
+		serviceAuthorizer := newServiceProxyAuthorizer(pgStore)
+		if trafficResilienceEnabled(serviceWakeAheadEnv) {
+			// ADR-950: an opted-in caller's wake also starts its declared
+			// dependencies restoring, so a cold chain is not serialised.
+			handler.WithServiceWakeAhead(newServiceWakeAheadPlanner(pgStore, serviceResolver, serviceAuthorizer))
+		}
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
+			Resolve:    serviceResolver,
+			Authorize:  serviceAuthorizer,
 			AllowAlias: guestServiceAliasAllowed,
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)

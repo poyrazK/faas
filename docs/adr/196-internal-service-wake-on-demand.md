@@ -123,6 +123,9 @@ a hot loop.
   this ADR — it would admit instances for services a request may never reach,
   spending the RAM ceiling on a prediction. Revisit only with measured
   evidence from `service.mesh` wake-timeline data.
+  ADR-950 later added it as a caller opt-in
+  (`x-gregale-service-wake-ahead: declared`), so the customer, not the
+  platform, makes the prediction.
 - The waker is an optional seam, so any wiring without a scheduler (unit
   tests, single-box dev) keeps the previous fail-fast behaviour rather than
   failing closed on a nil dependency.

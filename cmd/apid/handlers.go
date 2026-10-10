@@ -945,6 +945,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		ServiceReliability:        a.Manifest.ServiceReliability,
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
 		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
+		ServiceWakeAhead:          a.Manifest.EffectiveServiceWakeAhead(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
 		AllowedServiceCallers:     allowedCallers,
 		AllowedServiceCallScopes:  allowedCallScopes,

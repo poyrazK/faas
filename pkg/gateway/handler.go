@@ -952,6 +952,9 @@ type Handler struct {
 	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
 	gate                       *WakeGate
+	// wakeAhead restores an opted-in caller's declared dependencies alongside
+	// its own wake (ADR-950). nil keeps ADR-196 on-demand-only behaviour.
+	wakeAhead *serviceWakeAhead
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -8756,12 +8759,19 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // not an error: the caller re-reads the endpoint registry and surfaces
 // "no healthy replicas" if the wake genuinely produced nothing.
 func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
+}
+
+// ensureServiceCapacity is EnsureServiceCapacity with the wake-timeline
+// trigger chosen by the caller: service.mesh for a held call,
+// service.wake_ahead for a speculative dependency restore (ADR-950).
+func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {
 		limits = api.Limits{}
 	}
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
 	return err
 }
 
@@ -8864,6 +8874,10 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					return nil
 				}
 			}
+			// ADR-950: start the caller's declared dependencies restoring now,
+			// in parallel with its own admission, so a cold chain pays about
+			// one restore instead of one per hop. It returns immediately.
+			h.startServiceWakeAhead(appID, trigger) //nolint:contextcheck // wake-ahead is detached by design: it must outlive this request and must not inherit its start time.
 			admit := func(admitCtx context.Context) error {
 				if ensurer, ok := h.backend.(capacityWarmEnsurer); ok && scope == "" {
 					id, m, atCapacity, e := h.ensureInitialWarm(admitCtx, ensurer, appID, scope, trigger, h.initialWakeDemand(appID, maxConcurrency, plan, autoscaleTargetRPS))

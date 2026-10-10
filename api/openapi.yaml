@@ -46955,6 +46955,11 @@ components:
       type: string
       enum: [http, https]
 
+    ServiceWakeAhead:
+      description: "Whether waking this caller also starts restores for its declared service bindings (ADR-950). `declared` restores up to 8 resolvable, authorized dependencies in parallel with the caller; `off` restores each dependency only when it is called."
+      type: string
+      enum: ["off", declared]
+
     ServiceReliabilityPolicy:
       description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."
       type: object
@@ -47182,6 +47187,9 @@ components:
         service_binding_transport:
           $ref: '#/components/schemas/ServiceBindingTransport'
           description: "Effective canonical service URL transport. Legacy apps without a stored value return `http`."
+        service_wake_ahead:
+          $ref: '#/components/schemas/ServiceWakeAhead'
+          description: "Effective dependency wake-ahead mode. Apps without a stored value return `off`."
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`."
@@ -59884,6 +59892,9 @@ components:
         service_binding_transport:
           $ref: '#/components/schemas/ServiceBindingTransport'
           description: "Canonical URL transport selected by Compose `x-gregale-service-transport`. Omitted preserves the established transport; new workloads default to `http`."
+        service_wake_ahead:
+          $ref: '#/components/schemas/ServiceWakeAhead'
+          description: "Dependency wake-ahead mode selected by Compose `x-gregale-service-wake-ahead`. It is source-owned: omitted is `off`."
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."

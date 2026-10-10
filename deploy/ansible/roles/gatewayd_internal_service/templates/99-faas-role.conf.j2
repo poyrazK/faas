@@ -25,3 +25,7 @@ Environment=FAAS_GATEWAYD_ROLE={{ faas_box_role }}
 # instance-health breaker shared by the public path and the service proxy.
 Environment=FAAS_GATEWAY_RETRY={{ 'true' if (faas_gateway_retry | default(true) | bool) else 'false' }}
 Environment=FAAS_GATEWAY_CIRCUIT_BREAKER={{ 'true' if (faas_gateway_circuit_breaker | default(true) | bool) else 'false' }}
+# ADR-950 depends_on wake-ahead. Customers opt in per caller with
+# x-gregale-service-wake-ahead: declared; this is only the operator kill switch,
+# so it ships on rather than repeating the default-off trap described above.
+Environment=FAAS_GATEWAY_SERVICE_WAKE_AHEAD={{ 'true' if (faas_gateway_service_wake_ahead | default(true) | bool) else 'false' }}

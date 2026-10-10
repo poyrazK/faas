@@ -320,6 +320,7 @@ func (s *Service) applyUpdate(
 	manifest.ServiceReliability = serviceReliabilityForWorkload(a.Workload, serviceNames, a.App.Manifest.ServiceReliability)
 	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
 	manifest.ServiceBindingTransport = transport
+	manifest.ServiceWakeAhead = a.Workload.ServiceWakeAhead
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
@@ -399,6 +400,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 
 			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
 			ServiceBindingTransport:   transport,
+			ServiceWakeAhead:          w.ServiceWakeAhead,
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
@@ -433,6 +435,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.ServiceReliability = serviceReliabilityForWorkload(w, available, app.Manifest.ServiceReliability)
 	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
 	app.Manifest.ServiceBindingTransport = transport
+	app.Manifest.ServiceWakeAhead = w.ServiceWakeAhead
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
 	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes

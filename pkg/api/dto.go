@@ -1838,6 +1838,8 @@ type AppResponse struct {
 	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
 	// available in either mode; legacy apps default to HTTP.
 	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	// ServiceWakeAhead is the effective ADR-950 dependency wake-ahead mode.
+	ServiceWakeAhead ServiceWakeAhead `json:"service_wake_ahead,omitempty"`
 	// PreviewServiceCallsPolicy is this app's policy for calls originating
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
@@ -6841,7 +6843,9 @@ type PlanWorkload struct {
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
 	// canonical URL contract. Omitted keeps the established transport.
-	ServiceBindingTransport   ServiceBindingTransport             `json:"service_binding_transport,omitempty"`
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	// ServiceWakeAhead is the x-gregale-service-wake-ahead opt-in (ADR-950).
+	ServiceWakeAhead          ServiceWakeAhead                    `json:"service_wake_ahead,omitempty"`
 	ServiceReliability        map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy           `json:"preview_service_calls_policy,omitempty"`
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`

@@ -1587,7 +1587,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
-| `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
+| `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 deferred `depends_on` wake-ahead on this evidence; ADR-950 adds it as a caller opt-in, tracked by `gateway_service_wake_ahead_total`) |
+| `gateway_service_wake_ahead_total{outcome}` | n/a (fleet) | ADR-950 speculative dependency restores for opted-in callers; `restored` versus `at_capacity`/`wake_failed`/`saturated` shows whether wake-ahead helps or is refused |
 | `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
 | `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |
 | `schedd_instance_stats_collect_seconds` p95 | < 0.05 s | > 0.2 s warn (dialer saturation) |

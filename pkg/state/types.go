@@ -1839,8 +1839,11 @@ type AppManifest struct {
 	// It lives in the existing manifest JSONB, so no app-row migration is needed.
 	ServiceReliability map[string]api.ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 
-	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
-	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
+	ServiceBindingPolicy    api.ServiceBindingPolicy    `json:"service_binding_policy,omitempty"`
+	ServiceBindingTransport api.ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	// ServiceWakeAhead opts this caller into restoring its declared service
+	// bindings alongside its own wake (ADR-950). Empty is off.
+	ServiceWakeAhead          api.ServiceWakeAhead          `json:"service_wake_ahead,omitempty"`
 	PreviewServiceCallsPolicy api.PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// Nil preserves legacy same-account reachability; an explicit empty list
 	// denies all internal callers. Values are logical app names.
@@ -1912,6 +1915,12 @@ func (m AppManifest) EffectiveServiceBindingTransport() api.ServiceBindingTransp
 	return m.ServiceBindingTransport.Effective()
 }
 
+// EffectiveServiceWakeAhead returns the caller's wake-ahead mode. Older
+// manifests and unknown values are off.
+func (m AppManifest) EffectiveServiceWakeAhead() api.ServiceWakeAhead {
+	return m.ServiceWakeAhead.Effective()
+}
+
 // EffectivePreviewServiceCallsPolicy returns the target's preview ingress
 // policy. Legacy rows allow preview calls; unknown stored values deny them.
 func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCallsPolicy {
@@ -1923,7 +1932,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.ServiceWakeAhead == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1948,6 +1957,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	existing.ServiceBindingTransport = desired.ServiceBindingTransport
+	existing.ServiceWakeAhead = desired.ServiceWakeAhead
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
 	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	existing.AllowedServiceCallScopes = desired.AllowedServiceCallScopes

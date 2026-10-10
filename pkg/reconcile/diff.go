@@ -311,6 +311,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.EffectiveServiceBindingTransport() != transport.Effective() {
 		changed = append(changed, "service_binding_transport")
 	}
+	if a.Manifest.EffectiveServiceWakeAhead() != w.ServiceWakeAhead.Effective() {
+		changed = append(changed, "service_wake_ahead")
+	}
 	if a.Manifest.EffectivePreviewServiceCallsPolicy() != previewServiceCallsPolicyForWorkload(w) {
 		changed = append(changed, "preview_service_calls_policy")
 	}

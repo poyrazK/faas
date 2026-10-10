@@ -1111,9 +1111,45 @@ The restore is coalesced with any concurrent public request for that app, so a
 burst of internal callers costs one restore rather than one per caller. Set
 client timeouts above the platform wake budget plus your own handler time, and
 note that a fully cold chain (`public-api` → `auth` → `billing`) pays each
-restore in sequence. `min_instances` remains available to trade resident RAM
-for first-call latency, but it is no longer required for an internal
-dependency to be reachable.
+restore in sequence unless the caller opts into wake-ahead (below).
+`min_instances` remains available to trade resident RAM for first-call
+latency, but it is no longer required for an internal dependency to be
+reachable.
+
+### Dependency wake-ahead
+
+A caller that always reaches its dependencies can restore them in parallel
+with its own wake instead of one hop at a time (ADR-950):
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [auth, billing]
+    x-gregale-service-wake-ahead: declared
+  auth:
+    build: ./auth
+    depends_on: [billing]
+    x-gregale-service-wake-ahead: declared
+  billing:
+    build: ./billing
+```
+
+When `public-api` wakes for a request, Gregale starts restoring `auth` and
+`billing` at the same time; `auth`'s own wake-ahead covers its edge to
+`billing`. A fully cold chain then pays about one restore. Only bindings the
+caller is allowed to call are restored, PR previews resolve their same-PR
+siblings exactly as a real call would, and at most 8 dependencies are
+restored per wake. A call that arrives during a wake-ahead joins that restore
+rather than starting another.
+
+A wake-ahead instance is an ordinary instance: it counts toward the target's
+concurrency and is billed per running second until its idle timeout parks it,
+even if the caller never calls it. Leave the extension off (the default) for
+dependencies a request only sometimes reaches. Removing the line turns
+wake-ahead off on the next deploy. These restores appear in the wake timeline
+with trigger `service.wake_ahead`, and the app API returns
+`service_wake_ahead`.
 
 When a wake cannot produce a replica, the proxy answers `503`. A saturated
 wake queue carries `Retry-After`; a target at its plan concurrency ceiling

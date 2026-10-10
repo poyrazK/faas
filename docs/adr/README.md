@@ -745,3 +745,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
+- [ADR-950: Opt-in depends_on wake-ahead](950-service-dependency-wake-ahead.md)

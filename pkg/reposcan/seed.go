@@ -116,6 +116,7 @@ type workloadSeed struct {
 
 	serviceBindingPolicy      ServiceBindingPolicy
 	serviceBindingTransport   ServiceBindingTransport
+	serviceWakeAhead          api.ServiceWakeAhead
 	serviceReliability        map[string]api.ServiceReliabilityPolicy
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
 	allowedServiceCallers     *[]string

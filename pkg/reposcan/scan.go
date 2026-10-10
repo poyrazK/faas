@@ -128,6 +128,9 @@ type Workload struct {
 	// ServiceBindingTransport selects the canonical URL scheme injected for
 	// internal service bindings. Empty preserves the established HTTP contract.
 	ServiceBindingTransport ServiceBindingTransport
+	// ServiceWakeAhead is the caller's x-gregale-service-wake-ahead opt-in
+	// (ADR-950). It is source-owned: empty is off.
+	ServiceWakeAhead api.ServiceWakeAhead
 	// ServiceReliability is caller-owned timeout and retry policy for declared
 	// depends_on targets.
 	ServiceReliability map[string]api.ServiceReliabilityPolicy

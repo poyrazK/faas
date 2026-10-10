@@ -17,6 +17,7 @@ import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+import type { ServiceWakeAhead } from './ServiceWakeAhead.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -112,6 +113,10 @@ export type AppResponse = {
    * Effective canonical service URL transport. Legacy apps without a stored value return `http`.
    */
   service_binding_transport?: ServiceBindingTransport;
+  /**
+   * Effective dependency wake-ahead mode. Apps without a stored value return `off`.
+   */
+  service_wake_ahead?: ServiceWakeAhead;
   /**
    * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
    */

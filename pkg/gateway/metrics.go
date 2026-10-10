@@ -717,6 +717,11 @@ type Metrics struct {
 	// speculative wake-ahead along depends_on edges "until measured evidence";
 	// this histogram is that evidence.
 	serviceWakeLatency prometheus.Histogram
+	// serviceWakeAhead (ADR-950) counts speculative dependency restores
+	// started, or deliberately not started, when an opted-in caller wakes.
+	// Outcome is a closed label; per-app attribution lives in the wake
+	// timeline under trigger service.wake_ahead.
+	serviceWakeAhead *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
 	// app into a production service because no same-PR sibling was available.
 	// This is the fleet-wide signal that preview traffic is exercising live
@@ -1550,6 +1555,13 @@ func NewMetrics() *Metrics {
 				Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 1, 2, 5, 10, 30},
 			},
 		),
+		serviceWakeAhead: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_total",
+				Help: "Declared service dependencies considered for a speculative restore when an opted-in caller woke (ADR-950). Labelled by outcome: restored (the wake-ahead admitted or joined a restore), already_warm (the target had a healthy replica), at_capacity (the target was at its concurrency ceiling), wake_failed, denied (the caller may not call the target), unresolved (the binding names no live app), plan_failed (the caller's bindings could not be loaded), saturated (the node's wake-ahead in-flight cap was reached), truncated (bindings beyond the per-wake cap).",
+			},
+			[]string{"outcome"},
+		),
 		servicePreviewToProduction: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "gateway_service_preview_to_production_total",
@@ -1911,6 +1923,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
+	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
@@ -3530,6 +3543,15 @@ func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
 		return
 	}
 	m.serviceWakeLatency.Observe(d.Seconds())
+}
+
+// AddServiceWakeAhead records n wake-ahead decisions with one outcome
+// (ADR-950). nil-safe.
+func (m *Metrics) AddServiceWakeAhead(outcome ServiceWakeAheadOutcome, n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.serviceWakeAhead.WithLabelValues(string(outcome)).Add(float64(n))
 }
 
 // IncWSSessionStart (issue #676 / ADR-080 follow-up, PR-B)

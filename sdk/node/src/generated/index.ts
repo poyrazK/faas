@@ -1653,6 +1653,7 @@ export type { ServiceReplicas } from './models/ServiceReplicas.js';
 export type { ServiceRolloutBindingGate } from './models/ServiceRolloutBindingGate.js';
 export type { ServiceRolloutHandoffResponse } from './models/ServiceRolloutHandoffResponse.js';
 export type { ServiceRolloutRecoveryReceipt } from './models/ServiceRolloutRecoveryReceipt.js';
+export type { ServiceWakeAhead } from './models/ServiceWakeAhead.js';
 export type { SessionInfo } from './models/SessionInfo.js';
 export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';

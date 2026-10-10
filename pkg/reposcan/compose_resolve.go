@@ -233,6 +233,11 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.ServiceBindingTransport = transport
+	wakeAhead, err := interpolateComposeString(candidate.ServiceWakeAhead, values, source, service, "x-gregale-service-wake-ahead")
+	if err != nil {
+		return err
+	}
+	candidate.ServiceWakeAhead = wakeAhead
 	previewPolicy, err := interpolateComposeString(candidate.PreviewServiceCallsPolicy, values, source, service, "x-gregale-preview-calls")
 	if err != nil {
 		return err
