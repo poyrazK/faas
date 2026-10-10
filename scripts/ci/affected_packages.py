@@ -53,9 +53,10 @@ INVARIANT_PACKAGES = ("tests/property",)
 SPLIT_PACKAGES = ("pkg/state",)
 
 # cmd/apid and pkg/state both create/drop databases while clone tests verify
-# the whole PostgreSQL catalogue. Give apid its own CI job/service so those
-# package processes cannot invalidate each other's catalogue snapshots.
-ISOLATED_APID_SHARD = 4
+# the whole PostgreSQL catalogue. Give apid separate CI services, and split
+# its long race suite by test name so each hosted runner finishes promptly.
+ISOLATED_APID_FIRST_SHARD = 4
+LIGHT_TEST_SHARDS = 6
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
@@ -143,11 +144,13 @@ def internal_deps(root, pkgs):
 
 def shard(dirs, index, count):
     """Longest-processing-time assignment: deterministic and roughly balanced."""
-    if count == ISOLATED_APID_SHARD:
-        if index == ISOLATED_APID_SHARD:
+    if count == LIGHT_TEST_SHARDS:
+        if index >= ISOLATED_APID_FIRST_SHARD:
             return ["cmd/apid"] if "cmd/apid" in dirs else []
-        dirs = [d for d in dirs if d != "cmd/apid"]
-        count -= 1
+        # Preserve the established first three package assignments; moving
+        # their database tests would introduce new catalogue races with state.
+        return [d for d in shard(dirs, index, ISOLATED_APID_FIRST_SHARD - 1)
+                if d != "cmd/apid"]
     bins = [[0, []] for _ in range(count)]
     dirs = [d for d in dirs if d not in SPLIT_PACKAGES]
     for d in sorted(dirs, key=lambda d: (-WEIGHTS.get(d, 1), d)):
