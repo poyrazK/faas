@@ -12,7 +12,7 @@ import type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
 export type DebugEvidenceExplanation = {
   status: 'regression_detected' | 'unobserved' | 'regression_unavailable';
   headline: string;
-  diagnosis?: 'request_failure' | 'performance_regression' | 'cold_start' | 'slow_path' | 'insufficient_evidence' | 'no_issue_observed';
+  diagnosis?: 'request_failure' | 'dependency_regression' | 'performance_regression' | 'cold_start' | 'slow_path' | 'insufficient_evidence' | 'no_issue_observed';
   confidence?: 'high' | 'medium' | 'low';
   primary_span?: (DebugTelemetrySpan | null);
   findings?: Array<DebugEvidenceFinding>;

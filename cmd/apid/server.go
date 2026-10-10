@@ -58,6 +58,7 @@ import (
 type server struct {
 	profileBackend                           profiling.Backend
 	profileQuerySlots                        chan struct{}
+	guestTracingEnabled                      bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
 	durableEntities                          *durableentity.Manager
 	durableEntityOwner                       string
 	durableEntityApps                        map[string]bool

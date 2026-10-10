@@ -3,3 +3,9 @@
 # rollout cannot silently reintroduce the dispatcher log storm.
 faas_networkd_dispatcher_ephemeral_filter: true
 faas_networkd_dispatcher_log_filter_min_systemd: 253
+
+# ADR-958 split-box guest trace exports reuse vmmd's node-identity
+# apid-client leaf (pkg/pki RoleUsesNodeIdentity).
+vmmd_apid_client_tls_cert_path: /etc/faas/tls/vmmd/apid-client.crt
+vmmd_apid_client_tls_key_path: /etc/faas/tls/vmmd/apid-client.key
+vmmd_apid_client_tls_ca_path: /etc/faas/tls/ca/ca.crt

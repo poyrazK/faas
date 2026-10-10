@@ -14,12 +14,14 @@ import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
   profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   /**
    * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */

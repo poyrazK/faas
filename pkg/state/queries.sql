@@ -3746,17 +3746,19 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now()
+    $7, 'active', now(), now(), $8::jsonb
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- Keep the last known suspect when a pass could not compute one.
+    suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
         WHEN debug_regression_observations.state = 'resolved'
           OR (debug_regression_observations.state = 'dismissed'
@@ -3792,7 +3794,7 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -3814,7 +3816,7 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
@@ -3843,7 +3845,7 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
 
 -- name: ResolveStaleRegressionObservations :many
 -- A detector pass that no longer sees a regression resolves the previous
@@ -3857,7 +3859,7 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
 
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick
@@ -3893,7 +3895,7 @@ SELECT DISTINCT app_id
 FROM request_telemetry
 WHERE received_at > now() - $1::interval;
 
--- name: UpdateSpansSummary :exec
+-- name: UpdateSpansSummary :execrows
 -- ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 -- OTLP/HTTP handler coalesces incoming batches for the same trace_id
 -- in-process (pkg/gateway/spans_accumulator.go) and flushes the

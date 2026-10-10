@@ -31,6 +31,7 @@ class DebugCriticalPathSpan:
     parent_span_id: str | Unset = UNSET
     dependency_type: DebugCriticalPathSpanDependencyType | Unset = UNSET
     dependency_kind: str | Unset = UNSET
+    dependency_name: str | Unset = UNSET
     status: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -57,6 +58,8 @@ class DebugCriticalPathSpan:
 
         dependency_kind = self.dependency_kind
 
+        dependency_name = self.dependency_name
+
         status = self.status
 
         field_dict: dict[str, Any] = {}
@@ -78,6 +81,8 @@ class DebugCriticalPathSpan:
             field_dict["dependency_type"] = dependency_type
         if dependency_kind is not UNSET:
             field_dict["dependency_kind"] = dependency_kind
+        if dependency_name is not UNSET:
+            field_dict["dependency_name"] = dependency_name
         if status is not UNSET:
             field_dict["status"] = status
 
@@ -111,6 +116,8 @@ class DebugCriticalPathSpan:
 
         dependency_kind = d.pop("dependency_kind", UNSET)
 
+        dependency_name = d.pop("dependency_name", UNSET)
+
         status = d.pop("status", UNSET)
 
         debug_critical_path_span = cls(
@@ -124,6 +131,7 @@ class DebugCriticalPathSpan:
             parent_span_id=parent_span_id,
             dependency_type=dependency_type,
             dependency_kind=dependency_kind,
+            dependency_name=dependency_name,
             status=status,
         )
 

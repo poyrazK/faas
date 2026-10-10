@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.debug_regression_item_state import DebugRegressionItemState, check_debug_regression_item_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.debug_suspected_dependency import DebugSuspectedDependency
+
 
 T = TypeVar("T", bound="DebugRegressionItem")
 
@@ -31,6 +35,9 @@ class DebugRegressionItem:
     acknowledged_at: datetime.datetime | Unset = UNSET
     dismissed_until: datetime.datetime | Unset = UNSET
     resolved_at: datetime.datetime | Unset = UNSET
+    suspected_dependency: DebugSuspectedDependency | Unset = UNSET
+    """The classified dependency whose p95 regressed most between the previous and the regressed deployment on this
+    route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +71,10 @@ class DebugRegressionItem:
         if not isinstance(self.resolved_at, Unset):
             resolved_at = self.resolved_at.isoformat()
 
+        suspected_dependency: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.suspected_dependency, Unset):
+            suspected_dependency = self.suspected_dependency.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -85,11 +96,15 @@ class DebugRegressionItem:
             field_dict["dismissed_until"] = dismissed_until
         if resolved_at is not UNSET:
             field_dict["resolved_at"] = resolved_at
+        if suspected_dependency is not UNSET:
+            field_dict["suspected_dependency"] = suspected_dependency
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_suspected_dependency import DebugSuspectedDependency
+
         d = dict(src_dict)
         deployment_id = UUID(d.pop("deployment_id"))
 
@@ -130,6 +145,13 @@ class DebugRegressionItem:
         else:
             resolved_at = datetime.datetime.fromisoformat(_resolved_at)
 
+        _suspected_dependency = d.pop("suspected_dependency", UNSET)
+        suspected_dependency: DebugSuspectedDependency | Unset
+        if isinstance(_suspected_dependency, Unset):
+            suspected_dependency = UNSET
+        else:
+            suspected_dependency = DebugSuspectedDependency.from_dict(_suspected_dependency)
+
         debug_regression_item = cls(
             deployment_id=deployment_id,
             route=route,
@@ -143,6 +165,7 @@ class DebugRegressionItem:
             acknowledged_at=acknowledged_at,
             dismissed_until=dismissed_until,
             resolved_at=resolved_at,
+            suspected_dependency=suspected_dependency,
         )
 
         debug_regression_item.additional_properties = d

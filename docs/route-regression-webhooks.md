@@ -35,9 +35,25 @@ The event payload is metadata-only:
   "last_detected_at": "2026-09-27T10:46:13Z",
   "state": "active",
   "transition_id": "2026-09-27T10:41:13Z",
-  "resolved_at": null
+  "resolved_at": null,
+  "suspected_dependency": {
+    "type": "app_dependency",
+    "kind": "postgresql",
+    "name": "SELECT orders",
+    "p95_base_ms": 82,
+    "p95_ms": 191,
+    "regression_factor": 2.33
+  }
 }
 ```
+
+`suspected_dependency` names the database, cache, HTTP, RPC or messaging
+dependency whose p95 regressed most between the previous and the regressed
+deployment on that route. It is present when the app's spans reach the
+debugger (for example with [request tracing](tracing.md)) and a dependency
+crossed the regression thresholds; otherwise it is `null`. The name is a
+bounded identity such as `SELECT orders` or an HTTP host, never a query value,
+key, URL path or credential.
 
 The detector does not include request bodies, user identifiers, IP addresses,
 or trace/span contents in these webhook payloads. Delivery is at least once;

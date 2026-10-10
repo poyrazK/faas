@@ -6,7 +6,7 @@
  * Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans.
  */
 export type DebugDependencyLatencyItem = {
-  type: 'application' | 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal';
+  type: 'application' | 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal' | 'app_dependency';
   kind?: string;
   name: string;
   calls: number;

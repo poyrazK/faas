@@ -218,6 +218,7 @@ type AppManifest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -651,6 +652,9 @@ func (m AppManifest) Validate() error {
 // entrypoint here would make the customer API depend on deployment order.
 func (m AppManifest) ValidateLifecyclePlan(plan Plan) error {
 	if err := m.Profiling.Validate(plan); err != nil {
+		return err
+	}
+	if err := m.Tracing.Validate(plan); err != nil {
 		return err
 	}
 	if len(m.Entrypoint) == 0 {

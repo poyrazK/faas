@@ -3456,7 +3456,7 @@ type Querier interface {
 	// lookup still hits request_telemetry_trace_idx for the trace_id
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
-	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error
+	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Review finding MED-1 (PR #993): the inline SQL at
 	// pkg/state/pgstore.go::UpdateTrigger is the source of truth
