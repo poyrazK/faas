@@ -191,6 +191,15 @@
     mode: "0644"
   notify: restart faas-apid
 
+- name: control_plane_service — set developer live patch gate (ADR-740)
+  ansible.builtin.template:
+    src: 99-faas-dev-patch.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-dev-patch.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
 - name: control_plane_service — stop development relay when disabled
   ansible.builtin.systemd_service:
     name: faas-bridged.service

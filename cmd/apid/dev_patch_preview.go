@@ -97,7 +97,11 @@ func (s *server) planDevPatch(ctx context.Context, app state.App, sourcePath, so
 // deployment. Errors are logged; the deployment itself already succeeded.
 func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploymentID, sourcePath, sourceRoot string, plan devPatchPlan) {
 	store, ok := s.store.(state.DevSourcePatchStore)
-	if !ok || !plan.inspect {
+	if !ok {
+		return
+	}
+	if !plan.inspect {
+		s.devLoopMetrics.observePatchPlan(devPatchOutcomeUninspected, "")
 		return
 	}
 	if err := store.RecordDevSourceManifest(ctx, state.DevSourceManifest{
@@ -106,12 +110,25 @@ func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploy
 	}, devSourceManifestsKept); err != nil {
 		s.log.Warn("developer source manifest not recorded", "app_id", app.ID, "error", err)
 	}
-	if !devPatchDeliveryEnabled() || plan.preview == nil || !plan.preview.Eligible || plan.preview.ChangedPaths == 0 {
+	switch {
+	case plan.preview == nil:
+		return
+	case !plan.preview.Eligible:
+		s.devLoopMetrics.observePatchPlan(devPatchOutcomeIneligible, plan.preview.Reason)
+		return
+	case plan.preview.ChangedPaths == 0:
+		s.devLoopMetrics.observePatchPlan(devPatchOutcomeNoChanges, "")
+		return
+	case !devPatchDeliveryEnabled():
+		s.devLoopMetrics.observePatchPlan(devPatchOutcomeDeliveryDisabled, "")
 		return
 	}
 	if err := s.publishDevPatch(ctx, store, app, sourcePath, sourceRoot, plan); err != nil {
 		s.log.Warn("developer live patch not published", "app_id", app.ID, "error", err)
+		s.devLoopMetrics.observePatchPlan(devPatchOutcomePublishFailed, "")
+		return
 	}
+	s.devLoopMetrics.observePatchPlan(devPatchOutcomePublished, "")
 }
 
 func (s *server) publishDevPatch(ctx context.Context, store state.DevSourcePatchStore, app state.App, sourcePath, sourceRoot string, plan devPatchPlan) error {

@@ -441,6 +441,7 @@ func (s *server) recordDevSync(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("record developer sync history"))
 		return
 	}
+	s.devLoopMetrics.observeSync(req)
 	writeJSON(w, http.StatusCreated, devSyncHistoryItem(row))
 }
 

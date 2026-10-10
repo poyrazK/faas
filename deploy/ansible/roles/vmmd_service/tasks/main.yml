@@ -84,6 +84,15 @@
     group: root
     mode: "0644"
 
+- name: vmmd_service — set developer live patch gate (ADR-740)
+  ansible.builtin.template:
+    src: 99-faas-dev-patch.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-dev-patch.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
 - name: vmmd_service — remove legacy schedd target override
   ansible.builtin.file:
     path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf

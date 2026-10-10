@@ -23,7 +23,7 @@ func devPatchDeliveryEnabled() bool { return os.Getenv(devPatchDeliveryEnv) == "
 // guest metadata endpoint. A missing store keeps the transport available but
 // returns config_unavailable, which lets images roll out before the control
 // plane has enabled live configuration reads.
-func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store runtimeConfigStore, jailer *fcvm.JailerVMM, diverged *vmmdgrpc.DivergedInstances) (*runtimeConfigReceiver, error) {
+func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store runtimeConfigStore, jailer *fcvm.JailerVMM, diverged *vmmdgrpc.DivergedInstances, devPatchMetrics *devPatchMetrics) (*runtimeConfigReceiver, error) {
 	if ctx == nil {
 		return nil, errors.New("runtime config vsock: context is required")
 	}
@@ -33,7 +33,7 @@ func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 	if log == nil {
 		log = slog.Default()
 	}
-	r := &runtimeConfigReceiver{ctx: ctx, log: log, mgr: mgr, store: store, diverged: diverged, devPatchEnabled: devPatchDeliveryEnabled()}
+	r := &runtimeConfigReceiver{ctx: ctx, log: log, mgr: mgr, store: store, diverged: diverged, devPatchEnabled: devPatchDeliveryEnabled(), devPatchMetrics: devPatchMetrics}
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockRuntimeConfigHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
 	}

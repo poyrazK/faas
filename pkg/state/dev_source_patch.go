@@ -59,6 +59,14 @@ type DevSourcePatchStatus struct {
 
 // DevSourcePatchStore is implemented by PgStore and MemStore. apid records
 // manifests and patches; vmmd reads the newest patch for an instance.
+// DevSourcePatchAck is the outcome of recording a patch acknowledgement.
+type DevSourcePatchAck struct {
+	// First is true only for the acknowledgement that set applied_at.
+	First bool
+	// Delivery is publication to first acknowledgement; zero unless First.
+	Delivery time.Duration
+}
+
 type DevSourcePatchStore interface {
 	// RecordDevSourceManifest stores the manifest and prunes the app's older
 	// manifests, keeping the newest keep plus the live deployment's.
@@ -71,8 +79,8 @@ type DevSourcePatchStore interface {
 	// generation above afterGeneration, or ErrNotFound.
 	LatestDevSourcePatch(ctx context.Context, appID, baseDeploymentID string, afterGeneration int64) (DevSourcePatch, error)
 	// RecordDevSourcePatchApplied stores the first acknowledgement of a
-	// generation; later acknowledgements are ignored.
-	RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error
+	// generation; later acknowledgements are ignored and report First=false.
+	RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) (DevSourcePatchAck, error)
 	// DevSourcePatchStatus returns the app's newest patch with generation, or
 	// ErrNotFound.
 	DevSourcePatchStatus(ctx context.Context, appID string, generation int64) (DevSourcePatchStatus, error)

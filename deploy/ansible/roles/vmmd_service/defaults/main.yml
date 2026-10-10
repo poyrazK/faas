@@ -3,3 +3,6 @@
 # rollout cannot silently reintroduce the dispatcher log storm.
 faas_networkd_dispatcher_ephemeral_filter: true
 faas_networkd_dispatcher_log_filter_min_systemd: 253
+# ADR-740 developer live source patches. Must match control_plane_service's
+# value: apid publishes patches and vmmd serves them to developer environments.
+faas_dev_patch_delivery_enabled: false

@@ -207,7 +207,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DEV_BRIDGE_GATEWAY_URL", Owners: []string{"bridged"}, Source: EnvSourceDefault, Default: "http://127.0.0.1:8080", Note: "existing public gateway ingress for scoped development dependencies"},
 	{Name: "FAAS_DEV_BRIDGE_RELAY_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Default: "http://127.0.0.1:9098", Note: "API-to-relay loopback hop"},
 	{Name: "FAAS_DEV_DEBUG", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector"},
-	{Name: "FAAS_DEV_PATCH_DELIVERY", Owners: []string{"apid", "vmmd"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-740 operator gate for developer live source patches; explicit 1 on both apid and vmmd"},
+	{Name: "FAAS_DEV_PATCH_DELIVERY", Owners: []string{"apid", "vmmd"}, Source: EnvSourceDropin, Default: "0", Note: "ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree"},
 	{Name: "FAAS_DEV_TOKEN", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DNS_API_URL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_BLOCKLIST_FILE", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-373 optional operator threat feed added to the built-in guest DNS blocklist; unset uses the built-in list only, an unreadable file fails startup"},

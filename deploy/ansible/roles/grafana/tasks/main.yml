@@ -240,6 +240,19 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# ADR-740 — developer inner loop: edit-to-live, live-patch delivery and
+# why syncs rebuild. Byte-identical copy of deploy/grafana/dev-loop.json.
+- name: grafana — drop dev-loop dashboard JSON
+  ansible.builtin.copy:
+    src: dev-loop.json
+    dest: "{{ gv_dashboards_dir }}/dev-loop.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 - name: grafana — drop warm-snapshot dashboard JSON
   ansible.builtin.copy:
     src: warm-snapshot.json

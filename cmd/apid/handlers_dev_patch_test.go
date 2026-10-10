@@ -56,7 +56,7 @@ func TestDevPatchStatusReportsDelivery(t *testing.T) {
 	if code, body := status("1"); code != http.StatusOK || body.State != api.DevPatchStatePending || body.AppliedAt != nil {
 		t.Fatalf("before ack = %d %+v, want pending", code, body)
 	}
-	if err := e.store.RecordDevSourcePatchApplied(ctx, session.App.ID, base.ID, applied, 85, ""); err != nil {
+	if _, err := e.store.RecordDevSourcePatchApplied(ctx, session.App.ID, base.ID, applied, 85, ""); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := status("1"); code != http.StatusOK || body.State != api.DevPatchStateApplied || body.ApplyMS != 85 || body.AppliedAt == nil {
@@ -64,7 +64,7 @@ func TestDevPatchStatusReportsDelivery(t *testing.T) {
 	}
 
 	failed := publish()
-	if err := e.store.RecordDevSourcePatchApplied(ctx, session.App.ID, base.ID, failed, 3, "apply_failed"); err != nil {
+	if _, err := e.store.RecordDevSourcePatchApplied(ctx, session.App.ID, base.ID, failed, 3, "apply_failed"); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := status("2"); code != http.StatusOK || body.State != api.DevPatchStateFailed || body.ErrorCode != "apply_failed" {

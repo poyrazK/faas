@@ -118,7 +118,7 @@ func copyDevSourceEntries(entries map[string]DevSourceEntry) map[string]DevSourc
 }
 
 // RecordDevSourcePatchApplied mirrors PgStore.RecordDevSourcePatchApplied.
-func (m *MemStore) RecordDevSourcePatchApplied(_ context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error {
+func (m *MemStore) RecordDevSourcePatchApplied(_ context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) (DevSourcePatchAck, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.devSourcePatches {
@@ -126,9 +126,10 @@ func (m *MemStore) RecordDevSourcePatchApplied(_ context.Context, appID, baseDep
 		if patch.AppID == appID && patch.BaseDeploymentID == baseDeploymentID && patch.Generation == generation && patch.AppliedAt == nil {
 			now := time.Now().UTC()
 			patch.AppliedAt, patch.ApplyMS, patch.ApplyError = &now, applyMS, applyError
+			return DevSourcePatchAck{First: true, Delivery: max(now.Sub(patch.CreatedAt), 0)}, nil
 		}
 	}
-	return nil
+	return DevSourcePatchAck{}, nil
 }
 
 // DevSourcePatchStatus mirrors PgStore.DevSourcePatchStatus.
