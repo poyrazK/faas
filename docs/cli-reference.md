@@ -104,6 +104,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline [&lt;slug&gt;] &lt;wake-id&gt; [--app SLUG] [--since RFC3339] [--limit N] [--all] [--verbose]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
+| [`wake-ahead`](#wake-ahead) | Wake the services an app calls while the app itself wakes (opt-in) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
 | [`log-drains`](#log-drains) | Ship app runtime logs to an HTTP JSON or OTLP endpoint |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
@@ -6938,6 +6939,27 @@ gregale routes advise my-api --cache-max-age 300
 gregale routes advise my-api --apply 3f9a1c2b7d4e
 ```
 
+### routes priority
+
+Show or set which routes are served first, and turned away last, when every instance is busy
+
+`gregale routes priority [--critical <[METHOD] PATH>] [--bulk <[METHOD] PATH>] [--clear] [--reset] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--critical <[METHOD] PATH>` | route served first when the app is saturated (repeatable) |  |
+| `--bulk <[METHOD] PATH>` | route served last and turned away first (repeatable) |  |
+| `--clear` | save no priorities, not even the route-health default |  |
+| `--reset` | delete saved priorities and use the route-health default |  |
+
+Examples:
+
+```sh
+gregale routes priority my-api
+gregale routes priority my-api --critical "POST /checkout" --bulk "/exports/*"
+gregale routes priority my-api --reset
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app
@@ -11032,6 +11054,21 @@ Examples:
 ```sh
 gregale wake my-api
 gregale wake --wait --timeout 2m my-api
+```
+
+
+## wake-ahead
+
+Wake the services an app calls while the app itself wakes (opt-in)
+
+`gregale wake-ahead <slug> [on|off]`
+
+Examples:
+
+```sh
+gregale wake-ahead my-api
+gregale wake-ahead my-api on
+gregale wake-ahead my-api off --json
 ```
 
 
