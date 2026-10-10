@@ -38664,6 +38664,7 @@ components:
       additionalProperties: false
       required: [from, to]
       properties:
+        retained_milestone_invalidations: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneInvalidationRule'}, description: 'Pinned edge rules linking retained prerequisites to invalidating facts from declared workflow steps. Business occurrence time determines order; an invalidating fact wins equal timestamps.'}
         required_retained_milestones: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}, description: 'Previously reported transaction-backed workflow facts required within the same ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites.'}
         required_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowEffectRequirement'}}
         required_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowInvariantRequirement'}}
@@ -38686,14 +38687,31 @@ components:
         operation: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
     OperationWorkflowRetainedMilestone:
-      description: Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow instance, and contract version. Verified does not attest to an external provider or authorize business writes. Awaiting verification means no matching fact is currently retained and does not prove it never occurred.
+      description: Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow instance, and contract version. Verified does not attest to an external provider or authorize business writes. Invalidated means an applicable retained fact occurred at or after the prerequisite. Awaiting verification means no matching eligible fact is currently retained and does not prove it never occurred.
       type: object
       additionalProperties: false
       required: [requirement, status]
       properties:
+        invalidation: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneInvalidation', description: 'Source and evidence identity of the latest applicable invalidating fact. Present only for invalidated prerequisites.'}
         requirement: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
-        status: {type: string, enum: [verified, awaiting_verification]}
-        evidence: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef', description: Latest matching retained fact by publication time; present only for verified prerequisites.}
+        status: {type: string, enum: [verified, awaiting_verification, invalidated]}
+        evidence: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef', description: 'Matching retained prerequisite fact; present for verified and invalidated results. Edges with invalidation policies select the latest occurrence at or before evaluation time, with publication and identities breaking ties; other edges retain publication order.'}
+    OperationWorkflowRetainedMilestoneInvalidationRule:
+      description: Versioned link between a declared retained prerequisite and a distinct invalidating source bound to a transaction-backed workflow step. Sources must share ownership, subject, workflow instance, and contract version.
+      type: object
+      additionalProperties: false
+      required: [prerequisite, invalidated_by]
+      properties:
+        prerequisite: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
+        invalidated_by: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
+    OperationWorkflowRetainedMilestoneInvalidation:
+      description: Identity of the retained fact that invalidated a prerequisite by business occurrence time. Equal occurrence timestamps invalidate conservatively; a later prerequisite fact can satisfy the requirement again. Normal retention applies to both sources.
+      type: object
+      additionalProperties: false
+      required: [source, evidence]
+      properties:
+        source: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
+        evidence: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef'}
     OperationWorkflowEvidenceMilestone:
       description: Reference to a retained milestone fact committed in the same application transaction as a workflow transition.
       type: object
@@ -39325,7 +39343,7 @@ components:
       description: Ready means declared requirements match retained reports and the proposed milestone plan. It does not authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only blockers targeting this Operation apply. Staleness and overdue deadlines are advisories rather than undeclared guards.
       required: [transition, declared, ready, reasons, advisories, contract_version, blockers, unmet_dependencies, missing_milestones]
       properties:
-        retained_milestones: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}, description: 'Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification and prevent readiness.'}
+        retained_milestones: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}, description: 'Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness.'}
         unmet_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowUnmetEffect'}}
         unmet_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowUnmetInvariant'}}
         invariant_blockers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}, description: 'Subset of matching blockers using the invariant- namespace. Failed or unknown application checks deny readiness through application_blocked.'}
@@ -39334,7 +39352,7 @@ components:
         transition: {$ref: '#/components/schemas/OperationWorkflowInstanceTransition'}
         declared: {type: boolean}
         ready: {type: boolean}
-        reasons: {type: array, maxItems: 14, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required]}}
+        reasons: {type: array, maxItems: 15, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required, retained_milestone_invalidated]}}
         advisories: {type: array, maxItems: 2, uniqueItems: true, items: {type: string, enum: [state_stale, deadline_overdue]}}
         state_revision: {type: integer, format: int64, minimum: 1, maximum: 9007199254740991}
         contract_version: {type: integer, minimum: 0, maximum: 1000000}
@@ -39392,6 +39410,7 @@ components:
       additionalProperties: false
       required: [from, to, operation]
       properties:
+        retained_milestone_invalidations: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneInvalidationRule'}, description: 'Rules for this selected edge linking retained prerequisites to invalidating facts from declared workflow steps. Business occurrence time determines order; an invalidating fact wins equal timestamps.'}
         required_retained_milestones: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}, description: 'For this selected edge, previously reported transaction-backed workflow facts required within the same ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites.'}
         required_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowEffectRequirement'}}
         required_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowInvariantRequirement'}}

@@ -78,6 +78,9 @@ type (
 	OperationSubject                         = api.OperationSubject
 )
 
+type OperationWorkflowRetainedMilestoneInvalidationRule = api.OperationWorkflowRetainedMilestoneInvalidationRule
+type OperationWorkflowRetainedMilestoneInvalidation = api.OperationWorkflowRetainedMilestoneInvalidation
+
 type (
 	OperationWorkflowDependency                   = api.OperationWorkflowDependency
 	OperationWorkflowReadinessRequest             = api.OperationWorkflowReadinessRequest

@@ -17929,7 +17929,8 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
 
 -- name: ListCustomerOperationRetainedMilestonePrerequisites :many
-SELECT DISTINCT ON (required.operation,required.milestone)
+WITH matching AS (
+SELECT
  required.operation::text AS operation,required.milestone::text AS milestone,
  m.id::text AS id,m.operation_id::text AS operation_id,m.occurred_at,m.created_at
 FROM jsonb_to_recordset(sqlc.arg(requirements)::jsonb) AS required(operation text,milestone text)
@@ -17955,4 +17956,13 @@ WHERE o.record #>> '{subject,type}'=sqlc.arg(subject_type)::text
  AND m.payload #>> selected_path.pointer_parts=sqlc.arg(instance_id)::text
  AND m.created_at<=sqlc.arg(now)::timestamptz
  AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
-ORDER BY required.operation,required.milestone,m.created_at DESC,m.operation_id DESC,m.id DESC;
+), ranked AS (
+ SELECT matching.*,
+ row_number() OVER (PARTITION BY operation,milestone ORDER BY created_at DESC,operation_id DESC,id DESC) AS publication_rank,
+ row_number() OVER (PARTITION BY operation,milestone ORDER BY (occurred_at<=sqlc.arg(now)::timestamptz) DESC,occurred_at DESC,created_at DESC,operation_id DESC,id DESC) AS occurrence_rank
+ FROM matching
+)
+SELECT operation,milestone,id,operation_id,occurred_at,created_at,false AS occurrence_ordered FROM ranked WHERE publication_rank=1
+UNION ALL
+SELECT operation,milestone,id,operation_id,occurred_at,created_at,true AS occurrence_ordered FROM ranked WHERE occurrence_rank=1 AND occurred_at<=sqlc.arg(now)::timestamptz
+ORDER BY operation,milestone,occurrence_ordered;

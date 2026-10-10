@@ -141,7 +141,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	for _, requirement := range r.Transition.RequiredRetainedMilestones {
 		verified := false
 		for _, evidence := range r.RetainedMilestones {
-			if evidence.Requirement == requirement && evidence.Status == "verified" && evidence.Evidence != nil {
+			if evidence.Requirement == requirement && evidence.Status == "verified" && evidence.Evidence != nil && evidence.Invalidation == nil {
 				verified = true
 				break
 			}
@@ -151,7 +151,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 		}
 	}
 	for _, evidence := range r.RetainedMilestones {
-		if evidence.Status != "verified" || evidence.Evidence == nil {
+		if evidence.Status != "verified" || evidence.Evidence == nil || evidence.Invalidation != nil {
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}

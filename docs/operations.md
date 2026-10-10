@@ -1887,6 +1887,49 @@ applications still check authorization and their business row under their own
 transaction lock. Reporting APIs remain application-owned and do not enforce
 this observational prerequisite as a state-change admission rule.
 
+### Invalidating retained prerequisites
+
+A transition can declare `retained_milestone_invalidations` to make a prerequisite
+unusable after a later business fact. Both sources must be declared
+transaction-backed steps of the same workflow:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    requires_retained_milestones:
+      - {operation: receive-payment, milestone: payment-received}
+    retained_milestone_invalidations:
+      - prerequisite: {operation: receive-payment, milestone: payment-received}
+        invalidated_by: {operation: refund-payment, milestone: payment-refunded}
+```
+
+Raise the workflow contract version when adding or changing these rules. An edge
+accepts up to 16 unique prerequisite/source pairs. The prerequisite must already
+appear in `requires_retained_milestones`, and it cannot invalidate itself. The
+32-source lookup bound includes both prerequisite and invalidating sources.
+
+For prerequisites with invalidation rules, readiness uses the latest retained
+fact for each source by application `occurred_at`, at or before the evaluation
+clock. Publication time and fact identities break ties within one source. A
+matching invalidator with an equal or later occurrence time makes the prerequisite
+`invalidated`; readiness reports `retained_milestone_invalidated`, the prerequisite
+fact reference, and an `invalidation` containing the source and fact reference.
+Equal timestamps invalidate conservatively. A payment fact occurring after the
+refund can satisfy the prerequisite again. Late publication of an older payment
+cannot restore eligibility. Future occurrences do not count yet. Edges without
+invalidation rules retain their existing publication-ordered evidence selection.
+
+The same account, app, tenant, environment, subject, instance, and contract version
+checks apply to both facts. Multiple invalidators are allowed; the latest
+applicable fact explains the result. An invalidator without retained eligible
+prerequisite evidence leaves the result `awaiting_verification`. All facts follow
+normal Operation retention; this projection is not a permanent revocation ledger
+and expired invalidators stop contributing. SDK guards reject invalidated results.
+Applications continue to check their authoritative business row and authorization
+before committing a transition.
+
 ### Business action previews
 
 A preview returns declared action candidates from a selected workflow instance's

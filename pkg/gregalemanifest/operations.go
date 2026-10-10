@@ -57,15 +57,16 @@ type OperationWorkflow struct {
 }
 
 type OperationWorkflowTransitionSource struct {
-	RequiresRetainedMilestones []api.OperationWorkflowRetainedMilestoneRequirement `yaml:"requires_retained_milestones,omitempty" toml:"requires_retained_milestones"`
-	From                       string                                              `yaml:"from" toml:"from"`
-	To                         string                                              `yaml:"to" toml:"to"`
-	Operation                  string                                              `yaml:"operation,omitempty" toml:"operation"`
-	RequiresDependencies       *[]string                                           `yaml:"requires_dependencies,omitempty" toml:"requires_dependencies"`
-	RequiresEffects            []api.OperationWorkflowEffectRequirement            `yaml:"requires_effects,omitempty" toml:"requires_effects"`
-	RequiresInvariants         []api.OperationWorkflowInvariantRequirement         `yaml:"requires_invariants,omitempty" toml:"requires_invariants"`
-	RequiresPolicies           []api.OperationWorkflowPolicyRequirement            `yaml:"requires_policies,omitempty" toml:"requires_policies"`
-	RequiresMilestones         []string                                            `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
+	RetainedMilestoneInvalidations []api.OperationWorkflowRetainedMilestoneInvalidationRule `yaml:"retained_milestone_invalidations,omitempty" toml:"retained_milestone_invalidations"`
+	RequiresRetainedMilestones     []api.OperationWorkflowRetainedMilestoneRequirement      `yaml:"requires_retained_milestones,omitempty" toml:"requires_retained_milestones"`
+	From                           string                                                   `yaml:"from" toml:"from"`
+	To                             string                                                   `yaml:"to" toml:"to"`
+	Operation                      string                                                   `yaml:"operation,omitempty" toml:"operation"`
+	RequiresDependencies           *[]string                                                `yaml:"requires_dependencies,omitempty" toml:"requires_dependencies"`
+	RequiresEffects                []api.OperationWorkflowEffectRequirement                 `yaml:"requires_effects,omitempty" toml:"requires_effects"`
+	RequiresInvariants             []api.OperationWorkflowInvariantRequirement              `yaml:"requires_invariants,omitempty" toml:"requires_invariants"`
+	RequiresPolicies               []api.OperationWorkflowPolicyRequirement                 `yaml:"requires_policies,omitempty" toml:"requires_policies"`
+	RequiresMilestones             []string                                                 `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
 }
 
 type OperationWorkflowStepSource struct {
@@ -329,7 +330,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 				if _, exists := operationsByName[transition.Operation]; !exists {
 					return nil, fmt.Errorf("operation workflow %q transition references unknown operation %q", workflow.Name, transition.Operation)
 				}
-			} else if len(transition.RequiresRetainedMilestones) > 0 || len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
+			} else if len(transition.RetainedMilestoneInvalidations) > 0 || len(transition.RequiresRetainedMilestones) > 0 || len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
 				return nil, fmt.Errorf("operation workflow %q transition evidence requires an operation target", workflow.Name)
 			}
 			if len(transition.RequiresMilestones) > api.OperationWorkflowTransitionEvidenceMax {
@@ -362,7 +363,15 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			if err != nil {
 				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
 			}
-			for _, requirement := range retained {
+			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transition.RetainedMilestoneInvalidations, retained)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), retained...)
+			for _, rule := range invalidations {
+				sources = append(sources, rule.InvalidatedBy)
+			}
+			for _, requirement := range sources {
 				bound := false
 				for _, step := range workflow.Steps {
 					if step.Operation == requirement.Operation && step.Milestone == requirement.Milestone {
@@ -373,7 +382,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 					return nil, fmt.Errorf("operation workflow %q retained prerequisite must reference a declared workflow step", workflow.Name)
 				}
 			}
-			apiTransition := api.OperationWorkflowTransition{RequiredRetainedMilestones: retained, From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
+			apiTransition := api.OperationWorkflowTransition{RetainedMilestoneInvalidations: invalidations, RequiredRetainedMilestones: retained, From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
 			if transition.Operation == "" {
 				for operationName := range stepOperations {
 					transitionTargets[operationName] = append(transitionTargets[operationName], apiTransition)

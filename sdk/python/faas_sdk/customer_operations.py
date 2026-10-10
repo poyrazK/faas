@@ -452,10 +452,10 @@ class CustomerOperationTransaction:
             retained = [] if r.retained_milestones is UNSET else r.retained_milestones
             required_retained = [] if r.transition.required_retained_milestones is UNSET else r.transition.required_retained_milestones
             retained_missing = any(not any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
-                and e.status == "verified" and e.evidence is not UNSET for e in retained) for p in required_retained)
+                and e.status == "verified" and e.evidence is not UNSET and e.invalidation is UNSET for e in retained) for p in required_retained)
             if (retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
                 or r.contract_version != request.contract_version or r.reasons or r.blockers
-                or (r.retained_milestones is not UNSET and any(e.status != "verified" or e.evidence is UNSET for e in r.retained_milestones)) or r.unmet_dependencies or r.missing_milestones or (r.missing_policies is not UNSET and r.missing_policies) or (r.missing_dependency_workflows is not UNSET and r.missing_dependency_workflows) or (r.unmet_invariants is not UNSET and r.unmet_invariants) or (r.unmet_effects is not UNSET and r.unmet_effects)):
+                or (r.retained_milestones is not UNSET and any(e.status != "verified" or e.evidence is UNSET or e.invalidation is not UNSET for e in r.retained_milestones)) or r.unmet_dependencies or r.missing_milestones or (r.missing_policies is not UNSET and r.missing_policies) or (r.missing_dependency_workflows is not UNSET and r.missing_dependency_workflows) or (r.unmet_invariants is not UNSET and r.unmet_invariants) or (r.unmet_effects is not UNSET and r.unmet_effects)):
                 raise CustomerOperationReadinessError(response)
             self._milestones, self._workflow_states = staged_facts, staged_states
             return response

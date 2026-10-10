@@ -41,14 +41,15 @@ type OperationWorkflowSpec struct {
 // OperationWorkflowTransition is an app-declared allowed state edge. The
 // application still checks the current business row while holding its lock.
 type OperationWorkflowTransition struct {
-	RequiredRetainedMilestones  []OperationWorkflowRetainedMilestoneRequirement `json:"required_retained_milestones,omitempty"`
-	From                        string                                          `json:"from"`
-	To                          string                                          `json:"to"`
-	RequiredDependencyWorkflows *[]string                                       `json:"required_dependency_workflows,omitempty"`
-	RequiredEffects             []OperationWorkflowEffectRequirement            `json:"required_effects,omitempty"`
-	RequiredInvariants          []OperationWorkflowInvariantRequirement         `json:"required_invariants,omitempty"`
-	RequiredPolicies            []OperationWorkflowPolicyRequirement            `json:"required_policies,omitempty"`
-	RequiredMilestones          []string                                        `json:"required_milestones,omitempty"`
+	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
+	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`
+	From                           string                                               `json:"from"`
+	To                             string                                               `json:"to"`
+	RequiredDependencyWorkflows    *[]string                                            `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects                []OperationWorkflowEffectRequirement                 `json:"required_effects,omitempty"`
+	RequiredInvariants             []OperationWorkflowInvariantRequirement              `json:"required_invariants,omitempty"`
+	RequiredPolicies               []OperationWorkflowPolicyRequirement                 `json:"required_policies,omitempty"`
+	RequiredMilestones             []string                                             `json:"required_milestones,omitempty"`
 }
 
 var operationWorkflowStateName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)

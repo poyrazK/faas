@@ -13,6 +13,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+    from ..models.operation_workflow_retained_milestone_invalidation import (
+        OperationWorkflowRetainedMilestoneInvalidation,
+    )
     from ..models.operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
 
 
@@ -23,7 +26,8 @@ T = TypeVar("T", bound="OperationWorkflowRetainedMilestone")
 class OperationWorkflowRetainedMilestone:
     """Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow
     instance, and contract version. Verified does not attest to an external provider or authorize business writes.
-    Awaiting verification means no matching fact is currently retained and does not prove it never occurred.
+    Invalidated means an applicable retained fact occurred at or after the prerequisite. Awaiting verification means no
+    matching eligible fact is currently retained and does not prove it never occurred.
 
     """
 
@@ -31,6 +35,10 @@ class OperationWorkflowRetainedMilestone:
     """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
     contract."""
     status: OperationWorkflowRetainedMilestoneStatus
+    invalidation: OperationWorkflowRetainedMilestoneInvalidation | Unset = UNSET
+    """Identity of the retained fact that invalidated a prerequisite by business occurrence time. Equal occurrence
+    timestamps invalidate conservatively; a later prerequisite fact can satisfy the requirement again. Normal
+    retention applies to both sources."""
     evidence: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
     """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
 
@@ -38,6 +46,10 @@ class OperationWorkflowRetainedMilestone:
         requirement = self.requirement.to_dict()
 
         status: str = self.status
+
+        invalidation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.invalidation, Unset):
+            invalidation = self.invalidation.to_dict()
 
         evidence: dict[str, Any] | Unset = UNSET
         if not isinstance(self.evidence, Unset):
@@ -51,6 +63,8 @@ class OperationWorkflowRetainedMilestone:
                 "status": status,
             }
         )
+        if invalidation is not UNSET:
+            field_dict["invalidation"] = invalidation
         if evidence is not UNSET:
             field_dict["evidence"] = evidence
 
@@ -59,6 +73,9 @@ class OperationWorkflowRetainedMilestone:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+        from ..models.operation_workflow_retained_milestone_invalidation import (
+            OperationWorkflowRetainedMilestoneInvalidation,
+        )
         from ..models.operation_workflow_retained_milestone_requirement import (
             OperationWorkflowRetainedMilestoneRequirement,
         )
@@ -67,6 +84,13 @@ class OperationWorkflowRetainedMilestone:
         requirement = OperationWorkflowRetainedMilestoneRequirement.from_dict(d.pop("requirement"))
 
         status = check_operation_workflow_retained_milestone_status(d.pop("status"))
+
+        _invalidation = d.pop("invalidation", UNSET)
+        invalidation: OperationWorkflowRetainedMilestoneInvalidation | Unset
+        if isinstance(_invalidation, Unset):
+            invalidation = UNSET
+        else:
+            invalidation = OperationWorkflowRetainedMilestoneInvalidation.from_dict(_invalidation)
 
         _evidence = d.pop("evidence", UNSET)
         evidence: OperationWorkflowInstanceMilestoneRef | Unset
@@ -78,6 +102,7 @@ class OperationWorkflowRetainedMilestone:
         operation_workflow_retained_milestone = cls(
             requirement=requirement,
             status=status,
+            invalidation=invalidation,
             evidence=evidence,
         )
 

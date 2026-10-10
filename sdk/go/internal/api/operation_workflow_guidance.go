@@ -17,7 +17,7 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			out = append(out, "This workflow instance has completed; inspect its outcome before starting another instance.")
 		case "from_state_mismatch", "revision_mismatch", "contract_version_mismatch":
 			out = append(out, fmt.Sprintf("Refresh the workflow snapshot and evaluate against contract version %d and state revision %d.", r.ContractVersion, r.StateRevision))
-		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required":
+		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated":
 			// The structured findings below explain these requirements individually.
 		default:
 			out = append(out, "Inspect readiness requirement: "+reason+".")
@@ -48,8 +48,11 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 		p := result.Requirement
 		if result.Status == "verified" && result.Evidence != nil {
 			out = append(out, fmt.Sprintf("Verified retained milestone %s from operation %s (fact %s, operation instance %s).", p.Milestone, p.Operation, result.Evidence.ID, result.Evidence.OperationID))
+		} else if result.Status == "invalidated" && result.Evidence != nil && result.Invalidation != nil {
+			i := result.Invalidation
+			out = append(out, fmt.Sprintf("Retained milestone %s from operation %s (fact %s) was invalidated by %s from operation %s (fact %s, operation instance %s).", p.Milestone, p.Operation, result.Evidence.ID, i.Source.Milestone, i.Source.Operation, i.Evidence.ID, i.Evidence.OperationID))
 		} else {
-			out = append(out, fmt.Sprintf("Waiting for retained milestone %s from operation %s in this workflow instance and contract version. No matching fact is currently retained.", p.Milestone, p.Operation))
+			out = append(out, fmt.Sprintf("Waiting for retained milestone %s from operation %s in this workflow instance and contract version. No matching fact is currently eligible.", p.Milestone, p.Operation))
 		}
 	}
 	for _, milestone := range r.MissingMilestones {

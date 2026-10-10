@@ -14,7 +14,7 @@ import type { OperationWorkflowUnmetInvariant } from './OperationWorkflowUnmetIn
  */
 export type OperationWorkflowTransitionReadiness = {
   /**
-   * Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification and prevent readiness.
+   * Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness.
    */
   retained_milestones?: Array<OperationWorkflowRetainedMilestone>;
   unmet_effects?: Array<OperationWorkflowUnmetEffect>;
@@ -31,7 +31,7 @@ export type OperationWorkflowTransitionReadiness = {
   transition: OperationWorkflowInstanceTransition;
   declared: boolean;
   ready: boolean;
-  reasons: Array<'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required'>;
+  reasons: Array<'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated'>;
   advisories: Array<'state_stale' | 'deadline_overdue'>;
   state_revision?: number;
   contract_version: number;

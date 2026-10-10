@@ -18,7 +18,11 @@ func retainedMilestoneRequirements(instance *api.OperationWorkflowInstanceSnapsh
 	}
 	seen := map[api.OperationWorkflowRetainedMilestoneRequirement]bool{}
 	for _, edge := range instance.AllowedTransitions {
-		for _, requirement := range edge.RequiredRetainedMilestones {
+		sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), edge.RequiredRetainedMilestones...)
+		for _, rule := range edge.RetainedMilestoneInvalidations {
+			sources = append(sources, rule.InvalidatedBy)
+		}
+		for _, requirement := range sources {
 			seen[requirement] = true
 			if len(seen) > api.OperationWorkflowRetainedMilestoneLookupMax {
 				return nil, ErrInvalidArgument
@@ -62,6 +66,7 @@ func (m *MemStore) projectRetainedMilestonesLocked(page *api.OperationMilestones
 		wanted[requirement] = true
 	}
 	latest := map[api.OperationWorkflowRetainedMilestoneRequirement]api.OperationWorkflowInstanceMilestoneRef{}
+	latestOccurrence := map[api.OperationWorkflowRetainedMilestoneRequirement]api.OperationWorkflowInstanceMilestoneRef{}
 	data := m.operationMemoryLocked()
 	for operationID, receipts := range data.milestones {
 		op := data.operations[operationID]
@@ -88,15 +93,23 @@ func (m *MemStore) projectRetainedMilestonesLocked(page *api.OperationMilestones
 			if !matches {
 				continue
 			}
-			prior := latest[requirement]
-			if prior.ID == "" || fact.CreatedAt.After(prior.PublishedAt) || fact.CreatedAt.Equal(prior.PublishedAt) && (fact.OperationID > prior.OperationID || fact.OperationID == prior.OperationID && fact.ID > prior.ID) {
-				latest[requirement] = api.OperationWorkflowInstanceMilestoneRef{ID: fact.ID, OperationID: fact.OperationID, OccurredAt: fact.OccurredAt, PublishedAt: fact.CreatedAt}
+			evidence := api.OperationWorkflowInstanceMilestoneRef{ID: fact.ID, OperationID: fact.OperationID, OccurredAt: fact.OccurredAt, PublishedAt: fact.CreatedAt}
+			if retainedMilestoneAfter(evidence, latest[requirement], false) {
+				latest[requirement] = evidence
+			}
+			if !evidence.OccurredAt.After(now) && retainedMilestoneAfter(evidence, latestOccurrence[requirement], true) {
+				latestOccurrence[requirement] = evidence
 			}
 		}
 	}
 	for _, requirement := range requirements {
 		if evidence, ok := latest[requirement]; ok {
 			instance.RetainedMilestoneEvidence = append(instance.RetainedMilestoneEvidence, api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "verified", Evidence: &evidence})
+		}
+	}
+	for _, requirement := range requirements {
+		if evidence, ok := latestOccurrence[requirement]; ok {
+			instance.RetainedMilestoneOccurrenceEvidence = append(instance.RetainedMilestoneOccurrenceEvidence, api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "verified", Evidence: &evidence})
 		}
 	}
 	return nil
@@ -137,10 +150,62 @@ func (s *PgStore) projectRetainedMilestones(ctx context.Context, page *api.Opera
 		return fmt.Errorf("state: read retained milestone prerequisites: %w", mapErr(err))
 	}
 	for _, row := range rows {
-		instance.RetainedMilestoneEvidence = append(instance.RetainedMilestoneEvidence, api.OperationWorkflowRetainedMilestone{
+		result := api.OperationWorkflowRetainedMilestone{
 			Requirement: api.OperationWorkflowRetainedMilestoneRequirement{Operation: row.Operation, Milestone: row.Milestone}, Status: "verified",
 			Evidence: &api.OperationWorkflowInstanceMilestoneRef{ID: row.ID, OperationID: row.OperationID, OccurredAt: row.OccurredAt.Time, PublishedAt: row.CreatedAt.Time},
-		})
+		}
+		if row.OccurrenceOrdered {
+			instance.RetainedMilestoneOccurrenceEvidence = append(instance.RetainedMilestoneOccurrenceEvidence, result)
+		} else {
+			instance.RetainedMilestoneEvidence = append(instance.RetainedMilestoneEvidence, result)
+		}
 	}
 	return nil
+}
+
+// Occurrence order expresses business progression. Publication and identities
+// only break ties within one source; invalidation wins ties across sources.
+func retainedMilestoneAfter(a, b api.OperationWorkflowInstanceMilestoneRef, occurrence bool) bool {
+	if b.ID == "" {
+		return true
+	}
+	if occurrence && !a.OccurredAt.Equal(b.OccurredAt) {
+		return a.OccurredAt.After(b.OccurredAt)
+	}
+	return a.PublishedAt.After(b.PublishedAt) || a.PublishedAt.Equal(b.PublishedAt) && (a.OperationID > b.OperationID || a.OperationID == b.OperationID && a.ID > b.ID)
+}
+
+func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, requirement api.OperationWorkflowRetainedMilestoneRequirement) api.OperationWorkflowRetainedMilestone {
+	result := api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "awaiting_verification"}
+	var rules []api.OperationWorkflowRetainedMilestoneInvalidationRule
+	for _, rule := range edge.RetainedMilestoneInvalidations {
+		if rule.Prerequisite == requirement {
+			rules = append(rules, rule)
+		}
+	}
+	facts := instance.RetainedMilestoneEvidence
+	if len(rules) > 0 {
+		facts = instance.RetainedMilestoneOccurrenceEvidence
+	}
+	for _, fact := range facts {
+		if fact.Requirement == requirement && fact.Status == "verified" && fact.Evidence != nil {
+			result = fact
+			break
+		}
+	}
+	if result.Evidence == nil {
+		return result
+	}
+	for _, rule := range rules {
+		for _, source := range instance.RetainedMilestoneOccurrenceEvidence {
+			if source.Requirement != rule.InvalidatedBy || source.Status != "verified" || source.Evidence == nil || source.Evidence.OccurredAt.Before(result.Evidence.OccurredAt) {
+				continue
+			}
+			if result.Invalidation == nil || retainedMilestoneAfter(*source.Evidence, result.Invalidation.Evidence, true) {
+				result.Status = "invalidated"
+				result.Invalidation = &api.OperationWorkflowRetainedMilestoneInvalidation{Source: source.Requirement, Evidence: *source.Evidence}
+			}
+		}
+	}
+	return result
 }

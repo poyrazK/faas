@@ -52,7 +52,7 @@ class OperationWorkflowTransitionReadiness:
     missing_milestones: list[str]
     retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
     """Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
-    awaiting verification and prevent readiness."""
+    awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness."""
     unmet_effects: list[OperationWorkflowUnmetEffect] | Unset = UNSET
     unmet_invariants: list[OperationWorkflowUnmetInvariant] | Unset = UNSET
     invariant_blockers: list[OperationWorkflowBlocker] | Unset = UNSET

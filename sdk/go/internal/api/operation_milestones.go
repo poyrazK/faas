@@ -180,15 +180,16 @@ type OperationWorkflowInstanceSnapshot struct {
 }
 
 type OperationWorkflowInstanceTransition struct {
-	RequiredRetainedMilestones  []OperationWorkflowRetainedMilestoneRequirement `json:"required_retained_milestones,omitempty"`
-	From                        string                                          `json:"from"`
-	To                          string                                          `json:"to"`
-	Operation                   string                                          `json:"operation"`
-	RequiredDependencyWorkflows *[]string                                       `json:"required_dependency_workflows,omitempty"`
-	RequiredEffects             []OperationWorkflowEffectRequirement            `json:"required_effects,omitempty"`
-	RequiredInvariants          []OperationWorkflowInvariantRequirement         `json:"required_invariants,omitempty"`
-	RequiredPolicies            []OperationWorkflowPolicyRequirement            `json:"required_policies,omitempty"`
-	RequiredMilestones          []string                                        `json:"required_milestones,omitempty"`
+	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
+	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`
+	From                           string                                               `json:"from"`
+	To                             string                                               `json:"to"`
+	Operation                      string                                               `json:"operation"`
+	RequiredDependencyWorkflows    *[]string                                            `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects                []OperationWorkflowEffectRequirement                 `json:"required_effects,omitempty"`
+	RequiredInvariants             []OperationWorkflowInvariantRequirement              `json:"required_invariants,omitempty"`
+	RequiredPolicies               []OperationWorkflowPolicyRequirement                 `json:"required_policies,omitempty"`
+	RequiredMilestones             []string                                             `json:"required_milestones,omitempty"`
 }
 
 type OperationWorkflowInstanceStep struct {

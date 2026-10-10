@@ -258,3 +258,29 @@ attestation. Missing facts do not prove nonoccurrence; expired or different-vers
 facts remain unverified. The API, action preview, dashboard, CLI and SDK guards
 surface the same result. Application reporting remains authoritative and no
 transition, notification, or lifecycle action is executed by this projection.
+
+### Retained prerequisite invalidation
+
+Pinned edges may declare up to 16 canonical
+`retained_milestone_invalidations` prerequisite/source pairs. Both selectors bind
+to transaction-backed workflow steps; the prerequisite must already be required
+on that edge, sources must differ, and duplicate rules are rejected. Invalidation
+sources count toward the existing 32-source lookup bound. Rules participate in
+immutable contract identity and require a new workflow version when changed.
+
+The existing scoped memory/SQLC lookup projects latest publication and latest
+eligible occurrence independently for each source, using the same retention and
+evaluation clock. Prerequisites without rules preserve publication order. Ruled
+prerequisites use occurrence order, exclude future occurrences, and become
+`invalidated` when any configured source occurred at or after the latest eligible
+prerequisite. Equal occurrence times invalidate conservatively; publication and
+identities only break ties within a source. Late publication cannot undo a newer
+business invalidation, while a later prerequisite fact can satisfy the rule again.
+The latest applicable invalidator is returned with both evidence references and
+`retained_milestone_invalidated` denies readiness. Missing prerequisite evidence
+remains `awaiting_verification`, even when an invalidator is retained.
+
+All matching boundaries and contract-version rules from retained prerequisites
+apply to both sources. Facts follow normal retention and invalidation is derived,
+not permanently latched. The API, preview, dashboard, CLI, and SDKs expose the same
+result. No application state, milestone, or VM lifecycle state is changed.

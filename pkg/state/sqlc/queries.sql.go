@@ -28203,7 +28203,8 @@ func (q *Queries) ListCustomerOperationJobExecutions(ctx context.Context, db DBT
 }
 
 const listCustomerOperationRetainedMilestonePrerequisites = `-- name: ListCustomerOperationRetainedMilestonePrerequisites :many
-SELECT DISTINCT ON (required.operation,required.milestone)
+WITH matching AS (
+SELECT
  required.operation::text AS operation,required.milestone::text AS milestone,
  m.id::text AS id,m.operation_id::text AS operation_id,m.occurred_at,m.created_at
 FROM jsonb_to_recordset($1::jsonb) AS required(operation text,milestone text)
@@ -28229,7 +28230,16 @@ WHERE o.record #>> '{subject,type}'=$6::text
  AND m.payload #>> selected_path.pointer_parts=$10::text
  AND m.created_at<=$11::timestamptz
  AND (o.state IN ('accepted','running') OR o.expires_at>$11::timestamptz)
-ORDER BY required.operation,required.milestone,m.created_at DESC,m.operation_id DESC,m.id DESC
+), ranked AS (
+ SELECT matching.operation, matching.milestone, matching.id, matching.operation_id, matching.occurred_at, matching.created_at,
+ row_number() OVER (PARTITION BY operation,milestone ORDER BY created_at DESC,operation_id DESC,id DESC) AS publication_rank,
+ row_number() OVER (PARTITION BY operation,milestone ORDER BY (occurred_at<=$11::timestamptz) DESC,occurred_at DESC,created_at DESC,operation_id DESC,id DESC) AS occurrence_rank
+ FROM matching
+)
+SELECT operation,milestone,id,operation_id,occurred_at,created_at,false AS occurrence_ordered FROM ranked WHERE publication_rank=1
+UNION ALL
+SELECT operation,milestone,id,operation_id,occurred_at,created_at,true AS occurrence_ordered FROM ranked WHERE occurrence_rank=1 AND occurred_at<=$11::timestamptz
+ORDER BY operation,milestone,occurrence_ordered
 `
 
 type ListCustomerOperationRetainedMilestonePrerequisitesParams struct {
@@ -28247,12 +28257,13 @@ type ListCustomerOperationRetainedMilestonePrerequisitesParams struct {
 }
 
 type ListCustomerOperationRetainedMilestonePrerequisitesRow struct {
-	Operation   string
-	Milestone   string
-	ID          string
-	OperationID string
-	OccurredAt  pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	Operation         string
+	Milestone         string
+	ID                string
+	OperationID       string
+	OccurredAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	OccurrenceOrdered bool
 }
 
 func (q *Queries) ListCustomerOperationRetainedMilestonePrerequisites(ctx context.Context, db DBTX, arg ListCustomerOperationRetainedMilestonePrerequisitesParams) ([]ListCustomerOperationRetainedMilestonePrerequisitesRow, error) {
@@ -28283,6 +28294,7 @@ func (q *Queries) ListCustomerOperationRetainedMilestonePrerequisites(ctx contex
 			&i.OperationID,
 			&i.OccurredAt,
 			&i.CreatedAt,
+			&i.OccurrenceOrdered,
 		); err != nil {
 			return nil, err
 		}

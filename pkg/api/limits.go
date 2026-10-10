@@ -463,6 +463,7 @@ const (
 	OperationWorkflowStatesMax                              = 32
 	OperationWorkflowTransitionsMax                         = 128
 	OperationWorkflowContractVersionMax                     = 1_000_000
+	OperationWorkflowInvalidationRulesMax                   = 16
 	OperationWorkflowRetainedMilestoneLookupMax             = 32
 	OperationWorkflowTransitionEvidenceMax                  = 16
 	OperationWorkflowStateEvidenceMax                       = 16
