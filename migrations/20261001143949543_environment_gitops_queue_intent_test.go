@@ -3,6 +3,7 @@
 package migrations_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestMigrationEnvironmentGitOpsQueueIntentReplayRetainsIdentity(t *testing.T
 		t.Fatal(err)
 	}
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: project.Slug, Environment: "production", Workloads: map[string]api.EnvironmentWorkload{
-		"worker": {App: app.Slug, QueueBindings: map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker"}}},
+		"worker": {App: app.Slug, QueueBindings: map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker"}}, QueueSmoke: map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"queue-replay-qualification"}`)}}},
 	}})
 	if err != nil {
 		t.Fatal(err)

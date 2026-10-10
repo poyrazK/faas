@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// traceBridge is the guest-local OTLP/HTTP receiver (ADR-934). It accepts
+// traceBridge is the guest-local OTLP/HTTP receiver (ADR-958). It accepts
 // standard SDK exports on 127.0.0.1:4318 and forwards each body unparsed to
 // the host. It holds no credential: vmmd stamps identity from the vsock peer.
 type traceBridge struct {
@@ -158,7 +158,7 @@ func writeTraceExportResponse(w http.ResponseWriter, mediaType string) {
 }
 
 // stampTracingEnv points managed OTel SDKs at the local bridge and preloads
-// the platform auto-instrumentation when present (ADR-934).
+// the platform auto-instrumentation when present (ADR-958).
 func stampTracingEnv(env []string, cfg *api.TracingConfig) []string {
 	return tracingEnvAtPaths(env, cfg, api.TraceNodeBootstrapPath, api.TracePythonBootstrapDir, pathExists)
 }

@@ -14,7 +14,7 @@ func planCard(plan string, from time.Time, price int64) state.APIConsumerRateCar
 		PriceMillicentsPerUnit: price, PlanID: plan, EffectiveFrom: from}
 }
 
-// adr: 847
+// adr: 953
 func TestPlanCardTimelinePricesEachSegmentByItsPlan(t *testing.T) {
 	start := allowanceStart
 	defaultCard := planCard("", start, 10)

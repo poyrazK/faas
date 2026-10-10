@@ -2257,7 +2257,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
 	// paths so a customer's plan cap is enforced against one bucket pool.
 	sharedLimiter := peraccount.NewLimiter()
-	// ADR-934: one in-guest span ingester shared by both SpansWriter listeners.
+	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
 	var guestSpans *guestSpansIngester

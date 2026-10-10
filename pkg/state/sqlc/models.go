@@ -600,7 +600,6 @@ type AppEnvironmentWorkloadIntent struct {
 	AccountID       pgtype.UUID
 	AppID           pgtype.UUID
 	EnvironmentID   pgtype.UUID
-	JobID           pgtype.UUID
 	Source          []byte
 	Runtime         []byte
 	CreatedAt       pgtype.Timestamptz
@@ -609,6 +608,7 @@ type AppEnvironmentWorkloadIntent struct {
 	ServiceBindings []byte
 	Schedule        []byte
 	Variables       []byte
+	JobID           pgtype.UUID
 }
 
 type AppError struct {
@@ -1964,9 +1964,9 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
-	EnvironmentWorkloadHeld    bool
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
+	EnvironmentWorkloadHeld    bool
 }
 
 type DeploymentAlias struct {

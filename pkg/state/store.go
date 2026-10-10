@@ -23,7 +23,7 @@ var ErrNotFound = errors.New("state: not found")
 
 // ErrRequestTelemetryRowNotFound reports that a spans summary arrived before
 // (or without) the request_telemetry row it enriches. Producers retry it on
-// their next flush instead of treating the write as delivered (ADR-934).
+// their next flush instead of treating the write as delivered (ADR-958).
 var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
 
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most

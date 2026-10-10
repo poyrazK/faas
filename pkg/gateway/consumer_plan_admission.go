@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ConsumerPlanPolicy is what a consumer's current plan enforces (ADR-847).
+// ConsumerPlanPolicy is what a consumer's current plan enforces (ADR-953).
 // Zero limits mean unlimited; RouteWeights makes the monthly cap count the
 // same weighted units as billing.
 type ConsumerPlanPolicy struct {

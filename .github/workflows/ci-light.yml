@@ -138,7 +138,7 @@ jobs:
       # before every release; a lint-config change is validated here by
       # `config verify` and fully exercised by the next mega run.
       - name: install linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
           install-only: true
@@ -341,8 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Allow cold race builds and separate 25-minute API/state test budgets.
     timeout-minutes: 70
+    # Cold compilation and standard/API/state tests retain separate bounded
+    # deadlines; match current main's 25-minute commands and 70-minute job.
     strategy:
       fail-fast: false
       matrix:
@@ -446,19 +447,29 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
+          # Stream each test event so an interrupted runner identifies the last
+          # active test instead of hiding the entire package behind buffered output.
           status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=25m $PKGS || status=1
+            go test -json -race -count=1 -p 4 -timeout=25m $PKGS || status=1
           fi
-          # Split API/state suites run sequentially after the package set.
-          # This avoids overlapping large race binaries and keeps state clone
-          # fixtures' cluster-wide database catalogue stable between snapshots.
+          # Private databases share PostgreSQL's cluster-wide catalogues.
+          # Finish the standard packages before these partitions: API fixture
+          # create/drop activity invalidates the state clone catalogue pins.
+          # Every selected test still runs, including after an earlier failure.
           for pkg in $SPLIT; do
+            # Compare the source inventory with Go's registered runnable names:
+            # tests, fuzz seeds and examples must each appear in one partition.
+            inventory="$RUNNER_TEMP/split-${pkg##*/}-inventory.txt"
+            go test -race -list . "$pkg" > "$inventory"
+            go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -check -list-file="$inventory"
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SPLIT_SHARD")"
             echo "testing: $pkg (test shard $SPLIT_SHARD/3)"
-            go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
+            # API/state partitions retain current main's 25-minute process
+            # budget along with the complete registered-name inventory check.
+            go test -json -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

@@ -1,9 +1,9 @@
-# ADR-845: Graduated tiers on app consumer rate cards
+# ADR-951: Graduated tiers on app consumer rate cards
 
 - **Status:** accepted
 - **Date:** 2026-10-09
 - **Decision:** An app rate card can carry a graduated ladder of 2 to 10 `{up_to, price_millicents_per_unit}` steps.
-  - A consumer's units are counted per UTC calendar month in minute order (ADR-844), and each unit costs the price of the step its monthly position falls in.
+  - A consumer's units are counted per UTC calendar month in minute order (ADR-950), and each unit costs the price of the step its monthly position falls in.
   - The ladder replaces the flat price and the allowance. A free first step expresses "the first N requests are free".
   - Volume (all-units) pricing is not supported.
 - **Why:** A single price plus an allowance cannot express volume discounts. Graduated tiers are the common shape for API pricing, and they reuse the minute-order counting that allowances introduced.
@@ -22,3 +22,5 @@
   - Volume pricing, where the month's total picks one price for every unit, re-prices the whole month whenever a boundary is crossed, so every late unit would rewrite every line.
   - Freezing billed positions and appending late units would undercharge free and cheaper steps, granting them twice.
   - Storing the full per-minute step split as rows multiplies statement size; a short `tier_units` array per bucket keeps statements auditable at a small cost.
+
+Migration headers retain the original billing-branch ADR number 845 to preserve published migration bytes; this decision is now numbered 951.

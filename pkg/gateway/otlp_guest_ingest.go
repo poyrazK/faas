@@ -17,7 +17,7 @@ import (
 var ErrOTLPExportInvalid = errors.New("invalid OTLP trace export")
 
 // AddOTLPTraceExport decodes one OTLP/HTTP trace export body received outside
-// the public handler (the ADR-934 in-guest bridge) and merges its spans into
+// the public handler (the ADR-958 in-guest bridge) and merges its spans into
 // the accumulator for accountID. It applies the public endpoint's codec and
 // decoded-size bound; traces already claimed by another account are counted
 // as rejected without discarding the rest of the export.

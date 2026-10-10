@@ -1913,6 +1913,7 @@ from .object_s3_credential_secret import ObjectS3CredentialSecret
 from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
 from .object_s3_credential_status import ObjectS3CredentialStatus
 from .object_sign_request import ObjectSignRequest
+from .object_sign_request_if_none_match import ObjectSignRequestIfNoneMatch
 from .object_sign_request_metadata import ObjectSignRequestMetadata
 from .object_sign_request_method import ObjectSignRequestMethod
 from .object_sign_request_tags import ObjectSignRequestTags
@@ -5391,6 +5392,7 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
+    "ObjectSignRequestIfNoneMatch",
     "ObjectSignRequestMetadata",
     "ObjectSignRequestMethod",
     "ObjectSignRequestTags",

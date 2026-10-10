@@ -69,7 +69,7 @@ func (t *secretEntryTerminal) ReadPassword(label string) (string, error) {
 			}
 			return string(value), nil
 		case 21: // Ctrl-U clears the hidden line.
-			value = value[:0]
+			value = nil
 			overLimit = false
 		case 127, 8:
 			if len(value) > 0 {

@@ -28,6 +28,7 @@ func TestDispatcherCycleRelaysCommittedWebhookEventWithoutDeliverySlots(t *testi
 	statement, _, err := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
 		PeriodStart: start, PeriodEnd: start.Add(time.Hour), AsOf: time.Now().UTC(),
+		Revision: 1,
 	})
 	if err != nil {
 		t.Fatal(err)

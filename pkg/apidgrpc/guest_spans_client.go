@@ -12,7 +12,7 @@ import (
 )
 
 // GuestSpansClient forwards in-guest trace exports from vmmd to apid's
-// SpansWriter service (ADR-934). It is separate from SpansWriterClient so the
+// SpansWriter service (ADR-958). It is separate from SpansWriterClient so the
 // gateway producers' interface and fakes are unaffected.
 type GuestSpansClient interface {
 	IngestGuestSpans(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error)

@@ -37,6 +37,8 @@ func TestWorkflowScheduleValidation(t *testing.T) {
 		{"impossible date", WorkflowTriggerSpec{Type: "schedule", Schedule: "0 0 30 2 *"}, true},
 		{"bad timezone", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Timezone: "Missing/Zone"}, true},
 		{"host local timezone", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Timezone: "Local"}, true},
+		{"padded host local timezone", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Timezone: " Local "}, true},
+		{"explicit UTC timezone", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Timezone: " UTC "}, false},
 		{"bad overlap", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Overlap: "replace"}, true},
 		{"bad input", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Input: json.RawMessage(`{`)}, true},
 		{"oversized input", WorkflowTriggerSpec{Type: "schedule", Schedule: "* * * * *", Input: json.RawMessage(`"` + strings.Repeat("a", int(WorkflowRunInputMaxBytes)) + `"`)}, true},

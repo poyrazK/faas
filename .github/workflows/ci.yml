@@ -157,7 +157,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: install linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
           install-only: true
@@ -663,18 +663,35 @@ jobs:
           npm run build
       - name: install customer Operations example dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
+      - name: build CLI for local object storage wire journeys
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
-        # Omit test debug metadata and serialize its backend; keep optimization.
+        # Omit debug metadata for API and newly instrumented state; keep optimization.
+        # Serialized backends retain the existing memory and test budgets.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GREGALE_OBJECT_STORAGE_E2E_CLI: ${{ runner.temp }}/gregale
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          # Public API/worker contracts also exercise the exact state package.
+          # Preserve every selected package and instrument the shared adapters;
+          # the aggregate still requires every complete state shard below.
+          STATEPKG=$(go list ./pkg/state)
+          COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
+          go test -json -race -count=1 -p 4 -timeout=30m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+
+      - name: upload public API state-adapter coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-api
+          path: coverage/cover-shard1.out
+          if-no-files-found: error
 
       - name: sdk-check
         run: make sdk-check
@@ -710,6 +727,7 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -952,11 +970,12 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
 
-  # Require all five compatible profiles. A partial suite or parity-only profile
+  # Require all six compatible profiles, including complete public API contracts.
+  # A partial suite or external-adapter-only profile
   # cannot replace the full exact-package 70% gate.
   state-coverage:
     name: pkg/state coverage gate (all shards)
-    needs: [unit-tests-state, unit-tests-pg-2]
+    needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -970,7 +989,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out coverage/cover-shard1.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 

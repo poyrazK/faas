@@ -15,7 +15,7 @@ T = TypeVar("T", bound="DebugSuspectedDependency")
 @_attrs_define
 class DebugSuspectedDependency:
     """The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route
-    (ADR-934). Bounded and redacted; also sent in debug.regression.* webhooks.
+    (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks.
 
     """
 

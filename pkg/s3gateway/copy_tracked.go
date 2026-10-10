@@ -28,7 +28,7 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 	defer func(parent context.Context) {
 		if !dispatched && !settlementAttempted {
 			c.Status, c.ErrorCode = "failed", "dispatch_failed"
-			_, _ = h.finishGatewayPut(parent, st, c)
+			_, _ = h.finishGatewayPut(parent, st, c, false)
 		}
 	}(r.Context())
 	result, err, ok := h.executeAdmittedGatewayCopy(w, r, req, ctx, st, copier, copy, source, conditions, &c, &dispatched)
@@ -50,7 +50,7 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 	if err != nil {
 		if errors.Is(err, objectstorage.ErrWriteRejected) {
 			c.Status, c.ErrorCode = "failed", "provider_write_rejected"
-			if _, e := h.finishGatewayPut(r.Context(), st, c); e != nil {
+			if _, e := h.finishGatewayPut(r.Context(), st, c, false); e != nil {
 				h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 				return
 			}
@@ -73,7 +73,7 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 	c.Status, c.ETag = "completed", result.ETag
 	c.ProviderVersionID = result.ProviderVersionID
 	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
-	done, err := h.finishGatewayPut(r.Context(), st, c)
+	done, err := h.finishGatewayPut(r.Context(), st, c, false)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return

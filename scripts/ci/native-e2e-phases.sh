@@ -52,6 +52,7 @@ native_e2e_phase_files() {
     # Deploy paths: image, source tarball, healthcheck, port override, secrets.
     deploy) printf '%s\n' \
       deploy_healthcheck_metal_test.go \
+      dev_loop_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       direct_oci_autoscale_metal_test.go \
@@ -60,10 +61,14 @@ native_e2e_phase_files() {
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       private_service_tcp_metal_test.go \
+      scenario_tcp_chaos_metal_test.go \
+      guest_tracing_metal_test.go \
       tcp_ingress_metal_test.go udp_ingress_metal_test.go ;;
     # Wake scheduling and native Flags cache refresh after VM restore.
+    # The platform benchmark remains opt-in via FAAS_WAKE_PLATFORM_BENCH_CYCLES.
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
+      wake_platform_bench_metal_test.go \
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
       exclusive_operations_restore_metal_test.go \

@@ -15,7 +15,13 @@ def test_application_validation_preserves_deployment_pin():
     exported = DurableEntityStateExport.from_dict(
         {
             "format": 1,
-            "entity": {"account_id": "a", "app_id": "b", "environment_id": "e", "namespace": "ns", "key": "doc"},
+            "entity": {
+                "account_id": "22222222-2222-4222-8222-222222222222",
+                "app_id": "33333333-3333-4333-8333-333333333333",
+                "environment_id": "44444444-4444-4444-8444-444444444444",
+                "namespace": "ns",
+                "key": "doc",
+            },
             "version": 1,
             "data": {},
             "checksum": "a" * 64,
@@ -69,9 +75,9 @@ def test_export_restore_preserves_scope_and_full_integer_versions():
     envelope = {
         "format": 1,
         "entity": {
-            "account_id": "account",
-            "app_id": "app",
-            "environment_id": "env",
+            "account_id": "22222222-2222-4222-8222-222222222222",
+            "app_id": "33333333-3333-4333-8333-333333333333",
+            "environment_id": "44444444-4444-4444-8444-444444444444",
             "namespace": "documents",
             "key": "document:123",
         },

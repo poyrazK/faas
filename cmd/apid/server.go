@@ -58,7 +58,7 @@ import (
 type server struct {
 	profileBackend                           profiling.Backend
 	profileQuerySlots                        chan struct{}
-	guestTracingEnabled                      bool // ADR-934 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	guestTracingEnabled                      bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
 	durableEntities                          *durableentity.Manager
 	durableEntityOwner                       string
 	durableEntityApps                        map[string]bool
@@ -1736,7 +1736,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
-	// ADR-847: named consumer plans and minute-effective plan assignments.
+	// ADR-953: named consumer plans and minute-effective plan assignments.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlans))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerPlan)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))

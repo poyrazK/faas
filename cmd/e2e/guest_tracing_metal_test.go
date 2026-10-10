@@ -1,6 +1,6 @@
 //go:build metal
 
-// guest_tracing_metal_test.go — ADR-934 native acceptance for zero-config
+// guest_tracing_metal_test.go — ADR-958 native acceptance for zero-config
 // in-guest tracing. Each scenario deploys an app with `tracing.enabled`,
 // wakes it from its init snapshot with one request carrying an unsampled
 // traceparent, and requires the app's span on the debugger evidence:

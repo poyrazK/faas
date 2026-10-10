@@ -37,7 +37,7 @@ class DebugDependencyLatencyResponse:
     dependencies: list[DebugDependencyLatencyItem]
     edges: list[DebugDependencyImpactEdge]
     deployment_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
-    """Dependency latency split by deployment (ADR-934): baseline_* fields describe the previous deployment,
+    """Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment,
     current_* the compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

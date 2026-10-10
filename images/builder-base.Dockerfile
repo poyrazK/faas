@@ -102,10 +102,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       rm /tmp/railpack-source.tgz && \
       go mod edit -go=1.26.9 && \
       go mod edit -require=golang.org/x/net@v0.60.0 && \
-      CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+      GOTOOLCHAIN=local go mod tidy && \
+      CGO_ENABLED=0 GOTOOLCHAIN=local GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=mod -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
           -o /out/railpack ./cmd/cli && \
       go version -m /out/railpack | tee /tmp/railpack-build-info && \
+      grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
       grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info && \
       ! grep -Eq 'v0.58.0|go1.26.7' /tmp/railpack-build-info
 

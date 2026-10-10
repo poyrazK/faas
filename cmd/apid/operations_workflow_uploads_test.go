@@ -438,7 +438,9 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 	for _, action := range []string{"commit", "reuse"} {
 		t.Run(action, func(t *testing.T) {
-			f := newWorkflowUploadFixture(t, "postgres", 8*time.Second)
+			// Leave time for receipt setup and lock acquisition on race-enabled CI.
+			// The write still waits past the actual native deadline below.
+			f := newWorkflowUploadFixture(t, "postgres", 10*time.Second)
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				ctx := t.Context()
 				a := state.OperationWorkflowAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.instanceID, RunID: proof.RunID, StepName: proof.StepName, Generation: proof.Generation, Attempt: proof.Attempt, Capability: proof.Capability}
@@ -466,6 +468,10 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer func() { _ = lock.Rollback(ctx) }()
+				var blockerPID int32
+				if err := lock.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID); err != nil {
+					t.Fatal(err)
+				}
 				var blobID pgtype.UUID
 				if err := blobID.Scan(blob.ID); err != nil {
 					t.Fatal(err)
@@ -483,19 +489,31 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 					}
 					completed <- err
 				}()
-				// Control uses the same run lock. Its blocked read proves the file
-				// transaction has entered the native authority window before expiry.
-				controls := f.store.(state.OperationWorkflowControlStore)
+				// Observe the blob waiter itself. A short control-query deadline can
+				// expire during another authority read and be reported as a stale
+				// attempt; it does not prove the file transaction reached this lock.
+				observeCtx, cancelObserve := context.WithDeadline(ctx, control.DeadlineAt)
+				defer cancelObserve()
 				for {
-					probe, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-					_, err := controls.WorkflowOperationExecutionControl(probe, f.op.ID, a)
-					cancel()
-					if errors.Is(err, context.DeadlineExceeded) {
+					var waiting bool
+					if err := f.pool.QueryRow(observeCtx, `
+SELECT EXISTS (
+ SELECT 1 FROM pg_stat_activity
+ WHERE datname=current_database() AND wait_event_type='Lock'
+ AND $1::integer=ANY(pg_blocking_pids(pid))
+ AND query LIKE '%-- name: LockCustomerOperationBlob :one%'
+)`, blockerPID).Scan(&waiting); err != nil {
+						t.Fatal("observe file transaction waiting on the blob lock", err)
+					}
+					if waiting {
 						break
 					}
-					if err != nil || !time.Now().Before(control.DeadlineAt) {
-						t.Fatal("file transaction did not wait on the blob lock", err)
+					select {
+					case err := <-completed:
+						t.Fatal("file transaction completed before waiting on the blob lock", err)
+					default:
 					}
+					time.Sleep(5 * time.Millisecond)
 				}
 				if remaining := time.Until(control.DeadlineAt); remaining > 0 {
 					time.Sleep(remaining)
