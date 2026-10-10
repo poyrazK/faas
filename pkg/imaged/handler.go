@@ -3342,7 +3342,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// so validate again at the sole snapshot-row writer rather than relying
 		// only on schedd's pre-capture check. Zero is retained for legacy writers
 		// that did not report mem_bytes.
+		//
+		// The guest's RAM includes explicitly allocated companion RAM, as vmmd
+		// boots it (fcvm.wakeGuestMemoryMiB); production-us rc.251 rejected
+		// every companion deployment's snapshot against the app RAM alone.
 		expectedMemBytes := int64(app.RAMMB) << 20
+		if snapshot.MemBytes > 0 && app.RAMMB > 0 {
+			sidecarMBs, err := h.store.DeploymentSidecarRAMs(ctx, snapshot.DeploymentID)
+			if err != nil {
+				return fmt.Errorf("imaged: snapshot companion RAM for %s: %w", snapshot.DeploymentID, err)
+			}
+			expectedMemBytes = int64(api.BillableRAMMBWithSidecars(app.RAMMB, sidecarMBs)-api.PerVMOverheadMB) << 20
+		}
 		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
 			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedRAM)
 			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
