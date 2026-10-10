@@ -48,7 +48,7 @@ func queueIntentFixture(t *testing.T, basic gitOpsTestStore, mode string) (queue
 	enabled := true
 	d.Workloads["api"] = api.EnvironmentWorkload{App: app.Slug, Variables: map[string]string{"MODE": "approved"}, QueueBindings: map[string]api.EnvironmentQueueBinding{
 		"orders": {QueueName: "orders-v2", Mode: "push", WorkloadClass: "worker", Enabled: &enabled, MaxConcurrency: 3, RetryPolicy: &api.RetryPolicyDTO{MaxAttempts: 4}},
-	}}
+	}, QueueSmoke: map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}}}
 	desired, err := environmentsync.Compile(d)
 	if err != nil {
 		t.Fatal(err)
@@ -138,8 +138,9 @@ func TestEnvironmentGitOpsScopedQueueAdoptionAndReconciliation(t *testing.T) {
 			}
 		}
 		current, err := store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, "production")
-		if err != nil || current.AppliedRevisionID != current.ApprovedRevisionID {
-			t.Fatalf("queue not verified: %+v %v", current, err)
+		runs, runErr := store.ListEnvironmentGitOpsRuns(t.Context(), source.AccountID, source.ID, 1)
+		if err != nil || current.AppliedRevisionID != "" || runErr != nil || len(runs) != 1 || runs[0].Status != "partial" {
+			t.Fatalf("queue intent advanced without qualification: source=%+v runs=%+v err=%v run_err=%v", current, runs, err, runErr)
 		}
 	})
 }
@@ -187,6 +188,7 @@ func TestEnvironmentGitOpsQueueCreationRetainsIdentityAndBlocksPruning(t *testin
 		definition := desired.Definition
 		w := definition.Workloads["api"]
 		w.QueueBindings["billing"] = api.EnvironmentQueueBinding{QueueName: "billing", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 2}
+		w.QueueSmoke["billing"] = api.EnvironmentQueueSmoke{Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}
 		definition.Workloads["api"] = w
 		desired, err = environmentsync.Compile(definition)
 		if err != nil {
@@ -222,6 +224,7 @@ func TestEnvironmentGitOpsQueueCreationRetainsIdentityAndBlocksPruning(t *testin
 		definition = desired.Definition
 		w = definition.Workloads["api"]
 		delete(w.QueueBindings, "orders")
+		delete(w.QueueSmoke, "orders")
 		w.Variables["MODE"] = "must-not-commit"
 		definition.Workloads["api"] = w
 		desired, err = environmentsync.Compile(definition)
@@ -267,8 +270,8 @@ func TestEnvironmentGitOpsQueueOverrideRestoresApprovedIntent(t *testing.T) {
 		if err != nil || len(runs) != 1 || runs[0].Status == "converged" {
 			t.Fatalf("override falsely converged: %+v %v", runs, err)
 		}
-		if current.AppliedRevisionID != current.ApprovedRevisionID {
-			t.Fatal("prior approved application evidence was lost")
+		if current.AppliedRevisionID != "" {
+			t.Fatal("unqualified queue intent advanced the applied revision")
 		}
 		if err := store.RemoveEnvironmentGitOpsOverride(t.Context(), source.AccountID, source.ID, override.Resource, override.Path); err != nil {
 			t.Fatal(err)
@@ -301,6 +304,7 @@ func TestEnvironmentGitOpsQueueQuotaFailureRollsBackWholeIntent(t *testing.T) {
 		w := definition.Workloads["api"]
 		for _, name := range []string{"billing", "shipping"} {
 			w.QueueBindings[name] = api.EnvironmentQueueBinding{QueueName: name, Mode: "push", WorkloadClass: "worker"}
+			w.QueueSmoke[name] = api.EnvironmentQueueSmoke{Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}
 		}
 		w.Variables["MODE"] = "must-not-commit"
 		definition.Workloads["api"] = w

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
 
@@ -99,7 +100,9 @@ func (m *MemStore) qualificationCurrentLocked(memory *environmentGitOpsMemory, r
 			}
 		}
 		current, err := qualificationRequest(graph, member, m.deployments[member.CandidateDeploymentID])
-		if err != nil || captured.ID == "" || current.Artifact != captured.Artifact || !reflect.DeepEqual(current.FrozenInputs, captured.FrozenInputs) {
+		if err != nil || captured.ID == "" || captured.GraphID != graph.ID || captured.Resource != member.Resource ||
+			captured.DeploymentID != member.CandidateDeploymentID || captured.AppID != member.AppID ||
+			current.Artifact != captured.Artifact || !reflect.DeepEqual(current.FrozenInputs, captured.FrozenInputs) {
 			return ErrConflict
 		}
 	}
@@ -133,9 +136,12 @@ func (m *MemStore) claimEnvironmentWorkloadQualification(ctx context.Context, id
 	if err := m.qualificationCurrentLocked(memory, current); err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
 	}
+	if current.ExecutionMode == api.ExecutionModeJob || len(current.FrozenInputs.ServiceBindings) != 0 {
+		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+	}
 	if nodeID != "" {
 		app := m.apps[current.AppID]
-		if current.ExecutionMode == "job" || (app.Status != AppActive && app.Status != AppEvictedCold) ||
+		if current.ExecutionMode == "job" || current.ExecutionMode == "worker" || (app.Status != AppActive && app.Status != AppEvictedCold) ||
 			(app.NodeID != "" && qualificationRecoveryCursor(app.NodeID) != qualificationRecoveryCursor(nodeID)) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}
@@ -147,7 +153,7 @@ func (m *MemStore) claimEnvironmentWorkloadQualification(ctx context.Context, id
 	if ins, exists := m.instances[current.ReservedInstanceID]; exists && !qualificationInstanceRetired(ins) {
 		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
-	if m.qualificationExecutionUnretiredLocked(current.ReservedInstanceID) {
+	if m.qualificationRequestUnretiredLocked(current.ID) {
 		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
 	current.ReservedInstanceID = ""

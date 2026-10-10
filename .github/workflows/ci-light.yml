@@ -346,7 +346,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Shards 4-6 split cmd/apid's long suite across dedicated PostgreSQL
+        # services; its database DDL cannot race pkg/state's catalogue checks.
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -427,8 +429,15 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
-          SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 6 < "$RUNNER_TEMP/changed-paths.txt")"
+          if (( SHARD > 3 )); then
+            SPLIT="$PKGS"
+            PKGS=""
+            SPLIT_SHARD=$((SHARD - 3))
+          else
+            SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+            SPLIT_SHARD="$SHARD"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
@@ -447,8 +456,8 @@ jobs:
           # This avoids overlapping large race binaries and keeps state clone
           # fixtures' cluster-wide database catalogue stable between snapshots.
           for pkg in $SPLIT; do
-            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
-            echo "testing: $pkg (test shard $SHARD/3)"
+            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SPLIT_SHARD")"
+            echo "testing: $pkg (test shard $SPLIT_SHARD/3)"
             go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
           done
           exit "$status"

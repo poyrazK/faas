@@ -64,13 +64,20 @@ func qualificationRPCConnection(t *testing.T, server vmmdpb.VmmdServer) *grpc.Cl
 
 type qualificationRPCVMM struct {
 	*fakeVMM
-	mu      sync.Mutex
-	created []state.EnvironmentQualificationExecution
-	retired []state.EnvironmentQualificationExecution
-	wake    fcvm.WakeRequest
-	fields  wire.CorrelationFields
-	proof   state.EnvironmentQualificationRetirement
-	err     error
+	mu                 sync.Mutex
+	created            []state.EnvironmentQualificationExecution
+	restored           []state.EnvironmentQualificationExecution
+	retired            []state.EnvironmentQualificationExecution
+	artifactRetirement struct {
+		capture, restored state.EnvironmentQualificationExecution
+		smoke             state.EnvironmentQualificationSmokeReceipt
+		captureID         string
+	}
+	wake          fcvm.WakeRequest
+	fields        wire.CorrelationFields
+	proof         state.EnvironmentQualificationRetirement
+	restoreMethod fcvm.WakeMethod
+	err           error
 }
 
 func (v *qualificationRPCVMM) WakeEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, wake fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -88,6 +95,25 @@ func (v *qualificationRPCVMM) RetireEnvironmentQualification(_ context.Context, 
 	defer v.mu.Unlock()
 	v.retired = append(v.retired, frame)
 	return v.proof, v.err
+}
+
+func (v *qualificationRPCVMM) RetireEnvironmentQualificationArtifacts(_ context.Context, capture, restored state.EnvironmentQualificationExecution,
+	smoke state.EnvironmentQualificationSmokeReceipt, captureID string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.artifactRetirement.capture, v.artifactRetirement.restored = capture, restored
+	v.artifactRetirement.smoke, v.artifactRetirement.captureID = smoke, captureID
+	return v.err
+}
+
+func (v *qualificationRPCVMM) RestoreEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, wake fcvm.WakeRequest) (*fcvm.Instance, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.restored = append(v.restored, frame)
+	v.wake, v.fields = wake, wire.CorrelationFields{}
+	v.fields, _ = wire.FromContext(ctx)
+	return &fcvm.Instance{Lease: fcvm.Lease{Instance: frame.InstanceID, UID: 20002, HostIP: netip.MustParseAddr("10.100.0.3")},
+		Net: netns.Config{Netns: "fc-" + frame.InstanceID}, Method: v.restoreMethod}, v.err
 }
 
 func qualificationRPCServer(v vmmdgrpc.VmmdAPI, nodeID string) *vmmdgrpc.Server {
@@ -117,15 +143,88 @@ func TestVMMClientEnvironmentQualificationPreservesOriginalRuntimeAndCleanup(t *
 	if err != nil || evidence.Execution != frame || evidence.Retirement != v.proof {
 		t.Fatal("cleanup changed original frame or physical evidence", err)
 	}
+	restoredFrame := frame
+	restoredFrame.InstanceID, restoredFrame.WakeID, restoredFrame.CaptureInstanceID = uuid.NewString(), uuid.NewString(), frame.InstanceID
+	restoredRetirement, err := client.RetireEnvironmentQualification(t.Context(), restoredFrame)
+	if err != nil || restoredRetirement.Execution != restoredFrame || restoredRetirement.Retirement != v.proof {
+		t.Fatal("cleanup lost the separate restore target authority", err)
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if len(v.created) != 1 || v.created[0] != frame || len(v.retired) != 1 || v.retired[0] != frame || generic.Load() != 0 {
+	if len(v.created) != 1 || v.created[0] != frame || len(v.retired) != 2 || v.retired[0] != frame || v.retired[1] != restoredFrame || generic.Load() != 0 {
 		t.Fatal("qualification used generic operations or changed the complete original attempt")
 	}
 	if v.fields.WakeID != frame.WakeID || v.fields.DeploymentID != frame.DeploymentID || v.fields.InstanceID != frame.InstanceID ||
 		v.fields.AppID != frame.AppID || v.fields.NodeID != frame.NodeID || v.wake.DeploymentID != frame.DeploymentID || len(v.wake.SealedEnvEntries) != 1 ||
 		len(v.wake.APIEnvEntries) != 1 || v.wake.APIEnvEntries[0].Value != "reviewed" || v.wake.LayerKey != frame.Artifact.RootfsKey {
 		t.Fatal("host lost frozen boot payload or correlation")
+	}
+}
+
+func TestVMMClientEnvironmentQualificationRestoreUsesSeparateCaptureAndNoFallback(t *testing.T) {
+	frame := qualificationRPCFrame()
+	frame.InstanceID = uuid.NewString()
+	frame.WakeID = uuid.NewString()
+	frame.CaptureInstanceID = qualificationRPCFrame().InstanceID
+	var generic atomic.Int32
+	base := &fakeVMM{wakeFn: func(context.Context, fcvm.WakeRequest) (*fcvm.Instance, error) {
+		generic.Add(1)
+		return &fcvm.Instance{Method: fcvm.WakeColdBoot}, nil
+	}}
+	v := &qualificationRPCVMM{fakeVMM: base, restoreMethod: fcvm.WakeRestore}
+	client := sched.NewVMMClient(qualificationRPCConnection(t, qualificationRPCServer(v, frame.NodeID)))
+	app := sched.AppSpec{AppID: frame.AppID, DeploymentID: frame.DeploymentID, AccountID: uuid.NewString(), Plan: api.PlanPro,
+		BaseKey: "base/node22.ext4", LayerKey: frame.Artifact.RootfsKey, VCPUCount: 2, MemSizeMiB: 512,
+		APIEnv: []fcvm.APIEnvEntry{{Key: "MODE", Value: "reviewed"}}}
+	out, err := client.RestoreEnvironmentQualification(t.Context(), frame, app)
+	if err != nil || out == nil || out.Method != vmmdpb.WakeMethod_WAKE_RESTORE || out.Instance != frame.InstanceID {
+		t.Fatal("restore was not acknowledged as an exact native restore", err)
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.restored) != 1 || v.restored[0] != frame || len(v.created) != 0 || generic.Load() != 0 ||
+		v.fields.InstanceID != frame.InstanceID || v.wake.LayerKey != frame.Artifact.RootfsKey || len(v.wake.APIEnvEntries) != 1 {
+		t.Fatal("restore changed target/capture authority or borrowed generic wake", v.restored, v.fields, generic.Load())
+	}
+}
+
+func TestEnvironmentQualificationRestoreRejectsColdBootFallback(t *testing.T) {
+	frame := qualificationRPCFrame()
+	frame.InstanceID = uuid.NewString()
+	frame.WakeID = uuid.NewString()
+	frame.CaptureInstanceID = qualificationRPCFrame().InstanceID
+	var generic atomic.Int32
+	v := &qualificationRPCVMM{fakeVMM: &fakeVMM{wakeFn: func(context.Context, fcvm.WakeRequest) (*fcvm.Instance, error) {
+		generic.Add(1)
+		return nil, nil
+	}}}
+	client := sched.NewVMMClient(qualificationRPCConnection(t, qualificationRPCServer(v, frame.NodeID)))
+	app := sched.AppSpec{AppID: frame.AppID, DeploymentID: frame.DeploymentID, AccountID: uuid.NewString(), Plan: api.PlanPro,
+		BaseKey: "base/node22.ext4", LayerKey: frame.Artifact.RootfsKey, VCPUCount: 2, MemSizeMiB: 512}
+	if out, err := client.RestoreEnvironmentQualification(t.Context(), frame, app); err == nil || out != nil || generic.Load() != 0 {
+		t.Fatal("cold-boot fallback was accepted as a restore", out, err, generic.Load())
+	}
+}
+
+func TestVMMClientEnvironmentQualificationArtifactRetirementCarriesOwnerEvidence(t *testing.T) {
+	capture := qualificationRPCFrame()
+	restored := capture
+	restored.InstanceID, restored.WakeID, restored.CleanupToken = uuid.NewString(), uuid.NewString(), uuid.NewString()
+	restored.CaptureInstanceID = capture.InstanceID
+	smoke := state.EnvironmentQualificationSmokeReceipt{RequestID: capture.RequestID, Attempt: capture.Attempt, GraphID: capture.GraphID,
+		CaptureInstanceID: capture.InstanceID, InstanceID: restored.InstanceID, Resource: capture.Resource, PolicyID: "http-healthz-v1",
+		PolicySHA256: strings.Repeat("a", 64), ResultSHA256: strings.Repeat("b", 64), RecordedAt: time.UnixMilli(time.Now().UnixMilli()).UTC()}
+	captureID := uuid.NewString()
+	v := &qualificationRPCVMM{fakeVMM: &fakeVMM{}}
+	client := sched.NewVMMClient(qualificationRPCConnection(t, qualificationRPCServer(v, capture.NodeID)))
+	if err := client.RetireEnvironmentQualificationArtifacts(t.Context(), capture, restored, smoke, captureID); err != nil {
+		t.Fatal("host did not acknowledge exact artifact retirement", err)
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.artifactRetirement.capture != capture || v.artifactRetirement.restored != restored ||
+		v.artifactRetirement.smoke != smoke || v.artifactRetirement.captureID != captureID {
+		t.Fatal("artifact retirement did not preserve the exact owner evidence", v.artifactRetirement)
 	}
 }
 

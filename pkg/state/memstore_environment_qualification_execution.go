@@ -75,7 +75,7 @@ func (m *MemStore) MarkEnvironmentQualificationDispatched(ctx context.Context, c
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status, exists := m.qualificationExecutions[execution.InstanceID]
-	if !exists || !qualificationExecutionMatches(status.Execution, execution) || status.RetiredAt != nil {
+	if !exists || status.CaptureInstanceID != "" || !qualificationExecutionMatches(status.Execution, execution) || status.RetiredAt != nil {
 		return ErrConflict
 	}
 	memory, current, err := m.qualificationLocked(claimed.ID)
@@ -113,16 +113,37 @@ func (m *MemStore) RetireEnvironmentQualificationExecution(ctx context.Context, 
 	if !exists || !qualificationExecutionMatches(status.Execution, execution) || !qualificationRetirementValid(proof, status.DispatchStarted) {
 		return ErrConflict
 	}
+	if capture, exists := m.qualificationSnapshots[execution.InstanceID]; exists &&
+		(proof.Kind != QualificationNativeRetired || proof.ReceiptID != capture.Snapshot.CaptureID ||
+			proof.NativeGeneration != capture.Snapshot.NativeGeneration || proof.KernelBootID != capture.Snapshot.KernelBootID) {
+		return ErrConflict
+	}
+	if status.CaptureInstanceID != "" && proof.Kind == QualificationNativeRetired {
+		capture, hasCapture := m.qualificationSnapshots[status.CaptureInstanceID]
+		original := m.qualificationExecutions[status.CaptureInstanceID]
+		if !hasCapture || original.Retirement == nil || proof.NativeGeneration == capture.Snapshot.NativeGeneration ||
+			proof.KernelBootID != capture.Snapshot.KernelBootID || proof.ReceiptID == original.Retirement.ReceiptID {
+			return ErrConflict
+		}
+	}
 	if status.RetiredAt != nil {
 		if !qualificationRetirementEqual(status.Retirement, proof) {
 			return ErrConflict
 		}
 		return nil
 	}
-	if proof.Kind == QualificationNativeRetired {
+	switch proof.Kind {
+	case QualificationNativeRetired:
 		for id, prior := range m.qualificationExecutions {
 			if id != execution.InstanceID && prior.Retirement != nil && prior.Retirement.Kind == QualificationNativeRetired &&
 				(prior.Retirement.ReceiptID == proof.ReceiptID || prior.Execution.NodeID == execution.NodeID && prior.Retirement.KernelBootID == proof.KernelBootID && prior.Retirement.NativeGeneration == proof.NativeGeneration) {
+				return ErrConflict
+			}
+		}
+	case QualificationNativeEffectsAbsent:
+		for id, prior := range m.qualificationExecutions {
+			if id != execution.InstanceID && prior.Retirement != nil && prior.Retirement.Kind == QualificationNativeEffectsAbsent &&
+				prior.Retirement.ReceiptID == proof.ReceiptID {
 				return ErrConflict
 			}
 		}

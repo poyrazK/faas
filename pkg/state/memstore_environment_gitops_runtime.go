@@ -21,7 +21,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 		needed := len(m.environmentSecretSuppressionsLocked(appID, memory.source.EnvironmentSlug)) > 0
 		unqualified := int64(0)
 		for _, owner := range memory.owners {
-			if owner.Resource == resource && owner.Manager == memory.source.ID && gitOpsWorkloadField(owner.Path) {
+			if owner.Resource == resource && owner.Manager == memory.source.ID && gitOpsWorkloadRequiresQualification(owner.Path) {
 				needed = true
 				unqualified = 1
 			}

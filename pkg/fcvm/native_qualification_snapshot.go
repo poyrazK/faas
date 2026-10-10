@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -18,10 +19,17 @@ type environmentQualificationSnapshotBackend interface {
 	checkEnvironmentQualificationSnapshotSupport() error
 }
 
-// Native drive export still needs its durable producer adapter. Preserve the
-// existing freezeSnapshotDrive gate, and refuse before pause/snapshot effects.
+// A native producer owns resume and publication of the entire four-object
+// cohort. The Manager must not wrap it with legacy resume, Put or Delete.
+type environmentQualificationSnapshotProducer interface {
+	captureEnvironmentQualificationSnapshot(context.Context, Lease, BackingIdentity) (SnapshotInfo, error)
+}
+
+// The internal native producer must pass actual capture/restore acceptance and
+// acquire owner-fenced artifact retirement and qualification/graph restore proof
+// before this gate can open. Writer receipts alone do not enable capture.
 func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
-	return fmt.Errorf("native qualification: private-drive capture producer is unavailable: %w", state.ErrConflict)
+	return fmt.Errorf("native qualification: artifact retirement and qualification restore acceptance are unavailable: %w", state.ErrConflict)
 }
 
 // CaptureEnvironmentQualification captures exactly the original private VM.
@@ -39,6 +47,9 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	}
 	if err := backend.checkEnvironmentQualificationSnapshotSupport(); err != nil {
 		return proof, err
+	}
+	if strings.TrimSpace(m.fcVersion) == "" || len(m.fcVersion) > 256 || m.fcVersion != strings.TrimSpace(m.fcVersion) {
+		return proof, fmt.Errorf("native qualification: Firecracker version is not configured: %w", state.ErrConflict)
 	}
 	incoming, err := j.snapshotAuthority(ctx, frame)
 	if err != nil {
@@ -79,7 +90,9 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 		if capture.CompletedAt.IsZero() {
 			return proof, fmt.Errorf("native qualification: capture outcome is uncertain: %w", state.ErrConflict)
 		}
-		return qualificationSnapshotProof(incoming, capture.Info), nil
+		proof = qualificationSnapshotProof(incoming, capture.Info)
+		proof.FCVersion = capture.FCVersion
+		return proof, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return proof, err
@@ -89,23 +102,14 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 		return proof, err
 	}
 	capture = nativeQualificationCaptureRecord{Version: 1, InstanceID: frame.InstanceID, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: j.clock().UTC()}
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: m.fcVersion, StartedAt: j.clock().UTC()}
 	if err := j.writeCapture(incoming, capture); err != nil {
 		return proof, err
 	}
 	ctx = nativeSnapshotCaptureContext(ctx, incoming, capture, physical)
 	keys := qualificationSnapshotProof(incoming, SnapshotInfo{})
-	info, err := m.warmSnapshotInstance(ctx, inst, SnapshotSpec{StorageKey: keys.StorageKey, VMStateStorageKey: keys.VMStateStorageKey})
+	info, err := m.captureQualificationSnapshotCohort(ctx, inst, keys, backing)
 	if err != nil {
-		return proof, err
-	}
-	// A best-effort sidecar cannot make a restorable capture receipt. Bind
-	// the images remembered at boot and require successful publication.
-	body, err := json.Marshal(backing)
-	if err != nil {
-		return proof, err
-	}
-	if err := m.storage.Put(ctx, keys.BackingStorageKey, bytes.NewReader(body)); err != nil {
 		return proof, err
 	}
 	if err := j.requireSnapshotPhysical(ctx, incoming); err != nil {
@@ -121,7 +125,29 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if err := ctx.Err(); err != nil {
 		return proof, err
 	}
-	return qualificationSnapshotProof(incoming, info), nil
+	proof = qualificationSnapshotProof(incoming, info)
+	proof.FCVersion = capture.FCVersion
+	return proof, nil
+}
+
+func (m *Manager) captureQualificationSnapshotCohort(ctx context.Context, inst *Instance, keys state.EnvironmentQualificationSnapshot, backing BackingIdentity) (SnapshotInfo, error) {
+	if producer, ok := m.vmm.(environmentQualificationSnapshotProducer); ok {
+		return producer.captureEnvironmentQualificationSnapshot(ctx, inst.Lease, backing)
+	}
+	// Portable VMM fixtures retain their existing modeled capture contract.
+	// The real native backend always implements the complete producer above.
+	info, err := m.warmSnapshotInstance(ctx, inst, SnapshotSpec{StorageKey: keys.StorageKey, VMStateStorageKey: keys.VMStateStorageKey})
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	body, err := json.Marshal(backing)
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	if err := m.storage.Put(ctx, keys.BackingStorageKey, bytes.NewReader(body)); err != nil {
+		return SnapshotInfo{}, err
+	}
+	return info, nil
 }
 
 func (j *nativeQualificationJournal) snapshotAuthority(ctx context.Context, frame state.EnvironmentQualificationExecution) (incoming nativeQualificationRecord, result error) {

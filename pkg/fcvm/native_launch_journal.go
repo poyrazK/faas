@@ -151,11 +151,11 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 	}
 	generation := uuid.NewString()
 	if incoming != nil {
-		bound, err := j.qualifications(incoming.Execution.NodeID).bindNative(ctx, *incoming, lease)
+		bound, err := incoming.bind(ctx, j, lease)
 		if err != nil {
 			return err
 		}
-		generation = bound.NativeGeneration
+		generation = bound
 	}
 	return j.prepareGeneration(ctx, lease, generation)
 }
