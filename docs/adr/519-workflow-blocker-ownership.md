@@ -452,3 +452,25 @@ path omission is not a path removal, especially on metadata updates. Comparisons
 are derived only for responses and never mutate memory receipts or report identity.
 Dashboard, CLI, and SDK models expose the same bounded result. This changes no
 business execution ownership, database schema, or application transaction behavior.
+
+### Application-reported reasons for workflow changes
+
+A workflow report with a source state may carry one optional change reason linking
+a typed business decision fact and a bounded value snapshot of its payload.
+Existing transaction-backed milestone validation enforces the same Operation,
+workflow instance, and pinned contract version, and compares all decision fields.
+Initial snapshots cannot carry reasons. Metadata-only updates may carry exactly
+that reason as their sole evidence, preserving the prohibition on unrelated
+metadata evidence. The application owns this explanation and all business actions.
+
+An additive platform ledger column and additive customer outbox column store the
+reason as object-or-null JSON. Nil omission preserves old canonical fingerprints.
+SDK helpers attach exactly one queued decision to the last workflow update;
+publishers validate, preserve, and match reasons against receipts before
+acknowledgment. Copies isolate stored memory records and response projections.
+
+History and latest state expose the reason, and revision comparisons include it
+even without a baseline. Comparison evidence identifies the decision when facts
+are compared; reasons describe application reasoning rather than inferred cause.
+Dashboard and CLI render that distinction. This introduces no execution authority,
+remote application action, or permanent evidence retention.

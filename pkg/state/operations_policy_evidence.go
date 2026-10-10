@@ -52,7 +52,11 @@ func validateWorkflowPolicyEvidence(def OperationDefinition, report api.Operatio
 		}
 	}
 
-	for _, selection := range report.SelectedPaths {
+	reasonSelections := append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...)
+	if reason := report.ChangeReason; reason != nil {
+		reasonSelections = append(reasonSelections, api.OperationWorkflowPathSelection{DecisionMilestoneID: reason.MilestoneID, DecisionCode: reason.Decision.Code, DecisionDescription: reason.Decision.Description, DecisionRuleID: reason.Decision.RuleID, DecisionRuleVersion: reason.Decision.RuleVersion})
+	}
+	for _, selection := range reasonSelections {
 		if selection.DecisionMilestoneID == "" {
 			continue
 		}
@@ -83,6 +87,9 @@ func validateWorkflowPolicyEvidence(def OperationDefinition, report api.Operatio
 		}
 		decision, err := api.ParseOperationBusinessDecision(payloads[selection.DecisionMilestoneID])
 		if !referenced || !versionMatched || err != nil || decision == nil || decision.Workflow != report.Workflow || decision.InstanceID != report.InstanceID || decision.Code != selection.DecisionCode || decision.Description != selection.DecisionDescription || decision.RuleID != selection.DecisionRuleID || decision.RuleVersion != selection.DecisionRuleVersion {
+			if report.ChangeReason != nil && selection.DecisionMilestoneID == report.ChangeReason.MilestoneID {
+				return fmt.Errorf("%w: workflow change reason requires matching decision evidence in the same workflow instance and contract version", ErrInvalidArgument)
+			}
 			return fmt.Errorf("%w: selected path requires matching business decision evidence", ErrInvalidArgument)
 		}
 	}

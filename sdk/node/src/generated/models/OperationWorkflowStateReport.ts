@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+import type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
@@ -11,6 +12,7 @@ import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSele
  * Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
  */
 export type OperationWorkflowStateReport = {
+  change_reason?: OperationWorkflowChangeReason;
   selected_paths?: Array<OperationWorkflowPathSelection>;
   /**
    * Full replacement snapshot of direct prerequisite references.

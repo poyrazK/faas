@@ -893,6 +893,14 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 		return resolutions[i].Code < resolutions[j].Code
 	})
 	report.BlockerResolutions = resolutions
+	reason, reasonErr := api.CanonicalOperationWorkflowChangeReason(report.ChangeReason)
+	if reasonErr != nil {
+		return report, "", reasonErr
+	}
+	if reason != nil && (report.FromState == "" || reason.Decision.Workflow != report.Workflow || reason.Decision.InstanceID != report.InstanceID) {
+		return report, "", fmt.Errorf("workflow change reason requires a matching workflow transition or metadata update")
+	}
+	report.ChangeReason = reason
 	selections, err := api.CanonicalOperationWorkflowPathSelections(report.SelectedPaths)
 	if err != nil {
 		return report, "", err
@@ -905,8 +913,8 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	}
 	report.SelectedPaths = selections
 	if report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
-		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 {
-			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain no transition evidence")
+		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 && !(reason != nil && len(report.EvidenceMilestones) == 1 && report.EvidenceMilestones[0].ID == reason.MilestoneID) {
+			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain only change reason evidence when supplied")
 		}
 		requiredMilestones = nil
 	}

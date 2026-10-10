@@ -259,6 +259,12 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		if reason := transition.ChangeReason; reason != nil {
+			if _, err := fmt.Fprintf(out, "workflow-change-reason\t%s\tinstance=%s\trevision=%d\tfact=%s\tcode=%s\trule=%s\tversion=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, reason.MilestoneID, reason.Decision.Code, reason.Decision.RuleID, reason.Decision.RuleVersion, reason.Decision.Description); err != nil {
+				return err
+			}
+		}
+
 		if comparison := transition.Comparison; comparison != nil {
 			if _, err := fmt.Fprintf(out, "workflow-revision-comparison\t%s\tinstance=%s\trevision=%d\tstatus=%s\tprevious-revision=%d\tprevious-report=%s\tprevious-operation=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, comparison.Status, comparison.PreviousRevision, comparison.PreviousReportID, comparison.PreviousOperationID, comparison.Summary); err != nil {
 				return err

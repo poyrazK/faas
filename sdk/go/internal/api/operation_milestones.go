@@ -22,6 +22,7 @@ type OperationMilestoneValidationResponse struct {
 }
 
 type OperationWorkflowStateReport struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -59,6 +60,7 @@ type OperationWorkflowStateValidationResponse struct {
 }
 
 type OperationWorkflowStateReportResponse struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -82,6 +84,7 @@ type OperationWorkflowStateReportResponse struct {
 }
 
 type OperationWorkflowState struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	SLA                *OperationWorkflowStateSLA           `json:"sla,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
@@ -113,6 +116,7 @@ type OperationWorkflowState struct {
 }
 
 type OperationWorkflowStateHistoryEntry struct {
+	ChangeReason            *OperationWorkflowChangeReason            `json:"change_reason,omitempty"`
 	Comparison              *OperationWorkflowRevisionComparison      `json:"comparison,omitempty"`
 	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
 	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
@@ -336,6 +340,7 @@ type OperationWorkflowDependencyFinding struct {
 
 // OperationWorkflowRevisionComparison explains adjacent retained reports without inferring causality.
 type OperationWorkflowRevisionComparison struct {
+	ChangeReason        *OperationWorkflowChangeReason      `json:"change_reason,omitempty"`
 	Status              string                              `json:"status"`
 	Summary             string                              `json:"summary"`
 	PreviousReportID    string                              `json:"previous_report_id,omitempty"`

@@ -240,6 +240,7 @@ func (m *MemStore) collectWorkflowAttentionLocked(account, tenant string, opts a
 			continue
 		}
 		state := record.State
+		state.ChangeReason = api.CloneOperationWorkflowChangeReason(state.ChangeReason)
 		state.Blockers = append([]api.OperationWorkflowBlocker(nil), state.Blockers...)
 		state.DependsOn = append([]api.OperationWorkflowDependency(nil), state.DependsOn...)
 		state.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), state.BlockerResolutions...)

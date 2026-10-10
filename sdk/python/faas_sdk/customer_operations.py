@@ -31,6 +31,7 @@ from ._operation_contract import (
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .models.operation_workflow_path_selection import OperationWorkflowPathSelection
+from .models.operation_workflow_change_reason import OperationWorkflowChangeReason
 from .models.operation_workflow_state_report import OperationWorkflowStateReport
 from .models.operation_workflow_dependency import OperationWorkflowDependency
 from .models.operation_workflow_blocker import OperationWorkflowBlocker
@@ -394,6 +395,31 @@ class CustomerOperationTransaction:
 
     def workflow_state(self, workflow: str, instance_id: str, state: str) -> None:
         self._queue_workflow_state(workflow, instance_id, state, None)
+
+    def workflow_change_reason(self, milestone: str) -> None:
+        """Attach a queued decision to the most recent workflow update."""
+        self._check_open("Change reasons")
+        facts = [f for f in self._milestones if f.name == milestone]
+        if len(facts) != 1 or not self._workflow_states:
+            raise ValueError("queue one decision and a workflow update before its reason")
+        fact, prior = facts[0], self._workflow_states[-1]
+        if prior.change_reason is not UNSET:
+            raise ValueError("a change reason is already attached to this report")
+        if prior.from_state is UNSET or not prior.from_state:
+            raise ValueError("initial snapshots cannot carry change reasons")
+        payload = fact.payload
+        if not isinstance(payload, dict) or payload.get("kind") != "gregale.business-decision.v1":
+            raise ValueError("change reason requires a business decision")
+        reason = _canonical_workflow_change_reason(OperationWorkflowChangeReason.from_dict({"milestone_id":str(fact.id),"decision":payload["decision"]}))
+        if reason.decision.workflow != prior.workflow or reason.decision.instance_id != prior.instance_id:
+            raise ValueError("change reason requires a matching workflow decision")
+        evidence = [] if prior.evidence_milestones is UNSET else list(prior.evidence_milestones)
+        if not any(e.id == fact.id for e in evidence):
+            evidence.append(OperationWorkflowEvidenceMilestone(id=fact.id,name=fact.name))
+        self._workflow_states[-1] = evolve(prior,change_reason=reason,evidence_milestones=evidence)
+        if len(_json_bytes({"workflow_states":[r.to_dict() for r in self._workflow_states]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES:
+            self._workflow_states[-1] = prior
+            raise ValueError("workflow state batch exceeds its byte limit")
 
     def workflow_path_decision(self, group: str, path: str, milestone: str) -> OperationWorkflowPathSelection:
         """Link a chosen path to exactly one decision queued in this transaction."""
@@ -898,8 +924,8 @@ async def _save_workflow_states(
 
         await cursor.execute(
             "INSERT INTO public.gregale_customer_operation_workflow_states "
-            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths) "
-            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)",
+            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths,change_reason) "
+            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb,%s::jsonb)",
             (
                 request.operation_id,
                 str(saved_report.id),
@@ -922,6 +948,7 @@ async def _save_workflow_states(
                 _json_bytes(report_data["depends_on"]).decode("utf-8"),
                 saved_report.dependencies_only is True,
                 _json_bytes([p.to_dict() for p in _canonical_workflow_paths([] if saved_report.selected_paths is UNSET else saved_report.selected_paths)]).decode("utf-8"),
+                _json_bytes(None if saved_report.change_reason is UNSET else _canonical_workflow_change_reason(saved_report.change_reason).to_dict()).decode("utf-8"),
             ),
         )
         await cursor.execute(
@@ -1086,3 +1113,11 @@ def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -
                 rule_version=p.decision_rule_version).to_payload()
         result.append(evolve(p))
     return sorted(result, key=lambda p: p.group_id)
+
+def _canonical_workflow_change_reason(input):
+    if input is UNSET or input is None:
+        return UNSET
+    if not isinstance(input, OperationWorkflowChangeReason) or not isinstance(input.milestone_id, UUID) or input.milestone_id.int == 0:
+        raise ValueError("change reason requires a canonical fact UUID")
+    OperationBusinessDecision(**input.decision.to_dict()).to_payload()
+    return OperationWorkflowChangeReason.from_dict(input.to_dict())

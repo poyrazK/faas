@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_blocker import OperationWorkflowBlocker
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+    from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
     from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
@@ -31,6 +32,10 @@ class OperationWorkflowStateReportResponse:
     state: str
     revision: int
     contract_version: int
+    change_reason: OperationWorkflowChangeReason | Unset = UNSET
+    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+   """
     selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
     """In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references."""
@@ -76,6 +81,10 @@ class OperationWorkflowStateReportResponse:
         revision = self.revision
 
         contract_version = self.contract_version
+
+        change_reason: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.change_reason, Unset):
+            change_reason = self.change_reason.to_dict()
 
         selected_paths: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.selected_paths, Unset):
@@ -143,6 +152,8 @@ class OperationWorkflowStateReportResponse:
                 "contract_version": contract_version,
             }
         )
+        if change_reason is not UNSET:
+            field_dict["change_reason"] = change_reason
         if selected_paths is not UNSET:
             field_dict["selected_paths"] = selected_paths
         if depends_on is not UNSET:
@@ -176,6 +187,7 @@ class OperationWorkflowStateReportResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_blocker import OperationWorkflowBlocker
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+        from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
         from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
@@ -194,6 +206,13 @@ class OperationWorkflowStateReportResponse:
         revision = d.pop("revision")
 
         contract_version = d.pop("contract_version")
+
+        _change_reason = d.pop("change_reason", UNSET)
+        change_reason: OperationWorkflowChangeReason | Unset
+        if isinstance(_change_reason, Unset):
+            change_reason = UNSET
+        else:
+            change_reason = OperationWorkflowChangeReason.from_dict(_change_reason)
 
         _selected_paths = d.pop("selected_paths", UNSET)
         selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
@@ -269,6 +288,7 @@ class OperationWorkflowStateReportResponse:
             state=state,
             revision=revision,
             contract_version=contract_version,
+            change_reason=change_reason,
             selected_paths=selected_paths,
             depends_on=depends_on,
             dependencies_only=dependencies_only,

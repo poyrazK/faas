@@ -2847,3 +2847,54 @@ expired or caused it; applications must report those facts explicitly.
 The derived response is bounded to 64 changes and 64 evidence references per
 comparison, based on existing report limits. It is read-only, uses the existing
 retained page, and requires no migration or customer outbox schema update.
+
+### Report the application's reason for a workflow change
+
+A workflow transition or same-state metadata update may carry one optional
+`change_reason`: a business decision milestone ID and a validated snapshot of its
+`decision` payload. Queue the decision and workflow update in the same application
+transaction, then attach the reason to the most recently queued update:
+
+```typescript
+tx.businessDecision('review-decided', {
+  workflow: 'order-approval', instance_id: runID,
+  code: 'credit-limit-exceeded', description: 'The customer exceeded the business credit limit.',
+  rule_id: 'business-credit', rule_version: 'v3',
+});
+tx.workflowTransition('order-approval', runID, 'pending', 'manual-review');
+tx.workflowChangeReason('review-decided');
+```
+
+Declare `review-decided` as a workflow step in the same pinned contract version,
+with its instance pointer bound to `/decision/instance_id`. Go uses
+`tx.WorkflowChangeReason(milestone)` after `tx.BusinessDecision` and the workflow
+update; Python uses `tx.workflow_change_reason(milestone)` after
+`tx.business_decision` and the update. For guarded transitions, include the decision
+payload among the guard's planned facts, await a successful guard, and attach the
+reason before committing. The helper requires exactly one queued decision with
+that milestone name and permits one reason per report.
+
+Initial snapshots cannot carry change reasons. Same-state blocker, deadline,
+outcome, or dependency updates may include exactly the reason fact as evidence;
+other metadata evidence remains disallowed. Business transitions retain their
+existing evidence requirements and limits. The reason refers to this update only;
+it is not inherited automatically by later reports.
+
+Precommit validation checks the actual decision from the same transaction.
+Publication checks the referenced fact from this Operation. Both require matching
+workflow instance, pinned contract version, decision code, reason, and rule fields.
+A reason that differs from the fact is rejected. The reason is part of canonical
+report identity and receipt acknowledgment, and all SDK publishers preserve it
+through replay. Omission preserves existing report identities and behavior.
+
+Workflow history, latest state, and revision comparison objects expose
+`change_reason`. Dashboard and CLI show it as the application's reported reason
+and link its fact identity. Comparisons retain the reason even when the preceding
+revision is missing, without inventing the missing change or inferring independent
+causality. This is business context supplied by the application, not execution
+permission or proof from an external service.
+
+Apply the additive platform `customer_operation_change_reason` migration and
+reinstall the SDK customer Operation schema before upgrading the outbox adapters.
+Both columns default to JSON null for existing rows. The migration is provided in
+this change; it is not applied automatically to running databases.

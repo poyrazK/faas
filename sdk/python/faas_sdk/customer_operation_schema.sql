@@ -161,3 +161,7 @@ WHERE s.platform_tenant_id=c.platform_tenant_id AND s.workflow=c.workflow
 ALTER TABLE public.gregale_customer_operation_workflow_states
  ADD COLUMN IF NOT EXISTS selected_paths jsonb NOT NULL DEFAULT '[]'::jsonb
  CHECK (jsonb_typeof(selected_paths)='array' AND jsonb_array_length(selected_paths)<=8);
+
+ALTER TABLE public.gregale_customer_operation_workflow_states
+ ADD COLUMN IF NOT EXISTS change_reason jsonb NOT NULL DEFAULT 'null'::jsonb
+ CHECK (jsonb_typeof(change_reason) IN ('object','null'));

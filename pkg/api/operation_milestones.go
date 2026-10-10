@@ -122,6 +122,7 @@ type OperationWorkflowInstanceMilestoneRef struct {
 // revision is assigned inside the app transaction and keeps late publications
 // from replacing a newer business state.
 type OperationWorkflowStateReport struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -161,6 +162,7 @@ type OperationWorkflowStateValidationResponse struct {
 }
 
 type OperationWorkflowStateReportResponse struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -186,6 +188,7 @@ type OperationWorkflowStateReportResponse struct {
 // OperationWorkflowState is the latest explicit state reported for one
 // business workflow instance.
 type OperationWorkflowState struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
 	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	SLA                *OperationWorkflowStateSLA           `json:"sla,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
@@ -219,6 +222,7 @@ type OperationWorkflowState struct {
 // OperationWorkflowStateHistoryEntry is one retained app-reported state
 // update, ordered within a run by its app-assigned revision.
 type OperationWorkflowStateHistoryEntry struct {
+	ChangeReason            *OperationWorkflowChangeReason            `json:"change_reason,omitempty"`
 	Comparison              *OperationWorkflowRevisionComparison      `json:"comparison,omitempty"`
 	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
 	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
@@ -361,6 +365,7 @@ type OperationWorkflowDependencyFinding struct {
 
 // OperationWorkflowRevisionComparison explains adjacent retained reports without inferring causality.
 type OperationWorkflowRevisionComparison struct {
+	ChangeReason        *OperationWorkflowChangeReason      `json:"change_reason,omitempty"`
 	Status              string                              `json:"status"`
 	Summary             string                              `json:"summary"`
 	PreviousReportID    string                              `json:"previous_report_id,omitempty"`

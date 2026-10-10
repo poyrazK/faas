@@ -19,3 +19,11 @@ export function businessDecisionPayload(decision: OperationBusinessDecision): Op
   }
   return {kind: 'gregale.business-decision.v1', decision: {...decision}};
 }
+
+export interface OperationWorkflowChangeReason { milestone_id: string; decision: OperationBusinessDecision }
+export function canonicalWorkflowChangeReason(input: unknown): OperationWorkflowChangeReason | undefined {
+ if (input === undefined || input === null) return undefined;
+ const p = input as OperationWorkflowChangeReason;
+ if (typeof p.milestone_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.milestone_id) || p.milestone_id === '00000000-0000-0000-0000-000000000000') throw new TypeError('Change reason requires a canonical fact UUID');
+ return {milestone_id:p.milestone_id,decision:businessDecisionPayload(p.decision).decision};
+}

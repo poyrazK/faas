@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_blocker import OperationWorkflowBlocker
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+    from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
     from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
@@ -38,6 +39,10 @@ class OperationWorkflowStateHistoryEntry:
     contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
+    change_reason: OperationWorkflowChangeReason | Unset = UNSET
+    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+   """
     comparison: OperationWorkflowRevisionComparison | Unset = UNSET
     """Derived comparison with the preceding retained report on this history page in the same workflow run and
     tenant. Gaps and unavailable baselines prevent inferred changes or causal claims."""
@@ -94,6 +99,10 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
+
+        change_reason: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.change_reason, Unset):
+            change_reason = self.change_reason.to_dict()
 
         comparison: dict[str, Any] | Unset = UNSET
         if not isinstance(self.comparison, Unset):
@@ -178,6 +187,8 @@ class OperationWorkflowStateHistoryEntry:
                 "published_at": published_at,
             }
         )
+        if change_reason is not UNSET:
+            field_dict["change_reason"] = change_reason
         if comparison is not UNSET:
             field_dict["comparison"] = comparison
         if selected_paths is not UNSET:
@@ -217,6 +228,7 @@ class OperationWorkflowStateHistoryEntry:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_blocker import OperationWorkflowBlocker
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+        from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
         from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
@@ -241,6 +253,13 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
+
+        _change_reason = d.pop("change_reason", UNSET)
+        change_reason: OperationWorkflowChangeReason | Unset
+        if isinstance(_change_reason, Unset):
+            change_reason = UNSET
+        else:
+            change_reason = OperationWorkflowChangeReason.from_dict(_change_reason)
 
         _comparison = d.pop("comparison", UNSET)
         comparison: OperationWorkflowRevisionComparison | Unset
@@ -343,6 +362,7 @@ class OperationWorkflowStateHistoryEntry:
             contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
+            change_reason=change_reason,
             comparison=comparison,
             selected_paths=selected_paths,
             resolution_verifications=resolution_verifications,

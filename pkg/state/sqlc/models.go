@@ -1764,6 +1764,7 @@ type CustomerOperationWorkflowStateReport struct {
 	DependsOn          []byte
 	DependenciesOnly   bool
 	SelectedPaths      []byte
+	ChangeReason       []byte
 }
 
 type DataUpstream struct {

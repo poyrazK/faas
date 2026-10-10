@@ -13,6 +13,7 @@ from ..models.operation_workflow_revision_comparison_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
     from ..models.operation_workflow_revision_change import OperationWorkflowRevisionChange
     from ..models.operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
 
@@ -31,6 +32,10 @@ class OperationWorkflowRevisionComparison:
     summary: str
     changes: list[OperationWorkflowRevisionChange]
     evidence: list[OperationWorkflowRevisionEvidence]
+    change_reason: OperationWorkflowChangeReason | Unset = UNSET
+    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+   """
     previous_report_id: UUID | Unset = UNSET
     previous_operation_id: UUID | Unset = UNSET
     previous_revision: int | Unset = UNSET
@@ -49,6 +54,10 @@ class OperationWorkflowRevisionComparison:
         for evidence_item_data in self.evidence:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
+
+        change_reason: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.change_reason, Unset):
+            change_reason = self.change_reason.to_dict()
 
         previous_report_id: str | Unset = UNSET
         if not isinstance(self.previous_report_id, Unset):
@@ -70,6 +79,8 @@ class OperationWorkflowRevisionComparison:
                 "evidence": evidence,
             }
         )
+        if change_reason is not UNSET:
+            field_dict["change_reason"] = change_reason
         if previous_report_id is not UNSET:
             field_dict["previous_report_id"] = previous_report_id
         if previous_operation_id is not UNSET:
@@ -81,6 +92,7 @@ class OperationWorkflowRevisionComparison:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
         from ..models.operation_workflow_revision_change import OperationWorkflowRevisionChange
         from ..models.operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
 
@@ -103,6 +115,13 @@ class OperationWorkflowRevisionComparison:
 
             evidence.append(evidence_item)
 
+        _change_reason = d.pop("change_reason", UNSET)
+        change_reason: OperationWorkflowChangeReason | Unset
+        if isinstance(_change_reason, Unset):
+            change_reason = UNSET
+        else:
+            change_reason = OperationWorkflowChangeReason.from_dict(_change_reason)
+
         _previous_report_id = d.pop("previous_report_id", UNSET)
         previous_report_id: UUID | Unset
         if isinstance(_previous_report_id, Unset):
@@ -124,6 +143,7 @@ class OperationWorkflowRevisionComparison:
             summary=summary,
             changes=changes,
             evidence=evidence,
+            change_reason=change_reason,
             previous_report_id=previous_report_id,
             previous_operation_id=previous_operation_id,
             previous_revision=previous_revision,

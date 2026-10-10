@@ -119,6 +119,7 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 		response := prior.Response
 		response.Blockers = append([]api.OperationWorkflowBlocker(nil), response.Blockers...)
 		response.DependsOn = append([]api.OperationWorkflowDependency(nil), response.DependsOn...)
+		response.ChangeReason = api.CloneOperationWorkflowChangeReason(response.ChangeReason)
 		response.SelectedPaths = append([]api.OperationWorkflowPathSelection(nil), response.SelectedPaths...)
 		response.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), response.BlockerResolutions...)
 		return response, nil
@@ -129,10 +130,10 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	response := api.OperationWorkflowStateReportResponse{ID: report.ID, OperationID: id, Workflow: report.Workflow,
 		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
-		SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}
+		ChangeReason: api.CloneOperationWorkflowChangeReason(report.ChangeReason), SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}
 	history := api.OperationWorkflowStateHistoryEntry{ID: report.ID, OperationID: id, Workflow: report.Workflow,
 		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
-		SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...),
+		ChangeReason: api.CloneOperationWorkflowChangeReason(report.ChangeReason), SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...),
 		OccurredAt: report.OccurredAt, PublishedAt: now}
 	stateKey := operationWorkflowStateKey(op.AccountID, op.AppID, op.PlatformTenantID, op.Scope, op.Subject.Type, op.Subject.ID, report.Workflow, report.InstanceID)
 	prior, exists := data.workflowStates[stateKey]
@@ -141,7 +142,7 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 			State: api.OperationWorkflowState{ReportID: report.ID, OperationID: id, Workflow: report.Workflow, InstanceID: report.InstanceID, State: report.State,
 				Terminal: operations.OperationWorkflowStateIsTerminal(def.Spec, report.Workflow, report.State), OccurredAt: report.OccurredAt,
 				StaleAfterSeconds: operations.OperationWorkflowStateStaleAfterSeconds(def.Spec, report.Workflow, report.State),
-				Revision:          report.Revision, SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion,
+				Revision:          report.Revision, ChangeReason: api.CloneOperationWorkflowChangeReason(report.ChangeReason), SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion,
 				EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...), UpdatedAt: now},
 			OperationID: id, ReportID: report.ID, AccountID: op.AccountID, AppID: op.AppID, TenantID: op.PlatformTenantID,
 			Scope: op.Scope, SubjectType: op.Subject.Type, SubjectID: op.Subject.ID,
@@ -150,6 +151,7 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 	data.workflowStateReports[reportKey] = operationWorkflowStateReceipt{Response: response, Fingerprint: fingerprint, History: history}
 	response.Blockers = append([]api.OperationWorkflowBlocker(nil), response.Blockers...)
 	response.DependsOn = append([]api.OperationWorkflowDependency(nil), response.DependsOn...)
+	response.ChangeReason = api.CloneOperationWorkflowChangeReason(response.ChangeReason)
 	response.SelectedPaths = append([]api.OperationWorkflowPathSelection(nil), response.SelectedPaths...)
 	response.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), response.BlockerResolutions...)
 	return response, nil
@@ -282,6 +284,7 @@ func (m *MemStore) listOperationMilestones(account, tenant string, opts api.Oper
 			state := record.State
 			state.Blockers = append([]api.OperationWorkflowBlocker(nil), state.Blockers...)
 			state.DependsOn = append([]api.OperationWorkflowDependency(nil), state.DependsOn...)
+			state.ChangeReason = api.CloneOperationWorkflowChangeReason(state.ChangeReason)
 			state.SelectedPaths = append([]api.OperationWorkflowPathSelection(nil), state.SelectedPaths...)
 			state.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), state.BlockerResolutions...)
 			state.Stale = operationWorkflowStateIsStale(now, state)
@@ -315,6 +318,7 @@ func (m *MemStore) listOperationMilestones(account, tenant string, opts api.Oper
 				entry := receipt.History
 				entry.Blockers = append([]api.OperationWorkflowBlocker(nil), entry.Blockers...)
 				entry.DependsOn = append([]api.OperationWorkflowDependency(nil), entry.DependsOn...)
+				entry.ChangeReason = api.CloneOperationWorkflowChangeReason(entry.ChangeReason)
 				entry.SelectedPaths = append([]api.OperationWorkflowPathSelection(nil), entry.SelectedPaths...)
 				entry.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), entry.BlockerResolutions...)
 				op, exists := data.operations[entry.OperationID]

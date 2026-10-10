@@ -2,11 +2,11 @@ import { businessCompensationPayload, type OperationBusinessCompensation } from 
 import { businessEffectPayload, type OperationBusinessEffect } from './customer-operation-effects.js';
 import { applyBusinessInvariant, businessInvariantPayload, type OperationBusinessInvariant } from './customer-operation-invariants.js';
 import { reconcileWorkflowState, type CustomerOperationReconciliationHelper } from './customer-operation-reconciliation.js';
-import { businessDecisionPayload, type OperationBusinessDecision } from './customer-operation-decisions.js';
+import { canonicalWorkflowChangeReason, businessDecisionPayload, type OperationBusinessDecision } from './customer-operation-decisions.js';
 // ADR-715: commit facts with business writes, then publish under a fresh execution fence.
 import { guardedWorkflowTransition, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
 import { randomUUID } from 'node:crypto';
-import { OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPERATION_MILESTONES } from './operation-contract.js';
+import { OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPERATION_MILESTONES } from './operation-contract.js';
 import { customerOperationRequestDigest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import type { OperationConnection, OperationPool, OperationTransaction } from './operation-receipt.js';
 import type { OperationMilestone, OperationMilestoneReport } from './customer-operations.js';
@@ -17,6 +17,7 @@ export interface CustomerOperationTransaction extends OperationTransaction {
   businessEffect(milestone: string, effect: OperationBusinessEffect): void;
   reportBusinessInvariant(milestone: string, input: OperationBusinessInvariant, current: OperationWorkflowBlocker[]): OperationWorkflowBlocker[];
   reconcileWorkflowState: CustomerOperationReconciliationHelper;
+  workflowChangeReason(milestone: string): void;
   workflowPathDecision(group: string, path: string, milestone: string): OperationWorkflowPathSelection;
   businessDecision(milestone: string, decision: OperationBusinessDecision): void;
   guardedWorkflowTransition: CustomerOperationReadinessGuard;
@@ -51,7 +52,21 @@ export function milestoneJSON(value: unknown): string {
 
 export function milestoneTransaction(tx: OperationTransaction, request: CustomerOperationTransactionRequest, reports: OperationMilestoneReport[], workflowStates: OperationWorkflowStateReport[], isOpen: () => boolean, failGuard: (error: unknown) => void = () => {}): CustomerOperationTransaction {
   const stateTransaction = workflowStateTransaction(request, workflowStates, isOpen);
-  const transaction: CustomerOperationTransaction = {workflowPathDecision(group, path, milestone) {
+  const transaction: CustomerOperationTransaction = {workflowChangeReason(milestone) {
+    if (!isOpen()) throw new TypeError('Change reasons require an open transaction');
+    const facts = reports.filter(f => f.name === milestone), index = workflowStates.length-1;
+    if (facts.length !== 1 || index < 0) throw new TypeError('Queue one decision and a workflow update before its reason');
+    const fact=facts[0]!, prior=workflowStates[index]!;
+    if (prior.change_reason) throw new TypeError("A change reason is already attached to this report");
+    if (!prior.from_state) throw new TypeError('Initial snapshots cannot carry change reasons');
+    const payload=fact.payload as {kind?: string;decision?: OperationBusinessDecision};
+    if (payload?.kind !== 'gregale.business-decision.v1' || !payload.decision || payload.decision.workflow !== prior.workflow || payload.decision.instance_id !== prior.instance_id) throw new TypeError('Change reason requires a matching workflow decision');
+    const reason=canonicalWorkflowChangeReason({milestone_id:fact.id,decision:payload.decision})!;
+    const evidence=[...(prior.evidence_milestones ?? [])];
+    if (!evidence.some(e => e.id===fact.id)) evidence.push({id:fact.id,name:fact.name});
+    workflowStates[index]={...prior,change_reason:reason,evidence_milestones:evidence};
+    if (Buffer.byteLength(JSON.stringify({workflow_states:workflowStates})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES) {workflowStates[index]=prior;throw new TypeError('Workflow state batch exceeds its byte limit');}
+  },workflowPathDecision(group, path, milestone) {
     if (!isOpen()) throw new TypeError('Path decisions require an open transaction');
     const facts = reports.filter(f => f.name === milestone);
     if (facts.length !== 1) throw new TypeError('Path decision requires exactly one queued milestone');

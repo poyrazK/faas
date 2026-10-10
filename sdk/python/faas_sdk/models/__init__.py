@@ -2047,6 +2047,7 @@ from .operation_workflow_blocker_priority import OperationWorkflowBlockerPriorit
 from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
 from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
 from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
+from .operation_workflow_change_reason import OperationWorkflowChangeReason
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
@@ -5483,6 +5484,7 @@ __all__ = (
     "OperationWorkflowBlockerResolution",
     "OperationWorkflowBottlenecks",
     "OperationWorkflowBottlenecksIncompleteReasonsItem",
+    "OperationWorkflowChangeReason",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionReason",

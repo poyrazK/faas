@@ -1087,6 +1087,7 @@ export type { OperationWorkflowBlockerEscalationPolicy } from './models/Operatio
 export type { OperationWorkflowBlockerPerformance } from './models/OperationWorkflowBlockerPerformance.js';
 export type { OperationWorkflowBlockerResolution } from './models/OperationWorkflowBlockerResolution.js';
 export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBottlenecks.js';
+export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowControlResponse } from './models/OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
 export type { OperationWorkflowDependency } from './models/OperationWorkflowDependency.js';

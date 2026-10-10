@@ -38494,6 +38494,14 @@ components:
           - gregale.business-invariant.v1
         invariant:
           $ref: '#/components/schemas/OperationBusinessInvariant'
+    OperationWorkflowChangeReason:
+      type: object
+      additionalProperties: false
+      description: Optional application-reported explanation tied to a business decision fact in the same transaction and Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+      required: [milestone_id, decision]
+      properties:
+        milestone_id: {type: string, format: uuid}
+        decision: {$ref: '#/components/schemas/OperationBusinessDecision'}
     OperationBusinessDecision:
       description: "Application-reported business decision with a public explanation and optional exact policy rule identity."
       type: object
@@ -39558,6 +39566,7 @@ components:
       required: [id, workflow, instance_id, state, revision, occurred_at]
       description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
       properties:
+        change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         depends_on: {type: array, maxItems: 16, description: Full replacement snapshot of direct prerequisite references., items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: Same-state metadata update mutually exclusive with other metadata-only flags.}
@@ -39607,6 +39616,7 @@ components:
       additionalProperties: false
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version]
       properties:
+        change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         depends_on: {type: array, maxItems: 16, description: "In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "In the accepted report acknowledgement, same-state metadata update mutually exclusive with other metadata-only flags."}
@@ -39636,6 +39646,7 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, overdue, occurred_at, revision, contract_version, updated_at]
       properties:
+        change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         sla: {$ref: '#/components/schemas/OperationWorkflowStateSLA'}
         depends_on: {type: array, maxItems: 16, description: "In the latest retained state, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
@@ -39673,6 +39684,7 @@ components:
       description: Derived comparison with the preceding retained report on this history page in the same workflow run and tenant. Gaps and unavailable baselines prevent inferred changes or causal claims.
       required: [status, summary, changes, evidence]
       properties:
+        change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         status: {type: string, enum: [compared, baseline_unavailable, revision_gap, contract_changed, ambiguous_revision]}
         summary: {type: string, maxLength: 512}
         previous_report_id: {type: string, format: uuid}
@@ -39707,6 +39719,7 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         comparison: {$ref: '#/components/schemas/OperationWorkflowRevisionComparison'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Current retained-evidence status for verification obligations in this history report.}

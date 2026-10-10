@@ -68,3 +68,33 @@ func operationMilestoneHasKind(data []byte, kind string) bool {
 	}
 	return json.Unmarshal(data, &header) == nil && header.Kind == kind
 }
+
+// OperationWorkflowChangeReason links an application explanation to a transaction-backed decision.
+type OperationWorkflowChangeReason struct {
+	MilestoneID string                    `json:"milestone_id"`
+	Decision    OperationBusinessDecision `json:"decision"`
+}
+
+func CloneOperationWorkflowChangeReason(input *OperationWorkflowChangeReason) *OperationWorkflowChangeReason {
+	if input == nil {
+		return nil
+	}
+	copy := *input
+	return &copy
+}
+func CanonicalOperationWorkflowChangeReason(input *OperationWorkflowChangeReason) (*OperationWorkflowChangeReason, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if err := ValidateOperationBusinessDecision(input.Decision); err != nil {
+		return nil, err
+	}
+	p := OperationWorkflowPathSelection{DecisionMilestoneID: input.MilestoneID, DecisionCode: input.Decision.Code, DecisionDescription: input.Decision.Description, DecisionRuleID: input.Decision.RuleID, DecisionRuleVersion: input.Decision.RuleVersion}
+	if err := ValidateOperationWorkflowPathDecision(p); err != nil {
+		return nil, err
+	}
+	if input.MilestoneID == "" {
+		return nil, fmt.Errorf("workflow change reason requires a milestone ID")
+	}
+	return CloneOperationWorkflowChangeReason(input), nil
+}

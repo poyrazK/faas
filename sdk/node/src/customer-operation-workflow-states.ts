@@ -1,4 +1,4 @@
-import {businessDecisionPayload} from './customer-operation-decisions.js';
+import {canonicalWorkflowChangeReason, businessDecisionPayload} from './customer-operation-decisions.js';
 // ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
 import { OPERATION_WORKFLOW_PATH_SELECTIONS, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
@@ -16,6 +16,7 @@ export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
 export interface OperationWorkflowPathSelection { group_id: string; path_id: string; decision_milestone_id?: string; decision_code?: string; decision_description?: string; decision_rule_id?: string; decision_rule_version?: string }
 export interface OperationWorkflowStateReport {
+ change_reason?: import("./customer-operation-decisions.js").OperationWorkflowChangeReason;
  selected_paths?: OperationWorkflowPathSelection[];
  depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean;
  outcome_code?: string; outcome_description?: string; outcome_only?: boolean;
@@ -158,9 +159,9 @@ export async function saveCustomerWorkflowStates(
       return b;
     });
     await tx.query(
-      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths)
-       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean,$21::jsonb)`,
-      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, JSON.stringify(value.evidence_milestones ?? []), value.occurred_at, JSON.stringify(value.blockers ?? []), value.blockers_only ?? false, JSON.stringify(value.blocker_resolutions ?? []),value.deadline_at ?? '',value.deadline_only ?? false,value.outcome_code ?? '',value.outcome_description ?? '',value.outcome_only ?? false,JSON.stringify(value.depends_on),value.dependencies_only ?? false,JSON.stringify(canonicalWorkflowPaths(value.selected_paths ?? []))],
+      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths,change_reason)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean,$21::jsonb,$22::jsonb)`,
+      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, JSON.stringify(value.evidence_milestones ?? []), value.occurred_at, JSON.stringify(value.blockers ?? []), value.blockers_only ?? false, JSON.stringify(value.blocker_resolutions ?? []),value.deadline_at ?? '',value.deadline_only ?? false,value.outcome_code ?? '',value.outcome_description ?? '',value.outcome_only ?? false,JSON.stringify(value.depends_on),value.dependencies_only ?? false,JSON.stringify(canonicalWorkflowPaths(value.selected_paths ?? [])),JSON.stringify(canonicalWorkflowChangeReason(value.change_reason) ?? null)],
     );
     const updatedHead = (await tx.query(
       `UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state=$4,last_blockers=$6::jsonb,last_blockers_revision=$5,last_deadline_at=$7,last_deadline_revision=$5,last_outcome_code=$8,last_outcome_description=$9,last_outcome_revision=$5,last_dependencies=$10::jsonb,last_dependencies_revision=$5
@@ -195,7 +196,7 @@ export async function publishCustomerWorkflowStates(
     const digest = Buffer.from(customerOperationRequestDigest(request));
     const values = [request.operationId, request.accountId, request.appId, request.platformTenantId, digest];
     const rows = (await connection.query(
-      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only,s.selected_paths FROM public.gregale_customer_operation_workflow_states s
+      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only,s.selected_paths,s.change_reason FROM public.gregale_customer_operation_workflow_states s
        JOIN public.gregale_customer_operation_inbox r ON r.operation_id=s.operation_id
        WHERE r.operation_id=$1::uuid AND r.account_id=$2::uuid AND r.app_id=$3::uuid AND r.platform_tenant_id=$4::uuid
         AND r.request_digest=$5 AND s.acknowledged_at IS NULL ORDER BY s.revision,s.id LIMIT $6`, [...values, OPERATION_WORKFLOW_STATE_REPORTS + 1],
@@ -208,6 +209,7 @@ export async function publishCustomerWorkflowStates(
       const date = row.occurred_at instanceof Date ? row.occurred_at : new Date(String(row.occurred_at));
       if (!Number.isFinite(date.valueOf())) throw new TypeError('Invalid saved workflow state timestamp');
       const report: OperationWorkflowStateReport = {id: row.id, workflow: row.workflow, instance_id: row.instance_id, state: row.state, revision, occurred_at: date.toISOString()};
+      report.change_reason = canonicalWorkflowChangeReason(typeof row.change_reason === 'string' ? JSON.parse(row.change_reason) : row.change_reason);
       report.selected_paths = canonicalWorkflowPaths(typeof row.selected_paths === 'string' ? JSON.parse(row.selected_paths) : row.selected_paths);
       report.depends_on=canonicalWorkflowDependencies(typeof row.depends_on==='string' ? JSON.parse(row.depends_on) : row.depends_on);
       if (row.dependencies_only===true) report.dependencies_only=true;
@@ -224,7 +226,7 @@ export async function publishCustomerWorkflowStates(
           || typeof (item as Record<string, unknown>).id !== 'string' || typeof (item as Record<string, unknown>).name !== 'string')) throw new TypeError('Invalid saved workflow state evidence');
       if (evidence.length > 0) report.evidence_milestones = evidence as OperationWorkflowEvidenceMilestone[];
       const receipt = await publish(report);
-      if (JSON.stringify(canonicalWorkflowPaths(receipt?.selected_paths ?? [])) !== JSON.stringify(report.selected_paths) || JSON.stringify(canonicalWorkflowDependencies(receipt?.depends_on ?? []))!==JSON.stringify(report.depends_on) || (receipt?.dependencies_only ?? false)!==(report.dependencies_only ?? false) || (receipt?.outcome_code ?? '')!==(report.outcome_code ?? '') || (receipt?.outcome_description ?? '')!==(report.outcome_description ?? '') || (receipt?.outcome_only ?? false)!==(report.outcome_only ?? false) || canonicalWorkflowDeadline(receipt?.deadline_at ?? '')!==canonicalWorkflowDeadline(report.deadline_at ?? '') || (receipt?.deadline_only ?? false)!==(report.deadline_only ?? false) || receipt?.id !== report.id || receipt.operation_id !== request.operationId || receipt.revision !== revision
+      if (JSON.stringify(canonicalWorkflowChangeReason(receipt?.change_reason)) !== JSON.stringify(report.change_reason) || JSON.stringify(canonicalWorkflowPaths(receipt?.selected_paths ?? [])) !== JSON.stringify(report.selected_paths) || JSON.stringify(canonicalWorkflowDependencies(receipt?.depends_on ?? []))!==JSON.stringify(report.depends_on) || (receipt?.dependencies_only ?? false)!==(report.dependencies_only ?? false) || (receipt?.outcome_code ?? '')!==(report.outcome_code ?? '') || (receipt?.outcome_description ?? '')!==(report.outcome_description ?? '') || (receipt?.outcome_only ?? false)!==(report.outcome_only ?? false) || canonicalWorkflowDeadline(receipt?.deadline_at ?? '')!==canonicalWorkflowDeadline(report.deadline_at ?? '') || (receipt?.deadline_only ?? false)!==(report.deadline_only ?? false) || receipt?.id !== report.id || receipt.operation_id !== request.operationId || receipt.revision !== revision
           || !Number.isSafeInteger(receipt.contract_version) || receipt.contract_version < 1
           || receipt.workflow !== report.workflow || receipt.instance_id !== report.instance_id || receipt.from_state !== report.from_state || receipt.state !== report.state
           || JSON.stringify(receipt.evidence_milestones ?? []) !== JSON.stringify(report.evidence_milestones ?? [])

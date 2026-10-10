@@ -12,7 +12,7 @@ import (
 )
 
 func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, current api.OperationWorkflowStateHistoryEntry) *api.OperationWorkflowRevisionComparison {
-	out := &api.OperationWorkflowRevisionComparison{Status: "baseline_unavailable", Summary: "The preceding revision is unavailable on this page; changes cannot be determined.", Changes: make([]api.OperationWorkflowRevisionChange, 0), Evidence: make([]api.OperationWorkflowRevisionEvidence, 0)}
+	out := &api.OperationWorkflowRevisionComparison{ChangeReason: api.CloneOperationWorkflowChangeReason(current.ChangeReason), Status: "baseline_unavailable", Summary: "The preceding revision is unavailable on this page; changes cannot be determined.", Changes: make([]api.OperationWorkflowRevisionChange, 0), Evidence: make([]api.OperationWorkflowRevisionEvidence, 0)}
 	if previous == nil || previous.Workflow != current.Workflow || previous.InstanceID != current.InstanceID || previous.PlatformTenantID != current.PlatformTenantID {
 		return out
 	}
@@ -111,6 +111,9 @@ func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, 
 		out.Evidence = append(out.Evidence, api.OperationWorkflowRevisionEvidence{Kind: kind, OperationID: operation, MilestoneID: id, Milestone: name})
 	}
 	for _, row := range []api.OperationWorkflowStateHistoryEntry{*previous, current} {
+		if row.ChangeReason != nil {
+			fact("decision", row.OperationID, row.ChangeReason.MilestoneID, "")
+		}
 		for _, p := range row.SelectedPaths {
 			fact("decision", row.OperationID, p.DecisionMilestoneID, "")
 		}
