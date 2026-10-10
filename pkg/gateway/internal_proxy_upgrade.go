@@ -30,6 +30,9 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 	transport.DisableKeepAlives = true
 	defer transport.CloseIdleConnections()
 
+	// Read once here so ModifyResponse does not reach back into the
+	// request context (ADR-830: app-set headers win on customer hosts).
+	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) { //nolint:contextcheck // Rewrite receives a ProxyRequest; pr.In.Context is its canonical request context.
@@ -47,6 +50,13 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			// The outer public-edge middleware owns static policy and trace
 			// headers, including for 101 (which httputil writes by hijacking).
 			for name := range resp.Header {
+				// On customer hosts the app's copy replaces the platform
+				// default; httputil appends resp.Header after this hook,
+				// so drop the default and keep the upstream value (ADR-830).
+				if customerOwned && httpsec.IsStaticHeader(name) {
+					w.Header().Del(name)
+					continue
+				}
 				if httpsec.IsStaticHeader(name) || strings.EqualFold(name, api.TraceIDHeader) ||
 					strings.EqualFold(name, edgeOriginalStatusHeader) {
 					resp.Header.Del(name)

@@ -470,31 +470,47 @@ func ComputeDryRun(importedDoc []byte, existingRules []state.EdgeRule) (DryRunSu
 			existing[r.MatchPath+"|"+lowerASCII(m)+"|"+string(r.Kind)] = struct{}{}
 		}
 	}
-	// Walk each (path, method) in the spec.
-	for path, pi := range spec.Paths {
+	// Walk each (path, method) in the spec. A suggestion carries the
+	// operation's own JSON request-body schema and a path glob the gateway
+	// can match ("/users/{id}" -> "/users/?*"). Operations without a JSON body
+	// get none: validating an empty GET body against a schema rejects it
+	// once the rule is enforced. An existing rule stored with the literal
+	// template path never matched a request, so it does not count as cover.
+	for template, pi := range spec.Paths {
 		methodList := make([]string, 0, len(pi.Methods))
 		for m := range pi.Methods {
 			methodList = append(methodList, m)
 		}
 		sort.Strings(methodList)
+		out.EndpointCount += len(methodList)
+		glob, ok := api.OpenAPIPathGlob(template)
+		if !ok {
+			continue
+		}
 		for _, m := range methodList {
-			if _, covered := existing[path+"|"+m+"|validate"]; covered {
+			if _, covered := existing[glob+"|"+m+"|validate"]; covered {
 				continue
 			}
+			validate := map[string]any{"validate_mode": "observe"}
+			if schema, ok := requestBodyValidateSchema(spec, pi.Methods[m]); ok {
+				validate["schema"] = schema
+			}
+			if params := requestParameterSchemas(spec, pi, pi.Methods[m], template); params != nil {
+				validate["parameters"] = params
+			}
+			if len(validate) == 1 {
+				continue // neither a JSON body nor a parameter the gateway can check
+			}
 			out.Suggestions = append(out.Suggestions, EdgeRuleSuggestion{
-				Path:    path,
+				Path:    glob,
 				Methods: []string{m},
 				Kind:    "validate",
 				Action: map[string]any{
-					"kind": "validate",
-					"validate": map[string]any{
-						"schema":        map[string]any{"type": "object"},
-						"validate_mode": "observe",
-					},
+					"kind":     "validate",
+					"validate": validate,
 				},
 			})
 		}
-		out.EndpointCount += len(methodList)
 	}
 	sort.Slice(out.Suggestions, func(i, j int) bool {
 		if out.Suggestions[i].Path != out.Suggestions[j].Path {

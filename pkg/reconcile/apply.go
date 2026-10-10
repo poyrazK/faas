@@ -403,6 +403,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 			Ports:                     portsWithInternal(nil, w.InternalPorts),
+			// ADR-829: project-created apps get the same observe-only guard
+			// as POST /v1/apps. Drafts are create-only, so existing apps keep
+			// whatever they store.
+			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
 			BuildDockerfile: w.Dockerfile,
 		},

@@ -96,6 +96,20 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 	}
 }
 
+// cloneValidateParameters copies the raw parameter schemas so the stored
+// action does not alias the request buffer; Empty() collapses to nil.
+func cloneValidateParameters(p *api.EdgeRuleValidateParameters) *api.EdgeRuleValidateParameters {
+	if p.Empty() {
+		return nil
+	}
+	return &api.EdgeRuleValidateParameters{
+		PathTemplate: p.PathTemplate,
+		Path:         append(json.RawMessage(nil), p.Path...),
+		Query:        append(json.RawMessage(nil), p.Query...),
+		Headers:      append(json.RawMessage(nil), p.Headers...),
+	}
+}
+
 func edgeRuleResponseMode(mode string) string {
 	if mode == "" {
 		return api.EdgeRuleModeEnforce
@@ -120,8 +134,9 @@ func utcTimePtr(t *time.Time) *time.Time {
 // plan carries the per-plan ceiling context that kind=throttle
 // requires (sub-plan ceiling enforcement). Other kinds ignore it;
 // the explicit ThrottleValidationContext keeps the boundary clear
-// without forcing a global lookup.
-func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *api.Problem {
+// without forcing a global lookup. matchPath is the rule's effective
+// match_path; kind=validate path parameters must align with it.
+func validateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
 	k := state.EdgeRuleKind(kind)
 	if !k.IsValid() {
 		return api.ErrValidation(fmt.Sprintf("edge rule kind %q is not in the closed vocabulary", kind))
@@ -174,7 +189,10 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("validate action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return a.Parameters.Validate(matchPath)
 	case state.EdgeRuleKindLimit:
 		var a api.EdgeRuleLimitAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -276,6 +294,14 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
+		}
+		return a.Validate()
+	case state.EdgeRuleKindWAF:
+		// Per-plan availability (Free/Hobby 0) is enforced in
+		// CreateEdgeRuleIfUnderQuota via Limits.EdgeRulesWAFPerApp.
+		var a api.EdgeRuleWAFAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("waf action: %v", err))
 		}
 		return a.Validate()
 	}
@@ -416,6 +442,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
 		return
 	}
+	if prob := templatedMatchPathProblem(req.MatchPath); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -533,6 +563,20 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 // kind=throttle needs it to enforce the sub-plan ceiling
 // (rps ≤ plan.RateLimitRPS, burst ≤ plan.RateLimitBurst). Returns
 // the first *Problem it finds.
+// templatedMatchPathProblem rejects an OpenAPI-style {param} placeholder in a
+// match_path sent to the edge-rule create or update endpoint. Edge-rule paths
+// are globs, so the placeholder would only match the literal braces and the
+// rule would never run. Manifest- and environment-owned rules are not checked
+// here so existing deployments keep applying.
+func templatedMatchPathProblem(matchPath string) *api.Problem {
+	glob, templated := api.EdgeRuleTemplatedPath(matchPath)
+	if !templated {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf(
+		"match_path %q uses an OpenAPI {param} placeholder, but edge-rule paths are globs and would only match the literal braces; use %q", matchPath, glob))
+}
+
 func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
 	matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(req.MatchHeaders)
 	if headerErr != nil {
@@ -581,7 +625,7 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if len(req.Action) == 0 {
 		return api.ErrValidation("action is required")
 	}
-	if prob := validateEdgeRuleAction(req.Kind, req.Action, plan); prob != nil {
+	if prob := validateEdgeRuleAction(req.Kind, req.Action, req.MatchPath, plan); prob != nil {
 		return prob
 	}
 	return validateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
@@ -668,6 +712,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				// explicitly clears the field round-trips
 				// (issue #975 #3 / Mega-Foundation #979-a).
 				ValidateMode: a.ValidateMode,
+				Parameters:   cloneValidateParameters(a.Parameters),
 			}
 		}
 	case state.EdgeRuleKindLimit:
@@ -810,6 +855,17 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				MaxAgeSeconds: a.MaxAgeSeconds,
 			}
 		}
+	case state.EdgeRuleKindWAF:
+		var a api.EdgeRuleWAFAction
+		if err := json.Unmarshal(raw, &a); err == nil && a.Validate() == nil {
+			out.WAF = &state.EdgeRuleWAFAction{
+				Mode:             a.Mode,
+				ParanoiaLevel:    a.ParanoiaLevel,
+				AnomalyThreshold: a.AnomalyThreshold,
+				ExcludeRuleIDs:   a.ExcludeRuleIDs,
+				InspectBodyBytes: a.InspectBodyBytes,
+			}
+		}
 	}
 	return out
 }
@@ -881,6 +937,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.ErrValidation("match_path must start with '/' and be ≤ 2048 chars"))
 			return
 		}
+		if prob := templatedMatchPathProblem(*req.MatchPath); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 	}
 	if req.MatchHeaders != nil {
 		matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(*req.MatchHeaders)
@@ -922,13 +982,23 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	matchPath := row.MatchPath
+	if req.MatchPath != nil {
+		matchPath = *req.MatchPath
+	}
 	if req.Action != nil {
-		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
+		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, matchPath, acct.Plan)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
 		if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
+		// A path-only update must keep the stored path parameters aligned.
+		if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

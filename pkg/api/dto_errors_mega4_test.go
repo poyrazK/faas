@@ -637,6 +637,7 @@ func TestThrottleKeyByIsPerConsumer_Mega4(t *testing.T) {
 		ThrottleKeyByJWTClaim:   true,
 		ThrottleKeyByCountry:    true,
 		ThrottleKeyByIP:         true,
+		"IP":                    false, // closed vocab is case-sensitive
 		"ip_address":            false, // unknown → default-false
 		"unknown-thing":         false,
 	}

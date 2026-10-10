@@ -58,12 +58,68 @@ func MatchEdgeRulePath(glob, requestPath string) (bool, error) {
 	return path.Match(base, requestPath[:cut])
 }
 
+// OpenAPIPathGlob converts an OpenAPI path template into an edge-rule glob.
+// Each {param} becomes "?*": one or more characters within a single segment.
+// A bare "*" would be wrong for a trailing parameter, because
+// MatchEdgeRulePath treats a trailing "/*" as the whole subtree, so
+// "/users/{id}" would also match "/users/7/avatar". Literal glob
+// metacharacters are escaped. It reports false for a template the glob
+// cannot express, such as an unclosed brace.
+func OpenAPIPathGlob(template string) (string, bool) {
+	return templateGlob(template, true)
+}
+
+// EdgeRuleTemplatedPath reports whether matchPath contains OpenAPI-style
+// {param} placeholders. Edge-rule paths are globs, so a placeholder only
+// matches the literal braces and the rule never runs. It returns the glob the
+// author most likely meant; glob syntax already in matchPath is kept.
+func EdgeRuleTemplatedPath(matchPath string) (string, bool) {
+	if !strings.Contains(matchPath, "{") {
+		return "", false
+	}
+	return templateGlob(matchPath, false)
+}
+
+func templateGlob(template string, escape bool) (string, bool) {
+	var b strings.Builder
+	replaced := false
+	for i := 0; i < len(template); i++ {
+		switch c := template[i]; c {
+		case '{':
+			end := strings.IndexByte(template[i:], '}')
+			if end <= 1 || strings.ContainsAny(template[i+1:i+end], "/{") {
+				return "", false
+			}
+			b.WriteString("?*")
+			replaced = true
+			i += end
+		case '}':
+			return "", false
+		case '*', '?', '[', ']', '\\':
+			if escape {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	glob := b.String()
+	if _, err := path.Match(glob, ""); err != nil || !strings.HasPrefix(glob, "/") {
+		return "", false
+	}
+	if !escape && !replaced {
+		return "", false
+	}
+	return glob, true
+}
+
 // EdgeRuleKindUsesProtectivePathMatch reports whether a rule kind denies or
 // constrains requests, and therefore matches path variants protectively
 // (MatchProtectiveEdgeRulePath) rather than exactly.
 func EdgeRuleKindUsesProtectivePathMatch(kind string) bool {
 	switch kind {
-	case "jwt", "ip", "geo", "limit", "throttle", "validate", "maintenance":
+	case "jwt", "ip", "geo", "limit", "throttle", "validate", "maintenance", "waf":
 		return true
 	}
 	return false

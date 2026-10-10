@@ -49,6 +49,7 @@ import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListRes
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
+import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
@@ -1213,6 +1214,47 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/pre-auth-observations',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Summarize what the edge rejected for an app.
+   * Read-only security telemetry from the per-app gateway counters that
+   * the edge security alert presets evaluate: pre-auth source-limit
+   * decisions, kind=validate mismatches by mode, and requests answered by
+   * the other edge gates (JWT, IP, geo, ingress, body limits, throttles)
+   * by gate and status. On Prometheus failure, source starts with
+   * `degraded:` and counts are zero.
+   *
+   * @returns EdgeProtectionResponse Edge rejection counts for the range.
+   * @throws ApiError
+   */
+  public static getAppEdgeProtection({
+    slug,
+    range = '1h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Time window. Defaults to one hour.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<EdgeProtectionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-protection',
       path: {
         'slug': slug,
       },

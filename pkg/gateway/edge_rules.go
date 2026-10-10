@@ -357,6 +357,30 @@ type EdgeRuleValidateResolved struct {
 	// schema-mismatch branch to decide whether to 422, pass-through,
 	// or pass-through with the X-Validation-Warning header.
 	ValidateMode string
+	// NoBodySchema marks a parameter-only rule: the body is not read or
+	// validated. The zero value keeps body validation for existing rules.
+	NoBodySchema bool
+	// Parameters holds the compiled path, query, and header schemas
+	// (ADR-091 amendment: request parameters); nil when none are set.
+	Parameters *EdgeRuleValidateParamsResolved
+}
+
+// EdgeRuleValidateParamsResolved is the compiled form of
+// api.EdgeRuleValidateParameters. A location whose Set is false is not
+// validated.
+type EdgeRuleValidateParamsResolved struct {
+	PathTemplate string
+	Path         EdgeRuleParamSchemaResolved
+	Query        EdgeRuleParamSchemaResolved
+	Headers      EdgeRuleParamSchemaResolved
+}
+
+// EdgeRuleParamSchemaResolved is one compiled parameter schema plus the
+// declared property kinds used to convert string values before validation.
+type EdgeRuleParamSchemaResolved struct {
+	Set    bool
+	Digest [32]byte
+	Kinds  map[string]api.EdgeRuleParamKind
 }
 
 // EdgeRuleGeoResolved is the kind=geo subset (ADR-091 D21/D22).
@@ -510,6 +534,7 @@ type HostEntry struct {
 	Retry          []EdgeRuleRetryResolved
 	CircuitBreaker []EdgeRuleCircuitBreakerResolved
 	Async          []EdgeRuleAsyncResolved
+	WAF            []EdgeRuleWAFResolved
 	PathGlobErrs   []PathGlobError
 }
 
@@ -582,6 +607,7 @@ func cloneHostEntry(entry *HostEntry) *HostEntry {
 	out.Retry = slices.Clone(entry.Retry)
 	out.CircuitBreaker = slices.Clone(entry.CircuitBreaker)
 	out.Async = slices.Clone(entry.Async)
+	out.WAF = slices.Clone(entry.WAF)
 	for i := range out.Respond {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
@@ -933,6 +959,18 @@ func (c *EdgeRuleCache) GetAsync(host string) ([]EdgeRuleAsyncResolved, bool) {
 	return slices.Clone(entry.Async), true
 }
 
+// GetWAF returns a defensive copy of the compiled kind=waf rules.
+func (c *EdgeRuleCache) GetWAF(host string) ([]EdgeRuleWAFResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.WAF == nil {
+		return nil, true
+	}
+	return slices.Clone(entry.WAF), true
+}
+
 // getEntry promotes the entry on hit and returns it. Internal —
 // the Get* family wraps this so each returns a typed slice.
 //
@@ -1226,6 +1264,9 @@ type JWTClaims struct {
 type EdgeValidateIn struct {
 	Body        []byte
 	ContentType string
+	// Digest, when set, selects a compiled parameter schema instead of
+	// the rule's body SchemaDigest.
+	Digest *[32]byte
 }
 
 // EdgeValidateFieldError is one per-field entry of a validation

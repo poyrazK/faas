@@ -52,6 +52,13 @@ import (
 // by the happy-path POST tests.
 const sampleOpenAPIDoc = `{"openapi":"3.1.0","info":{"title":"sample","version":"1.0.0"},"paths":{"/users":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object"}}}}}}}}}`
 
+// sampleOpenAPIBodyDoc has one operation with a JSON request body (PUT
+// /users/{id}) and one without (GET /users), so policy generation yields
+// exactly one validate suggestion.
+const sampleOpenAPIBodyDoc = `{"openapi":"3.1.0","info":{"title":"sample","version":"1.0.0"},"paths":{
+  "/users":{"get":{"responses":{"200":{"description":"OK"}}}},
+  "/users/{id}":{"put":{"requestBody":{"content":{"application/json":{"schema":{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}}}},"responses":{"204":{"description":"updated"}}}}}}`
+
 // invalidOpenAPIDoc is what the validator rejects — a non-object
 // root. Mirrors the validator_test.go "reject non-object root"
 // case so the handler test exercises the 422 path the same way.
@@ -558,13 +565,13 @@ func TestPostAppOpenAPI_EmptyBody(t *testing.T) {
 }
 
 // TestPostAppOpenAPI_DryRunHappy verifies the dry-run endpoint
-// returns a suggestion list (1 endpoint → 1 suggestion when
-// no existing rules cover it).
+// returns one suggestion per uncovered operation with a JSON body,
+// using the gateway glob for the templated path.
 func TestPostAppOpenAPI_DryRunHappy(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	seedApp(t, e, "post-dry-run")
 
-	rec := e.do(t, "POST", "/v1/apps/post-dry-run/openapi/dry-run", json.RawMessage(sampleOpenAPIDoc), nil)
+	rec := e.do(t, "POST", "/v1/apps/post-dry-run/openapi/dry-run", json.RawMessage(sampleOpenAPIBodyDoc), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -578,7 +585,10 @@ func TestPostAppOpenAPI_DryRunHappy(t *testing.T) {
 		t.Fatalf("suggestions type=%T, want []any", out["suggestions"])
 	}
 	if len(suggestions) != 1 {
-		t.Errorf("suggestions=%d, want 1", len(suggestions))
+		t.Fatalf("suggestions=%d, want 1", len(suggestions))
+	}
+	if path := suggestions[0].(map[string]any)["path"]; path != "/users/?*" {
+		t.Errorf("suggestion path=%v, want /users/?*", path)
 	}
 }
 
@@ -600,7 +610,7 @@ func TestPostAppOpenAPI_DryRun_Invalid(t *testing.T) {
 func TestPostAppOpenAPIPolicyApply_PlanConfirmAndNoop(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := seedApp(t, e, "policy-apply")
-	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIBodyDoc), 1, "3.1.0")
 
 	planRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", map[string]any{}, nil)
 	if planRec.Code != http.StatusOK {
@@ -630,8 +640,9 @@ func TestPostAppOpenAPIPolicyApply_PlanConfirmAndNoop(t *testing.T) {
 	if applied.Planned || applied.AppliedCount != 1 || len(applied.Applied) != 1 {
 		t.Fatalf("unexpected apply: %+v", applied)
 	}
-	if applied.Applied[0].MatchHost != "policy-apply.gregale.dev" || applied.Applied[0].ValidateMode != api.ValidateModeObserve {
-		t.Fatalf("generated rule defaults: %+v", applied.Applied[0])
+	if applied.Applied[0].MatchHost != "policy-apply.gregale.dev" || applied.Applied[0].ValidateMode != api.ValidateModeObserve ||
+		applied.Applied[0].MatchPath != "/users/?*" || !strings.Contains(string(applied.Applied[0].Action), `"required"`) {
+		t.Fatalf("generated rule: %+v action=%s", applied.Applied[0], applied.Applied[0].Action)
 	}
 
 	noopPlanRec := e.do(t, "POST", "/v1/apps/policy-apply/openapi/apply", map[string]any{}, nil)

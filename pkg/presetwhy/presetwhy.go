@@ -201,6 +201,42 @@ var catalog = map[string]row{
 			DocsURL: "/docs/security#optional-pre-auth-source-limit",
 		},
 	},
+	"pre_auth_pressure": {
+		Explanation: Explanation{
+			Title:   "Pre-auth source limit pressure",
+			Hint:    "many requests exceeded the per-source pre-auth limit",
+			Why:     "the pre-auth source limit blocked, or in observe mode would have blocked, more requests than the threshold during the alert window. A burst from few sources usually means credential stuffing or scraping; steady traffic from a shared address (an office NAT or a server-side caller) can also trip it",
+			Fix:     "• inspect the app's pre-auth observations for this window\n• if the traffic is legitimate, raise --pre-auth-rps or --pre-auth-burst before enforcing\n• if it is abusive and the guard is still observing, switch to enforce with `gregale app <slug> --pre-auth enforce`",
+			DocsURL: "/docs/security#optional-pre-auth-source-limit",
+		},
+	},
+	"edge_validation_failures": {
+		Explanation: Explanation{
+			Title:   "Edge validation failures",
+			Hint:    "many requests failed a kind=validate edge rule",
+			Why:     "kind=validate rules recorded more schema mismatches than the threshold during the alert window, in any validate mode. A sudden rise usually means a client release sending a new shape or someone probing the API; a constant level often means a schema that is stricter than the real contract",
+			Fix:     "• check which rule and field fail in the gateway_validate_failures_total metric or the edge_rule.validate_failed audit events\n• compare with recent client releases before tightening or relaxing the schema\n• rules in observe or warn mode still pass the traffic through; switch to block only once the failures are understood",
+			DocsURL: "/docs/alerts",
+		},
+	},
+	"edge_rejection_pressure": {
+		Explanation: Explanation{
+			Title:   "Edge rejection pressure",
+			Hint:    "edge rules rejected many requests before they reached the app",
+			Why:     "JWT, IP, geo, ingress allowlist, body-limit, or throttle edge gates rejected more requests than the threshold during the alert window. A sudden rise usually means scanning, credential guessing, or a client that lost its credentials; a constant level often means a rule that is stricter than intended",
+			Fix:     "• see which gate rejects the traffic with `gregale edge-rules summary --app <slug>` or the Edge protection panel\n• use `gregale edge-rules trace` on a sample request to see which rule rejects it\n• tighten the source with a throttle or ip rule if the traffic is abusive, or relax the rule if it rejects legitimate clients",
+			DocsURL: "/docs/alerts",
+		},
+	},
+	"edge_waf_detections": {
+		Explanation: Explanation{
+			Title:   "Edge WAF detections",
+			Hint:    "kind=waf rules detected likely attacks",
+			Why:     "the OWASP Core Rule Set scored more requests at or above a kind=waf rule's anomaly threshold than the alert threshold during the alert window. Detections in request bodies and under observe or warn rules reached the app; block rules answered header and URL detections with 403. A burst usually means a scanner or an injection attempt; a constant level from normal clients usually means a false positive",
+			Fix:     "• see detections by category and the top CRS rule IDs with `gregale edge-rules summary --app <slug>` or the Edge protection panel\n• if one rule fires on legitimate traffic, add its ID to the rule's exclude_rule_ids with `gregale edge-rules update <id> --kind waf --waf-exclude-rules <ids>`\n• once detections are understood, switch a rule to --waf-mode block to stop header and URL attacks, and use a throttle or ip edge rule for abusive sources",
+			DocsURL: "/docs/alerts",
+		},
+	},
 	"login_target_signal_health": {
 		Explanation: Explanation{
 			Title:   "Login target signal coverage is low",

@@ -301,6 +301,11 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.ErrCapacity("request tracing is unavailable on this installation")
 	}
 	lifecycle := lifecycleManifestFromCreate(req)
+	if lifecycle.PreAuthRateLimit == nil {
+		// ADR-829: protect new apps by default without changing behavior; an
+		// explicit config, including mode=off, is kept as sent.
+		lifecycle.PreAuthRateLimit = api.DefaultPreAuthRateLimit(acct.Plan)
+	}
 	// A service's desired replica count is its steady-state instance
 	// requirement. When max_concurrency is omitted, make the default large
 	// enough for that target; an explicit max_concurrency remains authoritative.

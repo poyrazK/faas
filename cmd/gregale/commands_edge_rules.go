@@ -44,7 +44,7 @@ import (
 var edgeRuleKindVocab = []string{
 	"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip",
 	"validate", "limit", "geo", "maintenance", "throttle", "budget",
-	"cache", "respond", "retry", "circuit_breaker",
+	"cache", "respond", "retry", "circuit_breaker", "waf",
 	"async",
 }
 
@@ -78,12 +78,14 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdEdgeRulesList(args[1:])
+	case "summary":
+		return cmdEdgeRulesSummary(args[1:])
 	case "history":
 		return cmdEdgeRulesHistory(args[1:])
 	case "rollback":
@@ -117,7 +119,7 @@ func cmdEdgeRules(args []string) int {
 func cmdEdgeRulesList(args []string) int {
 	fs := newFlagSet("edge-rules list", flag.ContinueOnError)
 	slug := fs.String("app", "", "filter to a single app slug")
-	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async)")
+	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -174,7 +176,20 @@ func cmdEdgeRulesList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
 			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
 	}
+	warnTemplatedEdgeRulePaths(osStderr, items)
 	return 0
+}
+
+// warnTemplatedEdgeRulePaths flags rules whose match path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a rule only matches
+// the literal braces and never runs; older OpenAPI policy applies created them.
+func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
+	for _, it := range items {
+		if glob, templated := api.EdgeRuleTemplatedPath(it.MatchPath); templated {
+			_, _ = fmt.Fprintf(w, "warning: rule %s never matches: %q is an OpenAPI template, not a glob. Fix: gregale edge-rules update %s --match-path '%s'\n",
+				it.ID, it.MatchPath, it.ID, glob)
+		}
+	}
 }
 
 // cmdEdgeRulesCreate builds a CreateEdgeRuleRequest from the per-kind
@@ -187,7 +202,7 @@ func cmdEdgeRulesList(args []string) int {
 func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async (required)")
+	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
 	matchPath := fs.String("match-path", "/", "path to match")
 	var matchMethods multiFlag
@@ -336,6 +351,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+	wafFlags := addEdgeRuleWAFFlags(fs)
 
 	// maintenance (ADR-091 D20 / issue #881). Per-route 503 with a
 	// Retry-After. Both fields are optional — a bare maintenance rule
@@ -356,6 +372,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=plan default)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
+	validateParams := addValidateParamFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -388,6 +405,10 @@ func cmdEdgeRulesCreate(args []string) int {
 		if schemaErr != nil {
 			return printErr("Invalid --validate-schema", schemaErr)
 		}
+	}
+	validateParameters, paramErr := validateParams.resolve(visited)
+	if paramErr != nil {
+		return printErr("Invalid validate parameter flags", paramErr)
 	}
 	if *kind == "validate" {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
@@ -456,6 +477,11 @@ func cmdEdgeRulesCreate(args []string) int {
 		CircuitWindowSeconds:              *circuitWindowSeconds,
 		CircuitOpenSeconds:                *circuitOpenSeconds,
 		CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+		WAFMode:                           *wafFlags.mode,
+		WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
+		WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
+		WAFExcludeRules:                   *wafFlags.excludeRules,
+		WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 		MaintenanceRetryAfter:             *maintenanceRetryAfter,
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
@@ -473,6 +499,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		ValidateMaxBodyBytes:        *validateMaxBodyBytes,
 		ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
 		ValidateRejectUnknownFields: *validateRejectUnknownFields,
+		ValidateParameters:          validateParameters,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -711,18 +738,20 @@ func cmdEdgeRulesUpdate(args []string) int {
 	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+	wafFlags := addEdgeRuleWAFFlags(fs)
 
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
 	respondStatus := fs.Int("respond-status", 0, "kind=respond: new response status code (200..599)")
 	respondBody := fs.String("respond-body", "", "kind=respond: new JSON response body (max 64 KiB)")
-	validateSchema := fs.String("validate-schema", "", "kind=validate: replacement JSON Schema (required when updating action fields; inline JSON, @file, or -; max 64 KiB)")
+	validateSchema := fs.String("validate-schema", "", "kind=validate: replacement body JSON Schema (an action update replaces the body schema and all --validate-*-schema parameters together; inline JSON, @file, or -; max 64 KiB)")
 	validateMode := fs.String("validate-mode", "", "kind=validate: invalid-request behavior (block|observe|warn)")
 	var validateContentTypes multiFlag
 	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
 	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=plan default)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
+	validateParams := addValidateParamFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -751,6 +780,10 @@ func cmdEdgeRulesUpdate(args []string) int {
 		if schemaErr != nil {
 			return printErr("Invalid --validate-schema", schemaErr)
 		}
+	}
+	validateParameters, paramErr := validateParams.resolve(visited)
+	if paramErr != nil {
+		return printErr("Invalid validate parameter flags", paramErr)
 	}
 
 	req := api.UpdateEdgeRuleRequest{}
@@ -905,6 +938,11 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CircuitWindowSeconds:              *circuitWindowSeconds,
 			CircuitOpenSeconds:                *circuitOpenSeconds,
 			CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+			WAFMode:                           *wafFlags.mode,
+			WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
+			WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
+			WAFExcludeRules:                   *wafFlags.excludeRules,
+			WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 			MaintenanceRetryAfter:             *maintenanceRetryAfter,
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
@@ -922,6 +960,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			ValidateMaxBodyBytes:        *validateMaxBodyBytes,
 			ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
 			ValidateRejectUnknownFields: *validateRejectUnknownFields,
+			ValidateParameters:          validateParameters,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -997,6 +1036,13 @@ type edgeRuleActionInputs struct {
 	AsyncRetryPolicy               api.RetryPolicyDTO
 	AsyncRetryPolicySet            bool
 	AsyncMaxAgeSeconds             int
+	// waf (ADR-831 step 1). All optional; WAFExcludeRules is the raw
+	// comma-separated flag value, parsed by buildEdgeRuleWAFAction.
+	WAFMode             string
+	WAFParanoiaLevel    int
+	WAFAnomalyThreshold int
+	WAFExcludeRules     string
+	WAFInspectBodyBytes int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1101,6 +1147,7 @@ type edgeRuleActionInputs struct {
 	ValidateMaxBodyBytes        int
 	ValidateApplyWhileStreaming bool
 	ValidateRejectUnknownFields bool
+	ValidateParameters          *api.EdgeRuleValidateParameters
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -1423,6 +1470,8 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			return nil, errToError(err)
 		}
 		return marshalAction(a)
+	case "waf":
+		return buildEdgeRuleWAFAction(in)
 	case "validate":
 		a := api.EdgeRuleValidateAction{
 			Schema:                in.ValidateSchema,
@@ -1430,6 +1479,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			ApplyWhileStreaming:   in.ValidateApplyWhileStreaming,
 			RejectOnUnknownFields: in.ValidateRejectUnknownFields,
 			MaxBodyBytes:          in.ValidateMaxBodyBytes,
+			Parameters:            in.ValidateParameters,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1480,11 +1530,54 @@ func validateEdgeRuleValidateMode(mode string) error {
 	return nil
 }
 
+// validateParamFlags are the kind=validate request-parameter flags shared by
+// edge-rules create and update.
+type validateParamFlags struct {
+	pathTemplate, path, query, headers *string
+}
+
+func addValidateParamFlags(fs *flag.FlagSet) validateParamFlags {
+	return validateParamFlags{
+		pathTemplate: fs.String("validate-path-template", "", "kind=validate: OpenAPI path template for --validate-path-schema (e.g. /users/{id}; --match-path must be /users/?*)"),
+		path:         fs.String("validate-path-schema", "", "kind=validate: object JSON Schema for path parameters (inline JSON, @file, or -)"),
+		query:        fs.String("validate-query-schema", "", "kind=validate: object JSON Schema for query parameters (inline JSON, @file, or -)"),
+		headers:      fs.String("validate-headers-schema", "", "kind=validate: object JSON Schema for request headers, lowercase names (inline JSON, @file, or -)"),
+	}
+}
+
+// resolve reads the visited parameter flags; nil means none were given.
+func (f validateParamFlags) resolve(visited map[string]bool) (*api.EdgeRuleValidateParameters, error) {
+	out := &api.EdgeRuleValidateParameters{PathTemplate: *f.pathTemplate}
+	for _, flagSchema := range []struct {
+		name string
+		raw  *string
+		into *json.RawMessage
+	}{
+		{"validate-path-schema", f.path, &out.Path},
+		{"validate-query-schema", f.query, &out.Query},
+		{"validate-headers-schema", f.headers, &out.Headers},
+	} {
+		if !visited[flagSchema.name] {
+			continue
+		}
+		schema, err := resolveEdgeRuleValidateSchema(*flagSchema.raw)
+		if err != nil {
+			return nil, fmt.Errorf("--%s: %w", flagSchema.name, err)
+		}
+		*flagSchema.into = schema
+	}
+	if out.Empty() && out.PathTemplate == "" {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func edgeRuleValidateFlagsVisited(visited map[string]bool) bool {
 	for _, name := range []string{
 		"validate-schema", "validate-mode", "validate-content-type",
 		"validate-max-body-bytes", "validate-apply-while-streaming",
-		"validate-reject-unknown-fields",
+		"validate-reject-unknown-fields", "validate-path-template",
+		"validate-path-schema", "validate-query-schema", "validate-headers-schema",
 	} {
 		if visited[name] {
 			return true
@@ -1672,6 +1765,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"on-success-webhook", "on-failure-webhook",
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
+		"waf-mode", "waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",

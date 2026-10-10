@@ -4697,6 +4697,19 @@ func (c *Client) GetAppPreAuthObservations(ctx context.Context, slug, rng string
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppEdgeProtection summarizes edge rejections for slug over rng. An empty
+// range uses the server's one-hour default.
+func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (EdgeProtectionResponse, error) {
+	var out EdgeProtectionResponse
+	path := "/v1/apps/" + slug + "/edge-protection"
+	if rng != "" {
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // AppWakeTimelineOptions controls the optional query params for
 // GetAppWakeTimeline. Since and Until are RFC3339Nano strings (NOT
 // time.Time — the wire form is the canonical string so caller-side

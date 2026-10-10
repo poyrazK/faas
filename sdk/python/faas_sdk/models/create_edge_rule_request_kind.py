@@ -19,6 +19,7 @@ CreateEdgeRuleRequestKind = Literal[
     "route",
     "throttle",
     "validate",
+    "waf",
 ]
 
 CREATE_EDGE_RULE_REQUEST_KIND_VALUES: set[CreateEdgeRuleRequestKind] = {
@@ -40,6 +41,7 @@ CREATE_EDGE_RULE_REQUEST_KIND_VALUES: set[CreateEdgeRuleRequestKind] = {
     "route",
     "throttle",
     "validate",
+    "waf",
 }
 
 

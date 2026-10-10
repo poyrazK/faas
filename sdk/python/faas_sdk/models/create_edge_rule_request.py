@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_route_action import EdgeRuleRouteAction
     from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
     from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+    from ..models.edge_rule_waf_action import EdgeRuleWAFAction
 
 
 T = TypeVar("T", bound="CreateEdgeRuleRequest")
@@ -64,6 +65,7 @@ class CreateEdgeRuleRequest:
         | EdgeRuleRouteAction
         | EdgeRuleThrottleAction
         | EdgeRuleValidateAction
+        | EdgeRuleWAFAction
     )
     """Kind-tagged action body — shape depends on `kind`."""
     match_path: str | Unset = "/"
@@ -99,6 +101,7 @@ class CreateEdgeRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
@@ -152,6 +155,8 @@ class CreateEdgeRuleRequest:
         elif isinstance(self.action, EdgeRuleRetryAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleCircuitBreakerAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleAsyncAction):
             action = self.action.to_dict()
         else:
             action = self.action.to_dict()
@@ -245,6 +250,7 @@ class CreateEdgeRuleRequest:
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
         from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
         from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.edge_rule_waf_action import EdgeRuleWAFAction
 
         d = dict(src_dict)
         match_host = d.pop("match_host")
@@ -271,6 +277,7 @@ class CreateEdgeRuleRequest:
             | EdgeRuleRouteAction
             | EdgeRuleThrottleAction
             | EdgeRuleValidateAction
+            | EdgeRuleWAFAction
         ):
             try:
                 if not isinstance(data, dict):
@@ -400,11 +407,19 @@ class CreateEdgeRuleRequest:
                 return action_type_15
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+
+                return action_type_16
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+            action_type_17 = EdgeRuleWAFAction.from_dict(data)
 
-            return action_type_16
+            return action_type_17
 
         action = _parse_action(d.pop("action"))
 

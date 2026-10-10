@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -2824,6 +2825,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
+	// ADR-831 — kind=waf. Rule sets compile lazily on first use, so a node
+	// with no WAF rules pays nothing. FAAS_EDGE_WAF_INLINE_DISABLED=1 is the
+	// operator kill switch for in-path checks: warn and block rules then
+	// behave like observe (amendment 4).
+	wafInspector := edgewaf.New(deps.metrics, log)
+	go wafInspector.Run(ctx)
+	handler.WithWAFInspector(wafInspector)
+	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
+		handler.WithWAFInlineChecker(wafInspector)
+	} else {
+		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev
@@ -3540,10 +3553,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The order is httpsec.Nonce outer / httpsec.Static inner so the
 	// CSP can be set before Static runs (it doesn't matter for the
 	// static headers, but keeps the middleware chain readable).
-	publicHandler = httpsec.Static(httpsec.Nonce(
-		func(r *http.Request) bool { return isApidPath(r.URL.Path) },
-		publicHandler,
-	))
+	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
+	// hosts this hop sets nothing so the app's own value is the only copy
+	// gatewayd-public sees, and gatewayd-public fills defaults.
+	appsDomain := deps.appsDomain
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		false,
+		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+	)
 
 	// HSTS is seeded from the environment before the listener is built and
 	// then reconciled by the runtime-config watcher above. Do not re-read the

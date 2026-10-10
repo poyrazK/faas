@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -6115,6 +6116,57 @@ type PreAuthObservationsResponse struct {
 	Source   string                     `json:"source"`
 	AsOf     string                     `json:"as_of"`
 	Policies []PreAuthPolicyObservation `json:"policies"`
+	// Suggestion is present only for an observe-mode guard with a healthy
+	// metrics source. It is advice; nothing is applied automatically.
+	Suggestion *PreAuthEnforcementSuggestion `json:"suggestion,omitempty"`
+}
+
+// PreAuthEnforcementSuggestion says whether an observe-mode guard looks safe
+// to switch to enforce, judged on the response range (ADR-829 amendment 1).
+type PreAuthEnforcementSuggestion struct {
+	Status string `json:"status"` // ready | review | insufficient_data
+	Reason string `json:"reason"`
+	// Requests is every gateway request to the app in the range.
+	Requests int64 `json:"requests"`
+	// WouldBlock and WouldBlockSucceeded sum the app and route policies;
+	// succeeded counts 2xx and 3xx final responses.
+	WouldBlock          int64 `json:"would_block"`
+	WouldBlockSucceeded int64 `json:"would_block_succeeded"`
+}
+
+const (
+	PreAuthSuggestionReady            = "ready"
+	PreAuthSuggestionReview           = "review"
+	PreAuthSuggestionInsufficientData = "insufficient_data"
+)
+
+// SuggestPreAuthEnforcement judges an observe-mode guard from one range of
+// observations. Enforce is "ready" only when the range is long enough, the app
+// saw enough traffic, and no request the guard would have blocked succeeded.
+func SuggestPreAuthEnforcement(rng string, requests int64, policies []PreAuthPolicyObservation) PreAuthEnforcementSuggestion {
+	s := PreAuthEnforcementSuggestion{Requests: requests}
+	for _, p := range policies {
+		if p.Kind != "app" && p.Kind != "route" {
+			continue
+		}
+		s.WouldBlock += p.WouldBlock
+		s.WouldBlockSucceeded += p.Result2xx + p.Result3xx
+	}
+	switch {
+	case !slices.Contains(PreAuthSuggestionRanges, rng):
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = "judge enforcement on a range of 24h or longer"
+	case requests < PreAuthSuggestionMinRequests:
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = fmt.Sprintf("only %d requests in %s; at least %d are needed", requests, rng, PreAuthSuggestionMinRequests)
+	case s.WouldBlockSucceeded > 0:
+		s.Status = PreAuthSuggestionReview
+		s.Reason = fmt.Sprintf("enforce would have rejected %d requests that succeeded; raise requests_per_second or burst, or add route overrides, before enforcing", s.WouldBlockSucceeded)
+	default:
+		s.Status = PreAuthSuggestionReady
+		s.Reason = fmt.Sprintf("enforce would have rejected %d of %d requests in %s, none of which succeeded", s.WouldBlock, requests, rng)
+	}
+	return s
 }
 
 type PreAuthPolicyObservation struct {
@@ -8606,12 +8658,17 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     decoders may still read it from a response. The field will
 //     be removed in the release after the deprecation notice.
 type EdgeRuleValidateAction struct {
-	Schema                json.RawMessage `json:"schema"`
+	// Schema validates the JSON request body. It may be omitted when
+	// Parameters is set, so a body-less operation can still be validated.
+	Schema                json.RawMessage `json:"schema,omitempty"`
 	ContentTypes          []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming   bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values before the body
+	// is read (ADR-091 amendment: request parameters).
+	Parameters *EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
@@ -8846,7 +8903,12 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 		return ErrValidation("validate action is required")
 	}
 	if len(a.Schema) == 0 {
-		return ErrValidation("validate action: schema is required")
+		if a.Parameters.Empty() {
+			return ErrValidation("validate action: schema or parameters is required")
+		}
+		// Parameter-only rule: the body checks below do not apply. The
+		// parameter schemas are checked against match_path by the caller.
+		return a.validateMode()
 	}
 	if len(a.Schema) > MaxEdgeRuleValidateSchemaBytes {
 		return ErrValidation(fmt.Sprintf(
@@ -8899,11 +8961,14 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: max_body_bytes exceeds the platform cap (%d > %d)",
 			a.MaxBodyBytes, MaxRequestBodyBytes))
 	}
-	// ValidateMode: optional; empty == 'block' (the strictest mode,
-	// matches the NOT NULL DEFAULT 'block' the migration adds at
-	// 00293). Any non-empty value must be one of the three closed
-	// strings; an unknown value gets a 422 with the allowed list,
-	// not a 500.
+	return a.validateMode()
+}
+
+// validateMode checks the deprecated action-level validate_mode: empty ==
+// 'block' (the strictest mode, matching the NOT NULL DEFAULT 'block' added at
+// 00293). Any non-empty value must be one of the three closed strings; an
+// unknown value gets a 422 with the allowed list, not a 500.
+func (a *EdgeRuleValidateAction) validateMode() *Problem {
 	if a.ValidateMode != "" &&
 		a.ValidateMode != ValidateModeBlock &&
 		a.ValidateMode != ValidateModeObserve &&
@@ -9218,7 +9283,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).

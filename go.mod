@@ -25,6 +25,8 @@ require (
 	github.com/aws/smithy-go v1.28.1
 	github.com/caddyserver/certmagic v0.25.4
 	github.com/cloudevents/sdk-go/v2 v2.16.2
+	github.com/corazawaf/coraza-coreruleset/v4 v4.25.0
+	github.com/corazawaf/coraza/v3 v3.8.1
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/gofrs/flock v0.13.1
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
@@ -66,6 +68,7 @@ require (
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
+	golang.org/x/time v0.15.0
 	google.golang.org/api v0.293.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a
 	google.golang.org/grpc v1.83.2
@@ -96,30 +99,43 @@ require (
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
+	github.com/corazawaf/libinjection-go v0.3.3 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/godoc-lint/godoc-lint v0.11.4 // indirect
 	github.com/golangci/asciicheck v0.5.0 // indirect
 	github.com/golangci/canonicalheader v0.0.0-20260827115959-a25c71c521f6 // indirect
 	github.com/golangci/rowserrcheck v0.0.0-20260419091836-c5f79b8a11ba // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.20 // indirect
+	github.com/gotnospirit/makeplural v0.0.0-20180622080156-a5f48d94d976 // indirect
+	github.com/gotnospirit/messageformat v0.0.0-20221001023931-dfe49f1eb092 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kaptinlin/go-i18n v0.1.4 // indirect
+	github.com/kaptinlin/jsonschema v0.4.6 // indirect
 	github.com/ldez/structtags v0.6.1 // indirect
+	github.com/magefile/mage v1.17.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/ryancurrah/gomodguard/v2 v2.1.3 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.7.0 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/valllabh/ocsf-schema-golang v1.0.3 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/collector/featuregate v1.60.0 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
+	rsc.io/binaryregexp v0.2.0 // indirect
 )
 
 require (

@@ -465,6 +465,7 @@ export type { DurableEntityRetryResponse } from './DurableEntityRetryResponse.js
 export type { DurableEntityScope } from './DurableEntityScope.js';
 export type { DurableEntityStateExport } from './DurableEntityStateExport.js';
 export type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
+export type { EdgeProtectionResponse } from './EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
@@ -494,6 +495,8 @@ export type { EdgeRuleStatsResponse } from './EdgeRuleStatsResponse.js';
 export type { EdgeRuleSuggestion } from './EdgeRuleSuggestion.js';
 export type { EdgeRuleThrottleAction } from './EdgeRuleThrottleAction.js';
 export type { EdgeRuleValidateAction } from './EdgeRuleValidateAction.js';
+export type { EdgeRuleValidateParameters } from './EdgeRuleValidateParameters.js';
+export type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
 export type { EgressCircuitBreakerPolicy } from './EgressCircuitBreakerPolicy.js';
 export type { EgressFlowLogEntry } from './EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './EgressFlowLogResponse.js';
@@ -1281,6 +1284,7 @@ export type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBuc
 export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './PlatformTenantWebhookResponse.js';
+export type { PreAuthEnforcementSuggestion } from './PreAuthEnforcementSuggestion.js';
 export type { PreAuthFailedResponseLimit } from './PreAuthFailedResponseLimit.js';
 export type { PreAuthObservationsResponse } from './PreAuthObservationsResponse.js';
 export type { PreAuthPolicyObservation } from './PreAuthPolicyObservation.js';

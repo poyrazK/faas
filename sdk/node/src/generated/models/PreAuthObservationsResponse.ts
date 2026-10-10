@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PreAuthEnforcementSuggestion } from './PreAuthEnforcementSuggestion.js';
 import type { PreAuthPolicyObservation } from './PreAuthPolicyObservation.js';
 /**
  * Observe-mode decisions and final response classes for an app's configured pre-auth policies.
@@ -15,5 +16,6 @@ export type PreAuthObservationsResponse = {
   source: string;
   as_of: string;
   policies: Array<PreAuthPolicyObservation>;
+  suggestion?: PreAuthEnforcementSuggestion;
 };
 

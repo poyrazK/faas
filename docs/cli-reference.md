@@ -50,7 +50,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`consumers`](#consumers) | Meter, price, and bill your API&#39;s consumers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rule-lists`](#edge-rule-lists) | Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list\|get\|create\|update\|rm) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback\|stats\|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|summary\|trace\|create\|get\|update\|history\|rollback\|stats\|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -2558,7 +2558,7 @@ Show app streaming classification
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2607,6 +2607,9 @@ Get/update one app or run a deployment-attached command
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
 | `--head-wakes[=true|false]` | wake a parked app for HEAD / | one of `true` · `false` |
 | `--crawler-policy <wake|cached|block>` | monitor/crawler wake policy | one of `wake` · `cached` · `block` |
+| `--pre-auth <off|observe|enforce>` | per-source pre-auth limit mode; enforce first prints the 24h readiness check | one of `off` · `observe` · `enforce` |
+| `--pre-auth-rps <N>` | pre-auth requests per second per source |  |
+| `--pre-auth-burst <N>` | pre-auth burst per source |  |
 | `--health-path <PATH>` | set the monitor-facing health path |  |
 | `--health-path-wakes` | allow health probes to wake the app |  |
 | `--no-health-path-wakes` | answer health probes without waking the app |  |
@@ -6514,14 +6517,14 @@ Delete a list no rule references
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
+Per-app edge rules (edge-rules list|summary|trace|create|get|update|history|rollback|stats|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
 
 ### edge-rules list
 
@@ -6532,7 +6535,18 @@ List edge rules
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | filter to a single app slug |  |
-| `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
+
+### edge-rules summary
+
+Show what the edge rejected for an app: pre-auth blocks, validation failures, and gate rejections by status
+
+`gregale edge-rules summary --app <slug> [--range <WINDOW>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--range <WINDOW>` | time window (default 1h) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 
 ### edge-rules trace
 
@@ -6565,12 +6579,12 @@ gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>]`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
 | `--match-host <HOST>` | host to match | required |
 | `--match-path <PATH>` | path to match (default /) |  |
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
@@ -6606,12 +6620,21 @@ Add an edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+| `--waf-mode <MODE>` | kind=waf: observe (default), warn, or block; warn and block check headers and URL in-path at paranoia level 1 | one of `observe` · `warn` · `block` |
+| `--waf-paranoia-level <N>` | kind=waf: OWASP CRS paranoia level 1 or 2 (default 1) |  |
+| `--waf-anomaly-threshold <N>` | kind=waf: anomaly score that counts as a detection, 1..100 (default 5) |  |
+| `--waf-exclude-rules <IDS>` | kind=waf: comma-separated CRS rule IDs left out of scoring |  |
+| `--waf-inspect-body-bytes <BYTES>` | kind=waf: request body bytes to inspect, 1..65536 (default 8192) |  |
 | `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
 | `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+| `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
+| `--validate-path-schema <JSON|@FILE|->` | object JSON Schema for path parameters (inline JSON, @file, or -) |  |
+| `--validate-query-schema <JSON|@FILE|->` | object JSON Schema for query parameters (inline JSON, @file, or -) |  |
+| `--validate-headers-schema <JSON|@FILE|->` | object JSON Schema for request headers, lowercase names (inline JSON, @file, or -) |  |
 | `--cors-allow-credentials` | kind=cors: allow credentials |  |
 | `--cors-max-age-seconds <SECONDS>` | kind=cors: preflight max age |  |
 | `--jwt-platform-tenant-external-ref-claim <CLAIM>` | kind=jwt: claim containing the platform tenant external reference |  |
@@ -6647,6 +6670,7 @@ gregale edge-rules create --app my-api --kind cache --match-host my-api.gregale.
 gregale edge-rules create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
 gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
 cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -
+gregale edge-rules create --app my-api --kind validate --match-host api.example.com --match-path '/users/?*' --match-method GET --validate-path-template '/users/{id}' --validate-path-schema '{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}' --validate-query-schema @query.json
 ```
 
 ### edge-rules get
@@ -6659,7 +6683,7 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] <id>`
+`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6671,7 +6695,7 @@ Update one edge rule
 | `--priority <N>` | new match priority |  |
 | `--enable` | enable the rule |  |
 | `--disable` | disable the rule |  |
-| `--kind <KIND>` | new action kind (required when changing action flags) | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--kind <KIND>` | new action kind (required when changing action flags) | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
 | `--route-target-slug <SLUG>` | kind=route: target app slug |  |
 | `--rewrite-from <PATH>` | kind=rewrite: source path |  |
 | `--rewrite-to <PATH>` | kind=rewrite: destination path |  |
@@ -6739,12 +6763,21 @@ Update one edge rule
 | `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
 | `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
 | `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
-| `--validate-schema <JSON|@FILE|->` | replacement schema; required when updating action fields (inline JSON, @file, or -; max 64 KiB) |  |
+| `--waf-mode <MODE>` | kind=waf: observe (default), warn, or block; warn and block check headers and URL in-path at paranoia level 1 | one of `observe` · `warn` · `block` |
+| `--waf-paranoia-level <N>` | kind=waf: OWASP CRS paranoia level 1 or 2 (default 1) |  |
+| `--waf-anomaly-threshold <N>` | kind=waf: anomaly score that counts as a detection, 1..100 (default 5) |  |
+| `--waf-exclude-rules <IDS>` | kind=waf: comma-separated CRS rule IDs left out of scoring |  |
+| `--waf-inspect-body-bytes <BYTES>` | kind=waf: request body bytes to inspect, 1..65536 (default 8192) |  |
+| `--validate-schema <JSON|@FILE|->` | replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
 | `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+| `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
+| `--validate-path-schema <JSON|@FILE|->` | object JSON Schema for path parameters (inline JSON, @file, or -) |  |
+| `--validate-query-schema <JSON|@FILE|->` | object JSON Schema for query parameters (inline JSON, @file, or -) |  |
+| `--validate-headers-schema <JSON|@FILE|->` | object JSON Schema for request headers, lowercase names (inline JSON, @file, or -) |  |
 | `--match <JSON|@FILE|->` | replace the match condition (ADR-962 JSON, @file, or -) |  |
 | `--clear-match` | remove the match condition |  |
 | `--mode <MODE>` | enforce or log (log-mode rules only count matches) | one of `enforce` · `log` |

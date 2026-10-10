@@ -178,6 +178,25 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	case "pre_auth_target_threshold":
 		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome="target_threshold"}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "pre_auth_pressure":
+		// Enforced blocks and observe-mode would-blocks, app-wide and per
+		// route: the alert reports pressure before the customer enforces.
+		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_rate_limit_total{app=%q,outcome=~"blocked|route_blocked|would_block|route_would_block"}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "edge_rejections":
+		// Client-error rejections only: a 503 means a gate dependency is
+		// unavailable, which is an availability problem, not attack traffic.
+		query = fmt.Sprintf(`sum(increase(gateway_edge_rejections_total{app=%q,status=~"401|403|413|429"}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "edge_validation_failures":
+		query = fmt.Sprintf(`sum(increase(gateway_validate_failures_total{app_id=%q}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "edge_waf_detections":
+		// kind=waf detections: sampled (off-path) plus in-path warn and
+		// block verdicts (ADR-831 amendment 4). Requests the node skipped
+		// are not detections.
+		query = fmt.Sprintf(`(sum(increase(gateway_waf_inspections_total{app=%q,outcome="detected"}[%s])) or vector(0)) + (sum(increase(gateway_waf_inline_checks_total{app=%q,outcome=~"warned|blocked"}[%s])) or vector(0))`, appID, rng, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "pre_auth_target_signal_gap_pct":
 		// Evaluate the worst eligible route so a healthy, high-volume route
 		// cannot hide a broken integration on another route. The -1 sentinel

@@ -172,6 +172,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-934 tracing fixture for hosts without a matching Go toolchain |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
+| `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_CIRCUIT_BREAKER` | schedd | `default` |  |  | `` | ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream |
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
