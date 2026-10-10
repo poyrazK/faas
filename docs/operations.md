@@ -1847,6 +1847,46 @@ application must lock/check those rows and authorize the action independently.
 No database migration is required. Existing contracts retain their behavior;
 deploy a new immutable contract version to change edge requirements.
 
+### Retained milestone prerequisites
+
+Use `requires_retained_milestones` to require previously reported facts from
+transaction-backed steps of the same workflow. For an order workflow containing
+`receive-payment` / `payment-received` and `fulfill-order` steps:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    requires_retained_milestones:
+      - {operation: receive-payment, milestone: payment-received}
+```
+
+Each edge accepts up to 16 unique operation/milestone pairs. Each pair must bind
+to a declared workflow step; the edge must name its target operation. Raise the
+workflow `version` when adding or changing these rules. The lookup covers at most
+32 distinct prerequisite pairs across the selected workflow contract.
+
+The existing readiness endpoint, action preview, and selected-instance overview
+return `retained_milestones` results. A `verified` result includes the latest
+matching fact identity and timestamps; `awaiting_verification` adds
+`retained_milestone_required` and keeps `ready` false. Matching includes account,
+app, tenant, environment scope, business subject, workflow instance, pinned
+contract version, source operation, and milestone name. Page cursors never limit
+this lookup. Planned milestones cannot satisfy a retained prerequisite. Facts
+from an older contract version do not carry forward automatically.
+
+Verification means a matching application-reported transaction-backed fact is
+currently retained. It does not verify an external provider or infer business
+truth from arbitrary payload fields. A missing or expired fact does not prove the
+event never occurred. Account views without a selected tenant or a reported
+state identifying that tenant leave evidence unverified. The dashboard and CLI
+show the source milestone, verification status, and evidence identity. SDK
+readiness guards check these requirements before staging the proposed transition;
+applications still check authorization and their business row under their own
+transaction lock. Reporting APIs remain application-owned and do not enforce
+this observational prerequisite as a state-change admission rule.
+
 ### Business action previews
 
 A preview returns declared action candidates from a selected workflow instance's

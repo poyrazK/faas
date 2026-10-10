@@ -22,6 +22,7 @@ type OperationWorkflowReadinessRequest struct {
 }
 
 type OperationWorkflowTransitionReadiness struct {
+	RetainedMilestones         []OperationWorkflowRetainedMilestone `json:"retained_milestones,omitempty"`
 	Transition                 OperationWorkflowInstanceTransition  `json:"transition"`
 	Declared                   bool                                 `json:"declared"`
 	Ready                      bool                                 `json:"ready"`

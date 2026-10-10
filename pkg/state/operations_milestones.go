@@ -424,6 +424,7 @@ func projectOperationWorkflowInstance(page api.OperationMilestonesResponse, work
 			transitionIndexes[key] = struct{}{}
 			allowedTransitions = append(allowedTransitions, api.OperationWorkflowInstanceTransition{
 				From: transition.From, To: transition.To, Operation: declaration.Operation,
+				RequiredRetainedMilestones:  append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), transition.RequiredRetainedMilestones...),
 				RequiredMilestones:          append([]string(nil), transition.RequiredMilestones...),
 				RequiredEffects:             append([]api.OperationWorkflowEffectRequirement(nil), transition.RequiredEffects...),
 				RequiredInvariants:          append([]api.OperationWorkflowInvariantRequirement(nil), transition.RequiredInvariants...),

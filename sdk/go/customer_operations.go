@@ -79,36 +79,38 @@ type (
 )
 
 type (
-	OperationWorkflowDependency              = api.OperationWorkflowDependency
-	OperationWorkflowReadinessRequest        = api.OperationWorkflowReadinessRequest
-	OperationWorkflowTransitionReadiness     = api.OperationWorkflowTransitionReadiness
-	OperationWorkflowReadinessResponse       = api.OperationWorkflowReadinessResponse
-	OperationWorkflowReadinessOverview       = api.OperationWorkflowReadinessOverview
-	OperationWorkflowDependencyTrace         = api.OperationWorkflowDependencyTrace
-	OperationWorkflowDependencyFinding       = api.OperationWorkflowDependencyFinding
-	OperationWorkflowDependencyImpact        = api.OperationWorkflowDependencyImpact
-	OperationWorkflowDependentInstance       = api.OperationWorkflowDependentInstance
-	OperationWorkflowRelatedInstance         = api.OperationWorkflowRelatedInstance
-	OperationWorkflowOutcomeEntry            = api.OperationWorkflowOutcomeEntry
-	OperationWorkflowOutcomesResponse        = api.OperationWorkflowOutcomesResponse
-	OperationWorkflowOutcomeOptions          = api.OperationWorkflowOutcomeOptions
-	OperationWorkflowOutcomeGroup            = api.OperationWorkflowOutcomeGroup
-	OperationWorkflowOutcomeSummary          = api.OperationWorkflowOutcomeSummary
-	OperationWorkflowOutcomeSummaryOptions   = api.OperationWorkflowOutcomeSummaryOptions
-	OperationWorkflowAttentionEntry          = api.OperationWorkflowAttentionEntry
-	OperationWorkflowAttentionResponse       = api.OperationWorkflowAttentionResponse
-	OperationWorkflowAttentionOptions        = api.OperationWorkflowAttentionOptions
-	OperationWorkflowAttentionStats          = api.OperationWorkflowAttentionStats
-	OperationWorkflowAttentionGroup          = api.OperationWorkflowAttentionGroup
-	OperationWorkflowAttentionSummary        = api.OperationWorkflowAttentionSummary
-	OperationWorkflowAttentionSummaryOptions = api.OperationWorkflowAttentionSummaryOptions
-	OperationWorkflowBlockerResolution       = api.OperationWorkflowBlockerResolution
-	OperationWorkflowBlocker                 = api.OperationWorkflowBlocker
-	OperationWorkflowDecision                = api.OperationWorkflowDecision
-	OperationWorkflowInstanceSnapshot        = api.OperationWorkflowInstanceSnapshot
-	OperationWorkflowInstanceTransition      = api.OperationWorkflowInstanceTransition
-	OperationWorkflowInstanceStep            = api.OperationWorkflowInstanceStep
-	OperationWorkflowInstanceMilestoneRef    = api.OperationWorkflowInstanceMilestoneRef
+	OperationWorkflowDependency                   = api.OperationWorkflowDependency
+	OperationWorkflowReadinessRequest             = api.OperationWorkflowReadinessRequest
+	OperationWorkflowRetainedMilestoneRequirement = api.OperationWorkflowRetainedMilestoneRequirement
+	OperationWorkflowRetainedMilestone            = api.OperationWorkflowRetainedMilestone
+	OperationWorkflowTransitionReadiness          = api.OperationWorkflowTransitionReadiness
+	OperationWorkflowReadinessResponse            = api.OperationWorkflowReadinessResponse
+	OperationWorkflowReadinessOverview            = api.OperationWorkflowReadinessOverview
+	OperationWorkflowDependencyTrace              = api.OperationWorkflowDependencyTrace
+	OperationWorkflowDependencyFinding            = api.OperationWorkflowDependencyFinding
+	OperationWorkflowDependencyImpact             = api.OperationWorkflowDependencyImpact
+	OperationWorkflowDependentInstance            = api.OperationWorkflowDependentInstance
+	OperationWorkflowRelatedInstance              = api.OperationWorkflowRelatedInstance
+	OperationWorkflowOutcomeEntry                 = api.OperationWorkflowOutcomeEntry
+	OperationWorkflowOutcomesResponse             = api.OperationWorkflowOutcomesResponse
+	OperationWorkflowOutcomeOptions               = api.OperationWorkflowOutcomeOptions
+	OperationWorkflowOutcomeGroup                 = api.OperationWorkflowOutcomeGroup
+	OperationWorkflowOutcomeSummary               = api.OperationWorkflowOutcomeSummary
+	OperationWorkflowOutcomeSummaryOptions        = api.OperationWorkflowOutcomeSummaryOptions
+	OperationWorkflowAttentionEntry               = api.OperationWorkflowAttentionEntry
+	OperationWorkflowAttentionResponse            = api.OperationWorkflowAttentionResponse
+	OperationWorkflowAttentionOptions             = api.OperationWorkflowAttentionOptions
+	OperationWorkflowAttentionStats               = api.OperationWorkflowAttentionStats
+	OperationWorkflowAttentionGroup               = api.OperationWorkflowAttentionGroup
+	OperationWorkflowAttentionSummary             = api.OperationWorkflowAttentionSummary
+	OperationWorkflowAttentionSummaryOptions      = api.OperationWorkflowAttentionSummaryOptions
+	OperationWorkflowBlockerResolution            = api.OperationWorkflowBlockerResolution
+	OperationWorkflowBlocker                      = api.OperationWorkflowBlocker
+	OperationWorkflowDecision                     = api.OperationWorkflowDecision
+	OperationWorkflowInstanceSnapshot             = api.OperationWorkflowInstanceSnapshot
+	OperationWorkflowInstanceTransition           = api.OperationWorkflowInstanceTransition
+	OperationWorkflowInstanceStep                 = api.OperationWorkflowInstanceStep
+	OperationWorkflowInstanceMilestoneRef         = api.OperationWorkflowInstanceMilestoneRef
 )
 
 const (

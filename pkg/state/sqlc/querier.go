@@ -1585,6 +1585,7 @@ type Querier interface {
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
 	ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error)
 	ListCustomerOperationJobExecutions(ctx context.Context, db DBTX, arg ListCustomerOperationJobExecutionsParams) ([][]byte, error)
+	ListCustomerOperationRetainedMilestonePrerequisites(ctx context.Context, db DBTX, arg ListCustomerOperationRetainedMilestonePrerequisitesParams) ([]ListCustomerOperationRetainedMilestonePrerequisitesRow, error)
 	ListCustomerOperationWorkflowAttention(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowAttentionParams) ([]ListCustomerOperationWorkflowAttentionRow, error)
 	ListCustomerOperationWorkflowExecutions(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowExecutionsParams) ([][]byte, error)
 	ListCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowOutcomesParams) ([]ListCustomerOperationWorkflowOutcomesRow, error)

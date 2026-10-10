@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
     from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
     from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+    from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
     from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
     from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
@@ -49,6 +50,9 @@ class OperationWorkflowTransitionReadiness:
     unmet_dependencies: list[OperationWorkflowRelatedInstance]
     """Unmet reference/status pairs; inspect full related states through the workflow detail."""
     missing_milestones: list[str]
+    retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
+    """Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
+    awaiting verification and prevent readiness."""
     unmet_effects: list[OperationWorkflowUnmetEffect] | Unset = UNSET
     unmet_invariants: list[OperationWorkflowUnmetInvariant] | Unset = UNSET
     invariant_blockers: list[OperationWorkflowBlocker] | Unset = UNSET
@@ -89,6 +93,13 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = self.missing_milestones
+
+        retained_milestones: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.retained_milestones, Unset):
+            retained_milestones = []
+            for retained_milestones_item_data in self.retained_milestones:
+                retained_milestones_item = retained_milestones_item_data.to_dict()
+                retained_milestones.append(retained_milestones_item)
 
         unmet_effects: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.unmet_effects, Unset):
@@ -139,6 +150,8 @@ class OperationWorkflowTransitionReadiness:
                 "missing_milestones": missing_milestones,
             }
         )
+        if retained_milestones is not UNSET:
+            field_dict["retained_milestones"] = retained_milestones
         if unmet_effects is not UNSET:
             field_dict["unmet_effects"] = unmet_effects
         if unmet_invariants is not UNSET:
@@ -160,6 +173,7 @@ class OperationWorkflowTransitionReadiness:
         from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
         from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
         from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+        from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
         from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
         from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
@@ -201,6 +215,15 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = cast(list[str], d.pop("missing_milestones"))
+
+        _retained_milestones = d.pop("retained_milestones", UNSET)
+        retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
+        if _retained_milestones is not UNSET:
+            retained_milestones = []
+            for retained_milestones_item_data in _retained_milestones:
+                retained_milestones_item = OperationWorkflowRetainedMilestone.from_dict(retained_milestones_item_data)
+
+                retained_milestones.append(retained_milestones_item)
 
         _unmet_effects = d.pop("unmet_effects", UNSET)
         unmet_effects: list[OperationWorkflowUnmetEffect] | Unset = UNSET
@@ -252,6 +275,7 @@ class OperationWorkflowTransitionReadiness:
             blockers=blockers,
             unmet_dependencies=unmet_dependencies,
             missing_milestones=missing_milestones,
+            retained_milestones=retained_milestones,
             unmet_effects=unmet_effects,
             unmet_invariants=unmet_invariants,
             invariant_blockers=invariant_blockers,

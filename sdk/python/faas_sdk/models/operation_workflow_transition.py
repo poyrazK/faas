@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
     from ..models.operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
     from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+    from ..models.operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
 
 
 T = TypeVar("T", bound="OperationWorkflowTransition")
@@ -22,6 +23,9 @@ class OperationWorkflowTransition:
 
     from_: str
     to: str
+    required_retained_milestones: list[OperationWorkflowRetainedMilestoneRequirement] | Unset = UNSET
+    """Previously reported transaction-backed workflow facts required within the same ownership, subject, instance,
+    and contract version; proposed evidence does not satisfy these prerequisites."""
     required_effects: list[OperationWorkflowEffectRequirement] | Unset = UNSET
     required_invariants: list[OperationWorkflowInvariantRequirement] | Unset = UNSET
     required_dependency_workflows: list[str] | Unset = UNSET
@@ -35,6 +39,13 @@ class OperationWorkflowTransition:
         from_ = self.from_
 
         to = self.to
+
+        required_retained_milestones: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.required_retained_milestones, Unset):
+            required_retained_milestones = []
+            for required_retained_milestones_item_data in self.required_retained_milestones:
+                required_retained_milestones_item = required_retained_milestones_item_data.to_dict()
+                required_retained_milestones.append(required_retained_milestones_item)
 
         required_effects: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.required_effects, Unset):
@@ -73,6 +84,8 @@ class OperationWorkflowTransition:
                 "to": to,
             }
         )
+        if required_retained_milestones is not UNSET:
+            field_dict["required_retained_milestones"] = required_retained_milestones
         if required_effects is not UNSET:
             field_dict["required_effects"] = required_effects
         if required_invariants is not UNSET:
@@ -91,11 +104,25 @@ class OperationWorkflowTransition:
         from ..models.operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
         from ..models.operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
         from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+        from ..models.operation_workflow_retained_milestone_requirement import (
+            OperationWorkflowRetainedMilestoneRequirement,
+        )
 
         d = dict(src_dict)
         from_ = d.pop("from")
 
         to = d.pop("to")
+
+        _required_retained_milestones = d.pop("required_retained_milestones", UNSET)
+        required_retained_milestones: list[OperationWorkflowRetainedMilestoneRequirement] | Unset = UNSET
+        if _required_retained_milestones is not UNSET:
+            required_retained_milestones = []
+            for required_retained_milestones_item_data in _required_retained_milestones:
+                required_retained_milestones_item = OperationWorkflowRetainedMilestoneRequirement.from_dict(
+                    required_retained_milestones_item_data
+                )
+
+                required_retained_milestones.append(required_retained_milestones_item)
 
         _required_effects = d.pop("required_effects", UNSET)
         required_effects: list[OperationWorkflowEffectRequirement] | Unset = UNSET
@@ -133,6 +160,7 @@ class OperationWorkflowTransition:
         operation_workflow_transition = cls(
             from_=from_,
             to=to,
+            required_retained_milestones=required_retained_milestones,
             required_effects=required_effects,
             required_invariants=required_invariants,
             required_dependency_workflows=required_dependency_workflows,

@@ -38664,6 +38664,7 @@ components:
       additionalProperties: false
       required: [from, to]
       properties:
+        required_retained_milestones: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}, description: 'Previously reported transaction-backed workflow facts required within the same ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites.'}
         required_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowEffectRequirement'}}
         required_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowInvariantRequirement'}}
         required_dependency_workflows: {type: array, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}, description: 'Omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.'}
@@ -38676,6 +38677,23 @@ components:
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           description: Milestone names that must be committed in the same application transaction as this transition.
+    OperationWorkflowRetainedMilestoneRequirement:
+      description: Source operation and milestone bound to a declared transaction-backed step of the selected workflow contract.
+      type: object
+      additionalProperties: false
+      required: [operation, milestone]
+      properties:
+        operation: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+    OperationWorkflowRetainedMilestone:
+      description: Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow instance, and contract version. Verified does not attest to an external provider or authorize business writes. Awaiting verification means no matching fact is currently retained and does not prove it never occurred.
+      type: object
+      additionalProperties: false
+      required: [requirement, status]
+      properties:
+        requirement: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
+        status: {type: string, enum: [verified, awaiting_verification]}
+        evidence: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef', description: Latest matching retained fact by publication time; present only for verified prerequisites.}
     OperationWorkflowEvidenceMilestone:
       description: Reference to a retained milestone fact committed in the same application transaction as a workflow transition.
       type: object
@@ -39307,6 +39325,7 @@ components:
       description: Ready means declared requirements match retained reports and the proposed milestone plan. It does not authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only blockers targeting this Operation apply. Staleness and overdue deadlines are advisories rather than undeclared guards.
       required: [transition, declared, ready, reasons, advisories, contract_version, blockers, unmet_dependencies, missing_milestones]
       properties:
+        retained_milestones: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}, description: 'Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification and prevent readiness.'}
         unmet_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowUnmetEffect'}}
         unmet_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowUnmetInvariant'}}
         invariant_blockers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}, description: 'Subset of matching blockers using the invariant- namespace. Failed or unknown application checks deny readiness through application_blocked.'}
@@ -39315,7 +39334,7 @@ components:
         transition: {$ref: '#/components/schemas/OperationWorkflowInstanceTransition'}
         declared: {type: boolean}
         ready: {type: boolean}
-        reasons: {type: array, maxItems: 13, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required]}}
+        reasons: {type: array, maxItems: 14, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required]}}
         advisories: {type: array, maxItems: 2, uniqueItems: true, items: {type: string, enum: [state_stale, deadline_overdue]}}
         state_revision: {type: integer, format: int64, minimum: 1, maximum: 9007199254740991}
         contract_version: {type: integer, minimum: 0, maximum: 1000000}
@@ -39373,6 +39392,7 @@ components:
       additionalProperties: false
       required: [from, to, operation]
       properties:
+        required_retained_milestones: {type: array, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}, description: 'For this selected edge, previously reported transaction-backed workflow facts required within the same ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites.'}
         required_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowEffectRequirement'}}
         required_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowInvariantRequirement'}}
         required_dependency_workflows: {type: array, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}, description: 'For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.'}

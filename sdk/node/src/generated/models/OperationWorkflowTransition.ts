@@ -5,10 +5,15 @@
 import type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffectRequirement.js';
 import type { OperationWorkflowInvariantRequirement } from './OperationWorkflowInvariantRequirement.js';
 import type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
+import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 /**
  * Allowed state edge declared by a pinned application workflow definition.
  */
 export type OperationWorkflowTransition = {
+  /**
+   * Previously reported transaction-backed workflow facts required within the same ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites.
+   */
+  required_retained_milestones?: Array<OperationWorkflowRetainedMilestoneRequirement>;
   required_effects?: Array<OperationWorkflowEffectRequirement>;
   required_invariants?: Array<OperationWorkflowInvariantRequirement>;
   /**

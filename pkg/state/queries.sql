@@ -17927,3 +17927,32 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 
 -- name: PruneRouteProbeRounds :exec
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
+
+-- name: ListCustomerOperationRetainedMilestonePrerequisites :many
+SELECT DISTINCT ON (required.operation,required.milestone)
+ required.operation::text AS operation,required.milestone::text AS milestone,
+ m.id::text AS id,m.operation_id::text AS operation_id,m.occurred_at,m.created_at
+FROM jsonb_to_recordset(sqlc.arg(requirements)::jsonb) AS required(operation text,milestone text)
+JOIN customer_operation_definitions d ON d.name=required.operation
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+ AND d.scope=sqlc.arg(scope)::text AND d.spec->>'http_transaction_version'='1'
+JOIN customer_operations o ON o.definition_id=d.id AND o.account_id=d.account_id AND o.app_id=d.app_id
+ AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid
+JOIN customer_operation_milestones m ON m.operation_id=o.id AND m.name=required.milestone
+CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS declared(step)
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN declared.step->>'instance_id_from'='/' THEN ARRAY['']::text[]
+ ELSE ARRAY(SELECT replace(replace(pointer_token,'~1','/'),'~0','~')
+ FROM unnest(string_to_array(substr(declared.step->>'instance_id_from',2),'/')) AS parts(pointer_token))
+ END AS pointer_parts
+) AS selected_path
+WHERE o.record #>> '{subject,type}'=sqlc.arg(subject_type)::text
+ AND o.record #>> '{subject,id}'=sqlc.arg(subject_id)::text
+ AND declared.step->>'workflow'=sqlc.arg(workflow_name)::text
+ AND declared.step->>'milestone'=required.milestone
+ AND GREATEST(COALESCE(NULLIF(declared.step->>'version','')::integer,1),1)=sqlc.arg(contract_version)::integer
+ AND COALESCE(declared.step->>'instance_id_from','')<>''
+ AND m.payload #>> selected_path.pointer_parts=sqlc.arg(instance_id)::text
+ AND m.created_at<=sqlc.arg(now)::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ORDER BY required.operation,required.milestone,m.created_at DESC,m.operation_id DESC,m.id DESC;

@@ -381,6 +381,9 @@ func (m *MemStore) listOperationMilestones(account, tenant string, opts api.Oper
 		page = projectOperationWorkflowInstance(page, opts.Workflow, opts.WorkflowInstanceID, declarations, workflowInstanceState,
 			operationWorkflowStepFactSummaryList(retainedWorkflowFacts))
 	}
+	if err := m.projectRetainedMilestonesLocked(&page, account, tenant, opts, now); err != nil {
+		return api.OperationMilestonesResponse{}, err
+	}
 	m.projectResolutionVerificationsLocked(&page, account, tenant, opts, now)
 	m.projectRelatedWorkflowsLocked(&page, account, tenant, opts, operator, now)
 	if !opts.ReadinessOnly {

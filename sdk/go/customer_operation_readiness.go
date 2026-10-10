@@ -138,6 +138,23 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	if response.Subject != request.Subject || response.Workflow != request.Workflow || response.InstanceID != request.InstanceID || r.Transition.Operation != request.Operation || r.Transition.From != request.FromState || r.Transition.To != request.ToState {
 		return response, fmt.Errorf("faas: readiness response does not match proposed transition")
 	}
+	for _, requirement := range r.Transition.RequiredRetainedMilestones {
+		verified := false
+		for _, evidence := range r.RetainedMilestones {
+			if evidence.Requirement == requirement && evidence.Status == "verified" && evidence.Evidence != nil {
+				verified = true
+				break
+			}
+		}
+		if !verified {
+			return response, &CustomerOperationReadinessError{Response: response}
+		}
+	}
+	for _, evidence := range r.RetainedMilestones {
+		if evidence.Status != "verified" || evidence.Evidence == nil {
+			return response, &CustomerOperationReadinessError{Response: response}
+		}
+	}
 	if !r.Ready || !r.Declared || r.StateRevision != request.StateRevision || r.ContractVersion != request.ContractVersion || len(r.Reasons)+len(r.Blockers)+len(r.UnmetDependencies)+len(r.MissingMilestones)+len(r.MissingPolicies)+len(r.MissingDependencyWorkflows)+len(r.UnmetInvariants)+len(r.UnmetEffects) != 0 {
 		return response, &CustomerOperationReadinessError{Response: response}
 	}

@@ -148,6 +148,22 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 			out.Advisories = append(out.Advisories, "deadline_overdue")
 		}
 	}
+	for _, requirement := range out.Transition.RequiredRetainedMilestones {
+		result := api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "awaiting_verification"}
+		for _, evidence := range instance.RetainedMilestoneEvidence {
+			if evidence.Requirement == requirement && evidence.Status == "verified" && evidence.Evidence != nil {
+				result = evidence
+				break
+			}
+		}
+		out.RetainedMilestones = append(out.RetainedMilestones, result)
+	}
+	for _, evidence := range out.RetainedMilestones {
+		if evidence.Status != "verified" {
+			reason("retained_milestone_required")
+			break
+		}
+	}
 	planned := map[string]bool{}
 	for _, name := range req.Milestones {
 		planned[name] = true

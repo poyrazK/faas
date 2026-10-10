@@ -48,6 +48,8 @@ type OperationMilestonesResponse struct {
 // instance. Page-scoped facts and transition history follow their cursors;
 // retention summaries do not.
 type OperationWorkflowInstanceSnapshot struct {
+	// RetainedMilestoneEvidence is an internal, scoped readiness projection.
+	RetainedMilestoneEvidence   []OperationWorkflowRetainedMilestone      `json:"-"`
 	Bottlenecks                 *OperationWorkflowBottlenecks             `json:"bottlenecks,omitempty"`
 	ResolutionVerifications     []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
 	AwaitingVerificationCount   int64                                     `json:"awaiting_verification_count"`
@@ -72,14 +74,15 @@ type OperationWorkflowInstanceSnapshot struct {
 // OperationWorkflowInstanceTransition is an allowed edge from the selected
 // workflow contract, bound to the Operation that can report it.
 type OperationWorkflowInstanceTransition struct {
-	From                        string                                  `json:"from"`
-	To                          string                                  `json:"to"`
-	Operation                   string                                  `json:"operation"`
-	RequiredDependencyWorkflows *[]string                               `json:"required_dependency_workflows,omitempty"`
-	RequiredEffects             []OperationWorkflowEffectRequirement    `json:"required_effects,omitempty"`
-	RequiredInvariants          []OperationWorkflowInvariantRequirement `json:"required_invariants,omitempty"`
-	RequiredPolicies            []OperationWorkflowPolicyRequirement    `json:"required_policies,omitempty"`
-	RequiredMilestones          []string                                `json:"required_milestones,omitempty"`
+	RequiredRetainedMilestones  []OperationWorkflowRetainedMilestoneRequirement `json:"required_retained_milestones,omitempty"`
+	From                        string                                          `json:"from"`
+	To                          string                                          `json:"to"`
+	Operation                   string                                          `json:"operation"`
+	RequiredDependencyWorkflows *[]string                                       `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects             []OperationWorkflowEffectRequirement            `json:"required_effects,omitempty"`
+	RequiredInvariants          []OperationWorkflowInvariantRequirement         `json:"required_invariants,omitempty"`
+	RequiredPolicies            []OperationWorkflowPolicyRequirement            `json:"required_policies,omitempty"`
+	RequiredMilestones          []string                                        `json:"required_milestones,omitempty"`
 }
 
 // OperationWorkflowInstanceStep is one declared step with page-scoped and

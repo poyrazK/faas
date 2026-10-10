@@ -28202,6 +28202,98 @@ func (q *Queries) ListCustomerOperationJobExecutions(ctx context.Context, db DBT
 	return items, nil
 }
 
+const listCustomerOperationRetainedMilestonePrerequisites = `-- name: ListCustomerOperationRetainedMilestonePrerequisites :many
+SELECT DISTINCT ON (required.operation,required.milestone)
+ required.operation::text AS operation,required.milestone::text AS milestone,
+ m.id::text AS id,m.operation_id::text AS operation_id,m.occurred_at,m.created_at
+FROM jsonb_to_recordset($1::jsonb) AS required(operation text,milestone text)
+JOIN customer_operation_definitions d ON d.name=required.operation
+ AND d.account_id=$2::uuid AND d.app_id=$3::uuid
+ AND d.scope=$4::text AND d.spec->>'http_transaction_version'='1'
+JOIN customer_operations o ON o.definition_id=d.id AND o.account_id=d.account_id AND o.app_id=d.app_id
+ AND o.platform_tenant_id=$5::uuid
+JOIN customer_operation_milestones m ON m.operation_id=o.id AND m.name=required.milestone
+CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS declared(step)
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN declared.step->>'instance_id_from'='/' THEN ARRAY['']::text[]
+ ELSE ARRAY(SELECT replace(replace(pointer_token,'~1','/'),'~0','~')
+ FROM unnest(string_to_array(substr(declared.step->>'instance_id_from',2),'/')) AS parts(pointer_token))
+ END AS pointer_parts
+) AS selected_path
+WHERE o.record #>> '{subject,type}'=$6::text
+ AND o.record #>> '{subject,id}'=$7::text
+ AND declared.step->>'workflow'=$8::text
+ AND declared.step->>'milestone'=required.milestone
+ AND GREATEST(COALESCE(NULLIF(declared.step->>'version','')::integer,1),1)=$9::integer
+ AND COALESCE(declared.step->>'instance_id_from','')<>''
+ AND m.payload #>> selected_path.pointer_parts=$10::text
+ AND m.created_at<=$11::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>$11::timestamptz)
+ORDER BY required.operation,required.milestone,m.created_at DESC,m.operation_id DESC,m.id DESC
+`
+
+type ListCustomerOperationRetainedMilestonePrerequisitesParams struct {
+	Requirements    []byte
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Scope           string
+	TenantID        pgtype.UUID
+	SubjectType     string
+	SubjectID       string
+	WorkflowName    string
+	ContractVersion int32
+	InstanceID      string
+	Now             pgtype.Timestamptz
+}
+
+type ListCustomerOperationRetainedMilestonePrerequisitesRow struct {
+	Operation   string
+	Milestone   string
+	ID          string
+	OperationID string
+	OccurredAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerOperationRetainedMilestonePrerequisites(ctx context.Context, db DBTX, arg ListCustomerOperationRetainedMilestonePrerequisitesParams) ([]ListCustomerOperationRetainedMilestonePrerequisitesRow, error) {
+	rows, err := db.Query(ctx, listCustomerOperationRetainedMilestonePrerequisites,
+		arg.Requirements,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.TenantID,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.WorkflowName,
+		arg.ContractVersion,
+		arg.InstanceID,
+		arg.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerOperationRetainedMilestonePrerequisitesRow{}
+	for rows.Next() {
+		var i ListCustomerOperationRetainedMilestonePrerequisitesRow
+		if err := rows.Scan(
+			&i.Operation,
+			&i.Milestone,
+			&i.ID,
+			&i.OperationID,
+			&i.OccurredAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerOperationWorkflowAttention = `-- name: ListCustomerOperationWorkflowAttention :many
 SELECT json_build_object(
  'app_id',s.app_id,'scope',s.scope,'platform_tenant_id',s.platform_tenant_id,

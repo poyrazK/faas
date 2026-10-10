@@ -2102,6 +2102,9 @@ from .operation_workflow_related_instance import OperationWorkflowRelatedInstanc
 from .operation_workflow_related_instance_status import OperationWorkflowRelatedInstanceStatus
 from .operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 from .operation_workflow_resolution_verification_status import OperationWorkflowResolutionVerificationStatus
+from .operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
+from .operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
+from .operation_workflow_retained_milestone_status import OperationWorkflowRetainedMilestoneStatus
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_duration import OperationWorkflowStateDuration
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
@@ -5514,6 +5517,9 @@ __all__ = (
     "OperationWorkflowRelatedInstanceStatus",
     "OperationWorkflowResolutionVerification",
     "OperationWorkflowResolutionVerificationStatus",
+    "OperationWorkflowRetainedMilestone",
+    "OperationWorkflowRetainedMilestoneRequirement",
+    "OperationWorkflowRetainedMilestoneStatus",
     "OperationWorkflowState",
     "OperationWorkflowStateDuration",
     "OperationWorkflowStateHistoryEntry",

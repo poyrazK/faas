@@ -234,3 +234,27 @@ not that the business event never occurred. Readiness remains observational:
 even a ready result requires the application to check its business row and
 authorization before committing. Contract/revision mismatches require a refreshed
 snapshot rather than automatic retries or state changes.
+
+### Retained milestone prerequisites
+
+An edge may pin up to 16 `required_retained_milestones` operation/milestone pairs.
+Source manifests use `requires_retained_milestones`, validate each pair against a
+transaction-backed workflow step, and require an explicit target operation.
+Canonical ordering and duplicate rejection participate in immutable contract
+identity; applications raise the workflow version when requirements change.
+
+Readiness projects exact retained evidence in the same account/app/tenant/scope,
+subject, workflow instance, contract version, source operation and milestone.
+Memory and Postgres use the same publication-time ordering and retention clock;
+Postgres batches at most 32 distinct pairs in one SQLC query. Account views without
+an explicit or reported-state tenant cannot combine another tenant's proof.
+Only declared matching facts published by the evaluation clock count, independent
+of milestone/history pagination. Results are `verified` with an evidence reference
+or `awaiting_verification`, which denies readiness through
+`retained_milestone_required`. Planned evidence never satisfies these rules.
+
+Verified means retained application-reported evidence, not external provider
+attestation. Missing facts do not prove nonoccurrence; expired or different-version
+facts remain unverified. The API, action preview, dashboard, CLI and SDK guards
+surface the same result. Application reporting remains authoritative and no
+transition, notification, or lifecycle action is executed by this projection.

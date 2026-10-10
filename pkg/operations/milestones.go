@@ -75,6 +75,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	workflowTransitions := make(map[string][]api.OperationWorkflowTransition)
 	workflowTransitionsDeclared := make(map[string]bool)
 	workflowVersions := make(map[string]int)
+	workflowRetainedRequirements := make(map[string]map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
 	for i := range spec.WorkflowSteps {
 		if spec.WorkflowSteps[i].Version < 0 || spec.WorkflowSteps[i].Version > api.OperationWorkflowContractVersionMax {
 			return fmt.Errorf("operation workflow contract version is invalid")
@@ -160,6 +161,11 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			return fmt.Errorf("operation workflow transition list exceeds its limit")
 		}
 		for j := range transitions {
+			retained, err := api.CanonicalOperationWorkflowRetainedMilestones(transitions[j].RequiredRetainedMilestones)
+			if err != nil {
+				return err
+			}
+			transitions[j].RequiredRetainedMilestones = retained
 			if transitions[j].RequiredDependencyWorkflows != nil {
 				workflows := append([]string{}, (*transitions[j].RequiredDependencyWorkflows)...)
 				if len(workflows) > 16 {
@@ -255,6 +261,29 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		spec.WorkflowSteps[i].Transitions = transitions
 	}
 	for _, step := range spec.WorkflowSteps {
+		if workflowRetainedRequirements[step.Workflow] == nil {
+			workflowRetainedRequirements[step.Workflow] = make(map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
+		}
+		for _, edge := range step.Transitions {
+			for _, requirement := range edge.RequiredRetainedMilestones {
+				workflowRetainedRequirements[step.Workflow][requirement] = true
+				if len(workflowRetainedRequirements[step.Workflow]) > api.OperationWorkflowRetainedMilestoneLookupMax {
+					return fmt.Errorf("workflow retained milestone prerequisites exceed lookup limit")
+				}
+				if requirement.Operation == spec.Name {
+					bound := false
+					for _, source := range spec.WorkflowSteps {
+						if source.Workflow == step.Workflow && source.Milestone == requirement.Milestone {
+							bound = true
+							break
+						}
+					}
+					if !bound {
+						return fmt.Errorf("retained milestone prerequisite must reference a declared workflow step")
+					}
+				}
+			}
+		}
 		if !operationName.MatchString(step.Workflow) || len(step.Title) == 0 || len(step.Title) > api.OperationWorkflowTitleMaxBytes ||
 			!utf8.ValidString(step.Title) || strings.TrimSpace(step.Title) != step.Title || strings.ContainsAny(step.Title, "\x00\r\n\t") ||
 			!operationName.MatchString(step.Step) || len(step.Label) == 0 || len(step.Label) > api.OperationWorkflowLabelMaxBytes ||
@@ -377,7 +406,7 @@ func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool
 		return false
 	}
 	for i := range left {
-		if !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
+		if !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
 			return false
 		}
 		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {
