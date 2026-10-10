@@ -88,7 +88,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 			h.DumpLogs(t)
 		}
 	})
-	d := &safeReleaseDrill{t: t, h: h, store: state.NewPgStore(pool), key: h.SeedAccount(context.Background(), api.PlanPro)}
+	d := &safeReleaseDrill{t: t, h: h, store: state.NewPgStore(pool), key: h.SeedAccount(context.Background(), api.PlanHobby)}
 	d.waitLease(true, 2*time.Minute)
 
 	t.Run("flag-free release of a live app gets the safe default", func(t *testing.T) {

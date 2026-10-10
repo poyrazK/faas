@@ -77,6 +77,20 @@ immediate cutover, keeps the rollback opt-in (evaluated by apid from request
 telemetry per ADR-625, independent of meterd), and logs the fallback. A
 default must never fail a deploy that would have succeeded without it.
 
+### Dependency on the hosting smoke verifier
+
+imaged requires the post-readiness public hosting smoke for every canary
+deployment (`smokeRequired` in `pkg/imaged/handler.go`). Production compute
+nodes configure it through the `compute_only_service` drop-in
+(`FAAS_API_HOSTING_SMOKE_URL`, `FAAS_API_HOSTING_SMOKE_REQUIRED=1`). An
+installation without that verifier — a single-box or development host —
+fails every canary deployment with `public hosting smoke verifier is
+required but not configured`, so the default would turn flag-free deploys
+into failures there. Such hosts must either configure
+`FAAS_API_HOSTING_SMOKE_URL` on imaged or set
+`FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid. The safe-release metal
+drill found this and runs with the verifier wired, as production does.
+
 ### Bounded low-traffic hold
 
 `api.CanaryLowTrafficMaxHold` (5 minutes) bounds a hold that exists only

@@ -103,6 +103,9 @@ type Harness struct {
 	// schedd verifies with. imaged must sign with this exact key; see
 	// writeScheddSignPub.
 	SignKeyPath string
+	// signPubPath is the public half written by ensureSignPub. apid gets it
+	// too, so its rollback precheck verifies the same signatures schedd does.
+	signPubPath string
 	// GatewayURL addresses gatewayd-internal directly. Prefer EdgeURL for a
 	// customer-shaped request; reach for this only when a test is
 	// deliberately bypassing the public hop.
@@ -238,6 +241,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
 	if which&APID != 0 {
+		if which&Schedd != 0 {
+			h.ensureSignPub(t)
+		}
 		startAPID(t, h, bin, dbURL, extraEnv...)
 	}
 
@@ -298,7 +304,7 @@ kernel_path = %q
 		sockPath := h.ScheddSock
 		vmmdSock := h.VMMDSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
-		signPubPath := writeScheddSignPub(t, h)
+		signPubPath := h.ensureSignPub(t)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
@@ -799,7 +805,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		h.ScheddSock = sockPath
 		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
-		signPubPath := writeScheddSignPub(t, h)
+		signPubPath := h.ensureSignPub(t)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
@@ -888,6 +894,9 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
+	if h.signPubPath != "" {
+		env = append(env, "FAAS_SIGN_PUB="+h.signPubPath)
+	}
 	env = append(env, extraEnv...)
 	for _, entry := range extraEnv {
 		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_NODE_NAME="); ok && nodeName != "" {
@@ -1513,6 +1522,15 @@ func writeScheddSignPub(t *testing.T, h *Harness) string {
 	}
 	h.SignKeyPath = privPath
 	return pubPath
+}
+
+// ensureSignPub writes the harness keypair once and returns the public half.
+func (h *Harness) ensureSignPub(t *testing.T) string {
+	t.Helper()
+	if h.signPubPath == "" {
+		h.signPubPath = writeScheddSignPub(t, h)
+	}
+	return h.signPubPath
 }
 
 // startMeterd boots meterd against the test's schedd unix socket. The

@@ -136,6 +136,11 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
   increases. Send a single candidate 5xx in a fresh rollout and confirm it
   keeps holding instead.
+- **Smoke verifier prerequisite (ADR-911):** confirm imaged has
+  `FAAS_API_HOSTING_SMOKE_URL` before relying on the default. Without it every
+  canary deployment, including a defaulted one, fails with
+  `public hosting smoke verifier is required but not configured`; on such a
+  host set `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid.
 - **Crash loop (ADR-911):** deploy a candidate whose liveness endpoint fails
   after startup, on an app with almost no traffic. Confirm the rollout aborts
   after two liveness restarts without waiting for request samples, the exact
