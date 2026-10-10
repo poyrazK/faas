@@ -18,6 +18,7 @@ also covers the crash-loop gate added to ADR-911.
 | Branch | `feat/safe-releases-by-default` |
 | Signals | real apid, meterd canary progression, schedd, vmmd, gatewayd-internal; breaker PromQL answered from schedd's and the gateway's real `/metrics` |
 | Verdict | **PASS** — all six drills after the rollback fix (finding 1) |
+| Final full run | run 10 at `ab57a4b03`: `TestSafeReleaseDrillMetal` PASS in 940 s (default 71 s, low-traffic advance 350 s + rollback recovery 8.7 s, bad release 111 s, crash loop 127 s, worker fallback 108 s) |
 
 | Drill | Result | Evidence |
 |---|---|---|
