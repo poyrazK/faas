@@ -438,9 +438,10 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 	for _, action := range []string{"commit", "reuse"} {
 		t.Run(action, func(t *testing.T) {
-			f := newWorkflowUploadFixture(t, "postgres", 3*time.Second)
+			f := newWorkflowUploadFixture(t, "postgres", 30*time.Second)
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
-				ctx := t.Context()
+				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+				defer cancel()
 				a := state.OperationWorkflowAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.instanceID, RunID: proof.RunID, StepName: proof.StepName, Generation: proof.Generation, Attempt: proof.Attempt, Capability: proof.Capability}
 				store := f.store.(state.OperationWorkflowArtifactStore)
 				declaration := operations.WorkflowUploadArtifactDeclaration(f.op.ID, a.RunID, a.StepName, directJobDeclaration())
@@ -474,7 +475,10 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 				completed := make(chan error, 1)
+				var workers sync.WaitGroup
+				workers.Add(1)
 				go func() {
+					defer workers.Done()
 					var err error
 					if action == "reuse" {
 						_, err = store.ReuseWorkflowOperationArtifact(ctx, f.op.ID, a, declaration)
@@ -483,18 +487,35 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 					}
 					completed <- err
 				}()
-				// Control uses the same run lock. Its blocked read proves the file
-				// transaction has entered the native authority window before expiry.
-				controls := f.store.(state.OperationWorkflowControlStore)
-				for {
-					probe, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-					_, err := controls.WorkflowOperationExecutionControl(probe, f.op.ID, a)
+				defer func() {
 					cancel()
-					if errors.Is(err, context.DeadlineExceeded) {
+					cleanup, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+					defer cleanupCancel()
+					_ = lock.Rollback(cleanup)
+					workers.Wait()
+				}()
+				// Observe the actual blob-lock wait. A short control-query timeout
+				// can also mean a slow connection or query, before the file transaction
+				// has acquired the run lock. The setup budget does not change the
+				// assertion: release this lock only after the fixed deadline expires.
+				for {
+					var blocked bool
+					if err := f.pool.QueryRow(ctx, `SELECT EXISTS (
+						SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+						AND $1::integer=ANY(pg_blocking_pids(pid))
+						AND query LIKE '%LockCustomerOperationBlob%'
+					)`, int32(lock.Conn().PgConn().PID())).Scan(&blocked); err != nil {
+						t.Fatal(err)
+					}
+					if blocked {
 						break
 					}
-					if err != nil || !time.Now().Before(control.DeadlineAt) {
+					select {
+					case err := <-completed:
 						t.Fatal("file transaction did not wait on the blob lock", err)
+					case <-ctx.Done():
+						t.Fatal("file transaction did not reach the blob lock", ctx.Err())
+					case <-time.After(5 * time.Millisecond):
 					}
 				}
 				if remaining := time.Until(control.DeadlineAt); remaining > 0 {
