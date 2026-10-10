@@ -1,13 +1,13 @@
 -- ADR-568: immutable capture evidence, separate from serving snapshots.
 -- +goose Up
-CREATE TABLE environment_qualification_snapshot_receipts (
+CREATE TABLE IF NOT EXISTS environment_qualification_snapshot_receipts (
  instance_id uuid PRIMARY KEY REFERENCES environment_qualification_executions(instance_id),
  snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
  inputs jsonb NOT NULL CHECK(jsonb_typeof(inputs)='object'),
  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_snapshot_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_snapshot_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE e environment_qualification_executions%ROWTYPE; q environment_workload_qualification_requests%ROWTYPE;
  capture uuid; native uuid; kernel uuid; mem text;
 BEGIN
@@ -41,12 +41,13 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS environment_qualification_snapshot_receipt_guard ON environment_qualification_snapshot_receipts;
 CREATE TRIGGER environment_qualification_snapshot_receipt_guard BEFORE INSERT OR UPDATE OR DELETE ON environment_qualification_snapshot_receipts
 FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_snapshot_receipt();
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_capture_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_capture_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE capture jsonb;
 BEGIN
  IF NEW.retired_at IS NOT NULL AND OLD.retired_at IS NULL THEN
@@ -59,6 +60,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS environment_qualification_capture_retirement_guard ON environment_qualification_executions;
 CREATE TRIGGER environment_qualification_capture_retirement_guard BEFORE UPDATE ON environment_qualification_executions
 FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_capture_retirement();
 -- +goose StatementEnd

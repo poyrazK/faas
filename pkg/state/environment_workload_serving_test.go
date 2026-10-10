@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -370,7 +371,7 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 	store.environmentWorkloadServingReceipts[graphID] = EnvironmentWorkloadServingReceipt{GraphID: graphID, ReleaseSetID: releaseID,
 		ExpectedQueueConsumers: consumers, Acknowledgements: map[int64][]string{}}
 	store.mu.Unlock()
-	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(t.Context(), invocationID, 1, uuid.NewString(), nil); err != ErrNotFound {
+	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(t.Context(), invocationID, 1, uuid.NewString(), nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("stale attempt completion error = %v, want ErrNotFound", err)
 	}
 	current, err := store.InvocationByID(t.Context(), invocationID)

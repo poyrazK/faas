@@ -77,14 +77,15 @@ func (v *JailerVMM) nativeQualificationRestoreHandlers(ctx context.Context, leas
 	}
 
 	v.mu.Lock()
-	registered := make(map[uint32]nativeQualificationRestoreStreamHandler, len(nativeRestoreChannelPorts()))
-	for _, port := range nativeRestoreChannelPorts() {
+	ports := nativeRestoreChannelPorts()
+	registered := make(map[uint32]nativeQualificationRestoreStreamHandler, len(ports))
+	for _, port := range ports {
 		if handler := v.nativeQualificationRestoreStreamHandlers[port]; handler != nil {
 			registered[port] = handler
 		}
 	}
 	v.mu.Unlock()
-	if len(registered) != len(nativeRestoreChannelPorts()) {
+	if len(registered) != len(ports) {
 		return nil, errors.New("native restore channels: all registered platform handlers are required")
 	}
 

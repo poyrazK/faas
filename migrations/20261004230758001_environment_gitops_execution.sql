@@ -1,9 +1,9 @@
 -- GitOps execution adapters preserve reviewed identity and held candidates.
 -- +goose Up
-ALTER TABLE app_environment_workload_intents DROP CONSTRAINT environment_workload_source_revision_shape;
+ALTER TABLE app_environment_workload_intents DROP CONSTRAINT IF EXISTS environment_workload_source_revision_shape;
 ALTER TABLE app_environment_workload_intents ADD CONSTRAINT environment_workload_source_revision_shape CHECK(
  source_revision IS NULL OR (source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$' AND source IS NOT NULL AND source->>'kind' IN ('source','dockerfile','function')));
-ALTER TABLE app_environment_workload_intents ADD COLUMN service_bindings jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(service_bindings)='object');
+ALTER TABLE app_environment_workload_intents ADD COLUMN IF NOT EXISTS service_bindings jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(service_bindings)='object');
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.guard_environment_workload_candidate() RETURNS trigger
     LANGUAGE plpgsql
@@ -173,7 +173,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_service_binding_env_key() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_service_binding_env_key() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE row_value jsonb; src environment_git_sources%ROWTYPE;
 BEGIN
  IF TG_OP='DELETE' THEN row_value:=to_jsonb(OLD); ELSE row_value:=to_jsonb(NEW); END IF;
@@ -188,8 +188,10 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
+DROP TRIGGER IF EXISTS environment_service_binding_variable_key ON app_envs;
 CREATE TRIGGER environment_service_binding_variable_key BEFORE INSERT OR UPDATE OR DELETE ON app_envs
 FOR EACH ROW EXECUTE FUNCTION guard_environment_service_binding_env_key();
+DROP TRIGGER IF EXISTS environment_service_binding_secret_key ON app_environment_secret_refs;
 CREATE TRIGGER environment_service_binding_secret_key BEFORE INSERT OR UPDATE OR DELETE ON app_environment_secret_refs
 FOR EACH ROW EXECUTE FUNCTION guard_environment_service_binding_env_key();
 -- +goose StatementEnd

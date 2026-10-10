@@ -84,8 +84,8 @@ func (v *heldStartRecordingJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpe
 		GuestUID: 20026, StartHeld: spec.StartHeld}, nil
 }
 
-func (v *heldStartRecordingJobVMM) ReleaseJobStart(_ context.Context, spec JobStartSpec) error {
-	instance, err := v.store.InstanceByID(context.Background(), spec.InstanceID)
+func (v *heldStartRecordingJobVMM) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
+	instance, err := v.store.InstanceByID(ctx, spec.InstanceID)
 	if err != nil || !v.spec.StartHeld || spec.InstanceID != v.spec.InstanceID || spec.NodeID != v.spec.NodeID ||
 		instance.State != string(state.StateRunning) || instance.Netns == "" || instance.HostIP == "" || instance.GuestUID == 0 {
 		return errors.Join(err, errors.New("start gate released before runtime identity was published"))

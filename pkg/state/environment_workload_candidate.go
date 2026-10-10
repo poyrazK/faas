@@ -169,7 +169,7 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 		return nil, fmt.Errorf("%w: invalid frozen scoped service bindings", err)
 	}
 	if err := validateEnvironmentQueueBindings(frozen, frozen.QueueBindings); err != nil {
-		return nil, fmt.Errorf("%w: invalid frozen scoped queue bindings: %v", ErrInvalidArgument, err)
+		return nil, fmt.Errorf("%w: invalid frozen scoped queue bindings: %w", ErrInvalidArgument, err)
 	}
 	if frozen.Source != nil && frozen.Source.Kind == "function" && (frozen.AppType != AppTypeFunction || frozen.RuntimeBase != frozen.Source.Runtime) {
 		return nil, fmt.Errorf("%w: frozen function runner differs from source", ErrInvalidArgument)
@@ -272,15 +272,18 @@ func validateEnvironmentQueueBindings(frozen EnvironmentWorkloadRuntime, binding
 			return fmt.Errorf("%w: queue %q has an incomplete frozen contract", ErrInvalidArgument, name)
 		}
 		row, err := decodeGitOpsQueue("queue_bindings/"+name, mustGitOpsJSON(binding), frozen.EnvironmentID, frozen.Scope, frozen.AppID, "")
-		if err != nil || row.Name != name {
-			return fmt.Errorf("%w: queue %q contract cannot be decoded: %v", ErrInvalidArgument, name, err)
+		if err != nil {
+			return fmt.Errorf("%w: queue %q contract cannot be decoded: %w", ErrInvalidArgument, name, err)
+		}
+		if row.Name != name {
+			return fmt.Errorf("%w: queue %q contract has the wrong name", ErrInvalidArgument, name)
 		}
 		if err := validateQueueBindingConsumer(row, frozen.AppType, frozen.WorkloadClass); err != nil {
-			return fmt.Errorf("%w: queue %q is incompatible with the frozen workload: %v", ErrInvalidArgument, name, err)
+			return fmt.Errorf("%w: queue %q is incompatible with the frozen workload: %w", ErrInvalidArgument, name, err)
 		}
 		canonical, err := canonicalGitOpsValue(mustGitOpsJSON(gitOpsQueueContract(row)))
 		if err != nil {
-			return fmt.Errorf("%w: queue %q contract cannot be normalized: %v", ErrInvalidArgument, name, err)
+			return fmt.Errorf("%w: queue %q contract cannot be normalized: %w", ErrInvalidArgument, name, err)
 		}
 		frozenContract, err := canonicalGitOpsValue(mustGitOpsJSON(binding))
 		if err != nil || !bytes.Equal(canonical, frozenContract) {

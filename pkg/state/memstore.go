@@ -13321,7 +13321,7 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 		queueServingAck.AppID = inv.AppID
 		queueServingAck.Scope = inv.DeploymentScope
 		queueServingAck.BindingID = inv.QueueBindingID
-		if err := m.recordEnvironmentGitOpsQueueServingAcknowledgementLocked(*queueServingAck); err != nil && err != ErrConflict {
+		if err := m.recordEnvironmentGitOpsQueueServingAcknowledgementLocked(*queueServingAck); err != nil && !errors.Is(err, ErrConflict) {
 			return err
 		}
 	}

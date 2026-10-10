@@ -132,14 +132,15 @@ func (m *MemStore) RetireEnvironmentQualificationExecution(ctx context.Context, 
 		}
 		return nil
 	}
-	if proof.Kind == QualificationNativeRetired {
+	switch proof.Kind {
+	case QualificationNativeRetired:
 		for id, prior := range m.qualificationExecutions {
 			if id != execution.InstanceID && prior.Retirement != nil && prior.Retirement.Kind == QualificationNativeRetired &&
 				(prior.Retirement.ReceiptID == proof.ReceiptID || prior.Execution.NodeID == execution.NodeID && prior.Retirement.KernelBootID == proof.KernelBootID && prior.Retirement.NativeGeneration == proof.NativeGeneration) {
 				return ErrConflict
 			}
 		}
-	} else if proof.Kind == QualificationNativeEffectsAbsent {
+	case QualificationNativeEffectsAbsent:
 		for id, prior := range m.qualificationExecutions {
 			if id != execution.InstanceID && prior.Retirement != nil && prior.Retirement.Kind == QualificationNativeEffectsAbsent &&
 				prior.Retirement.ReceiptID == proof.ReceiptID {

@@ -240,7 +240,7 @@ func validQualificationSmokePath(path string) bool {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(path)
-	return err == nil && parsed.IsAbs() == false && parsed.Host == "" && parsed.RawQuery == "" && parsed.Fragment == ""
+	return err == nil && !parsed.IsAbs() && parsed.Host == "" && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 // ValidateFor ensures the smoke result is for this exact restored workload

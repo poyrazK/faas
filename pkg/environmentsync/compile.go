@@ -177,7 +177,7 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 			binding.Mode = "pull"
 		}
 		if binding.Mode != "pull" && binding.Mode != "push" || binding.WorkloadClass != "worker" && binding.WorkloadClass != "job" &&
-			!(binding.WorkloadClass == "http" && functionSource && binding.Mode == "push") {
+			(binding.WorkloadClass != "http" || !functionSource || binding.Mode != "push") {
 			return nil, fmt.Errorf("queue binding %q needs worker/job or push-only HTTP-function workload_class", key)
 		}
 		if binding.MaxConcurrency == 0 {
@@ -208,7 +208,7 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		binding, exists := w.QueueBindings[key]
 		httpFunction := binding.WorkloadClass == "http" && functionSource
 		worker := binding.WorkloadClass == "worker" && (binding.Mode == "push" || binding.Mode == "pull")
-		if !api.ValidQueueBindingName(key) || !exists || !worker && !(binding.Mode == "push" && httpFunction) ||
+		if !api.ValidQueueBindingName(key) || !exists || !worker && (binding.Mode != "push" || !httpFunction) ||
 			binding.Enabled == nil || !*binding.Enabled {
 			return nil, fmt.Errorf("queue smoke %q requires an enabled worker or HTTP-function push binding", key)
 		}

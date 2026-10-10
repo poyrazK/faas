@@ -242,11 +242,11 @@ func TestEnvironmentQualificationGraphDispatchRunsJobBeforeServiceRuntimes(t *te
 			var err error
 			jobReceipt, err = store.EnvironmentQualificationJobSmokeReceipt(ctx, jobRequest.ID, jobRequest.Attempt+1)
 			if err != nil || jobReceipt.GraphID != jobRequest.GraphID || jobReceipt.InstanceID == "" || jobReceipt.Resource != jobRequest.Resource {
-				return fmt.Errorf("service runtime started without a matching retired job receipt: receipt=%+v err=%v", jobReceipt, err)
+				return errors.Join(fmt.Errorf("service runtime started without a matching retired job receipt: receipt=%+v", jobReceipt), err)
 			}
 			jobInstance, err := store.InstanceByID(ctx, jobReceipt.InstanceID)
 			if err != nil || jobInstance.State != string(state.StateStopped) {
-				return fmt.Errorf("service runtime started before the job instance retired: instance=%+v err=%v", jobInstance, err)
+				return errors.Join(fmt.Errorf("service runtime started before the job instance retired: instance=%+v", jobInstance), err)
 			}
 			return nil
 		})

@@ -49,8 +49,8 @@ func environmentGitOpsScheduledJobsReadyTx(ctx context.Context, tx sqlc.DBTX, gr
 			jobQuery += ` FOR UPDATE`
 		}
 		job, err := scanJob(tx.QueryRow(ctx, jobQuery, member.JobID))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+		if errors.Is(err, ErrNotFound) {
+			return false, nil //nolint:nilerr // A missing job leaves the graph unready without a database failure.
 		}
 		if err != nil {
 			return false, mapErr(err)
@@ -58,7 +58,7 @@ func environmentGitOpsScheduledJobsReadyTx(ctx context.Context, tx sqlc.DBTX, gr
 		if json.Unmarshal(sourceRaw, &intent.Source) != nil || json.Unmarshal(scheduleRaw, &intent.Schedule) != nil ||
 			json.Unmarshal(serviceBindingsRaw, &intent.ServiceBindings) != nil || json.Unmarshal(variablesRaw, &intent.Variables) != nil ||
 			!environmentGitOpsScheduledJobMatches(graph, member, intent, job, status) {
-			return false, nil
+			return false, nil //nolint:nilerr // Invalid frozen intent makes the graph unready; it is not a database failure.
 		}
 	}
 	return true, nil
