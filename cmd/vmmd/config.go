@@ -585,11 +585,6 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_VMMD_TARGET_URL"); v != "" {
 		c.ComputeNode.TargetURL = v
 	}
-	// A shared test host may carry a resource journal written by a newer
-	// vmmd; an isolated run points its own vmmd at a private journal.
-	if v := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_DIR"); v != "" {
-		c.ResourceJournalDir = v
-	}
 	// Mega-PR-B (issue #911 / ADR-110 Tier-1 BLOCKING Commit 1):
 	// env-var overlay for [compute_node].host_bridge_cidr so the
 	// per-host bridge CIDR is configurable without a TOML edit
