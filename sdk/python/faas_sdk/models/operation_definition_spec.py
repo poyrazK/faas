@@ -19,6 +19,10 @@ from ..models.operation_definition_spec_recovery import (
     OperationDefinitionSpecRecovery,
     check_operation_definition_spec_recovery,
 )
+from ..models.operation_definition_spec_transaction_receipt import (
+    OperationDefinitionSpecTransactionReceipt,
+    check_operation_definition_spec_transaction_receipt,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -32,8 +36,9 @@ T = TypeVar("T", bound="OperationDefinitionSpec")
 
 @_attrs_define
 class OperationDefinitionSpec:
-    """Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication, never input fields.
-    Production admission stays disabled until the HTTP execution adapter is qualified.
+    """Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment. Workflow
+    definitions require POST ingress, reconciliation recovery and stages matching the steps. Ownership comes from
+    verified authentication. Production admission remains disabled pending qualification.
 
     """
 
@@ -54,6 +59,16 @@ class OperationDefinitionSpec:
     subject: OperationSubjectSpec | Unset = UNSET
     """Optional public business reference extracted once from validated input on new admission. This metadata does
     not authorize access to the business entity."""
+    job: str | Unset = UNSET
+    """Optional account-owned active batch Job. POST ingress and reconciliation recovery only; one task per
+    generation. Input, image, command, environment and execution policy are frozen at admission. Mutually exclusive
+    with workflow and transaction_receipt."""
+    workflow: str | Unset = UNSET
+    """Optional named workflow captured from this immutable deployment; path becomes its submission route."""
+    transaction_receipt: OperationDefinitionSpecTransactionReceipt | Unset = UNSET
+    """Explicit HTTP/PostgreSQL receipt adapter; requires reconciliation recovery. Business writes and the saved
+    result commit in the customer database. Approved recovery replays a committed result without calling business
+    code. This does not certify external effects or platform completion."""
     completion_webhook_id: UUID | Unset = UNSET
     recovery: OperationDefinitionSpecRecovery | Unset = "reconcile_on_unknown"
     http_transaction_version: OperationDefinitionSpecHttpTransactionVersion | Unset = UNSET
@@ -90,6 +105,14 @@ class OperationDefinitionSpec:
         if not isinstance(self.subject, Unset):
             subject = self.subject.to_dict()
 
+        job = self.job
+
+        workflow = self.workflow
+
+        transaction_receipt: str | Unset = UNSET
+        if not isinstance(self.transaction_receipt, Unset):
+            transaction_receipt = self.transaction_receipt
+
         completion_webhook_id: str | Unset = UNSET
         if not isinstance(self.completion_webhook_id, Unset):
             completion_webhook_id = str(self.completion_webhook_id)
@@ -121,6 +144,12 @@ class OperationDefinitionSpec:
             field_dict["workflow_steps"] = workflow_steps
         if subject is not UNSET:
             field_dict["subject"] = subject
+        if job is not UNSET:
+            field_dict["job"] = job
+        if workflow is not UNSET:
+            field_dict["workflow"] = workflow
+        if transaction_receipt is not UNSET:
+            field_dict["transaction_receipt"] = transaction_receipt
         if completion_webhook_id is not UNSET:
             field_dict["completion_webhook_id"] = completion_webhook_id
         if recovery is not UNSET:
@@ -174,6 +203,17 @@ class OperationDefinitionSpec:
         else:
             subject = OperationSubjectSpec.from_dict(_subject)
 
+        job = d.pop("job", UNSET)
+
+        workflow = d.pop("workflow", UNSET)
+
+        _transaction_receipt = d.pop("transaction_receipt", UNSET)
+        transaction_receipt: OperationDefinitionSpecTransactionReceipt | Unset
+        if isinstance(_transaction_receipt, Unset):
+            transaction_receipt = UNSET
+        else:
+            transaction_receipt = check_operation_definition_spec_transaction_receipt(_transaction_receipt)
+
         _completion_webhook_id = d.pop("completion_webhook_id", UNSET)
         completion_webhook_id: UUID | Unset
         if isinstance(_completion_webhook_id, Unset):
@@ -208,6 +248,9 @@ class OperationDefinitionSpec:
             milestones=milestones,
             workflow_steps=workflow_steps,
             subject=subject,
+            job=job,
+            workflow=workflow,
+            transaction_receipt=transaction_receipt,
             completion_webhook_id=completion_webhook_id,
             recovery=recovery,
             http_transaction_version=http_transaction_version,

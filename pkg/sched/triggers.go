@@ -53,10 +53,14 @@ const (
 	TriggerCronManual = "cron.manual"
 
 	// TriggerMeterd — legacy Engine.Wake path. No current caller
-	// dials it; stamped defensively for backwards compatibility
-	// with the engine.go:1050 comment ("legacy fast path used by
-	// meterd's per-minute sampler + cron firings").
+	// stamps it; it remains so historical wake events still decode.
 	TriggerMeterd = "meterd"
+
+	// TriggerInvocation — the invocation drain waking an app to deliver
+	// queued work: async invoke, managed operations, workflow steps and
+	// delayed tasks. It used to stamp TriggerMeterd, so customers saw an
+	// internal daemon name as the cause in `gregale wake-timeline` (H8-21).
+	TriggerInvocation = "invocation"
 
 	// TriggerMirror — best-effort asynchronous preview/mirror admission.
 	TriggerMirror = "mirror"

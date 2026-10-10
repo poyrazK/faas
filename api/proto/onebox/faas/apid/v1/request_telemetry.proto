@@ -35,6 +35,9 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;a
 // so the gateway can update its in-process counters (shipped /
 // rate_limited / db_error).
 service RequestTelemetry {
+  // Durable delivery coverage, including idle and disabled gateways.
+  rpc RecordTelemetryCoverage(TelemetryCoverage) returns (TelemetryCoverageReceipt);
+
   // IncrementRequestTelemetry streams collapsed telemetry rows
   // from the gateway edge to apid's writer path. The server
   // commits each record inside its own transaction (per-record
@@ -299,3 +302,26 @@ message IncrementRequestTelemetryResponse {
   // apid enforces the actual rate cap).
   int64 retry_after_ms = 2;
 }
+
+// Only trusted gateways publish coverage; customer APIs cannot attest it.
+message TelemetryCoverage {
+  string node_name = 1;
+  string boot_id = 2;
+  int64 sequence = 3;
+  bool enabled = 4;
+  int32 sampling_basis_points = 5;
+  int64 dropped_total = 6;
+  int32 pending_count = 7;
+  int64 source_at_unix_ms = 8;
+  // Older publishers retain conservative fleet-wide delivery accounting.
+  bool app_scoped = 9;
+  int64 unattributed_dropped_total = 10;
+  // Complete pending snapshot and unacknowledged loss deltas. Commit is atomic.
+  repeated TelemetryAppGap app_gaps = 11;
+}
+message TelemetryAppGap {
+  string app_id = 1;
+  int64 dropped_count = 2;
+  int32 pending_count = 3;
+}
+message TelemetryCoverageReceipt { bool recorded = 1; }

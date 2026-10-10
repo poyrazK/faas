@@ -127,6 +127,13 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 	})
 }
 
+func TestPgWorkflowOutboundAttemptRejectsInt32OverflowBeforeQuery(t *testing.T) {
+	store := &PgStore{}
+	if _, err := store.GetWorkflowOutboundAttempt(context.Background(), "not-a-uuid", "send", 1<<31); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("out-of-range attempt error = %v", err)
+	}
+}
+
 func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		ctx := context.Background()

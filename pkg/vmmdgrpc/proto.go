@@ -355,6 +355,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
+		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -516,6 +517,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
+		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),

@@ -367,11 +367,11 @@ RNG_ADDON_ZIG_VERSION := 0.16.0
 RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
 
 .PHONY: rng-addon rng-addon-check
-rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-680; needs zig $(RNG_ADDON_ZIG_VERSION))
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-687; needs zig $(RNG_ADDON_ZIG_VERSION))
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
 
-rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-680)
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-687)
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
@@ -695,7 +695,8 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 
 .PHONY: lint
 lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
-	@$(GO) tool golangci-lint run
+	@python3 scripts/ci/check_gosec_baseline.py
+	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
@@ -990,8 +991,7 @@ clean: ## Remove build artifacts
 # sqlc install path. CI drops the tarball at $$HOME/.local/sqlc/bin/sqlc
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
 # the local-dev convention so make sqlc-check works without a `go
-# install` round-trip — which avoids compiling the cgo-heavy sqlc tree on
-# every cold CI runner even though the pinned Go 1.26.9 toolchain supports it.
+# install` round-trip and compiling sqlc's large dependency tree.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this
@@ -1041,7 +1041,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event*_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
@@ -1303,12 +1303,25 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
-.PHONY: data-api-check data-api-acceptance
+.PHONY: data-api-check data-api-acceptance data-api-packaging-check data-api-browser-acceptance
 data-api-check: ## Runtime and typed application client unit checks
 	@bash scripts/test-data-api.sh
 
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
+
+data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
+	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
+
+data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
+	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: data-api-staging-check data-api-staging-canary
+data-api-staging-check: ## Staging canary harness contracts without provider calls
+	@node --test tests/data-api/staging/canary.test.mjs
+
+data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
+	@bash scripts/ci/run-data-api-staging-canary.sh
 
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml
@@ -1493,9 +1506,12 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
 
-.PHONY: test-operation-sdk check-operation-sdk-schema
+.PHONY: test-operation-sdk test-customer-operation-sdk check-operation-sdk-schema
 test-operation-sdk:
 	sh scripts/test-operation-sdk.sh
+
+test-customer-operation-sdk: test-operation-sdk
+	sh scripts/test-customer-operation-sdk.sh
 
 check-operation-sdk-schema:
 	python3 scripts/gen-operation-inbox-schema.py --check

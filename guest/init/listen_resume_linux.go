@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
@@ -55,11 +56,11 @@ const (
 	VsockResumeAckAfterRestore     = 13
 	VsockResumeAckBeforeCheckpoint = 14
 	// VsockResumeAckUserspaceReseed: a registered Node or Python process did
-	// not confirm its userspace RNG reseed (ADR-680). vmmd cold-boots instead
+	// not confirm its userspace RNG reseed (ADR-687). vmmd cold-boots instead
 	// of serving a process that may replay the snapshot's random values.
 	VsockResumeAckUserspaceReseed = 15
 	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
-	// barrier ran (ADR-680). vmmd refuses a restore without it, which is how
+	// barrier ran (ADR-687). vmmd refuses a restore without it, which is how
 	// snapshots taken by an older guest-init retire themselves. Hosts that
 	// read one byte ignore it.
 	VsockResumeCapUserspaceReseed = 0x01
@@ -261,6 +262,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
+	if msgType == guestmemproto.MessageType {
+		handleMemoryStatsConn(f, log, hdr[4:])
+		return
+	}
 	if msgType != VsockResumeMsgType {
 		log.Warn("vsock unknown msg type", "type", msgType)
 		resumeDiag(fmt.Sprintf("resume: unknown message type=%d", msgType))
@@ -339,7 +344,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// goroutine — the resume hook doesn't return a value, and the
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
-	// ADR-680: the kernel is reseeded; now every registered workload process
+	// ADR-687: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
 	if err := reseedRestoredWorkloads(); err != nil {
 		log.Error("vsock resume: userspace reseed failed", "err", err)
@@ -394,6 +399,45 @@ func handleBeforeCheckpointConn(f *os.File, log *slog.Logger, lengthHeader []byt
 		return
 	}
 	_, _ = f.Write([]byte{VsockResumeAckOK})
+}
+
+// handleMemoryStatsConn answers vmmd's pre-capture memory question with a
+// /proc/meminfo summary. It is diagnostic only: vmmd captures regardless.
+func handleMemoryStatsConn(f *os.File, log *slog.Logger, lengthHeader []byte) {
+	if binary.BigEndian.Uint32(lengthHeader) != 0 {
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	reply, err := memoryStatsReply("/proc/meminfo")
+	if err != nil {
+		log.Warn("memory stats", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckJSON})
+		return
+	}
+	_, _ = f.Write(reply)
+}
+
+// memoryStatsReply frames the reply as an OK byte, a 4-byte big-endian length
+// and the guestmemproto.Stats JSON.
+func memoryStatsReply(path string) ([]byte, error) {
+	// nolint:forbidigo // fixed procfs path inside the guest.
+	in, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = in.Close() }()
+	stats, err := guestmemproto.Parse(in)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(stats)
+	if err != nil {
+		return nil, err
+	}
+	reply := make([]byte, 5, 5+len(body))
+	reply[0] = VsockResumeAckOK
+	binary.BigEndian.PutUint32(reply[1:5], uint32(len(body)))
+	return append(reply, body...), nil
 }
 
 func firstCPULimitHandler(handlers []func(int) error) func(int) error {

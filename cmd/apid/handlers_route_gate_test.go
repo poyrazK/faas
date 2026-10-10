@@ -52,10 +52,13 @@ func TestCanaryRouteGateAPIAdvanceWorkerAndAbort(t *testing.T) {
 		t.Fatalf("missing gate: %d %s", rec.Code, rec.Body)
 	}
 	doc := json.RawMessage(`{"openapi":"3.1.0","paths":{"/health":{"get":{}}}}`)
+	if err := e.store.UpsertDeploymentOpenAPIDoc(t.Context(), stable.ID, e.acct.ID, app.ID, doc, "manual_upload", false); err != nil {
+		t.Fatal(err)
+	}
 	if rec := e.do(t, "PATCH", "/v1/apps/"+slug+"/deployments/"+candidate.ID+"/openapi", map[string]any{"set_doc": true, "set_source": true, "doc": doc, "source": "manual_upload"}, nil); rec.Code != 200 {
 		t.Fatalf("capture: %d %s", rec.Code, rec.Body)
 	}
-	if count, err := e.s.drainAutomaticRouteChecks(t.Context()); count != 1 || err != nil {
+	if count, err := e.s.drainAutomaticRouteChecks(t.Context()); count != 2 || err != nil {
 		t.Fatalf("check: %d %v", count, err)
 	}
 	rec := e.do(t, "POST", path, api.AdvanceCanaryRequest{ExpectedStep: 0}, nil)

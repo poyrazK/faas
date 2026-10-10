@@ -246,11 +246,15 @@ func startManagedLocalApp(ctx context.Context, cancel context.CancelCauseFunc, s
 		_ = command.Wait()
 		app.mu.Lock()
 		defer app.mu.Unlock()
-		if !app.stopping {
-			code := -1
-			if command.ProcessState != nil {
-				code = command.ProcessState.ExitCode()
-			}
+		code := -1
+		if command.ProcessState != nil {
+			code = command.ProcessState.ExitCode()
+		}
+		// A crash can race with stop(): the request that observed the crash may
+		// return EOF before this waiter runs. Keep nonzero exits unexpected even
+		// if stop has begun; a normal signal termination reports -1 and a
+		// graceful handler exits with code 0.
+		if !app.stopping || code > 0 {
 			app.unexpected = fmt.Errorf("local app exited before shutdown (exit code %d)", code)
 			// Clean descendants immediately after an unexpected exit. Do not
 			// signal this reaped PID again after a potentially long fixture cleanup.

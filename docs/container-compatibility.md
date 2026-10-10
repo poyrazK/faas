@@ -95,7 +95,7 @@ call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
 `secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
 
 For Node and Python, Gregale also reseeds the process itself before a woken
-instance serves traffic (ADR-680). It covers Node `crypto` (and the OpenSSL
+instance serves traffic (ADR-687). It covers Node `crypto` (and the OpenSSL
 state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
 and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
 process cannot confirm the reseed, the instance cold-boots instead of waking

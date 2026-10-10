@@ -135,18 +135,23 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 	}
 }
 
-// adr: 224 — a prefetch must cover every recorded byte, not just the head of
-// each range: the kernel truncates one FADV_WILLNEED to the readahead window.
-func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
-	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
-	type adviceCall struct {
-		fd, advice int
-		off, size  int64
+// adr: 224 — a prefetch must request every recorded byte, not just the head
+// of each range. FADV_WILLNEED is advisory, so verify bounded syscall requests
+// instead of relying on host page-cache residency.
+func TestAdviseWillNeedChunksWholeRanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mem")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	var calls []adviceCall
-	const fd = 17
-	if err := adviseRanges(fd, ranges, func(gotFD int, off, size int64, advice int) error {
-		calls = append(calls, adviceCall{fd: gotFD, advice: advice, off: off, size: size})
+	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
+	type call struct {
+		fd          int
+		off, length int64
+		advice      int
+	}
+	var calls []call
+	if err := adviseWillNeedWith(path, ranges, func(fd int, off, length int64, advice int) error {
+		calls = append(calls, call{fd: fd, off: off, length: length, advice: advice})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -159,16 +164,22 @@ func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
 	if len(calls) != wantCount {
 		t.Fatalf("made %d advice calls, want %d", len(calls), wantCount)
 	}
+	if len(calls) == 0 || calls[0].fd < 0 {
+		t.Fatalf("fadvise received invalid file descriptor in calls: %+v", calls)
+	}
+	fd := calls[0].fd
 	callIndex := 0
 	for _, r := range ranges {
 		for off := r.Off; off < r.Off+r.Len; off += int64(adviseChunk) {
-			wantSize := min(int64(adviseChunk), r.Off+r.Len-off)
-			got := calls[callIndex]
-			if got.fd != fd || got.off != off || got.size != wantSize || got.advice != unix.FADV_WILLNEED {
-				t.Errorf("advice call %d = %+v, want fd=%d range=%d+%d advice=FADV_WILLNEED", callIndex, got, fd, off, wantSize)
+			want := call{fd: fd, off: off, length: min(int64(adviseChunk), r.Off+r.Len-off), advice: unix.FADV_WILLNEED}
+			if got := calls[callIndex]; got != want {
+				t.Errorf("advice call %d = %+v, want %+v", callIndex, got, want)
 			}
 			callIndex++
 		}
+	}
+	if callIndex != len(calls) {
+		t.Errorf("got %d advice calls, want %d", len(calls), callIndex)
 	}
 }
 

@@ -1,0 +1,9 @@
+{
+  "name": "gregale-customer-operation-workflow-export",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.10.0"},
+  "scripts": {"start": "node server.mjs", "test": "node --test test/*.test.mjs", "typecheck": "tsc --noEmit -p tsconfig.types.json"},
+  "dependencies": {"@gregale/sdk-node": "file:packages/gregale-sdk.tgz"},
+  "devDependencies": {"typescript": "5.6.3"}
+}

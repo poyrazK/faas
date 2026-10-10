@@ -211,6 +211,19 @@ func TestPatchOpenAPIDoc_HappyPath(t *testing.T) {
 	if rec.Header().Get("X-OpenAPI-Doc-Source") != "manual_upload" {
 		t.Errorf("X-OpenAPI-Doc-Source: got %q, want manual_upload", rec.Header().Get("X-OpenAPI-Doc-Source"))
 	}
+	for header, want := range map[string]string{
+		"X-OpenAPI-Doc-Deployment-ID": depID,
+		"X-OpenAPI-Doc-SHA256":        resp["doc_sha256"].(string),
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+	for _, header := range []string{"X-OpenAPI-Doc-App-ID", "X-OpenAPI-Doc-Captured-At", "X-OpenAPI-Doc-Updated-At"} {
+		if rec.Header().Get(header) == "" {
+			t.Errorf("missing %s", header)
+		}
+	}
 	if rec.Body.String() != doc {
 		t.Errorf("body: got %q, want %q", rec.Body.String(), doc)
 	}

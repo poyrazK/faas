@@ -1,4 +1,4 @@
-// Package templates ships the twenty `gregale deploy --template <name>`
+// Package templates ships the built-in Gregale
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node data-api
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -71,13 +71,21 @@ var Names = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"customer-operation-export",
+	"customer-operation-job-export",
+	"customer-operation-workflow-export",
 	"data-api",
+	"data-api-starter",
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"data-api-starter": {
+		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
+		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
+	},
 	// production-us hunt #4: tools/ holds owner-machine scripts that need an
 	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
 	// them and told users to store FAAS_TOKEN as an app secret.
@@ -86,6 +94,23 @@ var generatedDotfiles = map[string]map[string]string{
 			"# credential. They never run in the app (the Dockerfile copies app/\n" +
 			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
 			"/tools/\n",
+	},
+}
+
+// Workflow sources remain visible to go:embed. Scaffold their conventional
+// hidden destinations when init materializes the project.
+var generatedTemplateCopies = map[string]map[string]string{
+	"data-api-starter": {
+		".github/workflows/data-api-client.yml":  "ci/client.yml",
+		".github/workflows/data-api-preview.yml": "ci/preview.yml",
+	},
+}
+
+// Share the runtime catalog implementation with the owner-side permission tool.
+var sharedTemplateCopies = map[string]map[string]string{
+	"data-api-starter": {
+		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
+		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
 	},
 }
 
@@ -131,6 +156,32 @@ func Materialize(name, dest string) error {
 			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 				return err
 			}
+		}
+	}
+	for target, source := range generatedTemplateCopies[name] {
+		content, err := fs.ReadFile(subFS, source)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(dest, target)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return err
+		}
+	}
+	for target, source := range sharedTemplateCopies[name] {
+		content, err := fs.ReadFile(FS, source)
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Join(dest, target)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(targetPath, content, 0o644); err != nil {
+			return err
 		}
 	}
 	// hello-go is an HTTP app and needs its module marker. function-go stays
@@ -200,6 +251,24 @@ func TarGz(name, dest string) error {
 			continue
 		}
 		if err := copyFromFS(tw, rootFS, p); err != nil {
+			return err
+		}
+	}
+	var shared []string
+	for target := range sharedTemplateCopies[name] {
+		shared = append(shared, target)
+	}
+	sort.Strings(shared)
+	for _, target := range shared {
+		content, err := fs.ReadFile(FS, sharedTemplateCopies[name][target])
+		if err != nil {
+			return err
+		}
+		hdr := &tar.Header{Name: name + "/" + target, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(content); err != nil {
 			return err
 		}
 	}
@@ -281,16 +350,18 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api":
+	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
 	case "mcp-node":
 		return "mcp"
+	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
+		return "operations"
 	}
 	return ""
 }
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations"}

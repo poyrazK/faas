@@ -3383,13 +3383,17 @@ type SetDeploymentAliasRequest struct {
 // deployment-alias API. Revision is included as the readable vN handle for
 // the immutable target; Host and URL expose its stable public route.
 type DeploymentAliasResponse struct {
-	Name         string    `json:"name"`
-	DeploymentID string    `json:"deployment_id"`
-	Revision     int       `json:"revision"`
-	Host         string    `json:"host,omitempty"`
-	URL          string    `json:"url,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	Name         string `json:"name"`
+	DeploymentID string `json:"deployment_id"`
+	Revision     int    `json:"revision"`
+	// DeploymentStatus is the target deployment's lifecycle status. An alias
+	// whose deployment is not live (superseded by a rollback or redeploy, or
+	// failed) no longer serves traffic.
+	DeploymentStatus string    `json:"deployment_status,omitempty"`
+	Host             string    `json:"host,omitempty"`
+	URL              string    `json:"url,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // DeploymentAliasListResponse is the bounded per-app alias list shape.

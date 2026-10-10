@@ -3,6 +3,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OperationsService, OpenAPI } from '../src/index.js';
 
+test('recovery inspection and preview preserve read-only proposals and revision fences', async () => {
+  const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE, previousToken = OpenAPI.TOKEN;
+  const calls: {url: string; method: string | undefined; body: unknown}[] = [];
+  OpenAPI.BASE = 'https://api.example.com'; OpenAPI.TOKEN = 'account-operator';
+  const revision = 'sha256:' + 'a'.repeat(64);
+  globalThis.fetch = async (input, init) => {
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer account-operator');
+    calls.push({url: String(input), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined});
+    return new Response(JSON.stringify({operation_id:'operation',inspection_revision:revision,eligible:false,evidence_required:true,blockers:['workflow_concurrency_limit'],reopened_steps:['finish']}),{headers:{'Content-Type':'application/json'}});
+  };
+  try {
+    const inspection = await OperationsService.inspectOperationRecovery({slug:'exports',id:'operation'});
+    assert.equal(inspection.inspection_revision, revision);
+    const p = await OperationsService.previewOperationRecovery({slug:'exports',id:'operation',requestBody:{expected_generation:1,resolution:'safe_to_retry'}});
+    assert.equal(p.eligible,false); assert.equal(p.evidence_required,true); assert.deepEqual(p.reopened_steps,['finish']);
+    assert.deepEqual(calls[1]!.body,{expected_generation:1,resolution:'safe_to_retry'});
+    await OperationsService.recoverOperation({slug:'exports',id:'operation',requestBody:{recovery_id:'decision',expected_generation:1,resolution:'safe_to_retry',evidence:'provider ledger checked',expected_inspection_revision:revision}});
+    assert.equal((calls[2]!.body as {expected_inspection_revision:string}).expected_inspection_revision,revision);
+    assert.deepEqual(calls.map(c=>[new URL(c.url).pathname,c.method]),[
+      ['/v1/apps/exports/operations/operation/recovery-inspection','GET'],
+      ['/v1/apps/exports/operations/operation/recovery-preview','POST'],
+      ['/v1/apps/exports/operations/operation/recover','POST'],
+    ]);
+  } finally {globalThis.fetch=previousFetch;OpenAPI.BASE=previousBase;OpenAPI.TOKEN=previousToken;}
+});
+
 test('HTTP Operations contract uses customer credentials, stable keys and resume cursors', async () => {
   const previousFetch = globalThis.fetch;
   const previousBase = OpenAPI.BASE;
@@ -98,12 +124,13 @@ test('Operations doctor reads scoped prerequisites and preserves delivery warnin
     assert.equal(url.searchParams.get('tenant_id'), 'tenant+selector');
     assert.equal(url.searchParams.get('name'), 'export name');
     assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer operator-token');
-    return new Response(JSON.stringify({ app_id: 'app', scope: 'production', deployment_id: 'deployment-id', platform_tenant_id: 'tenant+selector', plan: 'pro', observed_at: '2026-10-05T13:00:00Z', observation_scope: 'responding_api_node', submission_state: 'eligible', checks: [{ check: 'completion_destination', status: 'warning', impact: 'delivery', code: 'completion_destination_disabled', message: 'Disabled.' }, { check: 'native_lifecycle', status: 'unknown', impact: 'qualification', code: 'native_lifecycle_unverified', message: 'Unverified.' }] }), {headers: {'Content-Type': 'application/json'}});
+    return new Response(JSON.stringify({ app_id: 'app', scope: 'production', deployment_id: 'deployment-id', platform_tenant_id: 'tenant+selector', plan: 'pro', observed_at: '2026-10-05T13:00:00Z', observation_scope: 'responding_api_node', submission_state: 'eligible', checks: [{ check: 'completion_destination', status: 'warning', impact: 'delivery', code: 'completion_destination_disabled', message: 'Disabled.' }, { check: 'native_lifecycle', status: 'unknown', impact: 'qualification', code: 'native_lifecycle_unverified', message: 'Unverified.' }, {check: 'execution_preview', status: 'observed', impact: 'submission', code: 'preview_cohort_observed', message: 'Job allowed.', name: 'export name', execution_kind: 'job'}] }), {headers: {'Content-Type': 'application/json'}});
   };
   try {
     const report = await OperationsService.getOperationDoctor({slug: 'exports', deploymentId: 'deployment-id', tenantId: 'tenant+selector', name: 'export name'});
     assert.equal(requests, 1); assert.equal(report.submission_state, 'eligible');
     assert.equal(report.checks[0]?.status, 'warning'); assert.equal(report.checks[1]?.status, 'unknown');
+    assert.equal(report.checks[2]?.execution_kind, 'job');
   } finally { globalThis.fetch = previousFetch; OpenAPI.BASE = previousBase; OpenAPI.TOKEN = previousToken; }
 });
 
@@ -127,4 +154,24 @@ test('completion inspection and retry receipts preserve independent transport st
     assert.deepEqual(calls[2]!.body,{retry_id:'stable',delivery_id:'delivery',expected_replay_generation:0});
     assert.equal(calls[2]!.url,'https://api.example.com/v1/apps/exports/operations/operation/delivery-retries');
   } finally {globalThis.fetch=previousFetch;OpenAPI.BASE=previousBase;OpenAPI.TOKEN=previousToken;}
+});
+
+test('workflow Operations keep named definitions and native execution identities', async () => {
+  const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE, previousToken = OpenAPI.TOKEN;
+  OpenAPI.BASE = 'https://api.example.com'; OpenAPI.TOKEN = 'account-operator';
+  const definition = {name:'export',workflow:'export-chain',method:'POST' as const,path:'/exports',owner:'platform_tenant' as const,input_schema:true,output_schema:true,progress_stages:['collect','finish'],recovery:'reconcile_on_unknown' as const};
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === 'PUT') {
+      assert.deepEqual(JSON.parse(String(init.body)), definition);
+      return new Response(JSON.stringify({id:'definition',spec:definition}),{headers:{'Content-Type':'application/json'}});
+    }
+    return new Response(JSON.stringify({executions:[{generation:2,workflow_run_id:'run',state:'succeeded',attempts:3,created_at:'2026-10-06T00:00:00Z'}]}),{headers:{'Content-Type':'application/json'}});
+  };
+  try {
+    const resolved=await OperationsService.putOperationDefinition({slug:'exports',deploymentId:'deployment',name:'export',requestBody:definition});
+    assert.equal(resolved.spec.workflow,'export-chain');
+    const page=await OperationsService.getOperationExecutions({slug:'exports',id:'operation'});
+    assert.equal(page.executions[0]?.workflow_run_id,'run');
+    assert.equal(page.executions[0]?.invocation_id,undefined);
+  } finally { globalThis.fetch=previousFetch; OpenAPI.BASE=previousBase; OpenAPI.TOKEN=previousToken; }
 });

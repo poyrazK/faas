@@ -462,7 +462,11 @@ func TestStartBrowserLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
 
 func TestStartSelectsWorkspaceService(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
-	root := t.TempDir()
+	// The runner reports the resolved working directory (macOS: /private/var).
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["packages/*"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

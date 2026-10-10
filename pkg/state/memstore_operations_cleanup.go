@@ -20,6 +20,13 @@ func (m *MemStore) forgetOperationLocked(id string) {
 		}
 	}
 	delete(data.events, id)
+	delete(data.workflowExecutions, id)
+	delete(data.jobExecutions, id)
+	for runID, owner := range data.jobOwners {
+		if owner == id {
+			delete(data.jobOwners, runID)
+		}
+	}
 	for key, lease := range data.streams {
 		if lease.OperationID == id {
 			delete(data.streams, key)
@@ -39,6 +46,7 @@ func (m *MemStore) forgetOperationLocked(id string) {
 	for key := range data.recoveries {
 		if strings.HasPrefix(key, id+"/") {
 			delete(data.recoveries, key)
+			delete(data.recoveryDecisions, key)
 		}
 	}
 }
@@ -51,6 +59,9 @@ func (m *MemStore) forgetOwnedOperationsLocked(account, app string) {
 	owned := func(acct, appID string) bool { return account != "" && acct == account || app != "" && appID == app }
 	for id, op := range data.operations {
 		if owned(op.AccountID, op.AppID) {
+			if op.WorkflowRunID != "" {
+				m.forgetOwnedOperationWorkflowLocked(op.WorkflowRunID)
+			}
 			m.forgetOperationLocked(id)
 		}
 	}
@@ -67,6 +78,27 @@ func (m *MemStore) forgetOwnedOperationsLocked(account, app string) {
 	for key, record := range data.workflowStates {
 		if owned(record.AccountID, record.AppID) {
 			delete(data.workflowStates, key)
+		}
+	}
+}
+
+// Permanent owner deletion mirrors the native workflow FK cascades. Ordinary
+// result expiry only releases the association for the workflow retention sweep.
+func (m *MemStore) forgetOwnedOperationWorkflowLocked(runID string) {
+	delete(m.workflowRuns, runID)
+	delete(m.workflowSteps, runID)
+	delete(m.workflowEvents, runID)
+	delete(m.workflowResumes, runID)
+	delete(m.workflowRunLeases, runID)
+	for key := range m.workflowStepAttempts {
+		if key.runID == runID {
+			delete(m.workflowStepAttempts, key)
+			delete(m.workflowOperationEffects, key)
+		}
+	}
+	for id, binding := range m.workflowCallbackWebhookBindings {
+		if binding.RunID == runID {
+			delete(m.workflowCallbackWebhookBindings, id)
 		}
 	}
 }

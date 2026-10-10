@@ -24,7 +24,7 @@ type alarmDelivery struct {
 
 func validAlarmDelivery(value manifest) bool {
 	delivery := value.AlarmDelivery
-	return delivery == nil || value.Schema == 4 && value.Version > 0 &&
+	return delivery == nil || value.Schema >= 4 && value.Version > 0 &&
 		validAlarm(&delivery.At) && validAlarm(&delivery.NextAttemptAt) &&
 		delivery.Attempts > 0 && delivery.Attempts <= api.MaxDurableEntityAlarmAttempts && !delivery.NextAttemptAt.Before(delivery.At)
 }
