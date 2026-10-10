@@ -1973,9 +1973,10 @@ var cliCommands = []cliCommand{
 		Name:     "dev",
 		DocSlug:  "dev",
 		Short:    "Sync local changes to a developer environment",
-		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once"},
+		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all"},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
+			{Name: "all", Short: "run one developer loop per deployable workspace app"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
@@ -1983,6 +1984,13 @@ var cliCommands = []cliCommand{
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
+			{Name: "postgres", Short: "provision an isolated PostgreSQL database and inject DATABASE_URL"},
+			{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
+			{Name: "postgres-seed", Short: "shell command run once in the developer app after its database is ready", Value: "CMD"},
+			{Name: "reseed", Short: "run the seed again even if this database was already seeded"},
+			{Name: "debug", Short: "start the Node.js inspector and expose it on a local port"},
+			{Name: "debug-port", Short: "local port for --debug (default 9229)", Value: "PORT"},
+			{Name: "ttl", Short: "environment lease after the latest sync (default 24h; plan maximum applies)", Value: "DURATION"},
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
@@ -2010,6 +2018,22 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
 			}},
+			{Name: "info", Short: "show the developer environment URL, app slug, lease, and database without renewing it", Flags: []cliFlag{
+				{Name: "path", Short: "source directory", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+			}},
+			{Name: "trigger", Short: "invoke the developer app, fire a declared cron route, or schedule a delayed task", Examples: []string{
+				"gregale dev trigger invoke --method POST --path /orders --payload @order.json",
+				"gregale dev trigger cron /jobs/nightly",
+				"gregale dev trigger delayed-task --delay 5m --path /reminders",
+			}, Flags: []cliFlag{
+				{Name: "path", Short: "source directory (before the verb)", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name (before the verb)", Value: "PROJECT"},
+			}, Subcommands: []cliSub{
+				{Name: "invoke", Short: "run `gregale invoke` against the developer app"},
+				{Name: "cron", Short: "POST to a cron route declared for this app in gregale.yaml", Positionals: []string{"[ROUTE]"}},
+				{Name: "delayed-task", Short: "run `gregale delayed-task add` against the developer app"},
+			}},
 			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -2021,6 +2045,7 @@ var cliCommands = []cliCommand{
 				{Name: "open", Short: "open the verified URL"},
 				{Name: "postgres", Short: "provision an isolated PostgreSQL database"},
 				{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
+				{Name: "ttl", Short: "environment lease after the latest sync", Value: "DURATION"},
 			}},
 		},
 	},

@@ -404,6 +404,8 @@ export type { DevBridgeScope } from './DevBridgeScope.js';
 export type { DevBridgeSession } from './DevBridgeSession.js';
 export type { DevBridgeSessionSummary } from './DevBridgeSessionSummary.js';
 export type { DevBridgeWebhookReplay } from './DevBridgeWebhookReplay.js';
+export type { DevPatchPreview } from './DevPatchPreview.js';
+export type { DevPatchStatusResponse } from './DevPatchStatusResponse.js';
 export type { DevPostgresRequest } from './DevPostgresRequest.js';
 export type { DevPostgresResponse } from './DevPostgresResponse.js';
 export type { DevSessionResponse } from './DevSessionResponse.js';

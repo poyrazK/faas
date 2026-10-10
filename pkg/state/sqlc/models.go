@@ -1173,6 +1173,7 @@ type BuildProvenance struct {
 	SbomStorageKey   pgtype.Text
 	FrameworkVersion pgtype.Text
 	RuntimeBaseRef   string
+	DevPatch         []byte
 }
 
 // Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
@@ -2120,6 +2121,30 @@ type DevBridgeWebhookReplay struct {
 	HttpStatus     int32
 	CreatedAt      pgtype.Timestamptz
 	CompletedAt    pgtype.Timestamptz
+}
+
+type DevSourceManifest struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	SourceRoot   string
+	Manifest     []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type DevSourcePatch struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	BaseDeploymentID pgtype.UUID
+	Generation       int64
+	ImageDir         string
+	Archive          []byte
+	Deleted          []byte
+	Digest           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	AppliedAt        pgtype.Timestamptz
+	ApplyMs          pgtype.Int4
+	ApplyError       pgtype.Text
 }
 
 type DeveloperSyncHistory struct {

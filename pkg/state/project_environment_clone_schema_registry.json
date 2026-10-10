@@ -1274,6 +1274,7 @@
       "builder_node_id",
       "buildkit_version",
       "commit_sha",
+      "dev_patch",
       "finished_at",
       "framework_version",
       "id",
@@ -2419,6 +2420,36 @@
       "invocation_id",
       "session_id",
       "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "dev_source_manifests",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "manifest",
+      "source_root"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "dev_source_patches",
+    "columns": [
+      "app_id",
+      "applied_at",
+      "apply_error",
+      "apply_ms",
+      "archive",
+      "base_deployment_id",
+      "created_at",
+      "deleted",
+      "digest",
+      "expires_at",
+      "generation",
+      "id",
+      "image_dir"
     ],
     "kind": "operational"
   },

@@ -7591,6 +7591,8 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		outcome = wire.InitSnapshotOutcomeSnapshotFailed
 		if problem := api.AsProblem(err); problem != nil && problem.Code == api.CodeBeforeCheckpointFailed {
 			outcome = wire.InitSnapshotOutcomeBeforeCheckpointFailed
+		} else if problem != nil && problem.Code == api.CodeDevSourceDiverged {
+			outcome = wire.InitSnapshotOutcomeSourceDiverged
 		}
 	}
 	e.ops.RecordInitSnapshotAttempt(site, outcome, snapDuration)
@@ -7610,8 +7612,13 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		// "all park-snapshot failures in the last hour" is queryable.
 		e.ledger.Release(ins.ID)
 		reason := "snapshot_failed"
-		if outcome == wire.InitSnapshotOutcomeBeforeCheckpointFailed {
+		switch outcome {
+		case wire.InitSnapshotOutcomeBeforeCheckpointFailed:
 			reason = api.CodeBeforeCheckpointFailed
+		case wire.InitSnapshotOutcomeSourceDiverged:
+			// ADR-740: vmmd already destroyed the patched VM; the next wake
+			// restores the unpatched artifact. Expected, not a fault.
+			reason = api.CodeDevSourceDiverged
 		}
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", reason)
 		if e.events != nil {

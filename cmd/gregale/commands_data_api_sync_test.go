@@ -314,7 +314,10 @@ func TestDataAPISyncStopsAtFailedStep(t *testing.T) {
 			defer restore()
 			args := []string{"--json", "data-api", "sync", "notes", "--config", path}
 			if failure == "type-timeout" {
-				args = append(args, "--timeout", "3s")
+				// The task never leaves queued, so the sync must time out while
+				// polling it. Leave room for the earlier local steps on a loaded,
+				// race-enabled CI runner; 3s expired during permission setup.
+				args = append(args, "--timeout", "10s")
 			}
 			if code := run(args); code == 0 || out.Len() != 0 {
 				t.Fatalf("failed workflow reported success: exit=%d output=%s", code, out.String())
