@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Guidance explains the retained readiness result without granting permission to
 // change application state. Planned evidence must accompany the transition;
@@ -17,7 +20,7 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			out = append(out, "This workflow instance has completed; inspect its outcome before starting another instance.")
 		case "from_state_mismatch", "revision_mismatch", "contract_version_mismatch":
 			out = append(out, fmt.Sprintf("Refresh the workflow snapshot and evaluate against contract version %d and state revision %d.", r.ContractVersion, r.StateRevision))
-		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated":
+		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated", "retained_milestone_expired":
 			// The structured findings below explain these requirements individually.
 		default:
 			out = append(out, "Inspect readiness requirement: "+reason+".")
@@ -48,6 +51,8 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 		p := result.Requirement
 		if result.Status == "verified" && result.Evidence != nil {
 			out = append(out, fmt.Sprintf("Verified retained milestone %s from operation %s (fact %s, operation instance %s).", p.Milestone, p.Operation, result.Evidence.ID, result.Evidence.OperationID))
+		} else if result.Status == "expired" && result.Evidence != nil && result.Freshness != nil && result.Freshness.ExpiresAt != nil {
+			out = append(out, fmt.Sprintf("Retained milestone %s from operation %s (fact %s) expired at %s. Renew this prerequisite before proceeding.", p.Milestone, p.Operation, result.Evidence.ID, result.Freshness.ExpiresAt.UTC().Format(time.RFC3339Nano)))
 		} else if result.Status == "invalidated" && result.Evidence != nil && result.Invalidation != nil {
 			i := result.Invalidation
 			out = append(out, fmt.Sprintf("Retained milestone %s from operation %s (fact %s) was invalidated by %s from operation %s (fact %s, operation instance %s).", p.Milestone, p.Operation, result.Evidence.ID, i.Source.Milestone, i.Source.Operation, i.Evidence.ID, i.Evidence.OperationID))

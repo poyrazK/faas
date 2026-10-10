@@ -284,3 +284,24 @@ All matching boundaries and contract-version rules from retained prerequisites
 apply to both sources. Facts follow normal retention and invalidation is derived,
 not permanently latched. The API, preview, dashboard, CLI, and SDKs expose the same
 result. No application state, milestone, or VM lifecycle state is changed.
+
+### Retained prerequisite freshness
+
+Pinned edges may attach one maximum-age rule per declared retained prerequisite,
+expressed as a whole-second manifest duration and resolved as `max_age_seconds`.
+Canonical rules participate in immutable contract identity; changes require a new
+workflow version. Bounds live in `pkg/api/limits.go`: 16 rules per edge and at most
+315360000 seconds (10 years). No new source selectors or migrations are needed.
+
+Both stores project one evaluation clock with the existing scoped evidence lookup.
+Freshness selects the latest nonfuture occurrence and expires inclusively at its
+occurrence time plus maximum age. Results distinguish missing, expired, and
+invalidated evidence; invalidation wins if both policies fail. Policy, evaluation
+time, expiry, age, and remaining duration explain renewal through the API, preview,
+dashboard, CLI, and SDKs. Missing facts omit derived expiry. SDK guards require
+usable evidence and matching freshness policy details.
+
+Renewal is an application-owned business operation whose transaction publishes a
+new fact. Gregale provides point-in-time readiness, grants no lease, and does not
+extend retention or change business state. Applications still lock and verify
+business rows and authorization before committing.

@@ -1,9 +1,10 @@
 from typing import Literal
 
-OperationWorkflowRetainedMilestoneStatus = Literal["awaiting_verification", "invalidated", "verified"]
+OperationWorkflowRetainedMilestoneStatus = Literal["awaiting_verification", "expired", "invalidated", "verified"]
 
 OPERATION_WORKFLOW_RETAINED_MILESTONE_STATUS_VALUES: set[OperationWorkflowRetainedMilestoneStatus] = {
     "awaiting_verification",
+    "expired",
     "invalidated",
     "verified",
 }

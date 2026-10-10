@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"sort"
+	"time"
 )
 
 // OperationWorkflowRetainedMilestoneRequirement selects a transaction-backed
@@ -15,6 +16,7 @@ type OperationWorkflowRetainedMilestoneRequirement struct {
 // Verified means a matching app-reported fact remains retained in the selected
 // ownership, subject, workflow instance and version. It is not external proof.
 type OperationWorkflowRetainedMilestone struct {
+	Freshness    *OperationWorkflowRetainedMilestoneFreshness    `json:"freshness,omitempty"`
 	Invalidation *OperationWorkflowRetainedMilestoneInvalidation `json:"invalidation,omitempty"`
 	Requirement  OperationWorkflowRetainedMilestoneRequirement   `json:"requirement"`
 	Status       string                                          `json:"status"`
@@ -33,6 +35,21 @@ type OperationWorkflowRetainedMilestoneInvalidationRule struct {
 type OperationWorkflowRetainedMilestoneInvalidation struct {
 	Source   OperationWorkflowRetainedMilestoneRequirement `json:"source"`
 	Evidence OperationWorkflowInstanceMilestoneRef         `json:"evidence"`
+}
+
+// OperationWorkflowRetainedMilestoneFreshnessRule pins the maximum age of a prerequisite.
+type OperationWorkflowRetainedMilestoneFreshnessRule struct {
+	Prerequisite  OperationWorkflowRetainedMilestoneRequirement `json:"prerequisite" yaml:"prerequisite" toml:"prerequisite"`
+	MaxAgeSeconds int64                                         `json:"max_age_seconds" yaml:"max_age_seconds" toml:"max_age_seconds"`
+}
+
+// OperationWorkflowRetainedMilestoneFreshness describes eligibility at the server evaluation time.
+type OperationWorkflowRetainedMilestoneFreshness struct {
+	MaxAgeSeconds    int64      `json:"max_age_seconds"`
+	EvaluatedAt      time.Time  `json:"evaluated_at"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	AgeSeconds       *int64     `json:"age_seconds,omitempty"`
+	RemainingSeconds *int64     `json:"remaining_seconds,omitempty"`
 }
 
 func CanonicalOperationWorkflowRetainedMilestones(input []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneRequirement, error) {
@@ -73,6 +90,30 @@ func CanonicalOperationWorkflowRetainedMilestoneInvalidations(input []OperationW
 		}
 		if !declared || ValidateOperationWorkflowName(p.Prerequisite.Operation) != nil || ValidateOperationWorkflowStateName(p.Prerequisite.Milestone) != nil || p.Prerequisite == p.InvalidatedBy || ValidateOperationWorkflowName(p.InvalidatedBy.Operation) != nil || ValidateOperationWorkflowStateName(p.InvalidatedBy.Milestone) != nil || i > 0 && out[i-1] == p {
 			return nil, fmt.Errorf("invalidation rules require a declared prerequisite, valid distinct source, and unique pair")
+		}
+	}
+	return out, nil
+}
+
+func CanonicalOperationWorkflowRetainedMilestoneFreshness(input []OperationWorkflowRetainedMilestoneFreshnessRule, prerequisites []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneFreshnessRule, error) {
+	if len(input) > OperationWorkflowFreshnessRulesMax {
+		return nil, fmt.Errorf("retained milestone freshness rules exceed limit")
+	}
+	out := append([]OperationWorkflowRetainedMilestoneFreshnessRule(nil), input...)
+	key := func(p OperationWorkflowRetainedMilestoneFreshnessRule) string {
+		return p.Prerequisite.Operation + "/" + p.Prerequisite.Milestone
+	}
+	sort.Slice(out, func(i, j int) bool { return key(out[i]) < key(out[j]) })
+	for i, p := range out {
+		declared := false
+		for _, prerequisite := range prerequisites {
+			if p.Prerequisite == prerequisite {
+				declared = true
+				break
+			}
+		}
+		if !declared || ValidateOperationWorkflowName(p.Prerequisite.Operation) != nil || ValidateOperationWorkflowStateName(p.Prerequisite.Milestone) != nil || p.MaxAgeSeconds < 1 || p.MaxAgeSeconds > OperationWorkflowFreshnessMaxSeconds || i > 0 && out[i-1].Prerequisite == p.Prerequisite {
+			return nil, fmt.Errorf("freshness rules require a declared prerequisite, unique selector, and maximum age between 1 second and 10 years")
 		}
 	}
 	return out, nil

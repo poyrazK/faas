@@ -141,7 +141,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	for _, requirement := range r.Transition.RequiredRetainedMilestones {
 		verified := false
 		for _, evidence := range r.RetainedMilestones {
-			if evidence.Requirement == requirement && evidence.Status == "verified" && evidence.Evidence != nil && evidence.Invalidation == nil {
+			if evidence.Requirement == requirement && usableRetainedMilestone(evidence) {
 				verified = true
 				break
 			}
@@ -150,8 +150,20 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}
+	for _, rule := range r.Transition.RetainedMilestoneFreshness {
+		matched := false
+		for _, e := range r.RetainedMilestones {
+			if e.Requirement == rule.Prerequisite && usableRetainedMilestone(e) && e.Freshness != nil && e.Freshness.MaxAgeSeconds == rule.MaxAgeSeconds && e.Freshness.EvaluatedAt.Equal(response.EvaluatedAt) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return response, &CustomerOperationReadinessError{Response: response}
+		}
+	}
 	for _, evidence := range r.RetainedMilestones {
-		if evidence.Status != "verified" || evidence.Evidence == nil || evidence.Invalidation != nil {
+		if !usableRetainedMilestone(evidence) {
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}
@@ -160,4 +172,12 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	}
 	tx.milestones, tx.workflowStates = staged.milestones, staged.workflowStates
 	return response, nil
+}
+
+func usableRetainedMilestone(e OperationWorkflowRetainedMilestone) bool {
+	if e.Status != "verified" || e.Evidence == nil || e.Invalidation != nil {
+		return false
+	}
+	f := e.Freshness
+	return f == nil || f.MaxAgeSeconds > 0 && !f.EvaluatedAt.IsZero() && f.ExpiresAt != nil && f.ExpiresAt.After(f.EvaluatedAt) && f.AgeSeconds != nil && *f.AgeSeconds >= 0 && f.RemainingSeconds != nil && *f.RemainingSeconds > 0 && *f.RemainingSeconds <= f.MaxAgeSeconds
 }

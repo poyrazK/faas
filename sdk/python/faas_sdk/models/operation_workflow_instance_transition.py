@@ -11,6 +11,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
     from ..models.operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
     from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+    from ..models.operation_workflow_retained_milestone_freshness_rule import (
+        OperationWorkflowRetainedMilestoneFreshnessRule,
+    )
     from ..models.operation_workflow_retained_milestone_invalidation_rule import (
         OperationWorkflowRetainedMilestoneInvalidationRule,
     )
@@ -32,6 +35,8 @@ class OperationWorkflowInstanceTransition:
     to: str
     operation: str
     """Manifest operation name that may report this transition."""
+    retained_milestone_freshness: list[OperationWorkflowRetainedMilestoneFreshnessRule] | Unset = UNSET
+    """Freshness limits required for this selected transition."""
     retained_milestone_invalidations: list[OperationWorkflowRetainedMilestoneInvalidationRule] | Unset = UNSET
     """Rules for this selected edge linking retained prerequisites to invalidating facts from declared workflow
     steps. Business occurrence time determines order; an invalidating fact wins equal timestamps."""
@@ -54,6 +59,13 @@ class OperationWorkflowInstanceTransition:
         to = self.to
 
         operation = self.operation
+
+        retained_milestone_freshness: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.retained_milestone_freshness, Unset):
+            retained_milestone_freshness = []
+            for retained_milestone_freshness_item_data in self.retained_milestone_freshness:
+                retained_milestone_freshness_item = retained_milestone_freshness_item_data.to_dict()
+                retained_milestone_freshness.append(retained_milestone_freshness_item)
 
         retained_milestone_invalidations: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.retained_milestone_invalidations, Unset):
@@ -107,6 +119,8 @@ class OperationWorkflowInstanceTransition:
                 "operation": operation,
             }
         )
+        if retained_milestone_freshness is not UNSET:
+            field_dict["retained_milestone_freshness"] = retained_milestone_freshness
         if retained_milestone_invalidations is not UNSET:
             field_dict["retained_milestone_invalidations"] = retained_milestone_invalidations
         if required_retained_milestones is not UNSET:
@@ -129,6 +143,9 @@ class OperationWorkflowInstanceTransition:
         from ..models.operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
         from ..models.operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
         from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+        from ..models.operation_workflow_retained_milestone_freshness_rule import (
+            OperationWorkflowRetainedMilestoneFreshnessRule,
+        )
         from ..models.operation_workflow_retained_milestone_invalidation_rule import (
             OperationWorkflowRetainedMilestoneInvalidationRule,
         )
@@ -142,6 +159,17 @@ class OperationWorkflowInstanceTransition:
         to = d.pop("to")
 
         operation = d.pop("operation")
+
+        _retained_milestone_freshness = d.pop("retained_milestone_freshness", UNSET)
+        retained_milestone_freshness: list[OperationWorkflowRetainedMilestoneFreshnessRule] | Unset = UNSET
+        if _retained_milestone_freshness is not UNSET:
+            retained_milestone_freshness = []
+            for retained_milestone_freshness_item_data in _retained_milestone_freshness:
+                retained_milestone_freshness_item = OperationWorkflowRetainedMilestoneFreshnessRule.from_dict(
+                    retained_milestone_freshness_item_data
+                )
+
+                retained_milestone_freshness.append(retained_milestone_freshness_item)
 
         _retained_milestone_invalidations = d.pop("retained_milestone_invalidations", UNSET)
         retained_milestone_invalidations: list[OperationWorkflowRetainedMilestoneInvalidationRule] | Unset = UNSET
@@ -202,6 +230,7 @@ class OperationWorkflowInstanceTransition:
             from_=from_,
             to=to,
             operation=operation,
+            retained_milestone_freshness=retained_milestone_freshness,
             retained_milestone_invalidations=retained_milestone_invalidations,
             required_retained_milestones=required_retained_milestones,
             required_effects=required_effects,

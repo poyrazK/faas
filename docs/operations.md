@@ -1919,7 +1919,7 @@ fact reference, and an `invalidation` containing the source and fact reference.
 Equal timestamps invalidate conservatively. A payment fact occurring after the
 refund can satisfy the prerequisite again. Late publication of an older payment
 cannot restore eligibility. Future occurrences do not count yet. Edges without
-invalidation rules retain their existing publication-ordered evidence selection.
+invalidation or freshness rules retain their existing publication-ordered evidence selection.
 
 The same account, app, tenant, environment, subject, instance, and contract version
 checks apply to both facts. Multiple invalidators are allowed; the latest
@@ -1929,6 +1929,46 @@ normal Operation retention; this projection is not a permanent revocation ledger
 and expired invalidators stop contributing. SDK guards reject invalidated results.
 Applications continue to check their authoritative business row and authorization
 before committing a transition.
+
+### Retained prerequisite freshness
+
+Use a versioned freshness rule when evidence has a business expiry, such as an
+inventory reservation that remains usable for 15 minutes:
+
+```yaml
+requires_retained_milestones:
+  - operation: reserve-inventory
+    milestone: inventory-reserved
+retained_milestone_freshness:
+  - prerequisite:
+      operation: reserve-inventory
+      milestone: inventory-reserved
+    max_age: 15m
+```
+
+This block belongs to the consuming transition. Selectors must already be required
+retained prerequisites. At most 16 unique rules are allowed per edge; `max_age`
+must be a positive whole-second duration, bounded to 10 years (315360000 seconds).
+Resolved API definitions use `max_age_seconds`. Rules are canonicalized and pinned
+in the immutable workflow contract; changes require a new workflow version.
+
+Freshness selects the latest eligible business occurrence, excluding future facts;
+late publication of an older event cannot renew a prerequisite. Evidence expires
+inclusively at `occurred_at + max_age_seconds`. Readiness returns `expired` and
+`retained_milestone_expired`, with the fact identity, `evaluated_at`, `expires_at`,
+whole elapsed `age_seconds`, and rounded-up `remaining_seconds` (zero once expired).
+Missing evidence stays `awaiting_verification`, carrying the policy and evaluation
+time without derived expiry fields. Invalidation takes precedence over expiry,
+while freshness details remain available for diagnostics.
+
+Readiness, action previews, and workflow overviews share one store evaluation
+clock per response. Dashboard and CLI guidance explain renewal; Go, Node, and
+Python guards reject expired or incomplete freshness evidence. Planned facts
+cannot renew retained prerequisites. The application commits and publishes a new
+prerequisite fact with its actual business occurrence time, then rechecks readiness.
+Existing ownership, subject, instance, version, and retention boundaries apply.
+Readiness is a point-in-time observation, not a lease: applications must still
+verify their reservation and locked business rows before writing.
 
 ### Business action previews
 

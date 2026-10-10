@@ -5,12 +5,17 @@
 import type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffectRequirement.js';
 import type { OperationWorkflowInvariantRequirement } from './OperationWorkflowInvariantRequirement.js';
 import type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
+import type { OperationWorkflowRetainedMilestoneFreshnessRule } from './OperationWorkflowRetainedMilestoneFreshnessRule.js';
 import type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
 import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 /**
  * Allowed state edge declared by a pinned application workflow definition.
  */
 export type OperationWorkflowTransition = {
+  /**
+   * Maximum evidence ages pinned to this workflow edge.
+   */
+  retained_milestone_freshness?: Array<OperationWorkflowRetainedMilestoneFreshnessRule>;
   /**
    * Pinned edge rules linking retained prerequisites to invalidating facts from declared workflow steps. Business occurrence time determines order; an invalidating fact wins equal timestamps.
    */

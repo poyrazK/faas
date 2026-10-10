@@ -78,6 +78,8 @@ type (
 	OperationSubject                         = api.OperationSubject
 )
 
+type OperationWorkflowRetainedMilestoneFreshnessRule = api.OperationWorkflowRetainedMilestoneFreshnessRule
+type OperationWorkflowRetainedMilestoneFreshness = api.OperationWorkflowRetainedMilestoneFreshness
 type OperationWorkflowRetainedMilestoneInvalidationRule = api.OperationWorkflowRetainedMilestoneInvalidationRule
 type OperationWorkflowRetainedMilestoneInvalidation = api.OperationWorkflowRetainedMilestoneInvalidation
 

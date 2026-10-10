@@ -180,6 +180,7 @@ type OperationWorkflowInstanceSnapshot struct {
 }
 
 type OperationWorkflowInstanceTransition struct {
+	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessRule    `json:"retained_milestone_freshness,omitempty"`
 	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
 	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`
 	From                           string                                               `json:"from"`

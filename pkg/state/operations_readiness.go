@@ -148,15 +148,20 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 			out.Advisories = append(out.Advisories, "deadline_overdue")
 		}
 	}
-	missingRetained, invalidatedRetained := false, false
+	missingRetained, invalidatedRetained, expiredRetained := false, false, false
 	for _, requirement := range out.Transition.RequiredRetainedMilestones {
 		result := evaluateRetainedMilestone(instance, out.Transition, requirement)
 		out.RetainedMilestones = append(out.RetainedMilestones, result)
 		if result.Status == "invalidated" {
 			invalidatedRetained = true
+		} else if result.Status == "expired" {
+			expiredRetained = true
 		} else if result.Status != "verified" {
 			missingRetained = true
 		}
+	}
+	if expiredRetained {
+		reason("retained_milestone_expired")
 	}
 	if missingRetained {
 		reason("retained_milestone_required")
@@ -271,6 +276,9 @@ func checkOperationWorkflowReadiness(ctx context.Context, store OperationMilesto
 		return api.OperationWorkflowReadinessResponse{}, err
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
+	if page.WorkflowInstance != nil && !page.WorkflowInstance.RetainedMilestoneEvaluatedAt.IsZero() {
+		at = page.WorkflowInstance.RetainedMilestoneEvaluatedAt
+	}
 	if page.WorkflowInstance != nil && page.WorkflowInstance.State != nil {
 		state := page.WorkflowInstance.State
 		state.Stale = operationWorkflowStateIsStale(at, *state)

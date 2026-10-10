@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+    from ..models.operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
     from ..models.operation_workflow_retained_milestone_invalidation import (
         OperationWorkflowRetainedMilestoneInvalidation,
     )
@@ -26,8 +27,9 @@ T = TypeVar("T", bound="OperationWorkflowRetainedMilestone")
 class OperationWorkflowRetainedMilestone:
     """Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow
     instance, and contract version. Verified does not attest to an external provider or authorize business writes.
-    Invalidated means an applicable retained fact occurred at or after the prerequisite. Awaiting verification means no
-    matching eligible fact is currently retained and does not prove it never occurred.
+    Invalidated means an applicable retained fact occurred at or after the prerequisite. Expired means the declared
+    maximum evidence age has been reached at evaluation time. Invalidation takes precedence over expiry. Awaiting
+    verification means no matching eligible fact is currently retained and does not prove it never occurred.
 
     """
 
@@ -35,6 +37,9 @@ class OperationWorkflowRetainedMilestone:
     """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
     contract."""
     status: OperationWorkflowRetainedMilestoneStatus
+    freshness: OperationWorkflowRetainedMilestoneFreshness | Unset = UNSET
+    """Evidence age evaluated at the shared server timestamp. Expiry is inclusive; missing evidence omits expiry
+    and age fields. Remaining seconds round up while eligible and are zero after expiry."""
     invalidation: OperationWorkflowRetainedMilestoneInvalidation | Unset = UNSET
     """Identity of the retained fact that invalidated a prerequisite by business occurrence time. Equal occurrence
     timestamps invalidate conservatively; a later prerequisite fact can satisfy the requirement again. Normal
@@ -46,6 +51,10 @@ class OperationWorkflowRetainedMilestone:
         requirement = self.requirement.to_dict()
 
         status: str = self.status
+
+        freshness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.freshness, Unset):
+            freshness = self.freshness.to_dict()
 
         invalidation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.invalidation, Unset):
@@ -63,6 +72,8 @@ class OperationWorkflowRetainedMilestone:
                 "status": status,
             }
         )
+        if freshness is not UNSET:
+            field_dict["freshness"] = freshness
         if invalidation is not UNSET:
             field_dict["invalidation"] = invalidation
         if evidence is not UNSET:
@@ -73,6 +84,7 @@ class OperationWorkflowRetainedMilestone:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+        from ..models.operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
         from ..models.operation_workflow_retained_milestone_invalidation import (
             OperationWorkflowRetainedMilestoneInvalidation,
         )
@@ -84,6 +96,13 @@ class OperationWorkflowRetainedMilestone:
         requirement = OperationWorkflowRetainedMilestoneRequirement.from_dict(d.pop("requirement"))
 
         status = check_operation_workflow_retained_milestone_status(d.pop("status"))
+
+        _freshness = d.pop("freshness", UNSET)
+        freshness: OperationWorkflowRetainedMilestoneFreshness | Unset
+        if isinstance(_freshness, Unset):
+            freshness = UNSET
+        else:
+            freshness = OperationWorkflowRetainedMilestoneFreshness.from_dict(_freshness)
 
         _invalidation = d.pop("invalidation", UNSET)
         invalidation: OperationWorkflowRetainedMilestoneInvalidation | Unset
@@ -102,6 +121,7 @@ class OperationWorkflowRetainedMilestone:
         operation_workflow_retained_milestone = cls(
             requirement=requirement,
             status=status,
+            freshness=freshness,
             invalidation=invalidation,
             evidence=evidence,
         )

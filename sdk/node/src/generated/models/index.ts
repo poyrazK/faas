@@ -1118,6 +1118,8 @@ export type { OperationWorkflowReconciliationPayload } from './OperationWorkflow
 export type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';
 export type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 export type { OperationWorkflowRetainedMilestone } from './OperationWorkflowRetainedMilestone.js';
+export type { OperationWorkflowRetainedMilestoneFreshness } from './OperationWorkflowRetainedMilestoneFreshness.js';
+export type { OperationWorkflowRetainedMilestoneFreshnessRule } from './OperationWorkflowRetainedMilestoneFreshnessRule.js';
 export type { OperationWorkflowRetainedMilestoneInvalidation } from './OperationWorkflowRetainedMilestoneInvalidation.js';
 export type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
 export type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';

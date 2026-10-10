@@ -55,6 +55,7 @@ func (m *MemStore) projectRetainedMilestonesLocked(page *api.OperationMilestones
 	if err != nil || len(requirements) == 0 {
 		return err
 	}
+	instance.RetainedMilestoneEvaluatedAt = now.UTC().Truncate(time.Microsecond)
 	tenant = retainedMilestoneTenant(instance, tenant)
 	// An account-wide view without a selected tenant cannot borrow another
 	// tenant's evidence, even when business keys happen to match.
@@ -121,6 +122,7 @@ func (s *PgStore) projectRetainedMilestones(ctx context.Context, page *api.Opera
 	if err != nil || len(requirements) == 0 {
 		return err
 	}
+	instance.RetainedMilestoneEvaluatedAt = now.UTC().Truncate(time.Microsecond)
 	tenant = retainedMilestoneTenant(instance, tenant)
 	if tenant == "" {
 		return nil
@@ -183,8 +185,15 @@ func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, 
 			rules = append(rules, rule)
 		}
 	}
+	var freshness *api.OperationWorkflowRetainedMilestoneFreshness
+	for _, rule := range edge.RetainedMilestoneFreshness {
+		if rule.Prerequisite == requirement {
+			freshness = &api.OperationWorkflowRetainedMilestoneFreshness{MaxAgeSeconds: rule.MaxAgeSeconds, EvaluatedAt: instance.RetainedMilestoneEvaluatedAt}
+			break
+		}
+	}
 	facts := instance.RetainedMilestoneEvidence
-	if len(rules) > 0 {
+	if len(rules) > 0 || freshness != nil {
 		facts = instance.RetainedMilestoneOccurrenceEvidence
 	}
 	for _, fact := range facts {
@@ -193,8 +202,18 @@ func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, 
 			break
 		}
 	}
+	result.Freshness = freshness
 	if result.Evidence == nil {
 		return result
+	}
+	if freshness != nil {
+		expires := result.Evidence.OccurredAt.Add(time.Duration(freshness.MaxAgeSeconds) * time.Second)
+		age := (freshness.EvaluatedAt.UnixMicro() - result.Evidence.OccurredAt.UnixMicro()) / 1000000
+		remaining := max(int64(0), freshness.MaxAgeSeconds-age)
+		freshness.ExpiresAt, freshness.AgeSeconds, freshness.RemainingSeconds = &expires, &age, &remaining
+		if !freshness.EvaluatedAt.Before(expires) {
+			result.Status = "expired"
+		}
 	}
 	for _, rule := range rules {
 		for _, source := range instance.RetainedMilestoneOccurrenceEvidence {

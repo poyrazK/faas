@@ -171,6 +171,11 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 				return err
 			}
 			transitions[j].RetainedMilestoneInvalidations = invalidations
+			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(transitions[j].RetainedMilestoneFreshness, retained)
+			if err != nil {
+				return err
+			}
+			transitions[j].RetainedMilestoneFreshness = freshness
 			if transitions[j].RequiredDependencyWorkflows != nil {
 				workflows := append([]string{}, (*transitions[j].RequiredDependencyWorkflows)...)
 				if len(workflows) > 16 {
@@ -415,7 +420,7 @@ func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool
 		return false
 	}
 	for i := range left {
-		if !reflect.DeepEqual(left[i].RetainedMilestoneInvalidations, right[i].RetainedMilestoneInvalidations) || !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
+		if !reflect.DeepEqual(left[i].RetainedMilestoneFreshness, right[i].RetainedMilestoneFreshness) || !reflect.DeepEqual(left[i].RetainedMilestoneInvalidations, right[i].RetainedMilestoneInvalidations) || !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
 			return false
 		}
 		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {

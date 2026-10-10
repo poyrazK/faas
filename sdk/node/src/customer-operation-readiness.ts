@@ -3,8 +3,13 @@ import { businessInvariantPayload, type OperationBusinessInvariant } from './cus
 import { businessDecisionPayload, type OperationBusinessDecision } from './customer-operation-decisions.js';
 import type { CustomerOperationTransaction } from './customer-operation-milestones.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
-import type { OperationMilestoneReport, OperationWorkflowReadinessRequest, OperationWorkflowReadinessResponse } from './customer-operations.js';
+import type { OperationWorkflowRetainedMilestone, OperationMilestoneReport, OperationWorkflowReadinessRequest, OperationWorkflowReadinessResponse } from './customer-operations.js';
 import type { OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
+
+function usableRetainedMilestone(e: OperationWorkflowRetainedMilestone): boolean {
+ const f = e.freshness;
+ return e.status === 'verified' && !!e.evidence && !e.invalidation && (!f || (Number.isSafeInteger(f.max_age_seconds) && f.max_age_seconds > 0 && !!f.evaluated_at && Number.isFinite(Date.parse(f.evaluated_at)) && !!f.expires_at && Number.isFinite(Date.parse(f.expires_at)) && Number.isSafeInteger(f.age_seconds) && f.age_seconds! >= 0 && Number.isSafeInteger(f.remaining_seconds) && f.remaining_seconds! > 0 && f.remaining_seconds! <= f.max_age_seconds));
+}
 
 export class CustomerOperationReadinessError extends Error {
   constructor(readonly response: OperationWorkflowReadinessResponse) {
@@ -67,7 +72,8 @@ export async function guardedWorkflowTransition(
       break;
     }
     if (response.subject.type !== request.subject.type || response.subject.id !== request.subject.id || response.workflow !== request.workflow || response.instance_id !== request.instance_id || r.transition.operation !== request.operation || r.transition.from !== request.from_state || r.transition.to !== request.to_state) throw new TypeError('Readiness response does not match proposed transition');
-    if ((r.transition.required_retained_milestones ?? []).some(p => !(r.retained_milestones ?? []).some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone && e.status === "verified" && e.evidence && !e.invalidation)) || (r.retained_milestones ?? []).some(e => e.status !== "verified" || !e.evidence || !!e.invalidation) || !r.ready || !r.declared || r.state_revision !== request.state_revision || r.contract_version !== request.contract_version || r.reasons.length + r.blockers.length + r.unmet_dependencies.length + r.missing_milestones.length + (r.missing_policies?.length ?? 0) + (r.missing_dependency_workflows?.length ?? 0) + (r.unmet_invariants?.length ?? 0) + (r.unmet_effects?.length ?? 0) !== 0) throw new CustomerOperationReadinessError(response);
+    if ((r.transition.retained_milestone_freshness ?? []).some(rule => !(r.retained_milestones ?? []).some(e => e.requirement.operation === rule.prerequisite.operation && e.requirement.milestone === rule.prerequisite.milestone && usableRetainedMilestone(e) && e.freshness?.max_age_seconds === rule.max_age_seconds && e.freshness.evaluated_at === response.evaluated_at))) throw new CustomerOperationReadinessError(response);
+    if ((r.transition.required_retained_milestones ?? []).some(p => !(r.retained_milestones ?? []).some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone && usableRetainedMilestone(e))) || (r.retained_milestones ?? []).some(e => !usableRetainedMilestone(e)) || !r.ready || !r.declared || r.state_revision !== request.state_revision || r.contract_version !== request.contract_version || r.reasons.length + r.blockers.length + r.unmet_dependencies.length + r.missing_milestones.length + (r.missing_policies?.length ?? 0) + (r.missing_dependency_workflows?.length ?? 0) + (r.unmet_invariants?.length ?? 0) + (r.unmet_effects?.length ?? 0) !== 0) throw new CustomerOperationReadinessError(response);
     reports.splice(0, reports.length, ...stagedReports); states.splice(0, states.length, ...stagedStates);
     return response;
   } catch (error) {
