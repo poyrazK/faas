@@ -341,7 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold race builds can take over 12 minutes before the 16-minute test
+    # phase starts. Leave time for both phases and runner/container setup.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
