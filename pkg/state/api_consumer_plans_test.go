@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 940
+// adr: 954
 func TestDecidePlanAdmissionWindows(t *testing.T) {
 	now := time.Date(2026, 9, 30, 23, 59, 30, 0, time.UTC)
 	policy := APIConsumerPlanPolicy{MaxRequestsPerMinute: 2, MaxUnitsPerMonth: 30}

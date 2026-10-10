@@ -43,7 +43,7 @@ func stateRateCardTiers(tiers []api.APIConsumerRateCardTier) []state.APIConsumer
 }
 
 // rateCardAllowanceProblem rejects a card that would change which past
-// minutes were free or in which ladder step (ADR-937, ADR-938). Usage is
+// minutes were free or in which ladder step (ADR-951, ADR-952). Usage is
 // consumed in minute order from the start of each month, so once any card
 // carries an allowance or tiers, a backdated card could re-split units that
 // statements already billed.
@@ -65,7 +65,7 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 			return invalid("tiers replace included_units_per_month; make the first step free instead")
 		}
 	}
-	// Plan prices (ADR-940) are never backdated either: assignments price
+	// Plan prices (ADR-954) are never backdated either: assignments price
 	// minutes by the plan's history, so a backdated plan card would re-price
 	// minutes that statements may already have billed.
 	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0 || req.PlanID != ""
@@ -233,7 +233,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
 		return
 	}
-	// Earlier usage in since's month consumes the monthly allowance (ADR-937).
+	// Earlier usage in since's month consumes the monthly allowance (ADR-951).
 	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
@@ -277,7 +277,7 @@ func isUpperASCIICurrency(currency string) bool {
 	return true
 }
 
-// weightConsumerUsage applies the effective cards' route weights (ADR-939).
+// weightConsumerUsage applies the effective cards' route weights (ADR-953).
 // Route rows are read only when some card weights routes.
 func (s *server) weightConsumerUsage(r *http.Request, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket,
 	accountID, appID, consumerID string, since, until time.Time) ([]state.APIConsumerUsageBucket, error) {

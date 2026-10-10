@@ -28605,6 +28605,458 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
+  /v1/apps/{slug}/entities/inspect:
+    get:
+      tags: [invocations]
+      operationId: inspectDurableEntity
+      summary: Inspect one durable entity's state and recovery metadata.
+      description: |
+        Account-owner read preview, requiring apps:read or admin, MFA where
+        applicable, and the explicit durable entity app allowlist. Resolves the
+        current immutable environment and same-account optional customer. Owner
+        inspection permits suspended customers and plan downgrades for diagnosis;
+        it does not authorize execution. Customer self-service tokens are excluded.
+        Returns state version, alarm and pending-outbox recovery metadata only.
+        No business data, receipts, payloads, credentials, claim tokens or bucket
+        paths are exposed. Inspection acquires no ownership, writes no objects,
+        repairs no indexes and runs no guest code. A missing entity returns 404
+        without creating it; corrupt committed state fails closed with 503.
+        Head delivery status is a separate, later observation of retained transport
+        history. Unknown includes absent/pruned history or read failures and never
+        proves a message was not accepted. An empty pending queue does not prove
+        receiver completion. These observations are not atomic across stores.
+        Inspection does not retry work. Use its recovery_revision for the separate
+        owner-only retry endpoint. Responses are not cacheable.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: namespace
+          in: query
+          required: true
+          description: Entity namespace, bounded to 256 UTF-8 bytes.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: key
+          in: query
+          required: true
+          description: Logical entity key, bounded to 256 UTF-8 bytes.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: environment
+          in: query
+          description: Current registered project environment; defaults to production.
+          schema: { type: string, minLength: 1 }
+        - name: platform_tenant_id
+          in: query
+          description: Optional customer owned by the authenticated account, including suspended customers.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Metadata-only entity and head delivery observations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityInspectResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview disabled, bucket unavailable, corrupt committed state or retryable reclamation race.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Inspection deadline elapsed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/backups:
+    get:
+      tags: [invocations]
+      operationId: listDurableEntityBackups
+      summary: List retained backup metadata.
+      description: |
+        This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for backup listing.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for backup listing.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for backup listing; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for backup listing.", in: query, schema: { type: string } }
+        - { name: cursor, description: "Opaque continuation cursor from the previous backup page.", in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Backup listing observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private backup listing response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityBackupPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Backup listing observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Backup listing observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/backups/get:
+    get:
+      tags: [invocations]
+      operationId: getDurableEntityBackup
+      summary: Read one private application-state backup.
+      description: |
+        This backup retrieval operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for backup retrieval.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for backup retrieval.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for backup retrieval; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for backup retrieval.", in: query, schema: { type: string } }
+        - { name: backup_id, description: "Identifier of the retained backup to retrieve.", in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Backup retrieval observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private backup retrieval response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityBackup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Backup retrieval observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Backup retrieval observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore/preview:
+    post:
+      tags: [invocations]
+      operationId: previewDurableEntityRestore
+      summary: Preview a restore without writes or execution.
+      description: |
+        This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Restore preview observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private restore preview response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestorePreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Restore preview observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Restore preview observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Preview body exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/export:
+    get:
+      tags: [invocations]
+      operationId: exportDurableEntity
+      summary: Export committed application state from one durable entity.
+      description: |
+        Owner-only preview requiring apps:read or admin and MFA where applicable.
+        Resolves immutable account, app, environment and tenant identity. Requires
+        app enablement. Diagnostic reads permit held/suspended scopes and plan
+        downgrades. Performs no writes or guest invocation. Contains sensitive
+        application JSON; responses are private, no-store. Excludes alarms,
+        receipts, outbox and ownership. Checksum detects corruption, not authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for state export.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for state export.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for state export; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for state export.", in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: One committed state export. No version-zero entity is exported.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private state export response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityStateExport' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: State export preview is unavailable, ownership is busy or storage failed. Retry the export read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: State export deadline elapsed. Retry the export read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore/validate:
+    post:
+      tags: [invocations]
+      operationId: validateDurableEntityRestore
+      summary: Ask the live application deployment to validate exported state.
+      description: |
+        Operator-gated preview requiring deploy:write or admin, MFA where applicable,
+        app enablement, execution plan and active-tenant/account rules. Enqueues
+        a pinned invocation to the distinct private validation path. The synchronous
+        application validator must be pure and returns only a versioned boolean
+        verdict. Gregale commits no state, alarm, outbox or request receipt here;
+        invocation rows and normal execution resource use still occur. External
+        application I/O is not independently disabled by the current runtime.
+        Validate needs an existing committed entity and matching expected_version.
+        Returned deployment_id identifies the checked deployment, not a permission
+        token. Restore revalidates under its claim and rejects deployment drift;
+        preview/validation does not reserve a version. Keep candidate data private.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Application verdict without entity publication; false rejects the candidate.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private restore validation response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestoreValidationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: validateDurableEntityRestore requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Current state or selected deployment changed. Resolve the observation before starting a new operation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Validation request exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Application validation failed or returned a malformed verdict.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Application validation preview is disabled or storage/execution is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Validation deadline elapsed. No entity commit occurs for validation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore:
+    post:
+      tags: [invocations]
+      operationId: restoreDurableEntity
+      summary: Restore exported application data with a fenced expected-version check.
+      description: |
+        Owner-only mutation preview requiring deploy:write or admin and MFA where
+        applicable. Applies app enablement, execution plan, account hold and active
+        tenant rules. Export identity must exactly match resolved target scope.
+        Requires an existing committed entity, positive expected_version and stable
+        request_id. Commits only application data, preserving current receipts,
+        alarms, outbox and delivery attempts. Advances business version once; invokes
+        no guest unless application restore validation is enabled. With
+        FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1, every new restore requires
+        validation_deployment_id and a fresh pure validator verdict under the claim.
+        The chosen deployment is resolved before and after validation; publication
+        still uses the entity ownership/version CAS. Deployment routing and bucket
+        publication are not one atomic transaction. Receipt replay skips validation.
+        Receipt replay precedes expected-version comparison. Retry uncertain
+        outcomes with the identical request body and ID. Check application schema
+        compatibility before restoring. Audit is best effort after acknowledged
+        success, not atomic with the object-store commit. Responses are private,
+        no-store; request/response state must not be logged.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Restore committed or an existing receipt was replayed.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private state restore response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestoreResponse' }
+        '409':
+          description: Expected version is stale, request identity conflicts or storage budget is exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Restore request exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: restoreDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview unavailable, busy ownership, storage failure or uncertain outcome. Retry restore with identical request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Deadline elapsed. Retry restore with identical request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/retry:
+    post:
+      tags: [invocations]
+      operationId: retryDurableEntity
+      summary: Re-arm exactly one exhausted alarm or outgoing message.
+      description: |
+        Account-owner mutation preview requiring deploy:write or admin, MFA where
+        applicable, durable entity app enablement and the existing execution plan
+        and active-customer rules. Account holds block recovery. Requires a fresh
+        inspection's version and opaque recovery_revision plus alarm_at or head_id.
+        The revision changes on every manifest write, including ownership and
+        retry metadata changes. Only exhausted work on an unowned entity can be
+        re-armed. A stale observation or non-exhausted target returns 409; an
+        active owner returns 503. No missing entity is created.
+        Recovery changes retry metadata only, preserving state, receipts, deadlines,
+        message identities, payloads and durable transport acceptance. It does not
+        invoke the guest, send a webhook or retry a terminal receiver delivery.
+        Existing workers must be enabled separately. Responses are not cacheable.
+        A repeated request after success returns 409. After an uncertain response,
+        inspect again before deciding whether another recovery is needed.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRetryRequest' }
+      responses:
+        '200':
+          description: Retry metadata was re-armed; execution or delivery is not confirmed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRetryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: retryDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Observation changed, target changed or work is not exhausted. Inspect again.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Recovery request exceeds the central durable entity metadata size limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview unavailable, active owner, corrupt state or uncertain recovery outcome. Inspect before retrying.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Recovery deadline elapsed. Inspect before retrying.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/entities/invoke:
     post:
       tags: [invocations]
@@ -28657,8 +29109,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '402':
+          description: invokeDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.
@@ -49262,7 +49720,7 @@ components:
         as_of: { type: string, format: date-time }
 
     APIConsumerUsageCompletenessResponse:
-      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-941)."
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-955)."
       type: object
       required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
       properties:
@@ -51432,11 +51890,23 @@ components:
         expires_at: { type: string, format: date-time }
         deployment_id: { type: [string, "null"] }
 
+    DurableEntityValidatorDeploymentInfo:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: Observational validator readiness on deployment detail; not a reservation or code-purity attestation.
+      properties:
+        status: { type: string, enum: [disabled, unavailable, ready] }
+        source: { type: string, enum: [registry, object_storage] }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        durable_entity_validator:
+          $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
           type: object
           description: >-
@@ -66321,6 +66791,196 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
+    DurableEntityInspectResponse:
+      description: Metadata-only observation of entity state, recovery work and retained head-delivery history.
+      type: object
+      required: [entity, version, recovery_revision, state_committed, alarm, outbox]
+      properties:
+        recovery_revision:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque comparison value that changes on any manifest write; not ownership authority.
+        entity: { $ref: '#/components/schemas/DurableEntityScope' }
+        version: { type: integer, minimum: 0, description: "Business state uint64 version; zero means no transition has committed." }
+        state_committed: { type: boolean, description: "Whether a business transition has committed; does not imply delivery." }
+        alarm: { $ref: '#/components/schemas/DurableEntityAlarmInspection' }
+        outbox: { $ref: '#/components/schemas/DurableEntityOutboxInspection' }
+
+    DurableEntityScope:
+      description: Immutable account, application, environment and optional customer identity of a logical entity.
+      type: object
+      required: [account_id, app_id, environment_id, namespace, key]
+      properties:
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        namespace: { type: string }
+        key: { type: string }
+
+    DurableEntityAlarmInspection:
+      description: Observed alarm timing and bounded recovery attempt metadata.
+      type: object
+      required: [attempts, exhausted]
+      properties:
+        alarm_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time }
+        exhausted: { type: boolean }
+
+    DurableEntityOutboxInspection:
+      description: Pending outgoing work and retry metadata for the current queue head.
+      type: object
+      required: [pending, attempts, exhausted]
+      properties:
+        pending: { type: integer, minimum: 0, maximum: 128 }
+        head_id: { type: string, format: uuid }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time }
+        exhausted: { type: boolean }
+        head_delivery: { $ref: '#/components/schemas/DurableEntityHeadDelivery' }
+
+    DurableEntityHeadDelivery:
+      description: "Separate observation for the pending head only; absent when no head is pending. Unknown includes unavailable/pruned history, not proof of non-acceptance."
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [unknown, pending, in_flight, succeeded, failed, dead] }
+
+    DurableEntityBackup:
+      description: Private application-state export captured in a retained hourly backup slot.
+      type: object
+      additionalProperties: false
+      required: [captured_at, export]
+      properties:
+        captured_at: { type: string, format: date-time, description: UTC hourly slot start. }
+        export: { $ref: '#/components/schemas/DurableEntityStateExport' }
+    DurableEntityBackupInfo:
+      description: Backup identifier, capture slot and business version without application data.
+      type: object
+      additionalProperties: false
+      required: [id, captured_at, version]
+      properties:
+        id: { type: string }
+        captured_at: { type: string, format: date-time }
+        version: { type: integer, format: int64, minimum: 1 }
+    DurableEntityBackupPage:
+      description: Bounded page of retained backup metadata with an optional continuation cursor.
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DurableEntityBackupInfo' }
+        next_cursor: { type: string }
+    DurableEntityRestorePreview:
+      description: Read-only comparison of candidate and current state; compatibility remains unverified.
+      type: object
+      additionalProperties: false
+      required: [current_version, source_version, expected_version_matches, schema_relation, compatibility, alarm_pending, outbox_pending, alarm_exhausted, outbox_exhausted]
+      properties:
+        current_version: { type: integer, format: int64, minimum: 1 }
+        source_version: { type: integer, format: int64, minimum: 1 }
+        expected_version_matches: { type: boolean }
+        current_schema_version: { type: integer, minimum: 1 }
+        source_schema_version: { type: integer, minimum: 1 }
+        schema_relation: { type: string, enum: [same, older, newer, unknown] }
+        compatibility: { type: string, enum: [unverified] }
+        alarm_pending: { type: boolean }
+        outbox_pending: { type: integer, minimum: 0 }
+        alarm_exhausted: { type: boolean }
+        outbox_exhausted: { type: boolean }
+
+    DurableEntityStateExport:
+      description: Checksummed committed application data with immutable entity identity; excludes recovery and delivery history.
+      type: object
+      additionalProperties: false
+      required: [format, entity, version, data, checksum]
+      properties:
+        format: { type: integer, enum: [1] }
+        entity: { $ref: '#/components/schemas/DurableEntityScope' }
+        version: { type: integer, format: int64, minimum: 1 }
+        data:
+          description: Opaque application JSON, including any application schema envelope.
+        checksum: { type: string, pattern: '^[0-9a-f]{64}$' }
+    DurableEntityRestoreRequest:
+      description: Candidate export and comparison identity used for restore preview, validation or fenced publication.
+      type: object
+      additionalProperties: false
+      required: [namespace, key, request_id, expected_version, export]
+      properties:
+        namespace: { type: string, minLength: 1 }
+        key: { type: string, minLength: 1 }
+        environment: { type: string }
+        platform_tenant_id: { type: string }
+        request_id: { type: string, minLength: 1 }
+        validation_bundle_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Registered validator bundle digest. Required for isolated restores.
+        validation_deployment_id:
+          type: string
+          format: uuid
+          description: Explicit deployment pin. Required for restores when application validation is enabled.
+        expected_version: { type: integer, format: int64, minimum: 1 }
+        export: { $ref: '#/components/schemas/DurableEntityStateExport' }
+    DurableEntityRestoreValidationResponse:
+      description: Application validator verdict and deployment pin; does not reserve or commit entity state.
+      type: object
+      additionalProperties: false
+      required: [valid, deployment_id, expected_version, source_version]
+      properties:
+        bundle_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        isolation: { type: string, enum: [networkless] }
+        valid: { type: boolean }
+        deployment_id: { type: string, format: uuid }
+        expected_version: { type: integer, format: int64, minimum: 1 }
+        source_version: { type: integer, format: int64, minimum: 1 }
+
+    DurableEntityRestoreResponse:
+      description: Acknowledged business version and whether an existing restore receipt was replayed.
+      type: object
+      additionalProperties: false
+      required: [version, replayed]
+      properties:
+        version: { type: integer, format: int64, minimum: 1 }
+        replayed: { type: boolean }
+
+    DurableEntityRetryRequest:
+      type: object
+      additionalProperties: false
+      required: [namespace, key, target, expected_version, expected_recovery_revision]
+      description: |
+        For target alarm provide alarm_at and omit head_id; for outbox provide
+        head_id and omit alarm_at. Copy comparison fields from fresh inspection.
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 256 }
+        key: { type: string, minLength: 1, maxLength: 256 }
+        environment: { type: string, minLength: 1 }
+        platform_tenant_id: { type: string, format: uuid }
+        target: { type: string, enum: [alarm, outbox] }
+        expected_version:
+          type: integer
+          minimum: 1
+          description: Exact business uint64 version from inspection.
+        expected_recovery_revision:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque revision from the same inspection, invalidated by every manifest write.
+        head_id: { type: string, format: uuid }
+        alarm_at: { type: string, format: date-time }
+    DurableEntityRetryResponse:
+      description: Acknowledged recovery metadata reset for one exhausted alarm or outgoing message.
+      type: object
+      additionalProperties: false
+      required: [version, target, rearmed]
+      properties:
+        version: { type: integer, minimum: 1 }
+        target: { type: string, enum: [alarm, outbox] }
+        rearmed:
+          type: boolean
+          description: Retry metadata was reset; no execution or receiver completion is implied.
     DurableEntityInvokeRequest:
       description: "Preview entity invocation; request_id and payload identify durable retries."
       type: object

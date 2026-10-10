@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// CreateAPIConsumerPlanRequest creates a named consumer plan (ADR-940).
+// CreateAPIConsumerPlanRequest creates a named consumer plan (ADR-954).
 // Zero limits mean unlimited. Prices are the plan's own rate cards
 // (CreateAPIConsumerRateCardRequest.PlanID).
 type CreateAPIConsumerPlanRequest struct {
@@ -62,7 +62,7 @@ type APIConsumerPlanAssignmentListResponse struct {
 	Assignments []APIConsumerPlanAssignmentResponse `json:"assignments"`
 }
 
-// Error codes for plan-limited admission at the gateway (ADR-940).
+// Error codes for plan-limited admission at the gateway (ADR-954).
 const (
 	CodeConsumerPlanLimitExceeded    = "consumer_plan_limit_exceeded"
 	CodeConsumerPlanLimitUnavailable = "consumer_plan_limit_unavailable"

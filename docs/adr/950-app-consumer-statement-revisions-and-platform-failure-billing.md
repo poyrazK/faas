@@ -1,0 +1,23 @@
+# ADR-950: App consumer statement revisions and unbilled platform failures
+
+- **Status:** accepted
+- **Date:** 2026-10-09
+- **Decision:** App-local API consumer usage statements adopt the platform-tenant revision model (ADR-238). Separately, a request that ends in a 5xx before the guest sends any response byte is journaled with zero billable units.
+- **Why:** App-local statements were unique per exact period and created with `ON CONFLICT DO NOTHING`. The first create froze the draft. Later usage, or a rate card added to price unpriced units, was never reflected, and no route could replace the draft. Usage delivered after finalization could not be billed either: re-creating the period replayed the finalized snapshot, and any other period overlapping it was rejected at handoff. Separately, every admitted request was billed one unit regardless of outcome. A customer's end consumer therefore paid for wake failures, capacity rejections, queue timeouts, and vanished targets that the platform caused.
+- **Consequences:**
+  - Statements gain a `revision` column, a `superseded` status, and a uniqueness key of app, consumer, period, and revision. Existing rows become revision 1.
+  - Create plans against the period's revisions. Coverage is the per-minute buckets of every finalized revision.
+    - An unchanged draft replays (200).
+    - If units or effective prices changed, the open draft becomes `superseded` and a new draft revision holds every still-unfinalized unit.
+    - After finalization, a create with no new units replays the latest revision. New units create the next revision containing only the positive difference, at the rate cards effective for those minutes.
+    - Usage below finalized coverage fails closed with 409. It is not a negative credit note.
+  - A superseded draft cannot be finalized or handed off.
+  - Persistence locks the consumer row and requires the planned revision to be exactly one above the latest, with a matching prior status. A concurrent change returns 409 instead of being overwritten.
+  - Handoff still rejects other app-local or tenant statements whose windows overlap. Revisions of the same exact period are allowed, because each carries only units no earlier revision finalized. An external invoice ID remains unique per account across both handoff paths.
+  - Billing on failure is decided at the gateway's single exit funnel. The first-byte recorder is stamped only after upstream response headers arrive, on both the reverse-proxy and bridge paths. A 5xx without that stamp is a platform failure, so its usage event carries `billable_units = 0` while keeping its request and error counts. A 5xx the guest itself returned remains billable. The legacy debugger fallback bills every row it writes, so a platform failure is marked outboxed and kept away from it.
+  - Responses served without a guest below 500 (cached, redirected, edge-generated) are unchanged and still billable. Tenant request budgets (ADR-240) still count admitted requests regardless of outcome.
+- **Rejected alternatives:**
+  - Deleting or overwriting the stale draft would lose the audit trail of what was quoted.
+  - Allowing overlapping periods to be handed off would make double billing possible.
+  - Tagging every gateway error site as unbillable would be fragile: there are dozens of sites, and new ones would bill by default.
+  - Billing nothing for any 5xx would undercharge for genuine application failures that consumed guest compute.

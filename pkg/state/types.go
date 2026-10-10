@@ -771,7 +771,7 @@ type APIConsumerUsageEvent struct {
 	DiscoveredRoute string // optional normalized method/template
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
-	// so rate cards can weight routes (ADR-939).
+	// so rate cards can weight routes (ADR-953).
 	BillingRoute  string
 	DiscoveredAt  time.Time
 	WindowStart   time.Time
@@ -829,7 +829,7 @@ type APIConsumerUsageBucket struct {
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
-// bounded route label in one UTC minute (ADR-939). The per-minute totals in
+// bounded route label in one UTC minute (ADR-953). The per-minute totals in
 // APIConsumerUsageBucket stay authoritative; a minute's route units never
 // exceed them, and routes missing here count at weight 1.
 type APIConsumerRouteUsageBucket struct {
@@ -863,17 +863,17 @@ type APIConsumerRateCard struct {
 	Unit                   string
 	PriceMillicentsPerUnit int64
 	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-937).
+	// calendar month while this card is effective (ADR-951).
 	IncludedUnitsPerMonth int64
-	// Tiers is an optional graduated price ladder (ADR-938). When set it
+	// Tiers is an optional graduated price ladder (ADR-952). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
 	// RouteWeights counts each request on a listed route label as that many
-	// units (ADR-939); unlisted routes count 1. Weighted units feed the
+	// units (ADR-953); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
-	// to (ADR-940); empty is the app default plan.
+	// to (ADR-954); empty is the app default plan.
 	PlanID        string
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
@@ -979,13 +979,13 @@ type APIConsumerUsageStatementBucket struct {
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
 	// ChargedUnits is how many units this bucket bills at its price
-	// (ADR-937). Nil on buckets written before allowances existed, where
+	// (ADR-951). Nil on buckets written before allowances existed, where
 	// every priced unit was charged; read it through Charged. An adjustment
 	// may charge more units than it adds when late usage used allowance
 	// that later minutes had consumed.
 	ChargedUnits *int64 `json:"charged_units,omitempty"`
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-938); AmountMillicents is the sum of each step's units times its
+	// (ADR-952); AmountMillicents is the sum of each step's units times its
 	// price. In an adjustment, entries can be negative when late usage moved
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`

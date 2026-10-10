@@ -4522,3 +4522,50 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
+
+  - name: faas-durable-entity-health
+    rules:
+      - alert: FaasDurableEntityHealthScanFailed
+        expr: (apid_durable_entity_health_poll_success == 0) and on(job, instance) (apid_durable_entity_health_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: durable_entities
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
+          summary: "Durable entity health discovery is failing"
+          description: "Read-only bucket health scans are failing or encountering unverifiable committed state. Previous gauges remain historical; do not treat them as current inventory."
+      - alert: FaasDurableEntityHealthScanStale
+        expr: (time() - apid_durable_entity_health_last_success_timestamp_seconds > 900) and on(job, instance) (apid_durable_entity_health_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: durable_entities
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
+          summary: "Durable entity health observations are stale"
+          description: "This replica has no successful health rotation yet, or its last rotation is more than 15 minutes old. Check listing/read failures and rotation length before relying on backlog or exhaustion observations."
+      - alert: FaasDurableEntityWorkExhausted
+        expr: (apid_durable_entity_health_exhausted_entities > 0) and on(job, instance) (apid_durable_entity_health_enabled == 1) and on(job, instance) (apid_durable_entity_health_poll_success == 1) and on(job, instance) (time() - apid_durable_entity_health_last_success_timestamp_seconds < 900)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: durable_entities
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
+          summary: "Exhausted durable entity {{ $labels.target }} work was observed"
+          description: "A recent successful rotation observed exhausted work. Inspect the exact entity and correct its cause before submitting owner recovery with fresh comparison fields."
+      - alert: FaasDurableEntityBacklogAged
+        expr: (time() - apid_durable_entity_health_oldest_pending_timestamp_seconds > 300) and (apid_durable_entity_health_oldest_pending_timestamp_seconds > 0) and (apid_durable_entity_health_pending_work > 0) and on(job, instance) (apid_durable_entity_health_enabled == 1) and on(job, instance) (apid_durable_entity_health_poll_success == 1) and on(job, instance) (time() - apid_durable_entity_health_last_success_timestamp_seconds < 900)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: durable_entities
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
+          summary: "Durable entity {{ $labels.target }} backlog has aged"
+          description: "A recent rotation observed work older than five minutes. Alarm age starts at its saved deadline; outbox age uses known stored timestamps. This is sampled bucket backlog, not receiver-delivery latency."

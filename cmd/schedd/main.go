@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -609,6 +610,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
+	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,

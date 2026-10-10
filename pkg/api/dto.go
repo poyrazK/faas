@@ -1340,15 +1340,15 @@ type CreateAPIConsumerRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-937).
+	// calendar month while this card is effective (ADR-951).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
-	// Tiers is an optional graduated ladder (ADR-938) that replaces the
+	// Tiers is an optional graduated ladder (ADR-952) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
-	// as that many units (ADR-939); unlisted routes count 1.
+	// as that many units (ADR-953); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
-	// PlanID adds the version to a consumer plan's price history (ADR-940);
+	// PlanID adds the version to a consumer plan's price history (ADR-954);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
@@ -3048,7 +3048,8 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	StageState json.RawMessage `json:"stage_state,omitempty"`
+	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
+	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).

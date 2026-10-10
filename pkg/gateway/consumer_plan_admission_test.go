@@ -32,7 +32,7 @@ func planRequest(route string) *http.Request {
 	return withBillingRoute(r, route)
 }
 
-// adr: 940
+// adr: 954
 func TestEnforceConsumerPlan(t *testing.T) {
 	app := App{ID: "app-1", AccountID: "acct-1"}
 	t.Run("unlimited plans skip admission and cache the policy", func(t *testing.T) {

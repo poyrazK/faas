@@ -499,6 +499,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int
 	appWebhookReceiverCooldowns     map[string]time.Time
@@ -841,13 +842,13 @@ type MemStore struct {
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
 	platformTenantUsage   map[string]APIConsumerUsageBucket
-	// Consumer plans (ADR-940): plans by ID, assignments by ID, and admission
+	// Consumer plans (ADR-954): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan
 	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
 	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
 	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
-	// no request telemetry of its own (ADR-941).
+	// no request telemetry of its own (ADR-955).
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	apiConsumerUsageEvents    map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is

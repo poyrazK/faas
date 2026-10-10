@@ -149,14 +149,15 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
-	store    state.Store
-	notif    Notifier
-	vm       VM
-	cache    *Cache
-	detector *Detector
-	resid    ResidencyProbe
-	cfg      Config
-	log      *slog.Logger
+	validatorBuild func(context.Context, string, string, string, string) error
+	store          state.Store
+	notif          Notifier
+	vm             VM
+	cache          *Cache
+	detector       *Detector
+	resid          ResidencyProbe
+	cfg            Config
+	log            *slog.Logger
 	// ops is the build-metrics sink (ADR-030). nil in unit tests that
 	// don't care about metrics; all observations guard on nil (the
 	// ObserveBuild* methods are also nil-safe). Wired in production via
@@ -775,6 +776,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "source integrity: "+err.Error(), buildStart)
 		return BuildResult{}, err
+	}
+
+	if b.validatorBuild != nil {
+		if err := b.validatorBuild(ctx, app.ID, dep.ID, dep.SourcePath, dep.SourceRoot); err != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "validator artifact unavailable", buildStart)
+			return BuildResult{}, err
+		}
 	}
 
 	var fw Framework
@@ -1810,4 +1818,11 @@ func defaultCacheDir(cfg Config) string {
 		return cfg.CacheDir
 	}
 	return "/var/cache/faas/builds"
+}
+
+// WithValidatorBuild installs publication from the verified source archive,
+// before cache lookup, VM build and deployment priming.
+func (b *Builderd) WithValidatorBuild(build func(context.Context, string, string, string, string) error) *Builderd {
+	b.validatorBuild = build
+	return b
 }

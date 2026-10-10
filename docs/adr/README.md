@@ -72,12 +72,12 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 936 | [App consumer statement revisions and unbilled platform failures](936-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
-| 937 | [Monthly included units on app consumer rate cards](937-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
-| 938 | [Graduated tiers on app consumer rate cards](938-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
-| 939 | [Route weights on app consumer rate cards](939-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
-| 940 | [Named consumer plans](940-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
-| 941 | [Consumer usage completeness check](941-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
+| 950 | [App consumer statement revisions and unbilled platform failures](950-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
+| 951 | [Monthly included units on app consumer rate cards](951-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
+| 952 | [Graduated tiers on app consumer rate cards](952-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
+| 953 | [Route weights on app consumer rate cards](953-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
+| 954 | [Named consumer plans](954-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
+| 955 | [Consumer usage completeness check](955-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
@@ -725,7 +725,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
-- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -741,7 +741,39 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+- [ADR-933: Durable entity outbox relay and transport acceptance](933-durable-entity-outbox-relay.md)
+
+- [ADR-934: Gated durable entity guest outbox protocol](934-durable-entity-guest-outbox-protocol.md)
+
+- [ADR-935: Account-scoped durable entity inspection](935-durable-entity-owner-inspection.md)
+
+- [ADR-936: Owner recovery for exhausted durable entity work](936-durable-entity-exhausted-work-recovery.md)
+
+- [ADR-937: Bounded durable entity operational health](937-durable-entity-operational-health.md)
+
+- [ADR-938: Typed durable entity SDK handles and guest transitions](938-typed-durable-entity-sdk.md)
+
+- [ADR-939: Durable entity application-state schema migrations](939-durable-entity-application-schema-migrations.md)
+
+- [ADR-940: Durable entity application-state export and restore](940-durable-entity-state-export-restore.md)
+
+- [ADR-941: Durable entity owner state recovery API](941-durable-entity-owner-state-recovery-api.md)
+
+- [ADR-942: Scheduled durable entity backups and restore preview](942-durable-entity-scheduled-backups-and-restore-preview.md)
+
+- [ADR-943: Application-validated durable entity restore](943-durable-entity-application-validated-restore.md)
+
 - [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution
 
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
+
+- [ADR-944: Isolated durable entity restore validation](944-durable-entity-isolated-restore-validation.md)
+
+- [ADR-945: Durable entity operation observability](945-durable-entity-operation-observability.md)
+
+- [ADR-946: Durable entity validator release tooling](946-durable-entity-validator-release-tooling.md)
+
+- [ADR-947: Shared durable entity validator artifacts](947-shared-durable-entity-validator-artifacts.md)
+
+- [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)

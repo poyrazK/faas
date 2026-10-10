@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 935 — native acceptance for run-scoped faults on private TCP streams.
+// adr: 949 — native acceptance for run-scoped faults on private TCP streams.
 package e2e_test
 
 import (

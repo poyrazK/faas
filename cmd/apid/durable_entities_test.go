@@ -69,11 +69,12 @@ func (e entityHTTPEnv) do(t *testing.T, method, path string, body any, headers m
 // for Firecracker; native workload isolation remains a separate acceptance gate.
 type entityDispatchFixture struct {
 	*state.MemStore
-	t              *testing.T
-	guest          http.Handler
-	calls          atomic.Int64
-	badBody        atomic.Bool
-	beforeDispatch func(context.Context, state.Invocation) error
+	t                   *testing.T
+	guest               http.Handler
+	calls               atomic.Int64
+	badBody             atomic.Bool
+	beforeDispatch      func(context.Context, state.Invocation) error
+	currentInvocationID atomic.Value
 }
 
 func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state.Invocation) (state.Invocation, error) {
@@ -95,9 +96,10 @@ func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state
 		return queued, err
 	}
 	var envelope durableentity.HandlerRequest
-	if err := json.Unmarshal(delivered.Payload, &envelope); err != nil || envelope.DeploymentID != version.DeploymentID || envelope.Entity.TenantID != delivered.PlatformTenantID || delivered.Path != api.DurableEntityHandlerPath || delivered.DeadlineAt == nil {
+	if err := json.Unmarshal(delivered.Payload, &envelope); err != nil || envelope.DeploymentID != version.DeploymentID || envelope.Entity.TenantID != delivered.PlatformTenantID || (delivered.Path != api.DurableEntityHandlerPath && delivered.Path != api.DurableEntityRestoreValidationPath) || delivered.DeadlineAt == nil {
 		f.t.Errorf("guest envelope disagrees with authoritative invocation: %+v %v", delivered, err)
 	}
+	f.currentInvocationID.Store(queued.ID)
 	f.calls.Add(1)
 	r := httptest.NewRequest(delivered.Method, delivered.Path, strings.NewReader(string(delivered.Payload)))
 	var headers map[string]string
@@ -214,7 +216,8 @@ func entityAPIFixture(t *testing.T, project bool) (entityHTTPEnv, state.App, *en
 		if !project && scope == "staging" {
 			continue
 		}
-		dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage})
+		// Exercise the canonical deployment UUIDs used by PgStore and the restore protocol.
+		dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage})
 		if err != nil {
 			t.Fatal(err)
 		}

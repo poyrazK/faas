@@ -80,6 +80,9 @@ func (s *server) serviceRolloutBindingCheck(ctx context.Context, candidate state
 }
 
 func (s *server) serviceRecipientBindingObservation(r *http.Request, acct state.Account, app state.App, recipient state.Deployment) ([]bindingPromotionObservation, *api.Problem) {
+	if problem := s.durableEntityValidatorReleaseProblem(r.Context(), app, recipient); problem != nil {
+		return nil, problem
+	}
 	policies, ok := s.store.(state.BindingReleasePolicyStore)
 	if !ok {
 		return nil, api.ErrCapacity("binding release policies are unavailable")
