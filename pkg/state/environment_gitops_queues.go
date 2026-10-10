@@ -173,7 +173,7 @@ func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot git
 		}
 		binding, err := decodeGitOpsQueue("queue_bindings/"+name, mustGitOpsJSON(intent), snapshot.EnvironmentID, snapshot.Environment, app.ID, "")
 		if err == nil {
-			err = validateQueueBindingConsumer(binding, app.Type, app.WorkloadClass)
+			err = validateQueueBindingConsumer(binding, app.Type, QueueBindingAppClass(app.WorkloadClass, app.Manifest.ExecutionMode))
 		}
 		limits, _ := api.LimitsFor(snapshot.Plan)
 		if err == nil && binding.Mode == "push" {

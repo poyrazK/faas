@@ -573,7 +573,9 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	return e
+	// Worker scale-in stabilization has its own tests; fixtures that assert
+	// a single reconcile's convergence opt out of the window.
+	return e.WithWorkerScaleInStabilization(0)
 }
 
 type rotationFinalizeTrackingStore struct {

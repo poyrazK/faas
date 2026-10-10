@@ -53,6 +53,7 @@ func TestWorkerScopedAccountCapacityReportsBlockedDemand(t *testing.T) {
 		if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 			t.Fatal(err)
 		}
+		engine.WaitWorkerStops()
 		if got := scopedWorkerCounter(t, ops, "schedd_scale_up_decisions_total", map[string]string{"app": app.ID, "outcome": "reject_at_cap"}); got != float64(turn) {
 			t.Fatalf("blocked demand counter = %v, want %d", got, turn)
 		}

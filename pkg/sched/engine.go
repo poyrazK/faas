@@ -760,6 +760,15 @@ type Engine struct {
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
+	// workerScaleIn holds each worker pool's recent demand recommendations
+	// for the scale-in stabilization window. It is per schedd and in
+	// memory: a restart forgets it, and the pool then holds its size for
+	// one window before shrinking.
+	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -904,6 +913,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
@@ -945,6 +956,14 @@ func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
 // counter. Returns the engine for builder-style wiring.
 func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	e.ops = ops
+	return e
+}
+
+// WithWorkerScaleInStabilization replaces the worker-pool scale-in window.
+// Zero or negative disables stabilization so computed demand shrinks a pool
+// on the tick that observes it.
+func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
+	e.workerScaleIn = newWorkerScaleInStabilizer(window)
 	return e
 }
 

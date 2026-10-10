@@ -520,7 +520,7 @@
         "scale"
       ],
       "docs_url": "/docs/cli/deploy",
-      "acceptance_test": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"
+      "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn"
     },
     {
       "id": "workflows-and-jobs",
