@@ -2083,7 +2083,8 @@
       "regression_factor",
       "resolved_at",
       "route",
-      "state"
+      "state",
+      "suspected_dependency"
     ],
     "kind": "operational"
   },
