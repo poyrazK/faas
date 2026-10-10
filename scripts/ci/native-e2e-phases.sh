@@ -60,7 +60,8 @@ native_e2e_phase_files() {
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       private_service_tcp_metal_test.go \
-      tcp_ingress_metal_test.go udp_ingress_metal_test.go ;;
+      tcp_ingress_metal_test.go udp_ingress_metal_test.go \
+      dev_loop_metal_test.go ;;
     # Wake scheduling and native Flags cache refresh after VM restore.
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
@@ -73,6 +74,7 @@ native_e2e_phase_files() {
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
+      wake_platform_bench_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go ;;
