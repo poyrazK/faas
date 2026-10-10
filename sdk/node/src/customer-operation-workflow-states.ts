@@ -1,3 +1,4 @@
+import {businessDecisionPayload} from './customer-operation-decisions.js';
 // ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
 import { OPERATION_WORKFLOW_PATH_SELECTIONS, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
@@ -13,7 +14,7 @@ export interface OperationWorkflowBlocker { priority?: 'low' | 'normal' | 'high'
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 
 export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
-export interface OperationWorkflowPathSelection { group_id: string; path_id: string }
+export interface OperationWorkflowPathSelection { group_id: string; path_id: string; decision_milestone_id?: string; decision_code?: string; decision_description?: string; decision_rule_id?: string; decision_rule_version?: string }
 export interface OperationWorkflowStateReport {
  selected_paths?: OperationWorkflowPathSelection[];
  depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean;
@@ -355,7 +356,15 @@ export function canonicalWorkflowPaths(input: unknown): OperationWorkflowPathSel
  if (!Array.isArray(input) || input.length > OPERATION_WORKFLOW_PATH_SELECTIONS) throw new TypeError('Invalid selected workflow paths');
  const result: OperationWorkflowPathSelection[] = input.map(p => {
   if (!p || typeof p.group_id !== 'string' || !STATE.test(p.group_id) || typeof p.path_id !== 'string' || !STATE.test(p.path_id)) throw new TypeError('Selected paths require valid IDs');
-  return {group_id:p.group_id,path_id:p.path_id};
+  const result: OperationWorkflowPathSelection = {group_id:p.group_id,path_id:p.path_id};
+  const keys = ['decision_code','decision_description','decision_rule_id','decision_rule_version'] as const;
+  if (p.decision_milestone_id !== undefined) {
+   if (typeof p.decision_milestone_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.decision_milestone_id) || p.decision_milestone_id === '00000000-0000-0000-0000-000000000000') throw new TypeError('Path decision requires a canonical UUID');
+   businessDecisionPayload({workflow:'path',instance_id:'path',code:p.decision_code,description:p.decision_description,rule_id:p.decision_rule_id,rule_version:p.decision_rule_version});
+   result.decision_milestone_id = p.decision_milestone_id;
+   for (const key of keys) result[key] = p[key];
+  } else if (keys.some(key => p[key] !== undefined)) throw new TypeError('Path explanation requires a decision milestone');
+  return result;
  }).sort((a,b) => a.group_id < b.group_id ? -1 : a.group_id > b.group_id ? 1 : 0);
  if (result.some((p,i) => i > 0 && result[i-1]!.group_id === p.group_id)) throw new TypeError('Selected paths require unique groups');
  return result;

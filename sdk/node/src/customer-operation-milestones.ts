@@ -10,13 +10,14 @@ import { OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPE
 import { customerOperationRequestDigest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import type { OperationConnection, OperationPool, OperationTransaction } from './operation-receipt.js';
 import type { OperationMilestone, OperationMilestoneReport } from './customer-operations.js';
-import { workflowStateTransaction, type OperationWorkflowPathSelection, type OperationWorkflowStateReport, type OperationWorkflowDependency, type OperationWorkflowBlocker, type OperationWorkflowBlockerResolution } from './customer-operation-workflow-states.js';
+import { canonicalWorkflowPaths, workflowStateTransaction, type OperationWorkflowPathSelection, type OperationWorkflowStateReport, type OperationWorkflowDependency, type OperationWorkflowBlocker, type OperationWorkflowBlockerResolution } from './customer-operation-workflow-states.js';
 
 export interface CustomerOperationTransaction extends OperationTransaction {
   businessCompensation(milestone: string, compensation: OperationBusinessCompensation): void;
   businessEffect(milestone: string, effect: OperationBusinessEffect): void;
   reportBusinessInvariant(milestone: string, input: OperationBusinessInvariant, current: OperationWorkflowBlocker[]): OperationWorkflowBlocker[];
   reconcileWorkflowState: CustomerOperationReconciliationHelper;
+  workflowPathDecision(group: string, path: string, milestone: string): OperationWorkflowPathSelection;
   businessDecision(milestone: string, decision: OperationBusinessDecision): void;
   guardedWorkflowTransition: CustomerOperationReadinessGuard;
   /** Declared public fact. Queued synchronously and saved before the transaction commits. */
@@ -50,7 +51,16 @@ export function milestoneJSON(value: unknown): string {
 
 export function milestoneTransaction(tx: OperationTransaction, request: CustomerOperationTransactionRequest, reports: OperationMilestoneReport[], workflowStates: OperationWorkflowStateReport[], isOpen: () => boolean, failGuard: (error: unknown) => void = () => {}): CustomerOperationTransaction {
   const stateTransaction = workflowStateTransaction(request, workflowStates, isOpen);
-  const transaction: CustomerOperationTransaction = {businessCompensation(name,compensation) {transaction.milestone(name,businessCompensationPayload(compensation));},businessEffect(name,effect) {transaction.milestone(name,businessEffectPayload(effect));},reportBusinessInvariant(name,input,current) {
+  const transaction: CustomerOperationTransaction = {workflowPathDecision(group, path, milestone) {
+    if (!isOpen()) throw new TypeError('Path decisions require an open transaction');
+    const facts = reports.filter(f => f.name === milestone);
+    if (facts.length !== 1) throw new TypeError('Path decision requires exactly one queued milestone');
+    const fact = facts[0]!;
+    const payload = fact.payload as {kind?: string; decision?: OperationBusinessDecision};
+    if (payload?.kind !== 'gregale.business-decision.v1' || !payload.decision) throw new TypeError('Path reference requires a business decision milestone');
+    const d = businessDecisionPayload(payload.decision).decision;
+    return canonicalWorkflowPaths([{group_id:group,path_id:path,decision_milestone_id:fact.id,decision_code:d.code,decision_description:d.description,decision_rule_id:d.rule_id,decision_rule_version:d.rule_version}])[0]!;
+  },businessCompensation(name,compensation) {transaction.milestone(name,businessCompensationPayload(compensation));},businessEffect(name,effect) {transaction.milestone(name,businessEffectPayload(effect));},reportBusinessInvariant(name,input,current) {
     try {
       const payload=businessInvariantPayload(input), blockers=applyBusinessInvariant(payload.invariant,current);
       transaction.milestone(name,payload);

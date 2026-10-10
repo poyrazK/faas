@@ -393,3 +393,20 @@ canonical report identity, preserving old fingerprints when omitted. Memory and
 SQLC projections expose them in receipts and transition history; dashboard/CLI
 views display the application's choice. The application owns selection, execution,
 and authorization, and readiness remains a point-in-time observation.
+
+### Decision reasons for selected paths
+
+Selections may carry an optional business decision milestone ID and a bounded
+snapshot of its code, description, rule ID, and version. All five fields are
+supplied together and participate in canonical report identity. The reference
+must be an evidence milestone from the same application transaction and Operation;
+validation and publication compare the snapshot against the typed decision payload
+and its declared workflow instance and pinned contract version. Invalid, missing,
+ordinary, or mismatched facts cannot substantiate a path explanation.
+
+SDK transaction helpers build references from exactly one queued decision milestone.
+String-only selection values preserve defensive value copies and receipt equality.
+Existing JSON columns retain explanations through history and receipt replay; no
+additional migration is needed. Dashboard and CLI display the validated snapshot.
+Readiness checks validate shape, while report validation verifies evidence. A
+recorded explanation describes an application decision and grants no authority.

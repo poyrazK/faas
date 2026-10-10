@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from ._operation_contract import (
     OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES,
@@ -394,6 +394,23 @@ class CustomerOperationTransaction:
 
     def workflow_state(self, workflow: str, instance_id: str, state: str) -> None:
         self._queue_workflow_state(workflow, instance_id, state, None)
+
+    def workflow_path_decision(self, group: str, path: str, milestone: str) -> OperationWorkflowPathSelection:
+        """Link a chosen path to exactly one decision queued in this transaction."""
+        self._check_open("Path decisions")
+        facts = [f for f in self._milestones if f.name == milestone]
+        if len(facts) != 1:
+            raise ValueError("path decision requires exactly one queued milestone")
+        fact = facts[0]
+        payload = fact.payload
+        if not isinstance(payload, dict) or payload.get("kind") != "gregale.business-decision.v1" or not isinstance(payload.get("decision"), dict):
+            raise ValueError("path reference requires a business decision milestone")
+        decision = OperationBusinessDecision(**payload["decision"])
+        decision.to_payload()
+        return _canonical_workflow_paths([OperationWorkflowPathSelection(
+            group_id=group, path_id=path, decision_milestone_id=fact.id,
+            decision_code=decision.code, decision_description=decision.description,
+            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version)])[0]
 
     def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str, *, selected_paths: Sequence[OperationWorkflowPathSelection] = ()) -> None:
         selected = _canonical_workflow_paths(selected_paths)
@@ -1014,5 +1031,15 @@ def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -
             or not _STATE.fullmatch(p.path_id) or p.group_id in seen):
             raise ValueError("selected paths require valid IDs and unique groups")
         seen.add(p.group_id)
-        result.append(OperationWorkflowPathSelection(group_id=p.group_id, path_id=p.path_id))
+        fields = (p.decision_code, p.decision_description, p.decision_rule_id, p.decision_rule_version)
+        if p.decision_milestone_id is UNSET:
+            if any(f is not UNSET for f in fields):
+                raise ValueError("path explanation requires a decision milestone")
+        else:
+            if not isinstance(p.decision_milestone_id, UUID) or p.decision_milestone_id.int == 0:
+                raise ValueError("path decision requires a canonical UUID")
+            OperationBusinessDecision(workflow="path", instance_id="path", code=p.decision_code,
+                description=p.decision_description, rule_id=p.decision_rule_id,
+                rule_version=p.decision_rule_version).to_payload()
+        result.append(evolve(p))
     return sorted(result, key=lambda p: p.group_id)

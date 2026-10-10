@@ -38688,6 +38688,11 @@ components:
       properties:
         group_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         path_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        decision_milestone_id: {type: string, format: uuid, description: 'Optional business decision milestone in this report evidence list and application transaction. When present all decision fields are required and must match its payload.'}
+        decision_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        decision_description: {type: string, minLength: 1, maxLength: 1024}
+        decision_rule_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        decision_rule_version: {type: string, minLength: 1, maxLength: 128}
     OperationWorkflowRetainedMilestoneGroup:
       description: Named alternatives in a pinned workflow edge. Declare either a nonempty any_of list or nonempty named paths. Any verified fact satisfies a flat group; every fact in one complete path satisfies a path group. All groups and mandatory prerequisites must pass. Across named paths a group permits at most 16 fact occurrences including repeated selectors. Changes require a new contract version.
       type: object

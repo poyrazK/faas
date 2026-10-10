@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"net/http"
 	"regexp"
 	"sort"
@@ -813,6 +814,9 @@ func canonicalCustomerWorkflowPaths(input []OperationWorkflowPathSelection) ([]O
 	out := append([]OperationWorkflowPathSelection(nil), input...)
 	sort.Slice(out, func(i, j int) bool { return out[i].GroupID < out[j].GroupID })
 	for i, p := range out {
+		if err := api.ValidateOperationWorkflowPathDecision(p); err != nil {
+			return nil, err
+		}
 		if !customerOperationStateName.MatchString(p.GroupID) || !customerOperationStateName.MatchString(p.PathID) || i > 0 && out[i-1].GroupID == p.GroupID {
 			return nil, errors.New("faas: selected paths require valid IDs and unique groups")
 		}

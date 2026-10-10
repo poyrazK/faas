@@ -3,9 +3,45 @@ package state
 import (
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/operations"
 )
 
 func validateWorkflowPolicyEvidence(def OperationDefinition, report api.OperationWorkflowStateReport, payloads map[string][]byte) error {
+	for _, selection := range report.SelectedPaths {
+		if selection.DecisionMilestoneID == "" {
+			continue
+		}
+		referenced := false
+		for _, evidence := range report.EvidenceMilestones {
+			if evidence.ID == selection.DecisionMilestoneID {
+				referenced = true
+			}
+		}
+		versionMatched := false
+		for _, evidence := range report.EvidenceMilestones {
+			if evidence.ID != selection.DecisionMilestoneID {
+				continue
+			}
+			steps, err := operations.WorkflowStepsForMilestone(def.Spec, evidence.Name, payloads[evidence.ID])
+			if err != nil {
+				continue
+			}
+			for _, step := range steps {
+				version := step.Version
+				if version == 0 {
+					version = 1
+				}
+				if step.Workflow == report.Workflow && step.InstanceID == report.InstanceID && version == report.ContractVersion {
+					versionMatched = true
+				}
+			}
+		}
+		decision, err := api.ParseOperationBusinessDecision(payloads[selection.DecisionMilestoneID])
+		if !referenced || !versionMatched || err != nil || decision == nil || decision.Workflow != report.Workflow || decision.InstanceID != report.InstanceID || decision.Code != selection.DecisionCode || decision.Description != selection.DecisionDescription || decision.RuleID != selection.DecisionRuleID || decision.RuleVersion != selection.DecisionRuleVersion {
+			return fmt.Errorf("%w: selected path requires matching business decision evidence", ErrInvalidArgument)
+		}
+	}
+
 	if report.FromState == "" && len(report.EvidenceMilestones) > 0 {
 		if len(report.EvidenceMilestones) != 1 {
 			return fmt.Errorf("%w: reconciliation requires exactly one discrepancy fact", ErrInvalidArgument)

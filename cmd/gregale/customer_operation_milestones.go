@@ -260,6 +260,12 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 	}
 	for _, transition := range page.WorkflowStateHistory {
 		for _, selection := range transition.SelectedPaths {
+			if selection.DecisionMilestoneID != "" {
+				if _, err := fmt.Fprintf(out, "workflow-path-decision\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\tfact=%s\tcode=%s\trule=%s\tversion=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID, selection.DecisionMilestoneID, selection.DecisionCode, selection.DecisionRuleID, selection.DecisionRuleVersion, selection.DecisionDescription); err != nil {
+					return err
+				}
+			}
+
 			if _, err := fmt.Fprintf(out, "workflow-selected-path\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID); err != nil {
 				return err
 			}

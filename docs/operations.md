@@ -2713,3 +2713,43 @@ must reinstall the SDK's additive customer Operation schema before upgrading the
 adapters. The new `selected_paths` JSON column defaults to an empty array, so old
 pending reports remain publishable. Gregale records the application's decision
 without choosing a path, authorizing actions, or changing business state.
+
+### Explain a selected business path
+
+A selected path can reference a business decision committed in the same application
+transaction. Queue the decision before the transition and use the SDK helper to
+copy its stable fact ID, reason, decision code, rule ID, and rule version:
+
+```typescript
+tx.businessDecision('credit-decided', {
+  workflow: 'order-approval', instance_id: runID,
+  code: 'credit-approved', description: 'Customer passed the business credit policy.',
+  rule_id: 'business-credit', rule_version: 'v3',
+});
+const choice = tx.workflowPathDecision('payment', 'business-credit', 'credit-decided');
+tx.workflowTransition('order-approval', runID, 'pending', 'approved', [choice]);
+```
+
+Declare the decision milestone as a step of this workflow with its instance pointer
+bound to `/decision/instance_id`, in the same pinned contract version as the edge.
+The SDK precommit validator verifies the referenced fact before the business write
+commits. Publication requires that same fact to have been published for this
+Operation. The reference must appear in the transition's `evidence_milestones`.
+Both validation paths check the decision payload, workflow instance, and contract
+version; a copied reason that differs from the fact is rejected.
+
+Go uses `choice, err := tx.WorkflowPathDecision(group, path, milestone)` after
+`tx.BusinessDecision`, then passes `choice` to `tx.WorkflowTransition`. Python uses
+`choice = tx.workflow_path_decision(group, path, milestone)` after
+`tx.business_decision`, then `tx.workflow_transition(..., selected_paths=[choice])`.
+Helpers require exactly one queued decision fact with the requested milestone name.
+
+The optional wire fields on each selection are `decision_milestone_id`,
+`decision_code`, `decision_description`, `decision_rule_id`, and
+`decision_rule_version`. Supply all five together, or omit all five. The validated
+explanation remains in receipts and workflow history and appears in dashboard and
+CLI views even when the original fact leaves the current page. Readiness checks
+validate the bounded selection shape; decision evidence is verified during report
+validation and publication. Applications still own decisions and authorization.
+Existing selections remain compatible. This uses the existing selected-path JSON
+columns; no additional platform migration or customer schema installation is needed.
