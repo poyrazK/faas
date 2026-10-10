@@ -3,7 +3,6 @@
 package migrations_test
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
