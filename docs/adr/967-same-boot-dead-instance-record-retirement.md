@@ -1,4 +1,4 @@
-# ADR-933: Retire dead same-boot instance records after verified absence
+# ADR-967: Retire dead same-boot instance records after verified absence
 
 Date: 2026-10-10
 

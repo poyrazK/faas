@@ -1,4 +1,4 @@
-// adr: 933
+// adr: 967
 package fcvm
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 // reclaimRestartDead retires instance records whose guest process is provably
-// gone and whose kernel resources are verifiably absent (ADR-933). Each record
+// gone and whose kernel resources are verifiably absent (ADR-967). Each record
 // still in the journal otherwise quarantines its slot for this vmmd's lifetime,
 // and the record outlives every restart: production-us fsn-2 carried 13 such
 // records (13 of 32 slots) after rc.251's rollout, plus their materialised
@@ -44,7 +44,7 @@ func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *Resource
 		}
 		if holders == nil {
 			if holders, err = scanRestartHolders(ctx, opts); err != nil {
-				// Startup proceeds with the pre-ADR-933 quarantine.
+				// Startup proceeds with the pre-ADR-967 quarantine.
 				return reclaimed, err, nil
 			}
 		}
