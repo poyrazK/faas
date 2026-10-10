@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
     from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+    from ..models.operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
 
 
 T = TypeVar("T", bound="OperationWorkflowStateHistoryEntry")
@@ -37,6 +38,9 @@ class OperationWorkflowStateHistoryEntry:
     contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
+    comparison: OperationWorkflowRevisionComparison | Unset = UNSET
+    """Derived comparison with the preceding retained report on this history page in the same workflow run and
+    tenant. Gaps and unavailable baselines prevent inferred changes or causal claims."""
     selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
     """Current retained-evidence status for verification obligations in this history report."""
@@ -90,6 +94,10 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
+
+        comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.comparison, Unset):
+            comparison = self.comparison.to_dict()
 
         selected_paths: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.selected_paths, Unset):
@@ -170,6 +178,8 @@ class OperationWorkflowStateHistoryEntry:
                 "published_at": published_at,
             }
         )
+        if comparison is not UNSET:
+            field_dict["comparison"] = comparison
         if selected_paths is not UNSET:
             field_dict["selected_paths"] = selected_paths
         if resolution_verifications is not UNSET:
@@ -211,6 +221,7 @@ class OperationWorkflowStateHistoryEntry:
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
         from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+        from ..models.operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -230,6 +241,13 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
+
+        _comparison = d.pop("comparison", UNSET)
+        comparison: OperationWorkflowRevisionComparison | Unset
+        if isinstance(_comparison, Unset):
+            comparison = UNSET
+        else:
+            comparison = OperationWorkflowRevisionComparison.from_dict(_comparison)
 
         _selected_paths = d.pop("selected_paths", UNSET)
         selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
@@ -325,6 +343,7 @@ class OperationWorkflowStateHistoryEntry:
             contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
+            comparison=comparison,
             selected_paths=selected_paths,
             resolution_verifications=resolution_verifications,
             depends_on=depends_on,

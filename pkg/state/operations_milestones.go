@@ -592,6 +592,38 @@ func workflowStateHistoryAfterCursor(row api.OperationWorkflowStateHistoryEntry,
 }
 
 func operationWorkflowStateHistoryPage(rows []api.OperationWorkflowStateHistoryEntry, limit int, cursor operationWorkflowStateHistoryCursor) ([]api.OperationWorkflowStateHistoryEntry, string) {
+	rows = append([]api.OperationWorkflowStateHistoryEntry(nil), rows...)
+	type revisionKey struct {
+		tenant, workflow, instance string
+		revision                   int64
+	}
+	counts := map[revisionKey]int{}
+	for _, row := range rows {
+		counts[revisionKey{row.PlatformTenantID, row.Workflow, row.InstanceID, row.Revision}]++
+	}
+	previousByRun := map[[3]string]int{}
+	for i := range rows {
+		row := rows[i]
+		run := [3]string{row.PlatformTenantID, row.Workflow, row.InstanceID}
+		var previous *api.OperationWorkflowStateHistoryEntry
+		if index, exists := previousByRun[run]; exists {
+			previous = &rows[index]
+		}
+		rows[i].Comparison = compareWorkflowRevisions(previous, row)
+		ambiguous := counts[revisionKey{row.PlatformTenantID, row.Workflow, row.InstanceID, row.Revision}] > 1
+		if previous != nil {
+			ambiguous = ambiguous || counts[revisionKey{previous.PlatformTenantID, previous.Workflow, previous.InstanceID, previous.Revision}] > 1
+		}
+		if ambiguous {
+			comparison := rows[i].Comparison
+			comparison.Status = "ambiguous_revision"
+			comparison.Summary = "Multiple reports share a revision on this page; changes cannot be determined."
+			comparison.Changes = []api.OperationWorkflowRevisionChange{}
+			comparison.Evidence = []api.OperationWorkflowRevisionEvidence{}
+		}
+		previousByRun[run] = i
+	}
+
 	if len(rows) <= limit {
 		return rows, ""
 	}

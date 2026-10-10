@@ -1136,6 +1136,9 @@ export type { OperationWorkflowRetainedMilestoneInvalidationRule } from './model
 export type { OperationWorkflowRetainedMilestonePath } from './models/OperationWorkflowRetainedMilestonePath.js';
 export type { OperationWorkflowRetainedMilestonePathResult } from './models/OperationWorkflowRetainedMilestonePathResult.js';
 export type { OperationWorkflowRetainedMilestoneRequirement } from './models/OperationWorkflowRetainedMilestoneRequirement.js';
+export type { OperationWorkflowRevisionChange } from './models/OperationWorkflowRevisionChange.js';
+export type { OperationWorkflowRevisionComparison } from './models/OperationWorkflowRevisionComparison.js';
+export type { OperationWorkflowRevisionEvidence } from './models/OperationWorkflowRevisionEvidence.js';
 export type { OperationWorkflowStaleOnly } from './models/OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './models/OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './models/OperationWorkflowStateCursor.js';

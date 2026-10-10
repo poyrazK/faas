@@ -259,6 +259,22 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		if comparison := transition.Comparison; comparison != nil {
+			if _, err := fmt.Fprintf(out, "workflow-revision-comparison\t%s\tinstance=%s\trevision=%d\tstatus=%s\tprevious-revision=%d\tprevious-report=%s\tprevious-operation=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, comparison.Status, comparison.PreviousRevision, comparison.PreviousReportID, comparison.PreviousOperationID, comparison.Summary); err != nil {
+				return err
+			}
+			for _, change := range comparison.Changes {
+				if _, err := fmt.Fprintf(out, "workflow-revision-change\t%s\trevision=%d\tkind=%s\tkey=%s\tbefore=%s\tafter=%s\t%s\n", transition.Workflow, transition.Revision, change.Kind, change.Key, change.Before, change.After, change.Explanation); err != nil {
+					return err
+				}
+			}
+			for _, fact := range comparison.Evidence {
+				if _, err := fmt.Fprintf(out, "workflow-revision-evidence\t%s\trevision=%d\tkind=%s\toperation=%s\tmilestone=%s\tfact=%s\n", transition.Workflow, transition.Revision, fact.Kind, fact.OperationID, fact.Milestone, fact.MilestoneID); err != nil {
+					return err
+				}
+			}
+		}
+
 		for _, selection := range transition.SelectedPaths {
 			if selection.DecisionMilestoneID != "" {
 				if _, err := fmt.Fprintf(out, "workflow-path-decision\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\tfact=%s\tcode=%s\trule=%s\tversion=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID, selection.DecisionMilestoneID, selection.DecisionCode, selection.DecisionRuleID, selection.DecisionRuleVersion, selection.DecisionDescription); err != nil {

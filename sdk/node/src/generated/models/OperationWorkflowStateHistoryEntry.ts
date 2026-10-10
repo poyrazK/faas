@@ -8,10 +8,12 @@ import type { OperationWorkflowDependency } from './OperationWorkflowDependency.
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
+import type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+  comparison?: OperationWorkflowRevisionComparison;
   selected_paths?: Array<OperationWorkflowPathSelection>;
   /**
    * Current retained-evidence status for verification obligations in this history report.

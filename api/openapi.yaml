@@ -39667,12 +39667,47 @@ components:
           items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
         updated_at: {type: string, format: date-time}
         platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
+    OperationWorkflowRevisionComparison:
+      type: object
+      additionalProperties: false
+      description: Derived comparison with the preceding retained report on this history page in the same workflow run and tenant. Gaps and unavailable baselines prevent inferred changes or causal claims.
+      required: [status, summary, changes, evidence]
+      properties:
+        status: {type: string, enum: [compared, baseline_unavailable, revision_gap, contract_changed, ambiguous_revision]}
+        summary: {type: string, maxLength: 512}
+        previous_report_id: {type: string, format: uuid}
+        previous_operation_id: {type: string, format: uuid}
+        previous_revision: {type: integer, format: int64, minimum: 1}
+        changes: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowRevisionChange'}}
+        evidence: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowRevisionEvidence'}}
+    OperationWorkflowRevisionChange:
+      type: object
+      additionalProperties: false
+      description: Deterministic reported state or blocker or path or decision change. Before and after contain bounded public snapshot text; removal of a blocker does not prove business resolution.
+      required: [kind, key, explanation]
+      properties:
+        kind: {type: string, enum: [state_changed, blocker_added, blocker_removed, blocker_updated, path_selected, path_changed, decision_changed, contract_changed]}
+        key: {type: string, maxLength: 256}
+        before: {type: string, maxLength: 8192}
+        after: {type: string, maxLength: 8192}
+        explanation: {type: string, maxLength: 512}
+    OperationWorkflowRevisionEvidence:
+      type: object
+      additionalProperties: false
+      description: Links to reported decision or milestone facts and explicitly unverified expected verification facts. These references do not establish a cause for the revision.
+      required: [kind, operation_id, milestone_id]
+      properties:
+        kind: {type: string, enum: [milestone, decision, verification_expected]}
+        operation_id: {type: string, format: uuid}
+        milestone_id: {type: string, format: uuid}
+        milestone: {type: string, maxLength: 64}
     OperationWorkflowStateHistoryEntry:
       type: object
       additionalProperties: false
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        comparison: {$ref: '#/components/schemas/OperationWorkflowRevisionComparison'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Current retained-evidence status for verification obligations in this history report.}
         depends_on: {type: array, maxItems: 16, description: "At this retained historical revision, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}

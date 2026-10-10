@@ -182,3 +182,7 @@ type OperationWorkflowRetainedMilestonePathResult = api.OperationWorkflowRetaine
 type OperationWorkflowPathSelection = api.OperationWorkflowPathSelection
 
 type OperationWorkflowPathDecisionResult = api.OperationWorkflowPathDecisionResult
+
+type OperationWorkflowRevisionComparison = api.OperationWorkflowRevisionComparison
+type OperationWorkflowRevisionChange = api.OperationWorkflowRevisionChange
+type OperationWorkflowRevisionEvidence = api.OperationWorkflowRevisionEvidence

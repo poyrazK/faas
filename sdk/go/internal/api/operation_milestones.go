@@ -113,6 +113,7 @@ type OperationWorkflowState struct {
 }
 
 type OperationWorkflowStateHistoryEntry struct {
+	Comparison              *OperationWorkflowRevisionComparison      `json:"comparison,omitempty"`
 	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
 	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
 	DependsOn               []OperationWorkflowDependency             `json:"depends_on,omitempty"`
@@ -331,4 +332,28 @@ type OperationWorkflowDependencyFinding struct {
 	Explanation string                        `json:"explanation"`
 	State       *OperationWorkflowState       `json:"state,omitempty"`
 	Limit       string                        `json:"limit,omitempty"`
+}
+
+// OperationWorkflowRevisionComparison explains adjacent retained reports without inferring causality.
+type OperationWorkflowRevisionComparison struct {
+	Status              string                              `json:"status"`
+	Summary             string                              `json:"summary"`
+	PreviousReportID    string                              `json:"previous_report_id,omitempty"`
+	PreviousOperationID string                              `json:"previous_operation_id,omitempty"`
+	PreviousRevision    int64                               `json:"previous_revision,omitempty"`
+	Changes             []OperationWorkflowRevisionChange   `json:"changes"`
+	Evidence            []OperationWorkflowRevisionEvidence `json:"evidence"`
+}
+type OperationWorkflowRevisionChange struct {
+	Kind        string `json:"kind"`
+	Key         string `json:"key"`
+	Before      string `json:"before,omitempty"`
+	After       string `json:"after,omitempty"`
+	Explanation string `json:"explanation"`
+}
+type OperationWorkflowRevisionEvidence struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operation_id"`
+	MilestoneID string `json:"milestone_id"`
+	Milestone   string `json:"milestone,omitempty"`
 }

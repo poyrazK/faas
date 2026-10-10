@@ -2118,6 +2118,12 @@ from .operation_workflow_retained_milestone_path import OperationWorkflowRetaine
 from .operation_workflow_retained_milestone_path_result import OperationWorkflowRetainedMilestonePathResult
 from .operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
 from .operation_workflow_retained_milestone_status import OperationWorkflowRetainedMilestoneStatus
+from .operation_workflow_revision_change import OperationWorkflowRevisionChange
+from .operation_workflow_revision_change_kind import OperationWorkflowRevisionChangeKind
+from .operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
+from .operation_workflow_revision_comparison_status import OperationWorkflowRevisionComparisonStatus
+from .operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
+from .operation_workflow_revision_evidence_kind import OperationWorkflowRevisionEvidenceKind
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_duration import OperationWorkflowStateDuration
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
@@ -5546,6 +5552,12 @@ __all__ = (
     "OperationWorkflowRetainedMilestonePathResult",
     "OperationWorkflowRetainedMilestoneRequirement",
     "OperationWorkflowRetainedMilestoneStatus",
+    "OperationWorkflowRevisionChange",
+    "OperationWorkflowRevisionChangeKind",
+    "OperationWorkflowRevisionComparison",
+    "OperationWorkflowRevisionComparisonStatus",
+    "OperationWorkflowRevisionEvidence",
+    "OperationWorkflowRevisionEvidenceKind",
     "OperationWorkflowState",
     "OperationWorkflowStateDuration",
     "OperationWorkflowStateHistoryEntry",

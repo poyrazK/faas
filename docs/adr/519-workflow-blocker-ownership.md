@@ -433,3 +433,22 @@ path decision rules, and matching linked typed evidence when the chosen path is
 constrained. Existing Operation ownership, workflow instance, and pinned version
 validation apply to that reference. An unconstrained sibling remains available.
 This adds no database column, remote business action, or execution authority.
+
+### Retained revision comparisons
+
+Business workflow history derives a comparison for each returned revision against
+the preceding report for the same tenant and workflow run on that page. Both stores
+use one pure projection after scoped history selection. Consecutive unique revisions
+with the same effective pinned version support state, blocker, path, and decision
+snapshot comparisons; missing baselines, gaps, duplicate revisions visible on the
+page, and version changes are explicit statuses. No additional SQL or hidden cursor
+fetch is introduced. At most 64 changes and 64 deduplicated evidence references can
+be produced from the existing bounded report fields.
+
+Comparison evidence links the retained reports' published milestone and decision
+identities and explicitly labels expected verification references. It does not
+claim causal attribution, external verification, or business resolution. Per-edge
+path omission is not a path removal, especially on metadata updates. Comparisons
+are derived only for responses and never mutate memory receipts or report identity.
+Dashboard, CLI, and SDK models expose the same bounded result. This changes no
+business execution ownership, database schema, or application transaction behavior.

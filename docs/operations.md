@@ -2808,3 +2808,42 @@ decision; selecting an unconstrained sibling requires no decision. This applies
 when the contract opts into path rules; older contracts retain their behavior.
 Applications continue to own selection, authorization, and execution. No new
 platform migration or customer outbox schema update is required.
+
+### Compare retained workflow revisions
+
+Each entry in a selected workflow's `workflow_state_history` and
+`workflow_instance.transitions` now includes a derived `comparison`. It compares
+with the preceding retained entry for that tenant and workflow run on the same
+page, using consecutive application revisions and the same pinned contract.
+
+A `compared` result contains a concise summary and structured changes to reported
+state, blockers, selected paths, and decision code, reason, or rule version. Each
+change identifies its kind and key and includes public before/after snapshot text.
+The comparison links the previous report and Operation and includes deduplicated
+reported milestone and decision references from both revisions. Expected resolution
+verification references are labeled `verification_expected`; they are not proof
+that verification succeeded. Evidence links describe reported support, not causality.
+
+The dashboard shows summaries, before/after values, and links to the relevant
+Operations. CLI output includes `workflow-revision-comparison`,
+`workflow-revision-change`, and `workflow-revision-evidence` lines. All SDKs expose
+the comparison models through the existing business history response.
+
+`baseline_unavailable` marks the first entry for a run on a page. `revision_gap`
+marks missing intervening revisions. `ambiguous_revision` marks duplicate revisions
+visible on the page. `contract_changed` identifies a version change without
+comparing business snapshots across contracts. These results do not invent missing
+changes. Page boundaries and retention remain explicit limitations: following the
+next cursor does not fetch an extra prior report or reconstruct expired history.
+Account operator comparisons never mix tenants.
+
+Path selections are per business transition. An omitted selection on a metadata
+update does not mean the application removed its prior path. A later selection
+without a selection on the preceding revision is shown as `path_selected`, with
+no claimed previous choice. Removing a blocker from a report does not prove the
+business issue was resolved. A path change does not prove which prerequisite
+expired or caused it; applications must report those facts explicitly.
+
+The derived response is bounded to 64 changes and 64 evidence references per
+comparison, based on existing report limits. It is read-only, uses the existing
+retained page, and requires no migration or customer outbox schema update.

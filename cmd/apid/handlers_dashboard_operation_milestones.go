@@ -120,7 +120,7 @@ func populateDashboardOperationMilestones(r *http.Request, log *slog.Logger, acc
 		}
 		data.Workflows[index].StateHistory = append(data.Workflows[index].StateHistory, dashboard.CustomerOperationWorkflowStateHistory{
 			ID: entry.ID, OperationID: entry.OperationID, OperationURL: dashboardCustomerOperationsURL(app.Slug) + "/" + url.PathEscape(entry.OperationID),
-			SelectedPaths: entry.SelectedPaths, ResolutionVerifications: entry.ResolutionVerifications, Blockers: entry.Blockers, DependsOn: entry.DependsOn, DependenciesOnly: entry.DependenciesOnly, BlockerResolutions: entry.BlockerResolutions, OutcomeCode: entry.OutcomeCode, OutcomeDescription: entry.OutcomeDescription, OutcomeOnly: entry.OutcomeOnly, DeadlineAt: entry.DeadlineAt, DeadlineOnly: entry.DeadlineOnly, BlockersOnly: entry.BlockersOnly, FromState: entry.FromState, State: entry.State, Revision: entry.Revision,
+			Comparison: entry.Comparison, SelectedPaths: entry.SelectedPaths, ResolutionVerifications: entry.ResolutionVerifications, Blockers: entry.Blockers, DependsOn: entry.DependsOn, DependenciesOnly: entry.DependenciesOnly, BlockerResolutions: entry.BlockerResolutions, OutcomeCode: entry.OutcomeCode, OutcomeDescription: entry.OutcomeDescription, OutcomeOnly: entry.OutcomeOnly, DeadlineAt: entry.DeadlineAt, DeadlineOnly: entry.DeadlineOnly, BlockersOnly: entry.BlockersOnly, FromState: entry.FromState, State: entry.State, Revision: entry.Revision,
 			OccurredAt: dashboardJobsTime(entry.OccurredAt), PublishedAt: dashboardJobsTime(entry.PublishedAt),
 		})
 	}

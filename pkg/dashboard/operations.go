@@ -87,6 +87,7 @@ type CustomerOperationWorkflow struct {
 }
 
 type CustomerOperationWorkflowStateHistory struct {
+	Comparison                      *api.OperationWorkflowRevisionComparison
 	SelectedPaths                   []api.OperationWorkflowPathSelection
 	ResolutionVerifications         []api.OperationWorkflowResolutionVerification
 	Blockers                        []api.OperationWorkflowBlocker
