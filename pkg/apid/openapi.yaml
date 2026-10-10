@@ -26612,6 +26612,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityInspectResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -26656,6 +26657,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityBackupPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -26700,6 +26702,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityBackup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -26744,6 +26747,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityRestorePreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -26791,6 +26795,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityStateExport' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -26839,7 +26844,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityRestoreValidationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: validateDurableEntityRestore requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -26918,7 +26929,13 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: restoreDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
@@ -26967,7 +26984,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityRetryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: retryDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -27045,8 +27068,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '402':
+          description: invokeDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.

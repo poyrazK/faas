@@ -585,7 +585,7 @@ testing agent's automated and native/live-provider qualification.
 
 After that qualification, stop all older entity callers/alarm/maintenance
 writers, upgrade to manifest schema 6, and apply
-`20261009150000001_entity_outbox_acceptance.sql` before separately opting in with
+`20261010010028804_entity_outbox_acceptance.sql` before separately opting in with
 `FAAS_DURABLE_ENTITY_OUTBOX_ENABLED=1`. It also requires the existing invocation
 preview, explicit app allowlist, private delimiter/flat listing and probe DELETE,
 and a store supporting deduplicating webhook acceptance. No flag is enabled by

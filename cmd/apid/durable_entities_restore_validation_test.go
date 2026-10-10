@@ -49,7 +49,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"protocol_version": 1, "valid": !reject.Load()})
 	})
-	if rec := e.do(t, http.MethodPost, path, restore, nil); rec.Code != http.StatusUnprocessableEntity || dispatch.calls.Load() != 0 {
+	if rec := e.do(t, http.MethodPost, path, restore, nil); rec.Code != http.StatusBadRequest || dispatch.calls.Load() != 0 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	rec := e.do(t, http.MethodPost, path+"/validate", restore, nil)

@@ -52,7 +52,7 @@ func TestEntityInspectionReadScopeAndMetadata(t *testing.T) {
 	}
 	for _, query := range []string{"namespace=x", "namespace=x&key=y&key=z", "namespace=x&key=y&account_id=other", "namespace=x&key=y&environment="} {
 		bad := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/entities/inspect?"+query, nil, nil)
-		if bad.Code != http.StatusUnprocessableEntity {
+		if bad.Code != http.StatusBadRequest {
 			t.Fatal(query, bad.Code, bad.Body.String())
 		}
 	}

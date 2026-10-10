@@ -9,7 +9,7 @@ confirmation or needs a SQL database, bucket credentials or persistent disk.
 ## Prepare the preview
 
 The testing agent must first qualify the relay, apply migration
-`20261009150000001_entity_outbox_acceptance.sql`, and complete the schema-6 writer
+`20261010010028804_entity_outbox_acceptance.sql`, and complete the schema-6 writer
 upgrade in [ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md). Keep the
 invocation preview's private backend/bucket placement stable and its explicit
 app allowlist configured. No feature is enabled by this example.

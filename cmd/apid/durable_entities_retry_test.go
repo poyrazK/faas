@@ -143,7 +143,7 @@ func TestEntityRecoveryRejectsReadScopeAndMalformedTargets(t *testing.T) {
 			malformed.Target = "delivery"
 		}
 		rec := e.do(t, http.MethodPost, path, malformed, nil)
-		if rec.Code != http.StatusUnprocessableEntity {
+		if rec.Code != http.StatusBadRequest {
 			t.Fatal(kind, rec.Code, rec.Body.String())
 		}
 	}
@@ -168,10 +168,12 @@ func TestEntityRecoveryRechecksMutationAdmission(t *testing.T) {
 			want := http.StatusForbidden
 			switch kind {
 			case "plan":
+				want = http.StatusPaymentRequired
 				if err := e.store.UpdateAccountPlan(t.Context(), e.acct.ID, api.PlanFree); err != nil {
 					t.Fatal(err)
 				}
 			case "abuse":
+				want = http.StatusPaymentRequired
 				if _, err := e.store.SetAccountAbuseHold(t.Context(), e.acct.ID, state.AccountAbuseHoldOperator, time.Now()); err != nil {
 					t.Fatal(err)
 				}

@@ -363,6 +363,22 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # State clone fixtures compare the complete cluster catalogue. Keep
+      # concurrent handler fixtures on a separate PostgreSQL cluster.
+      postgres-state:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       # Handler fixtures clone one fully migrated template database.
@@ -412,6 +428,10 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      - name: enable PostgreSQL TLS for isolated state fixtures
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres-state.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.
@@ -450,7 +470,8 @@ jobs:
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
+            DATABASE_URL=postgres://faas:faas@localhost:5433/faas?sslmode=disable \
+              go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
             pids+=("$!")
           done
           status=0

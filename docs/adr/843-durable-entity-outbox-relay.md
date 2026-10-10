@@ -105,7 +105,7 @@ identities, payloads and credentials.
 All manifest writers use **schema 6**; readers accept schemas 1–6 and the existing
 snapshot schemas 1–3. Older writers cannot preserve the reservation, so stop all
 older entity callers, alarms and maintenance workers before any new writer.
-Apply migration `20261009150000001_entity_outbox_acceptance.sql` before enabling
+Apply migration `20261010010028804_entity_outbox_acceptance.sql` before enabling
 the relay. Keep bucket lifecycle deletion disabled. Downgrade requires disabling
 workers, an explicit object-storage migration and preservation of acceptance
 receipts while any replayable pending work exists; dropping the receipt table
