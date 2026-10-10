@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
@@ -7086,7 +7087,8 @@ func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, st
 		return "", fmt.Errorf("vmm: create tmp for sealed %q: %w", key, err)
 	}
 	tmpPath := tmp.Name()
-	if _, err := io.Copy(tmp, rc); err != nil {
+	// Sparse: memory and the private drive are mostly zero pages.
+	if _, err := crashcrypt.CopySparse(tmp, rc); err != nil {
 		_ = tmp.Close()
 		return "", errors.Join(fmt.Errorf("vmm: decrypt %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
 	}
