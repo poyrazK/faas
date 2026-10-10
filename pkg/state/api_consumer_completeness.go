@@ -7,7 +7,7 @@ import (
 )
 
 // APIConsumerTelemetryHour is one consumer's successful (status < 400)
-// requests in one UTC hour as request telemetry observed them (ADR-938).
+// requests in one UTC hour as request telemetry observed them (ADR-954).
 type APIConsumerTelemetryHour struct {
 	Hour               time.Time
 	SuccessfulRequests int64

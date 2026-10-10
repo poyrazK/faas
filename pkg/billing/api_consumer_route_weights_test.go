@@ -11,7 +11,7 @@ func routeAt(minute time.Time, route string, units int64) state.APIConsumerRoute
 	return state.APIConsumerRouteUsageBucket{WindowStart: minute, Route: route, BillableUnits: units}
 }
 
-// adr: 936
+// adr: 952
 func TestWeightAPIConsumerUsageCountsWeightedRoutes(t *testing.T) {
 	plain := allowanceCard(allowanceStart, 10, 0)
 	weighted := allowanceCard(allowanceStart.Add(time.Hour), 10, 0)

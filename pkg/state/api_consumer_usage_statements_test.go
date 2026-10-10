@@ -114,7 +114,7 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 	}
 }
 
-// adr: 933
+// adr: 949
 func TestMemAPIConsumerUsageStatementRevisions(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

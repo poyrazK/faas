@@ -25,7 +25,7 @@ func withConsumersTestAPI(t *testing.T, handler http.HandlerFunc) *bytes.Buffer 
 	return &stdout
 }
 
-// adr: 933 — the CLI drives the consumer monetization lifecycle end to end.
+// adr: 949 — the CLI drives the consumer monetization lifecycle end to end.
 func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 	var key api.CreateConsumerKeyRequest
 	var card api.CreateAPIConsumerRateCardRequest
@@ -124,7 +124,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 	}
 }
 
-// adr: 935
+// adr: 951
 func TestCmdConsumersTieredRateCard(t *testing.T) {
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,7 @@ func TestCmdConsumersTieredRateCard(t *testing.T) {
 	}
 }
 
-// adr: 936
+// adr: 952
 func TestCmdConsumersRouteWeights(t *testing.T) {
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +161,7 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 	}
 }
 
-// adr: 937
+// adr: 953
 func TestCmdConsumersPlans(t *testing.T) {
 	var created api.CreateAPIConsumerPlanRequest
 	var updated api.UpdateAPIConsumerPlanLimitsRequest

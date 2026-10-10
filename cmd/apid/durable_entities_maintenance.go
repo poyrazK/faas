@@ -22,8 +22,10 @@ func (s *server) runDurableEntityMaintenance(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
+		started := time.Now()
 		result, err := s.durableEntities.MaintenanceStep(ctx, s.durableEntityOwner, s.durableEntityApps)
 		s.durableEntityMetrics.observeMaintenance(result, err)
+		s.durableEntityMetrics.observeDuration("maintenance", started)
 		if ctx.Err() == nil && (result.Failed > 0 || result.Cleanup.Failed > 0 || err != nil && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict)) {
 			// Provider errors and storage paths may expose credentials or identities.
 			s.log.Warn("durable entity maintenance deferred")

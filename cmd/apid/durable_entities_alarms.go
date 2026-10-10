@@ -77,6 +77,8 @@ func (s *server) deliverDurableEntityAlarm(ctx context.Context, alarm durableent
 	}
 	s.durableEntityMetrics.observeAlarmDelay(alarm.At)
 	var result durableentity.Result
+	started := time.Now()
+	defer s.durableEntityMetrics.observeDuration("alarm", started)
 	defer func() { s.durableEntityMetrics.observeResult("alarm", result, err) }()
 	callCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
 	defer cancel()
@@ -98,11 +100,18 @@ func (s *server) deliverDurableEntityAlarm(ctx context.Context, alarm durableent
 }
 
 func (s *server) durableEntityAlarmSelection(ctx context.Context, alarm durableentity.Alarm) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
-	acct, err := s.store.AccountByID(ctx, alarm.Entity.AccountID)
+	acct, app, request, err := s.durableEntityBackgroundSelection(ctx, alarm.Entity)
+	work := durableentity.AlarmRequest(alarm)
+	request.RequestID, request.Payload = work.ID, work.Payload
+	return acct, app, request, err
+}
+
+func (s *server) durableEntityBackgroundSelection(ctx context.Context, entity durableentity.ID) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
+	acct, err := s.store.AccountByID(ctx, entity.AccountID)
 	if err != nil {
 		return acct, state.App{}, api.DurableEntityInvokeRequest{}, err
 	}
-	app, err := s.store.AppByID(ctx, alarm.Entity.AppID)
+	app, err := s.store.AppByID(ctx, entity.AppID)
 	if err != nil {
 		return acct, app, api.DurableEntityInvokeRequest{}, err
 	}
@@ -110,10 +119,9 @@ func (s *server) durableEntityAlarmSelection(ctx context.Context, alarm durablee
 		acct.Status != state.AccountActive && acct.Status != state.AccountPastDue || acct.DeletionRequestedAt != nil || !api.MustLimitsFor(acct.Plan).AsyncInvokeAllowed {
 		return acct, app, api.DurableEntityInvokeRequest{}, durableentity.ErrInvalid
 	}
-	work := durableentity.AlarmRequest(alarm)
-	request := api.DurableEntityInvokeRequest{Namespace: alarm.Entity.Namespace, Key: alarm.Entity.Key, RequestID: work.ID, Payload: work.Payload, PlatformTenantID: alarm.Entity.TenantID}
+	request := api.DurableEntityInvokeRequest{Namespace: entity.Namespace, Key: entity.Key, PlatformTenantID: entity.TenantID}
 	if app.ProjectID == "" || app.PreviewOfSlug != "" {
-		if alarm.Entity.EnvironmentID != app.ID {
+		if entity.EnvironmentID != app.ID {
 			return acct, app, request, durableentity.ErrInvalid
 		}
 		return acct, app, request, nil
@@ -123,7 +131,7 @@ func (s *server) durableEntityAlarmSelection(ctx context.Context, alarm durablee
 		return acct, app, request, err
 	}
 	for _, env := range environments {
-		if env.ID == alarm.Entity.EnvironmentID {
+		if env.ID == entity.EnvironmentID {
 			request.Environment = env.Slug
 			return acct, app, request, nil
 		}

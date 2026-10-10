@@ -61,6 +61,7 @@ native_e2e_phase_files() {
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       private_service_tcp_metal_test.go \
+      scenario_tcp_chaos_metal_test.go \
       tcp_ingress_metal_test.go udp_ingress_metal_test.go ;;
     # Wake scheduling and native Flags cache refresh after VM restore.
     # The platform benchmark remains opt-in via FAAS_WAKE_PLATFORM_BENCH_CYCLES.

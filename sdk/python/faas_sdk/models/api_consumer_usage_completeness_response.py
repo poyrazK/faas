@@ -18,7 +18,7 @@ T = TypeVar("T", bound="APIConsumerUsageCompletenessResponse")
 
 @_attrs_define
 class APIConsumerUsageCompletenessResponse:
-    """Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-938)."""
+    """Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-954)."""
 
     consumer_id: UUID
     status: APIConsumerUsageCompletenessResponseStatus

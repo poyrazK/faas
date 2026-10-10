@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 938 — completeness is reported on demand and warned after a draft.
+// adr: 954 — completeness is reported on demand and warned after a draft.
 func TestCmdConsumersCompleteness(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

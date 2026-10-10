@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -55,17 +56,26 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	profileBackend                  profiling.Backend
-	profileQuerySlots               chan struct{}
-	durableEntities                 *durableentity.Manager
-	durableEntityOwner              string
-	durableEntityApps               map[string]bool
-	durableEntityAlarmsEnabled      bool
-	durableEntityMaintenanceEnabled bool
-	durableEntityMetrics            *durableEntityMetrics
-	devBridgeEnabled                bool
-	devBridgeURL                    string
-	devBridgeObserver               *devbridge.Observer
+	profileBackend                           profiling.Backend
+	profileQuerySlots                        chan struct{}
+	durableEntities                          *durableentity.Manager
+	durableEntityOwner                       string
+	durableEntityApps                        map[string]bool
+	durableEntityAlarmsEnabled               bool
+	durableEntityHealthEnabled               bool
+	durableEntityBackupsEnabled              bool
+	durableEntityRestoreValidationEnabled    bool
+	durableEntityRestoreIsolationEnabled     bool
+	durableEntityValidatorReleaseGateEnabled bool
+	durableEntityValidatorBundles            map[string]durableEntityValidatorBundle
+	durableEntityValidatorArtifacts          *validatorbundle.Artifacts
+	durableEntityOutboxEnabled               bool
+	durableEntityOutboxHandlersEnabled       bool
+	durableEntityMaintenanceEnabled          bool
+	durableEntityMetrics                     *durableEntityMetrics
+	devBridgeEnabled                         bool
+	devBridgeURL                             string
+	devBridgeObserver                        *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.
 	operationsAdmissionEnabled bool
 	operationsPreview          *operations.PreviewAdmission
@@ -1725,7 +1735,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
-	// ADR-937: named consumer plans and minute-effective plan assignments.
+	// ADR-953: named consumer plans and minute-effective plan assignments.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlans))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerPlan)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))
@@ -2865,6 +2875,14 @@ func (s *server) handler() http.Handler {
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeDurableEntity))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/inspect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectDurableEntity))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDurableEntityBackups))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups/get", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDurableEntityBackup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewDurableEntityRestore))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportDurableEntity))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/validate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.validateDurableEntityRestore))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDurableEntity))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryDurableEntity))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotent(s.queueSend))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotent(s.sendAppMessage))))))

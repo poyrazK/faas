@@ -110,8 +110,8 @@ exclusive_tests="$(native_e2e_lane_tests exclusive-operations-only "${repo_root}
 [[ "$(native_e2e_lane_regex exclusive-operations-only "${repo_root}")" == \
   '^(TestExclusiveOperationFencesRestoredKVMOwnerMetal)$' ]] ||
   fail "exclusive-operations-only does not build an anchored test filter"
-printf '%s\n' "$(native_e2e_phase_tests wake "${repo_root}")" | grep -qx \
-  'TestExclusiveOperationFencesRestoredKVMOwnerMetal' ||
+wake_tests="$(native_e2e_phase_tests wake "${repo_root}")"
+grep -Fx 'TestExclusiveOperationFencesRestoredKVMOwnerMetal' <<<"${wake_tests}" >/dev/null ||
   fail "exclusive-owner KVM test is no longer included in the wake phase"
 native_e2e_is_lane exclusive-operations-only || fail "exclusive-operations-only is not recognised as a lane"
 # The managed workflow recovery lane stays isolated and blocking so the new

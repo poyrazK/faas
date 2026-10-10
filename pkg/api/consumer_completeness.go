@@ -7,7 +7,7 @@ import (
 )
 
 // APIConsumerUsageCompletenessResponse compares a consumer's billing ledger
-// with request telemetry over successful requests (ADR-938). Status is
+// with request telemetry over successful requests (ADR-954). Status is
 // verified, partial, gaps_detected, or unverifiable. missing_requests is a
 // lower bound of successful requests telemetry saw that the ledger never
 // billed; checked_from/checked_until are the settled, retained hours checked.

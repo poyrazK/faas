@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
-// adr: 939
+// adr: 955
 func TestConditionalURLHeadersCannotChange(t *testing.T) {
 	size := int64(3)
 	for _, condition := range []objectstorage.ObjectWriteConditions{{IfMatch: `"old"`}, {IfNoneMatch: "*"}} {

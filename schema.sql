@@ -18266,6 +18266,20 @@ CREATE TABLE public.email_verification_tokens (
 
 
 --
+-- Name: entity_outbox_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_outbox_acceptances (
+    message_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT entity_outbox_acceptances_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30446,6 +30460,14 @@ ALTER TABLE ONLY public.egress_policy
 
 ALTER TABLE ONLY public.email_verification_tokens
     ADD CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_pkey PRIMARY KEY (message_id);
 
 
 --
@@ -47705,6 +47727,22 @@ ALTER TABLE ONLY public.edge_rules
 
 ALTER TABLE ONLY public.email_verification_tokens
     ADD CONSTRAINT email_verification_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -8,7 +8,7 @@ import (
 )
 
 // PlanCardTimeline resolves the price history one consumer actually had
-// (ADR-937). Assignments split time into segments; each segment is priced
+// (ADR-953). Assignments split time into segments; each segment is priced
 // by its plan's cards, or the app default cards (empty PlanID) before the
 // first assignment and after a return to default. The result is an ordinary
 // card list, so allowances, tiers, weights, and statements price plan

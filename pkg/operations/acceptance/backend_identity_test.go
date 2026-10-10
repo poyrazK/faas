@@ -182,7 +182,7 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb`); err != nil {
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb; ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_held boolean NOT NULL DEFAULT false`); err != nil {
 		t.Fatal(err)
 	}
 	// Current CreateDeployment also pins workload settings. Provision the exact

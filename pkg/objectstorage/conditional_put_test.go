@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// adr: 939
+// adr: 955
 func TestS3ConditionalPutSavedAuthority(t *testing.T) {
 	p, err := NewS3(testBackend(), testCredentials)
 	if err != nil {
@@ -35,7 +35,7 @@ func TestS3ConditionalPutSavedAuthority(t *testing.T) {
 	}
 }
 
-// adr: 939
+// adr: 955
 func TestConditionalPutAdmissionCapabilities(t *testing.T) {
 	p := &GCS{}
 	for _, c := range []ObjectWriteConditions{{IfNoneMatch: "*"}, {IfMatch: `"old"`}, {IfMatch: "*"}} {

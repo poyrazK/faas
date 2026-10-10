@@ -133,7 +133,7 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	}
 }
 
-// adr: 933 — app-local statements supersede changed drafts and bill late
+// adr: 949 — app-local statements supersede changed drafts and bill late
 // usage as additive adjustment revisions of the same period.
 func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 	e := setup(t, api.PlanHobby)
@@ -234,7 +234,7 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 	post(path+"/"+overlap.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-3"}, http.StatusConflict)
 }
 
-// adr: 934 — a rate card's monthly allowance is free, cannot be backdated,
+// adr: 950 — a rate card's monthly allowance is free, cannot be backdated,
 // and late usage that exhausts it sooner is billed as an adjustment.
 func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -307,7 +307,7 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	}
 }
 
-// adr: 935 — graduated tiers price monthly statements by position and
+// adr: 951 — graduated tiers price monthly statements by position and
 // re-rate late usage exactly.
 func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -384,7 +384,7 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	}
 }
 
-// adr: 936 — route weights turn requests into weighted units before
+// adr: 952 — route weights turn requests into weighted units before
 // allowances and prices apply.
 func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -435,7 +435,7 @@ func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 	}
 }
 
-// adr: 937 — a consumer's plan prices its minutes from the assignment on.
+// adr: 953 — a consumer's plan prices its minutes from the assignment on.
 func TestAPIConsumerPlansPriceAssignedMinutes(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	if now.Add(10*time.Minute).Month() != now.Month() {
