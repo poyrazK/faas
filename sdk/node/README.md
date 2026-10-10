@@ -2364,3 +2364,8 @@ See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publi
 samples recent original-subscriber outcomes. Check per-item `evidence_status`
 and continuation cursors; failures throw `CommitDeliveryReportError` with the
 partial report. Counts cover sampled evidence only.
+
+Delivery reports accept `recipientPages` (1–20, default 1) and `resume: savedReport`.
+Resume fixes selection and filter, merges recipients without duplicate counts,
+and checks the source under the current account. Omit selection/filter options
+when resuming; saved completed coverage is not refreshed.

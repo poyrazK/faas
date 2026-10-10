@@ -647,8 +647,8 @@ gregale commit delivery-report SOURCE --before NEXT_BEFORE --limit 50
 ```
 
 This read-only report selects one newest-first publication-history page (default
-50, maximum 200 publications) and reads the first guarded recipient page for each
-publication (up to 200 recipients). Each item retains its acceptance receipt and
+50, maximum 200 publications) and reads guarded recipient pages for each
+publication (up to 200 recipients per page; one page by default). Each item retains its acceptance receipt and
 reports `evidence_status`: `available`, `partial`, `unavailable`,
 `acceptance_replaced`, `not_read`, or `read_error`. Subscriber rows include the
 original recipient evidence, including existing recovery and attempt-history
@@ -666,7 +666,8 @@ recipient coverage is incomplete; pass it to the guarded publication receipt
 reader to continue. A missing requested subscriber on a partial page stays
 unknown, rather than being labelled untargeted. Even with no continuation,
 a receipt whose original snapshot has not been captured is `partial`.
-Unavailable or replaced evidence never contributes a completion count.
+Unavailable or replaced reads never establish a new completion observation;
+a resumed report can retain earlier local observations as described below.
 
 `read_complete` means all selected publication reads finished, including reads
 that established unavailable/replaced evidence. It does not mean every
@@ -677,7 +678,7 @@ observations rather than an atomic source-wide health snapshot.
 The CLI prints partial reports on read errors and exits 1 (124 for deadline,
 130 for interruption). Unvisited selected publications remain `not_read`.
 Exit 0 means the reads finished, even when subscribers failed. After a read
-error, retry the same history cursor; advancing `next_before` would skip unread
+error, resume the saved report or retry the same history cursor; advancing `next_before` would skip unread
 items in that selected history page.
 
 SDK equivalents:
@@ -696,3 +697,52 @@ SDK equivalents:
 For complete evidence of one selected subscriber, use the subscriber wait,
 which follows recipient pagination. Reports preserve the acceptance-time guard
 on every sampled receipt and remain useful after delivery evidence expires.
+
+### Resume recipient coverage
+
+```sh
+gregale commit delivery-report SOURCE --limit 50 --recipient-pages 2 > report.json
+gregale commit delivery-report SOURCE --resume report.json --recipient-pages 5 > report-next.json
+```
+
+`--recipient-pages` bounds each publication to 1–20 recipient pages per run,
+defaulting to 1. A resumed run uses the saved selection and subscriber filter;
+omit `--before`, `--limit` and `--subscription-id`. It does not select newer
+publications or change `next_before`. Save output to a different file from the
+resume input. CLI input is limited to 64 MiB; use smaller history selections
+for large reports.
+
+Resume authenticates the source with the current account, validates publication
+source/event bindings and rejects duplicate saved publication/subscriber
+identities. It copies the saved report, skips completed coverage (`available`)
+and terminal unavailable/replaced evidence, and continues `partial`, `not_read`
+or `read_error` items from their saved recipient cursor. A partial receipt with
+no cursor is reread from the first page because its snapshot was incomplete.
+Previously read complete coverage is not refreshed.
+
+Each successfully decoded page merges original recipients by subscription UUID.
+Repeated recipients replace their saved observation; counts are derived from
+the merged records, not from saved count totals. The cursor advances only after
+that page has been decoded and merged, so a failed read can be retried without
+adding duplicate counts. Repeated/cyclic cursors within a run are read errors.
+The same acceptance-time guard remains on every page.
+
+When retention removes a later page, the item becomes `unavailable`. A
+replacement becomes `acceptance_replaced`. Earlier local observations remain
+in the report for diagnosis and retain their counts; these statuses explain why
+coverage could not finish. Such saved counts do not establish current delivery
+health. `partial` means coverage still needs work, and `read_complete` still
+means the bounded read run finished rather than full coverage or delivery
+completion. Saved reports are editable local observations, not signed proof,
+and observations collected on different pages can reflect different times.
+
+SDK support preserves existing one-page defaults:
+
+- Go: `GetCommitDeliveryReportWithPages(ctx, source, before, subscription, limit,
+  pages)` and `ResumeCommitDeliveryReport(ctx, saved, pages)`.
+- Node: `getCommitDeliveryReport(source, { recipientPages: 5, resume: saved,
+  timeoutMs: 120000 })`. With `resume`, omit selection/filter options.
+- Python: `await aget_commit_delivery_report(client, source, recipient_pages=5,
+  resume=saved, timeout=120)`. With `resume`, omit selection/filter options.
+
+Resume errors preserve partial reports using the same SDK error contracts.

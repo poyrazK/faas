@@ -780,3 +780,8 @@ See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publi
 recent original-subscriber outcomes. Check per-item evidence status and cursors;
 read failures raise `CommitDeliveryReportError` with the partial report. Counts
 cover sampled evidence only.
+
+Delivery reports accept `recipient_pages` (1–20, default 1) and `resume=saved_report`.
+Resume fixes selection/filter and merges recipients without duplicate counts.
+Omit selection/filter arguments when resuming; saved completed coverage is not
+refreshed. The saved dictionary is copied before reads.

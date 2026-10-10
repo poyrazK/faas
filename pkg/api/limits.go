@@ -9632,3 +9632,7 @@ const CommitPublicationHistoryPageDefault = 50
 const CommitPublicationHistoryPageMax = 200
 
 const CommitPublicationHistoryCursorMaxBytes = 192
+
+// Commit delivery reports bound each invocation of recipient traversal.
+const CommitDeliveryReportPagesMax = 20
+const CommitDeliveryReportFileMaxBytes = 64 << 20

@@ -758,3 +758,8 @@ See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publi
 `GetCommitDeliveryReport` samples recent publication receipts and their original
 subscriber outcomes. Counts cover sampled evidence only; use `NextAfter` and
 `NextBefore` to continue. Read errors return the partial report alongside the error.
+
+Use `GetCommitDeliveryReportWithPages` to traverse more recipient pages, or
+`ResumeCommitDeliveryReport(ctx, saved, pages)` to continue the saved selection.
+The per-publication budget is 1–20 pages. Resume merges subscribers without
+counting an observation twice; saved completed coverage is not refreshed.
