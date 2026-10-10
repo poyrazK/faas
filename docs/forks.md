@@ -59,6 +59,41 @@ curl -X POST -H "Authorization: Bearer $GREGALE_TOKEN" \
 - Live forks need the platform's crash snapshot captures; where those are
   off, the request answers `501 live_forks_not_enabled`.
 
+## Run commands in a fork {#run-commands}
+
+Run a command inside a running fork to look at its files, environment or
+processes:
+
+```sh
+curl -X POST -H "Authorization: Bearer $GREGALE_TOKEN" \
+  "https://api.gregale.dev/v1/apps/my-api/forks/$FORK_ID/execs" \
+  -d '{"command": ["ls", "-la", "/tmp"]}'
+```
+
+The answer is the queued command; poll it until `status` is `succeeded`,
+`failed` or `timed_out`:
+
+```sh
+curl -H "Authorization: Bearer $GREGALE_TOKEN" \
+  "https://api.gregale.dev/v1/apps/my-api/forks/$FORK_ID/execs/$EXEC_ID"
+```
+
+It returns `exit_code` and the tail of `stdout` and `stderr`.
+
+- `command` is an argv. Pass `"shell": true` with a single string to run it
+  through your app's shell (the image must have one).
+- The command runs in your app's working directory and user, with the
+  app's configured environment but **no secrets**: they are removed from the
+  fork when it starts. It cannot reach the network.
+- `timeout_seconds` defaults to 60 (max 600). `max_output_bytes` defaults to
+  64 KiB (max 1 MiB) of combined output; older output is dropped and
+  `output_truncated` is set.
+- One command runs at a time; up to 4 can be pending per fork.
+- A command never runs in your serving instances, only in the fork.
+- Creating a command and reading its output need both `deploy:write` and
+  `secrets:read`, like creating the fork. Every command is recorded in your
+  audit log (without its arguments).
+
 ## Send requests to a fork {#access}
 
 Call your app's normal hostname with two headers:

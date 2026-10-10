@@ -24,6 +24,9 @@ import (
 const (
 	Version   uint16 = 1
 	VsockPort uint32 = 1031
+	// ForkExecVsockPort is the guest port app VMs listen on for ADR-732 fork
+	// exec. vmmd dials it only for a quarantined fork instance.
+	ForkExecVsockPort uint32 = 1034
 
 	FrameRequest uint32 = 1
 	FrameStdout  uint32 = 2

@@ -146,6 +146,32 @@ func TestForkMetal(t *testing.T) {
 		}
 	})
 
+	t.Run("exec-runs-inside-the-fork", func(t *testing.T) {
+		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/forks/"+fork.ID+"/execs",
+			api.CreateAppForkExecRequest{Command: []string{"/hello-server", "-print-file", "/app/hello.txt"}})
+		if status != http.StatusAccepted {
+			t.Fatalf("create exec = %d %s", status, raw)
+		}
+		var exec api.AppForkExecResponse
+		if err := json.Unmarshal(raw, &exec); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(60 * time.Second)
+		for exec.Status == "queued" || exec.Status == "running" {
+			if time.Now().After(deadline) {
+				t.Fatalf("exec still %s after 60s", exec.Status)
+			}
+			time.Sleep(500 * time.Millisecond)
+			raw, status = doReq(t, h, key, http.MethodGet, "/v1/apps/hello/forks/"+fork.ID+"/execs/"+exec.ID, nil)
+			if status != http.StatusOK || json.Unmarshal(raw, &exec) != nil {
+				t.Fatalf("get exec = %d %s", status, raw)
+			}
+		}
+		if exec.Status != "succeeded" || exec.ExitCode == nil || *exec.ExitCode != 0 || strings.TrimSpace(exec.Stdout) != helloBody {
+			t.Fatalf("exec = %+v, want exit 0 printing the app's file", exec)
+		}
+	})
+
 	t.Run("cancel-destroys", func(t *testing.T) {
 		instanceID := forkInstance(ctx, t, pool, appID).ID
 		if _, status := doReq(t, h, key, http.MethodDelete, "/v1/apps/hello/forks/"+fork.ID, nil); status != http.StatusAccepted {

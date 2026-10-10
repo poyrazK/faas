@@ -79,6 +79,46 @@ func (s *Server) ExecuteAppTask(ctx context.Context, req *vmmdpb.ExecuteAppTaskR
 	return appTaskResponseFromResult(wireReq.TaskID, result), nil
 }
 
+// forkExecVMM is the optional ADR-732 fork exec capability of the VMM.
+type forkExecVMM interface {
+	ExecInFork(ctx context.Context, instance string, req apptaskproto.Request) (apptaskproto.Result, error)
+}
+
+// ExecForkCommand runs one command inside a running quarantined fork.
+func (s *Server) ExecForkCommand(ctx context.Context, req *vmmdpb.ExecuteAppTaskRequest) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	const op = "ExecForkCommand"
+	start := time.Now()
+	forkVMM, ok := s.vmm.(forkExecVMM)
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Fork exec unavailable", "vmmd fork exec is not configured")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	wireReq, err := appTaskRequestFromProto(req)
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	result, err := forkVMM.ExecInFork(ctx, req.GetInstance(), wireReq)
+	if errors.Is(err, fcvm.ErrForkExecNotAFork) {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.FailedPrecondition), api.CodeValidation,
+			"Not a running fork", "fork exec runs only inside a running quarantined fork"))
+	}
+	if err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(appTaskProblem(err))
+	}
+	if err := result.Validate(wireReq.MaxOutputBytes); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Fork exec protocol failed", "vmmd received an invalid terminal result"))
+	}
+	s.ops.Observe(op, time.Since(start), nil)
+	return appTaskResponseFromResult(wireReq.TaskID, result), nil
+}
+
 // ExecuteAppTaskStream forwards bounded output chunks followed by one
 // metadata-only terminal result.
 func (s *Server) ExecuteAppTaskStream(req *vmmdpb.ExecuteAppTaskRequest, stream vmmdpb.Vmmd_ExecuteAppTaskStreamServer) error {

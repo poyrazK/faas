@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -65,8 +66,18 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	printFile := flag.String("print-file", "", "print this file to stdout and exit (a shell-free cat for fork exec tests)")
 	crashCapture := flag.Bool("crash-capture", false, "serve /boom, which asks for an ADR-733 crash capture of itself")
 	flag.Parse()
+	if *printFile != "" {
+		data, err := os.ReadFile(*printFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(data)
+		os.Exit(0)
+	}
 	if *addr == "" {
 		port := os.Getenv("PORT")
 		if port == "" {
