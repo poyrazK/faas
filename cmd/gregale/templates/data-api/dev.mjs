@@ -128,6 +128,7 @@ async function atomicFile(path, content, mode) {
 
 export async function run(options) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required')
+  if (options.check_types && !options.once) throw new DevFailure('--check-types requires --once.')
   if (options.replay && !options.once) throw new DevFailure('--replay requires --once.')
   if (options.scenario && !options.replay) throw new DevFailure('--scenario requires --replay.')
   let project
@@ -279,8 +280,14 @@ export async function run(options) {
       .setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('24h').sign(privateKey) }
     phase = 'required project authorization verification'
     await verifyProject(url, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
-    phase = 'writing generated types'
-    await atomicFile(options.output, generate(config.snapshot), 0o644)
+    phase = options.check_types ? 'checking committed types' : 'writing generated types'
+    const generatedTypes = generate(config.snapshot)
+    if (options.check_types) {
+      let committedTypes
+      try { committedTypes = await readFile(options.output) }
+      catch { throw new DevFailure('Committed types are missing or unreadable; regenerate with gregale data-api dev --once, then commit the types file.') }
+      if (!committedTypes.equals(Buffer.from(generatedTypes))) throw new DevFailure('Database types are stale; regenerate with gregale data-api dev --once using the same project, config and output options, then commit the types file.')
+    } else await atomicFile(options.output, generatedTypes, 0o644)
     await acceptContract(config.snapshot)
     const checkClient = async () => {
       if (!options.check) return
@@ -326,7 +333,7 @@ export async function run(options) {
     await writeReceipt()
     receiptWritten = true
     clearTimeout(startup)
-    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check }))
+    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check, types_checked: Boolean(options.check_types) }))
     else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\n${project.legacy ? 'Alice/Bob RLS isolation verified.' : 'Required project authorization scenarios passed.'}`)
     const event = (status, detail) => {
       inspectorState = { ...inspectorState, status, detail, ready: Boolean(gateway) }

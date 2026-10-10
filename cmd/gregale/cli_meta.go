@@ -3539,6 +3539,7 @@ var cliCommands = []cliCommand{
 				{Name: "output", Value: "FILE", Short: "types output relative to the project"},
 				{Name: "port", Value: "PORT", Short: "loopback gateway port (default 8080; 0 selects a free port)"},
 				{Name: "check", Short: "run configured client checks"},
+				{Name: "check-types", Short: "compare committed types without rewriting them (requires --once)"},
 				{Name: "once", Short: "verify and exit, removing disposable containers"},
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},

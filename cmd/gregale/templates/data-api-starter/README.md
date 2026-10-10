@@ -881,3 +881,19 @@ without a response do not. Duration measures token lookup and fetch through
 headers, not body processing, SQL execution or platform wake time. See the
 [Data API guide](https://gregale.dev/docs/data-api#typed-client-response-diagnostics)
 for a typed example.
+
+### Check committed types in local CI
+
+Run `gregale data-api dev --port 0 --once --check-types --check` after installing
+client dependencies. The disposable database applies your project migrations,
+verifies authorization scenarios, and compares generated types byte-for-byte
+with the configured output file. Missing or stale types exit nonzero without
+creating or overwriting that file. `--check` then runs configured client checks;
+`--check-types` requires `--once`. Containers and volumes are removed on success
+and failure. No hosted account or staging credentials are required.
+
+To update types, run `gregale data-api dev --port 0 --once` with the same
+`--directory`, `--config` and `--output` options, then commit the generated file.
+This detects drift; use `--check-breaking` separately for compatibility checks.
+The workflow still creates local contract artifacts and runs configured setup
+and authorization steps; the types output alone is preserved by this flag.
