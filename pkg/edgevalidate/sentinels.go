@@ -160,7 +160,7 @@ func (fe *FieldError) Reason() string {
 		return "required_missing"
 	case "type":
 		return "type_mismatch"
-	case "additionalProperties":
+	case "additionalProperties", "unevaluatedProperties":
 		return "additional_properties_not_allowed"
 	case "enum":
 		return "enum_violation"
