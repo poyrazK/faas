@@ -78,6 +78,7 @@ type OperationWorkflowInstanceSnapshot struct {
 // OperationWorkflowInstanceTransition is an allowed edge from the selected
 // workflow contract, bound to the Operation that can report it.
 type OperationWorkflowInstanceTransition struct {
+	RetainedMilestoneGroups        []OperationWorkflowRetainedMilestoneGroup            `json:"retained_milestone_groups,omitempty"`
 	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessRule    `json:"retained_milestone_freshness,omitempty"`
 	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
 	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`

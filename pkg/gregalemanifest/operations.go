@@ -62,6 +62,7 @@ type OperationWorkflowRetainedMilestoneFreshnessSource struct {
 }
 
 type OperationWorkflowTransitionSource struct {
+	RetainedMilestoneGroups        []api.OperationWorkflowRetainedMilestoneGroup            `yaml:"retained_milestone_groups,omitempty" toml:"retained_milestone_groups"`
 	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessSource      `yaml:"retained_milestone_freshness,omitempty" toml:"retained_milestone_freshness"`
 	RetainedMilestoneInvalidations []api.OperationWorkflowRetainedMilestoneInvalidationRule `yaml:"retained_milestone_invalidations,omitempty" toml:"retained_milestone_invalidations"`
 	RequiresRetainedMilestones     []api.OperationWorkflowRetainedMilestoneRequirement      `yaml:"requires_retained_milestones,omitempty" toml:"requires_retained_milestones"`
@@ -336,7 +337,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 				if _, exists := operationsByName[transition.Operation]; !exists {
 					return nil, fmt.Errorf("operation workflow %q transition references unknown operation %q", workflow.Name, transition.Operation)
 				}
-			} else if len(transition.RetainedMilestoneFreshness) > 0 || len(transition.RetainedMilestoneInvalidations) > 0 || len(transition.RequiresRetainedMilestones) > 0 || len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
+			} else if len(transition.RetainedMilestoneGroups) > 0 || len(transition.RetainedMilestoneFreshness) > 0 || len(transition.RetainedMilestoneInvalidations) > 0 || len(transition.RequiresRetainedMilestones) > 0 || len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
 				return nil, fmt.Errorf("operation workflow %q transition evidence requires an operation target", workflow.Name)
 			}
 			if len(transition.RequiresMilestones) > api.OperationWorkflowTransitionEvidenceMax {
@@ -369,7 +370,12 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			if err != nil {
 				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
 			}
-			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transition.RetainedMilestoneInvalidations, retained)
+			groups, err := api.CanonicalOperationWorkflowRetainedMilestoneGroups(transition.RetainedMilestoneGroups)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			selectors := api.OperationWorkflowRetainedSelectors(retained, groups)
+			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transition.RetainedMilestoneInvalidations, selectors)
 			if err != nil {
 				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
 			}
@@ -384,11 +390,11 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 				}
 				freshnessInput = append(freshnessInput, api.OperationWorkflowRetainedMilestoneFreshnessRule{Prerequisite: rule.Prerequisite, MaxAgeSeconds: int64(age / time.Second)})
 			}
-			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(freshnessInput, retained)
+			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(freshnessInput, selectors)
 			if err != nil {
 				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
 			}
-			sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), retained...)
+			sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), selectors...)
 			for _, rule := range invalidations {
 				sources = append(sources, rule.InvalidatedBy)
 			}
@@ -403,7 +409,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 					return nil, fmt.Errorf("operation workflow %q retained prerequisite must reference a declared workflow step", workflow.Name)
 				}
 			}
-			apiTransition := api.OperationWorkflowTransition{RetainedMilestoneFreshness: freshness, RetainedMilestoneInvalidations: invalidations, RequiredRetainedMilestones: retained, From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
+			apiTransition := api.OperationWorkflowTransition{RetainedMilestoneGroups: groups, RetainedMilestoneFreshness: freshness, RetainedMilestoneInvalidations: invalidations, RequiredRetainedMilestones: retained, From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
 			if transition.Operation == "" {
 				for operationName := range stepOperations {
 					transitionTargets[operationName] = append(transitionTargets[operationName], apiTransition)

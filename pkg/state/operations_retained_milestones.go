@@ -18,7 +18,7 @@ func retainedMilestoneRequirements(instance *api.OperationWorkflowInstanceSnapsh
 	}
 	seen := map[api.OperationWorkflowRetainedMilestoneRequirement]bool{}
 	for _, edge := range instance.AllowedTransitions {
-		sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), edge.RequiredRetainedMilestones...)
+		sources := api.OperationWorkflowRetainedSelectors(edge.RequiredRetainedMilestones, edge.RetainedMilestoneGroups)
 		for _, rule := range edge.RetainedMilestoneInvalidations {
 			sources = append(sources, rule.InvalidatedBy)
 		}

@@ -20,7 +20,7 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			out = append(out, "This workflow instance has completed; inspect its outcome before starting another instance.")
 		case "from_state_mismatch", "revision_mismatch", "contract_version_mismatch":
 			out = append(out, fmt.Sprintf("Refresh the workflow snapshot and evaluate against contract version %d and state revision %d.", r.ContractVersion, r.StateRevision))
-		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated", "retained_milestone_expired":
+		case "application_blocked", "dependency_unmet", "dependency_required", "milestone_required", "policy_evidence_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated", "retained_milestone_expired", "retained_milestone_group_unmet":
 			// The structured findings below explain these requirements individually.
 		default:
 			out = append(out, "Inspect readiness requirement: "+reason+".")
@@ -71,6 +71,20 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			}
 			out = append(out, message)
 		}
+	}
+	for _, group := range r.RetainedMilestoneGroups {
+		if group.Satisfied {
+			for _, alternative := range group.Alternatives {
+				if alternative.Status == "verified" {
+					out = append(out, fmt.Sprintf("Alternative group %s is satisfied by milestone %s from operation %s.", group.ID, alternative.Requirement.Milestone, alternative.Requirement.Operation))
+					break
+				}
+			}
+			continue
+		}
+		out = append(out, fmt.Sprintf("Satisfy any one alternative in retained prerequisite group %s; the alternatives below are choices, not cumulative requirements.", group.ID))
+		nested := OperationWorkflowTransitionReadiness{RetainedMilestones: group.Alternatives}
+		out = append(out, nested.Guidance()...)
 	}
 	for _, milestone := range r.MissingMilestones {
 		out = append(out, fmt.Sprintf("Include milestone %s with the proposed transition.", milestone))

@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
     from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
     from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
+    from ..models.operation_workflow_retained_milestone_group_result import (
+        OperationWorkflowRetainedMilestoneGroupResult,
+    )
     from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
     from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
@@ -50,6 +53,7 @@ class OperationWorkflowTransitionReadiness:
     unmet_dependencies: list[OperationWorkflowRelatedInstance]
     """Unmet reference/status pairs; inspect full related states through the workflow detail."""
     missing_milestones: list[str]
+    retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroupResult] | Unset = UNSET
     retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
     """Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
     awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness."""
@@ -93,6 +97,13 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = self.missing_milestones
+
+        retained_milestone_groups: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.retained_milestone_groups, Unset):
+            retained_milestone_groups = []
+            for retained_milestone_groups_item_data in self.retained_milestone_groups:
+                retained_milestone_groups_item = retained_milestone_groups_item_data.to_dict()
+                retained_milestone_groups.append(retained_milestone_groups_item)
 
         retained_milestones: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.retained_milestones, Unset):
@@ -150,6 +161,8 @@ class OperationWorkflowTransitionReadiness:
                 "missing_milestones": missing_milestones,
             }
         )
+        if retained_milestone_groups is not UNSET:
+            field_dict["retained_milestone_groups"] = retained_milestone_groups
         if retained_milestones is not UNSET:
             field_dict["retained_milestones"] = retained_milestones
         if unmet_effects is not UNSET:
@@ -174,6 +187,9 @@ class OperationWorkflowTransitionReadiness:
         from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
         from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
         from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
+        from ..models.operation_workflow_retained_milestone_group_result import (
+            OperationWorkflowRetainedMilestoneGroupResult,
+        )
         from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
         from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
@@ -215,6 +231,17 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = cast(list[str], d.pop("missing_milestones"))
+
+        _retained_milestone_groups = d.pop("retained_milestone_groups", UNSET)
+        retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroupResult] | Unset = UNSET
+        if _retained_milestone_groups is not UNSET:
+            retained_milestone_groups = []
+            for retained_milestone_groups_item_data in _retained_milestone_groups:
+                retained_milestone_groups_item = OperationWorkflowRetainedMilestoneGroupResult.from_dict(
+                    retained_milestone_groups_item_data
+                )
+
+                retained_milestone_groups.append(retained_milestone_groups_item)
 
         _retained_milestones = d.pop("retained_milestones", UNSET)
         retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
@@ -275,6 +302,7 @@ class OperationWorkflowTransitionReadiness:
             blockers=blockers,
             unmet_dependencies=unmet_dependencies,
             missing_milestones=missing_milestones,
+            retained_milestone_groups=retained_milestone_groups,
             retained_milestones=retained_milestones,
             unmet_effects=unmet_effects,
             unmet_invariants=unmet_invariants,

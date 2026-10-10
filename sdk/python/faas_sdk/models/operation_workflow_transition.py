@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_retained_milestone_freshness_rule import (
         OperationWorkflowRetainedMilestoneFreshnessRule,
     )
+    from ..models.operation_workflow_retained_milestone_group import OperationWorkflowRetainedMilestoneGroup
     from ..models.operation_workflow_retained_milestone_invalidation_rule import (
         OperationWorkflowRetainedMilestoneInvalidationRule,
     )
@@ -29,6 +30,7 @@ class OperationWorkflowTransition:
 
     from_: str
     to: str
+    retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroup] | Unset = UNSET
     retained_milestone_freshness: list[OperationWorkflowRetainedMilestoneFreshnessRule] | Unset = UNSET
     """Maximum evidence ages pinned to this workflow edge."""
     retained_milestone_invalidations: list[OperationWorkflowRetainedMilestoneInvalidationRule] | Unset = UNSET
@@ -50,6 +52,13 @@ class OperationWorkflowTransition:
         from_ = self.from_
 
         to = self.to
+
+        retained_milestone_groups: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.retained_milestone_groups, Unset):
+            retained_milestone_groups = []
+            for retained_milestone_groups_item_data in self.retained_milestone_groups:
+                retained_milestone_groups_item = retained_milestone_groups_item_data.to_dict()
+                retained_milestone_groups.append(retained_milestone_groups_item)
 
         retained_milestone_freshness: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.retained_milestone_freshness, Unset):
@@ -109,6 +118,8 @@ class OperationWorkflowTransition:
                 "to": to,
             }
         )
+        if retained_milestone_groups is not UNSET:
+            field_dict["retained_milestone_groups"] = retained_milestone_groups
         if retained_milestone_freshness is not UNSET:
             field_dict["retained_milestone_freshness"] = retained_milestone_freshness
         if retained_milestone_invalidations is not UNSET:
@@ -136,6 +147,7 @@ class OperationWorkflowTransition:
         from ..models.operation_workflow_retained_milestone_freshness_rule import (
             OperationWorkflowRetainedMilestoneFreshnessRule,
         )
+        from ..models.operation_workflow_retained_milestone_group import OperationWorkflowRetainedMilestoneGroup
         from ..models.operation_workflow_retained_milestone_invalidation_rule import (
             OperationWorkflowRetainedMilestoneInvalidationRule,
         )
@@ -147,6 +159,17 @@ class OperationWorkflowTransition:
         from_ = d.pop("from")
 
         to = d.pop("to")
+
+        _retained_milestone_groups = d.pop("retained_milestone_groups", UNSET)
+        retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroup] | Unset = UNSET
+        if _retained_milestone_groups is not UNSET:
+            retained_milestone_groups = []
+            for retained_milestone_groups_item_data in _retained_milestone_groups:
+                retained_milestone_groups_item = OperationWorkflowRetainedMilestoneGroup.from_dict(
+                    retained_milestone_groups_item_data
+                )
+
+                retained_milestone_groups.append(retained_milestone_groups_item)
 
         _retained_milestone_freshness = d.pop("retained_milestone_freshness", UNSET)
         retained_milestone_freshness: list[OperationWorkflowRetainedMilestoneFreshnessRule] | Unset = UNSET
@@ -217,6 +240,7 @@ class OperationWorkflowTransition:
         operation_workflow_transition = cls(
             from_=from_,
             to=to,
+            retained_milestone_groups=retained_milestone_groups,
             retained_milestone_freshness=retained_milestone_freshness,
             retained_milestone_invalidations=retained_milestone_invalidations,
             required_retained_milestones=required_retained_milestones,

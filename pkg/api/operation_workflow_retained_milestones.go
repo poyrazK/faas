@@ -62,6 +62,19 @@ type OperationWorkflowPrerequisiteRecovery struct {
 	Steps           []string   `json:"steps"`
 }
 
+// OperationWorkflowRetainedMilestoneGroup requires any one retained fact in a named group.
+type OperationWorkflowRetainedMilestoneGroup struct {
+	ID    string                                          `json:"id" yaml:"id" toml:"id"`
+	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of" yaml:"any_of" toml:"any_of"`
+}
+
+// OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
+type OperationWorkflowRetainedMilestoneGroupResult struct {
+	ID           string                               `json:"id"`
+	Satisfied    bool                                 `json:"satisfied"`
+	Alternatives []OperationWorkflowRetainedMilestone `json:"alternatives"`
+}
+
 func CanonicalOperationWorkflowRetainedMilestones(input []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneRequirement, error) {
 	if len(input) > OperationWorkflowTransitionEvidenceMax {
 		return nil, fmt.Errorf("retained milestone prerequisites exceed limit")
@@ -127,4 +140,40 @@ func CanonicalOperationWorkflowRetainedMilestoneFreshness(input []OperationWorkf
 		}
 	}
 	return out, nil
+}
+
+func CanonicalOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflowRetainedMilestoneGroup) ([]OperationWorkflowRetainedMilestoneGroup, error) {
+	if len(input) > OperationWorkflowRetainedGroupsMax {
+		return nil, fmt.Errorf("retained milestone groups exceed limit")
+	}
+	out := append([]OperationWorkflowRetainedMilestoneGroup(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	for i := range out {
+		if ValidateOperationWorkflowStateName(out[i].ID) != nil || i > 0 && out[i-1].ID == out[i].ID || len(out[i].AnyOf) < 2 {
+			return nil, fmt.Errorf("retained milestone groups require unique valid IDs and at least two alternatives")
+		}
+		choices, err := CanonicalOperationWorkflowRetainedMilestones(out[i].AnyOf)
+		if err != nil {
+			return nil, err
+		}
+		out[i].AnyOf = choices
+	}
+	return out, nil
+}
+
+// OperationWorkflowRetainedSelectors includes required facts and every alternative for lookup and policy validation.
+func OperationWorkflowRetainedSelectors(required []OperationWorkflowRetainedMilestoneRequirement, groups []OperationWorkflowRetainedMilestoneGroup) []OperationWorkflowRetainedMilestoneRequirement {
+	out := append([]OperationWorkflowRetainedMilestoneRequirement(nil), required...)
+	for _, group := range groups {
+		out = append(out, group.AnyOf...)
+	}
+	return out
+}
+
+func CloneOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflowRetainedMilestoneGroup) []OperationWorkflowRetainedMilestoneGroup {
+	out := append([]OperationWorkflowRetainedMilestoneGroup(nil), input...)
+	for i := range out {
+		out[i].AnyOf = append([]OperationWorkflowRetainedMilestoneRequirement(nil), out[i].AnyOf...)
+	}
+	return out
 }

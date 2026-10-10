@@ -6,12 +6,14 @@ import type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffe
 import type { OperationWorkflowInvariantRequirement } from './OperationWorkflowInvariantRequirement.js';
 import type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 import type { OperationWorkflowRetainedMilestoneFreshnessRule } from './OperationWorkflowRetainedMilestoneFreshnessRule.js';
+import type { OperationWorkflowRetainedMilestoneGroup } from './OperationWorkflowRetainedMilestoneGroup.js';
 import type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
 import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 /**
  * Allowed state edge declared by a pinned application workflow definition.
  */
 export type OperationWorkflowTransition = {
+  retained_milestone_groups?: Array<OperationWorkflowRetainedMilestoneGroup>;
   /**
    * Maximum evidence ages pinned to this workflow edge.
    */

@@ -166,12 +166,18 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 				return err
 			}
 			transitions[j].RequiredRetainedMilestones = retained
-			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transitions[j].RetainedMilestoneInvalidations, retained)
+			groups, err := api.CanonicalOperationWorkflowRetainedMilestoneGroups(transitions[j].RetainedMilestoneGroups)
+			if err != nil {
+				return err
+			}
+			transitions[j].RetainedMilestoneGroups = groups
+			selectors := api.OperationWorkflowRetainedSelectors(retained, groups)
+			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transitions[j].RetainedMilestoneInvalidations, selectors)
 			if err != nil {
 				return err
 			}
 			transitions[j].RetainedMilestoneInvalidations = invalidations
-			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(transitions[j].RetainedMilestoneFreshness, retained)
+			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(transitions[j].RetainedMilestoneFreshness, selectors)
 			if err != nil {
 				return err
 			}
@@ -275,7 +281,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			workflowRetainedRequirements[step.Workflow] = make(map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
 		}
 		for _, edge := range step.Transitions {
-			sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), edge.RequiredRetainedMilestones...)
+			sources := api.OperationWorkflowRetainedSelectors(edge.RequiredRetainedMilestones, edge.RetainedMilestoneGroups)
 			for _, rule := range edge.RetainedMilestoneInvalidations {
 				sources = append(sources, rule.InvalidatedBy)
 			}
@@ -420,7 +426,7 @@ func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool
 		return false
 	}
 	for i := range left {
-		if !reflect.DeepEqual(left[i].RetainedMilestoneFreshness, right[i].RetainedMilestoneFreshness) || !reflect.DeepEqual(left[i].RetainedMilestoneInvalidations, right[i].RetainedMilestoneInvalidations) || !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
+		if !reflect.DeepEqual(left[i].RetainedMilestoneGroups, right[i].RetainedMilestoneGroups) || !reflect.DeepEqual(left[i].RetainedMilestoneFreshness, right[i].RetainedMilestoneFreshness) || !reflect.DeepEqual(left[i].RetainedMilestoneInvalidations, right[i].RetainedMilestoneInvalidations) || !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
 			return false
 		}
 		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {

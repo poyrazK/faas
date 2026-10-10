@@ -59,3 +59,16 @@ type OperationWorkflowPrerequisiteRecovery struct {
 	AfterOccurredAt *time.Time `json:"after_occurred_at,omitempty"`
 	Steps           []string   `json:"steps"`
 }
+
+// OperationWorkflowRetainedMilestoneGroup requires any one retained fact in a named group.
+type OperationWorkflowRetainedMilestoneGroup struct {
+	ID    string                                          `json:"id" yaml:"id" toml:"id"`
+	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of" yaml:"any_of" toml:"any_of"`
+}
+
+// OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
+type OperationWorkflowRetainedMilestoneGroupResult struct {
+	ID           string                               `json:"id"`
+	Satisfied    bool                                 `json:"satisfied"`
+	Alternatives []OperationWorkflowRetainedMilestone `json:"alternatives"`
+}

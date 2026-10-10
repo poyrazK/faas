@@ -72,8 +72,16 @@ export async function guardedWorkflowTransition(
       break;
     }
     if (response.subject.type !== request.subject.type || response.subject.id !== request.subject.id || response.workflow !== request.workflow || response.instance_id !== request.instance_id || r.transition.operation !== request.operation || r.transition.from !== request.from_state || r.transition.to !== request.to_state) throw new TypeError('Readiness response does not match proposed transition');
-    if ((r.transition.retained_milestone_freshness ?? []).some(rule => !(r.retained_milestones ?? []).some(e => e.requirement.operation === rule.prerequisite.operation && e.requirement.milestone === rule.prerequisite.milestone && usableRetainedMilestone(e) && e.freshness?.max_age_seconds === rule.max_age_seconds && e.freshness.evaluated_at === response.evaluated_at))) throw new CustomerOperationReadinessError(response);
-    if ((r.transition.required_retained_milestones ?? []).some(p => !(r.retained_milestones ?? []).some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone && usableRetainedMilestone(e))) || (r.retained_milestones ?? []).some(e => !usableRetainedMilestone(e)) || !r.ready || !r.declared || r.state_revision !== request.state_revision || r.contract_version !== request.contract_version || r.reasons.length + r.blockers.length + r.unmet_dependencies.length + r.missing_milestones.length + (r.missing_policies?.length ?? 0) + (r.missing_dependency_workflows?.length ?? 0) + (r.unmet_invariants?.length ?? 0) + (r.unmet_effects?.length ?? 0) !== 0) throw new CustomerOperationReadinessError(response);
+    const usable = (e: OperationWorkflowRetainedMilestone) => usableRetainedMilestone(e) && (r.transition.retained_milestone_freshness ?? []).every(rule => rule.prerequisite.operation !== e.requirement.operation || rule.prerequisite.milestone !== e.requirement.milestone || (e.freshness?.max_age_seconds === rule.max_age_seconds && e.freshness.evaluated_at === response.evaluated_at));
+    const groups = r.retained_milestone_groups ?? [], expectedGroups = r.transition.retained_milestone_groups ?? [];
+    if (groups.length !== expectedGroups.length || expectedGroups.some(expected => {
+      const matches = groups.filter(group => group.id === expected.id);
+      if (matches.length !== 1) return true;
+      const group = matches[0];
+      if (!group) return true;
+      return !group.satisfied || expected.any_of.length < 2 || group.alternatives.length !== expected.any_of.length || !expected.any_of.every(p => group.alternatives.some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone)) || !group.alternatives.some(usable);
+    })) throw new CustomerOperationReadinessError(response);
+    if ((r.transition.required_retained_milestones ?? []).some(p => !(r.retained_milestones ?? []).some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone && usable(e))) || (r.retained_milestones ?? []).some(e => !usable(e)) || !r.ready || !r.declared || r.state_revision !== request.state_revision || r.contract_version !== request.contract_version || r.reasons.length + r.blockers.length + r.unmet_dependencies.length + r.missing_milestones.length + (r.missing_policies?.length ?? 0) + (r.missing_dependency_workflows?.length ?? 0) + (r.unmet_invariants?.length ?? 0) + (r.unmet_effects?.length ?? 0) !== 0) throw new CustomerOperationReadinessError(response);
     reports.splice(0, reports.length, ...stagedReports); states.splice(0, states.length, ...stagedStates);
     return response;
   } catch (error) {

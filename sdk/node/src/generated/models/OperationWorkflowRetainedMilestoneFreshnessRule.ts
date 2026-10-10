@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 /**
- * Versioned maximum age for one declared retained prerequisite; measured from business occurrence time.
+ * Versioned maximum age for one declared mandatory or alternative retained prerequisite; measured from business occurrence time.
  */
 export type OperationWorkflowRetainedMilestoneFreshnessRule = {
   prerequisite: OperationWorkflowRetainedMilestoneRequirement;

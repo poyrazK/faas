@@ -22,22 +22,23 @@ type OperationWorkflowReadinessRequest struct {
 }
 
 type OperationWorkflowTransitionReadiness struct {
-	RetainedMilestones         []OperationWorkflowRetainedMilestone `json:"retained_milestones,omitempty"`
-	Transition                 OperationWorkflowInstanceTransition  `json:"transition"`
-	Declared                   bool                                 `json:"declared"`
-	Ready                      bool                                 `json:"ready"`
-	Reasons                    []string                             `json:"reasons"`
-	Advisories                 []string                             `json:"advisories"`
-	StateRevision              int64                                `json:"state_revision,omitempty"`
-	ContractVersion            int                                  `json:"contract_version"`
-	InvariantBlockers          []OperationWorkflowBlocker           `json:"invariant_blockers,omitempty"`
-	Blockers                   []OperationWorkflowBlocker           `json:"blockers"`
-	UnmetDependencies          []OperationWorkflowRelatedInstance   `json:"unmet_dependencies"`
-	MissingDependencyWorkflows []string                             `json:"missing_dependency_workflows,omitempty"`
-	UnmetEffects               []OperationWorkflowUnmetEffect       `json:"unmet_effects,omitempty"`
-	UnmetInvariants            []OperationWorkflowUnmetInvariant    `json:"unmet_invariants,omitempty"`
-	MissingPolicies            []OperationWorkflowPolicyRequirement `json:"missing_policies,omitempty"`
-	MissingMilestones          []string                             `json:"missing_milestones"`
+	RetainedMilestoneGroups    []OperationWorkflowRetainedMilestoneGroupResult `json:"retained_milestone_groups,omitempty"`
+	RetainedMilestones         []OperationWorkflowRetainedMilestone            `json:"retained_milestones,omitempty"`
+	Transition                 OperationWorkflowInstanceTransition             `json:"transition"`
+	Declared                   bool                                            `json:"declared"`
+	Ready                      bool                                            `json:"ready"`
+	Reasons                    []string                                        `json:"reasons"`
+	Advisories                 []string                                        `json:"advisories"`
+	StateRevision              int64                                           `json:"state_revision,omitempty"`
+	ContractVersion            int                                             `json:"contract_version"`
+	InvariantBlockers          []OperationWorkflowBlocker                      `json:"invariant_blockers,omitempty"`
+	Blockers                   []OperationWorkflowBlocker                      `json:"blockers"`
+	UnmetDependencies          []OperationWorkflowRelatedInstance              `json:"unmet_dependencies"`
+	MissingDependencyWorkflows []string                                        `json:"missing_dependency_workflows,omitempty"`
+	UnmetEffects               []OperationWorkflowUnmetEffect                  `json:"unmet_effects,omitempty"`
+	UnmetInvariants            []OperationWorkflowUnmetInvariant               `json:"unmet_invariants,omitempty"`
+	MissingPolicies            []OperationWorkflowPolicyRequirement            `json:"missing_policies,omitempty"`
+	MissingMilestones          []string                                        `json:"missing_milestones"`
 }
 
 type OperationWorkflowReadinessResponse struct {

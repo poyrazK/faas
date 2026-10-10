@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"strings"
+	"time"
 )
 
 // CustomerOperationReadinessError carries unmet requirements without committing business writes.
@@ -141,7 +142,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	for _, requirement := range r.Transition.RequiredRetainedMilestones {
 		verified := false
 		for _, evidence := range r.RetainedMilestones {
-			if evidence.Requirement == requirement && usableRetainedMilestone(evidence) {
+			if evidence.Requirement == requirement && retainedEvidenceUsable(evidence, r.Transition, response.EvaluatedAt) {
 				verified = true
 				break
 			}
@@ -150,20 +151,11 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}
-	for _, rule := range r.Transition.RetainedMilestoneFreshness {
-		matched := false
-		for _, e := range r.RetainedMilestones {
-			if e.Requirement == rule.Prerequisite && usableRetainedMilestone(e) && e.Freshness != nil && e.Freshness.MaxAgeSeconds == rule.MaxAgeSeconds && e.Freshness.EvaluatedAt.Equal(response.EvaluatedAt) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return response, &CustomerOperationReadinessError{Response: response}
-		}
+	if !retainedGroupsUsable(r, response.EvaluatedAt) {
+		return response, &CustomerOperationReadinessError{Response: response}
 	}
 	for _, evidence := range r.RetainedMilestones {
-		if !usableRetainedMilestone(evidence) {
+		if !retainedEvidenceUsable(evidence, r.Transition, response.EvaluatedAt) {
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}
@@ -180,4 +172,54 @@ func usableRetainedMilestone(e OperationWorkflowRetainedMilestone) bool {
 	}
 	f := e.Freshness
 	return f == nil || f.MaxAgeSeconds > 0 && !f.EvaluatedAt.IsZero() && f.ExpiresAt != nil && f.ExpiresAt.After(f.EvaluatedAt) && f.AgeSeconds != nil && *f.AgeSeconds >= 0 && f.RemainingSeconds != nil && *f.RemainingSeconds > 0 && *f.RemainingSeconds <= f.MaxAgeSeconds
+}
+
+func retainedEvidenceUsable(e OperationWorkflowRetainedMilestone, edge OperationWorkflowInstanceTransition, at time.Time) bool {
+	if !usableRetainedMilestone(e) {
+		return false
+	}
+	for _, rule := range edge.RetainedMilestoneFreshness {
+		if rule.Prerequisite == e.Requirement && (e.Freshness == nil || e.Freshness.MaxAgeSeconds != rule.MaxAgeSeconds || !e.Freshness.EvaluatedAt.Equal(at)) {
+			return false
+		}
+	}
+	return true
+}
+
+func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time) bool {
+	if len(r.RetainedMilestoneGroups) != len(r.Transition.RetainedMilestoneGroups) {
+		return false
+	}
+	for _, expected := range r.Transition.RetainedMilestoneGroups {
+		matches := 0
+		for _, group := range r.RetainedMilestoneGroups {
+			if group.ID != expected.ID {
+				continue
+			}
+			matches++
+			if !group.Satisfied || len(group.Alternatives) != len(expected.AnyOf) || len(expected.AnyOf) < 2 {
+				return false
+			}
+			satisfied := false
+			for _, selector := range expected.AnyOf {
+				found := false
+				for _, evidence := range group.Alternatives {
+					if evidence.Requirement == selector {
+						found = true
+						satisfied = satisfied || retainedEvidenceUsable(evidence, r.Transition, at)
+					}
+				}
+				if !found {
+					return false
+				}
+			}
+			if !satisfied {
+				return false
+			}
+		}
+		if matches != 1 {
+			return false
+		}
+	}
+	return true
 }

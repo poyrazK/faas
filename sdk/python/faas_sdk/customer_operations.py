@@ -449,22 +449,36 @@ class CustomerOperationTransaction:
                 or response.instance_id != request.instance_id or r.transition.operation != request.operation
                 or r.transition.from_ != request.from_state or r.transition.to != request.to_state):
                 raise ValueError("Readiness response does not match proposed transition")
+            freshness_rules = [] if r.transition.retained_milestone_freshness is UNSET else r.transition.retained_milestone_freshness
             def usable(e):
                 f = e.freshness
                 return (e.status == "verified" and e.evidence is not UNSET and e.invalidation is UNSET
                     and (f is UNSET or (f.max_age_seconds > 0 and f.expires_at is not UNSET
                         and f.expires_at > f.evaluated_at and f.age_seconds is not UNSET and f.age_seconds >= 0
-                        and f.remaining_seconds is not UNSET and 0 < f.remaining_seconds <= f.max_age_seconds)))
+                        and f.remaining_seconds is not UNSET and 0 < f.remaining_seconds <= f.max_age_seconds))
+                    and all(rule.prerequisite.operation != e.requirement.operation
+                        or rule.prerequisite.milestone != e.requirement.milestone
+                        or (f is not UNSET and f.max_age_seconds == rule.max_age_seconds
+                            and f.evaluated_at == response.evaluated_at) for rule in freshness_rules))
             retained = [] if r.retained_milestones is UNSET else r.retained_milestones
             required_retained = [] if r.transition.required_retained_milestones is UNSET else r.transition.required_retained_milestones
             retained_missing = any(not any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
                 and usable(e) for e in retained) for p in required_retained)
-            freshness_rules = [] if r.transition.retained_milestone_freshness is UNSET else r.transition.retained_milestone_freshness
-            freshness_missing = any(not any(e.requirement.operation == rule.prerequisite.operation
-                and e.requirement.milestone == rule.prerequisite.milestone and usable(e)
-                and e.freshness is not UNSET and e.freshness.max_age_seconds == rule.max_age_seconds
-                and e.freshness.evaluated_at == response.evaluated_at for e in retained) for rule in freshness_rules)
-            if (freshness_missing or retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
+            expected_groups = [] if r.transition.retained_milestone_groups is UNSET else r.transition.retained_milestone_groups
+            groups = [] if r.retained_milestone_groups is UNSET else r.retained_milestone_groups
+            groups_missing = len(groups) != len(expected_groups)
+            for expected in expected_groups:
+                matches = [group for group in groups if group.id == expected.id]
+                if len(matches) != 1:
+                    groups_missing = True
+                    continue
+                group = matches[0]
+                if (not group.satisfied or len(expected.any_of) < 2 or len(group.alternatives) != len(expected.any_of)
+                    or not all(any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
+                        for e in group.alternatives) for p in expected.any_of)
+                    or not any(usable(e) for e in group.alternatives)):
+                    groups_missing = True
+            if (groups_missing or retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
                 or r.contract_version != request.contract_version or r.reasons or r.blockers
                 or (r.retained_milestones is not UNSET and any(not usable(e) for e in r.retained_milestones)) or r.unmet_dependencies or r.missing_milestones or (r.missing_policies is not UNSET and r.missing_policies) or (r.missing_dependency_workflows is not UNSET and r.missing_dependency_workflows) or (r.unmet_invariants is not UNSET and r.unmet_invariants) or (r.unmet_effects is not UNSET and r.unmet_effects)):
                 raise CustomerOperationReadinessError(response)

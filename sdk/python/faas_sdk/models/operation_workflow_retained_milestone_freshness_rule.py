@@ -14,7 +14,10 @@ T = TypeVar("T", bound="OperationWorkflowRetainedMilestoneFreshnessRule")
 
 @_attrs_define
 class OperationWorkflowRetainedMilestoneFreshnessRule:
-    """Versioned maximum age for one declared retained prerequisite; measured from business occurrence time."""
+    """Versioned maximum age for one declared mandatory or alternative retained prerequisite; measured from business
+    occurrence time.
+
+    """
 
     prerequisite: OperationWorkflowRetainedMilestoneRequirement
     """Source operation and milestone bound to a declared transaction-backed step of the selected workflow

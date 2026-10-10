@@ -2575,3 +2575,48 @@ assert that a producer can run from the current state. The application must chec
 that operation's own requirements. API previews and overviews return these same
 plans; shared dashboard/CLI guidance and Go, Node, and Python SDK types expose
 them. No new lookup, manifest rule, migration, or execution permission is added.
+
+### Alternative retained prerequisite groups
+
+Declare named `retained_milestone_groups` on a transition when different retained
+business facts can satisfy the same requirement. For example:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    retained_milestone_groups:
+      - id: settlement
+        any_of:
+          - {operation: receive-payment, milestone: payment-received}
+          - {operation: approve-credit, milestone: credit-approved}
+```
+
+Any one verified alternative satisfies a group. Every group must be satisfied,
+alongside all mandatory `requires_retained_milestones` and the edge's other
+requirements. An edge accepts up to 8 uniquely named groups, each with 2–16 unique
+operation/milestone selectors. Group IDs and alternatives are canonicalized; changes
+require a new workflow version. The existing 32-distinct-source lookup bound
+covers mandatory facts, alternatives, and invalidation sources across the workflow.
+All alternatives must bind to declared transaction-backed workflow steps.
+
+Freshness and invalidation rules can target either mandatory selectors or group
+alternatives. Evaluation uses the same ownership, subject, workflow instance,
+contract version, retention, and server clock as mandatory prerequisites. Planned
+facts cannot satisfy alternatives. Failed alternatives retain their evidence and
+recovery diagnostics but do not block a group with a verified alternative.
+
+Readiness returns `retained_milestone_groups` with each group's `id`, `satisfied`,
+and complete `alternatives` findings. An unsatisfied group adds
+`retained_milestone_group_unmet`; mandatory findings remain in `retained_milestones`.
+Dashboard/CLI guidance names a satisfied path or explains that recovery paths are
+choices, not cumulative actions. SDK guards require complete matching group
+findings and at least one usable proof, including that alternative's pinned
+freshness policy. Missing or contradictory group findings fail the guard.
+
+Groups express alternatives between individual retained facts, without nested
+Boolean expressions or inferred business choices. Gregale evaluates every option
+and does not execute a path. Applications still authorize actions and check locked
+business rows; readiness remains a point-in-time observation. No database or
+application-schema migration is required.

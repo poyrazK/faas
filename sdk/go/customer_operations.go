@@ -172,3 +172,6 @@ type OperationWorkflowPerformanceInstancesResponse = api.OperationWorkflowPerfor
 type OperationWorkflowStateSLA = api.OperationWorkflowStateSLA
 
 type OperationWorkflowPrerequisiteRecovery = api.OperationWorkflowPrerequisiteRecovery
+
+type OperationWorkflowRetainedMilestoneGroup = api.OperationWorkflowRetainedMilestoneGroup
+type OperationWorkflowRetainedMilestoneGroupResult = api.OperationWorkflowRetainedMilestoneGroupResult

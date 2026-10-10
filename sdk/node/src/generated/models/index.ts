@@ -1121,6 +1121,8 @@ export type { OperationWorkflowResolutionVerification } from './OperationWorkflo
 export type { OperationWorkflowRetainedMilestone } from './OperationWorkflowRetainedMilestone.js';
 export type { OperationWorkflowRetainedMilestoneFreshness } from './OperationWorkflowRetainedMilestoneFreshness.js';
 export type { OperationWorkflowRetainedMilestoneFreshnessRule } from './OperationWorkflowRetainedMilestoneFreshnessRule.js';
+export type { OperationWorkflowRetainedMilestoneGroup } from './OperationWorkflowRetainedMilestoneGroup.js';
+export type { OperationWorkflowRetainedMilestoneGroupResult } from './OperationWorkflowRetainedMilestoneGroupResult.js';
 export type { OperationWorkflowRetainedMilestoneInvalidation } from './OperationWorkflowRetainedMilestoneInvalidation.js';
 export type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
 export type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';

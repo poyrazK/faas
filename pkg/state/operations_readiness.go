@@ -169,6 +169,20 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 	if invalidatedRetained {
 		reason("retained_milestone_invalidated")
 	}
+	unmetGroup := false
+	for _, group := range out.Transition.RetainedMilestoneGroups {
+		finding := api.OperationWorkflowRetainedMilestoneGroupResult{ID: group.ID, Alternatives: make([]api.OperationWorkflowRetainedMilestone, 0, len(group.AnyOf))}
+		for _, requirement := range group.AnyOf {
+			result := evaluateRetainedMilestone(instance, out.Transition, requirement)
+			finding.Alternatives = append(finding.Alternatives, result)
+			finding.Satisfied = finding.Satisfied || result.Status == "verified"
+		}
+		unmetGroup = unmetGroup || !finding.Satisfied
+		out.RetainedMilestoneGroups = append(out.RetainedMilestoneGroups, finding)
+	}
+	if unmetGroup {
+		reason("retained_milestone_group_unmet")
+	}
 	planned := map[string]bool{}
 	for _, name := range req.Milestones {
 		planned[name] = true

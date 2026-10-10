@@ -329,3 +329,25 @@ assert that a producer can run from the current state. The application must chec
 that operation's own requirements. API previews and overviews return these same
 plans; shared dashboard/CLI guidance and Go, Node, and Python SDK types expose
 them. No new lookup, manifest rule, migration, or execution permission is added.
+
+### Alternative retained prerequisite groups
+
+Pinned edges may declare up to 8 named alternative groups, each containing 2–16
+unique retained milestone selectors. Any verified selector satisfies its group;
+all groups and mandatory requirements must pass. Canonical IDs and selectors
+participate in immutable contract identity and require a new workflow version
+when changed. Bounds live in `pkg/api/limits.go`, and alternatives count toward
+the existing 32-distinct-source lookup bound across the workflow contract.
+
+Freshness and invalidation rules may target mandatory or alternative selectors.
+The existing scoped lookup and evaluator preserve evidence and recovery findings
+for every option. Only an entirely unsatisfied group denies readiness through
+`retained_milestone_group_unmet`; failed unchosen alternatives are diagnostic.
+Shared guidance distinguishes choices from cumulative recovery requirements.
+SDK guards require complete matching groups and at least one usable proof with
+its pinned freshness policy, rather than trusting the satisfaction boolean alone.
+
+This extension supports alternatives between individual retained facts, without
+nested Boolean expressions, new queries, or migrations. Gregale evaluates options
+and does not choose or execute a business path. Applications keep authorization
+and business-row checks; readiness remains a point-in-time observation.

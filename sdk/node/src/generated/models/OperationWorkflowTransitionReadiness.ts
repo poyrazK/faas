@@ -7,12 +7,14 @@ import type { OperationWorkflowInstanceTransition } from './OperationWorkflowIns
 import type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 import type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';
 import type { OperationWorkflowRetainedMilestone } from './OperationWorkflowRetainedMilestone.js';
+import type { OperationWorkflowRetainedMilestoneGroupResult } from './OperationWorkflowRetainedMilestoneGroupResult.js';
 import type { OperationWorkflowUnmetEffect } from './OperationWorkflowUnmetEffect.js';
 import type { OperationWorkflowUnmetInvariant } from './OperationWorkflowUnmetInvariant.js';
 /**
  * Ready means declared requirements match retained reports and the proposed milestone plan. It does not authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only blockers targeting this Operation apply. Staleness and overdue deadlines are advisories rather than undeclared guards.
  */
 export type OperationWorkflowTransitionReadiness = {
+  retained_milestone_groups?: Array<OperationWorkflowRetainedMilestoneGroupResult>;
   /**
    * Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness.
    */
@@ -31,7 +33,7 @@ export type OperationWorkflowTransitionReadiness = {
   transition: OperationWorkflowInstanceTransition;
   declared: boolean;
   ready: boolean;
-  reasons: Array<'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired'>;
+  reasons: Array<'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet'>;
   advisories: Array<'state_stale' | 'deadline_overdue'>;
   state_revision?: number;
   contract_version: number;

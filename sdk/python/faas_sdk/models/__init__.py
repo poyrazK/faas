@@ -2108,6 +2108,8 @@ from .operation_workflow_resolution_verification_status import OperationWorkflow
 from .operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
 from .operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
 from .operation_workflow_retained_milestone_freshness_rule import OperationWorkflowRetainedMilestoneFreshnessRule
+from .operation_workflow_retained_milestone_group import OperationWorkflowRetainedMilestoneGroup
+from .operation_workflow_retained_milestone_group_result import OperationWorkflowRetainedMilestoneGroupResult
 from .operation_workflow_retained_milestone_invalidation import OperationWorkflowRetainedMilestoneInvalidation
 from .operation_workflow_retained_milestone_invalidation_rule import OperationWorkflowRetainedMilestoneInvalidationRule
 from .operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
@@ -5530,6 +5532,8 @@ __all__ = (
     "OperationWorkflowRetainedMilestone",
     "OperationWorkflowRetainedMilestoneFreshness",
     "OperationWorkflowRetainedMilestoneFreshnessRule",
+    "OperationWorkflowRetainedMilestoneGroup",
+    "OperationWorkflowRetainedMilestoneGroupResult",
     "OperationWorkflowRetainedMilestoneInvalidation",
     "OperationWorkflowRetainedMilestoneInvalidationRule",
     "OperationWorkflowRetainedMilestoneRequirement",

@@ -6,12 +6,14 @@ import type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffe
 import type { OperationWorkflowInvariantRequirement } from './OperationWorkflowInvariantRequirement.js';
 import type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 import type { OperationWorkflowRetainedMilestoneFreshnessRule } from './OperationWorkflowRetainedMilestoneFreshnessRule.js';
+import type { OperationWorkflowRetainedMilestoneGroup } from './OperationWorkflowRetainedMilestoneGroup.js';
 import type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
 import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 /**
  * One allowed state edge from the selected contract version, bound to the Operation that can report it. Required milestones must be committed with the transition in the same application transaction. This declaration does not establish that the edge is currently valid for the application's business row or authorized for the caller.
  */
 export type OperationWorkflowInstanceTransition = {
+  retained_milestone_groups?: Array<OperationWorkflowRetainedMilestoneGroup>;
   /**
    * Freshness limits required for this selected transition.
    */

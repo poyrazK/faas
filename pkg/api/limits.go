@@ -463,6 +463,7 @@ const (
 	OperationWorkflowStatesMax                              = 32
 	OperationWorkflowTransitionsMax                         = 128
 	OperationWorkflowContractVersionMax                     = 1_000_000
+	OperationWorkflowRetainedGroupsMax                      = 8
 	OperationWorkflowRecoveryStepsMax                       = 3
 	OperationWorkflowFreshnessRulesMax                      = 16
 	OperationWorkflowFreshnessMaxSeconds              int64 = 315360000
