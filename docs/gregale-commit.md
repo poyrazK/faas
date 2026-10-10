@@ -591,3 +591,49 @@ attributed to the retained receipt. Neither means the original Commit acceptance
 was undone. Use `commit inspect SOURCE EVENT` to combine retained acceptance
 with available delivery evidence. An accepted history item alone does not prove
 subscriber completion. Operation-destination sources are rejected by this read.
+
+### Wait for an individual publication subscriber
+
+```sh
+gregale commit wait SOURCE EVENT --subscription-id SUBSCRIPTION_UUID \
+  --until completed --timeout 5m --interval 1s
+```
+
+The CLI first waits for durable publication acceptance, then pins all recipient
+reads to that original acceptance time. The single timeout covers both stages.
+It follows recipient pagination and selects only the named application
+subscription captured at acceptance. Backfill recipients, workflow recipients
+and generic replay recovery executions do not satisfy this wait. In-place
+retries/replay of the original invocation can update its observed state, but the
+wait returns immediately when a currently terminal outcome is observed; it does
+not wait for a future operator recovery action.
+
+Only `completed` means the original invocation finished successfully. Other
+outcomes include `failed`, `dead_letter`, `cancelled`, `expired`, `superseded`,
+`routing_failed`, `filtered`, `not_targeted`, `unsupported_recipient`,
+`unavailable`, and `acceptance_replaced`. Receipt pruning is unavailable evidence,
+never success. Routing enqueue is not execution completion. A completed
+invocation does not independently prove an external service's side effects.
+
+The CLI prints the selected recipient evidence and exits 0 only for `completed`,
+1 for another outcome or read failure, 124 for timeout, and 130 for interruption.
+Timeout/interruption stops reads and does not cancel durable work. Transport and
+server failures remain errors rather than successful delivery outcomes.
+
+SDK equivalents accept a saved `CommitEventPublication` descriptor:
+
+- Go: `client.WaitCommitSubscriber(ctx, publication, subscriptionID, time.Second)`.
+  Set the context deadline; cancellation/deadline returns the last observation
+  with `interrupted`/`timed_out` and a context error.
+- Node: `waitCommitSubscriber(publication, subscriptionID, { timeoutMs: 300000,
+  intervalMs: 1000, signal })`, using the configured generated `EventsService`.
+  Timeout/interruption returns a result with the corresponding status and aborts
+  the current read. Other read errors reject the promise.
+- Python: `await await_commit_subscriber(client, publication, subscription_id,
+  timeout=300, interval=1)`, with an authenticated generated client. Timeout
+  returns `timed_out`; task cancellation propagates `CancelledError`. Other
+  read failures propagate.
+
+SDK readers preserve the original acceptance-time guard on every page. Each
+result concerns one subscriber independently; it does not assert completion of
+other consumers or require them to finish first.

@@ -377,3 +377,5 @@ type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
 
 type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
 type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse
+
+type CommitSubscriberWaitResult = api.CommitSubscriberWaitResult

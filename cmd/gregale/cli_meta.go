@@ -829,7 +829,7 @@ var cliCommands = []cliCommand{
 			{Name: "doctor", Short: "Read-only source diagnostics and optional local database checks", Flags: []cliFlag{{Name: "file", Short: "local TLS PostgreSQL credential file; never uploaded", Value: "PATH"}}},
 			{Name: "history", Short: "List retained publication acceptance receipts", Positionals: []string{"<source>"}, Flags: []cliFlag{{Name: "before", Short: "next_before continuation cursor", Value: "CURSOR"}, {Name: "limit", Short: "receipts per page (1..200; default 50)", Value: "N"}}},
 			{Name: "inspect", Short: "Inspect event acceptance, retained execution and blocked observations"},
-			{Name: "wait", Short: "Wait without cancelling durable work on timeout", Flags: []cliFlag{{Name: "until", Short: "accepted or completed", Value: "STATE"}, {Name: "timeout", Short: "maximum wait (default 2m)", Value: "D"}, {Name: "interval", Short: "poll interval (default 1s)", Value: "D"}}},
+			{Name: "wait", Short: "Wait without cancelling durable work on timeout", Flags: []cliFlag{{Name: "subscription-id", Short: "original application subscriber; requires --until completed", Value: "UUID"}, {Name: "until", Short: "accepted or completed", Value: "STATE"}, {Name: "timeout", Short: "maximum wait (default 2m)", Value: "D"}, {Name: "interval", Short: "poll interval (default 1s)", Value: "D"}}},
 			{Name: "blocked", Short: "Inspect the bounded blocked-event snapshot"},
 			{Name: "replay", Short: "Request durable replay after correcting an unaccepted event"},
 			{Name: "receipt", Short: "Recover a source event acceptance receipt"},

@@ -233,12 +233,19 @@ func cmdCommitInspect(verb string, args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum wait; timing out does not cancel durable work")
 	interval := fs.Duration("interval", time.Second, "poll interval (100ms-1m)")
 	until := fs.String("until", "completed", "wait for accepted or completed")
+	subscription := fs.String("subscription-id", "", "original application subscriber to wait for; requires --until completed")
 	flags, positional := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 2 {
 		return 1
 	}
 	if *timeout <= 0 || *timeout > 24*time.Hour || *interval < 100*time.Millisecond || *interval > time.Minute || (*until != "accepted" && *until != "completed") {
 		return 1
+	}
+	if *subscription != "" {
+		id, err := uuid.Parse(*subscription)
+		if err != nil || id == uuid.Nil || *until != "completed" {
+			return 1
+		}
 	}
 	if verb != "wait" && fs.NFlag() != 0 {
 		return 1
@@ -265,6 +272,9 @@ func cmdCommitInspect(verb string, args []string) int {
 			return printErr("Cannot inspect Commit event", err)
 		}
 		return 0
+	}
+	if *subscription != "" {
+		return runCommitSubscriberWait(ctx, client, positional[0], positional[1], *subscription, *interval)
 	}
 	out, err := waitCommitEvent(ctx, client, positional[0], positional[1], *until, *interval)
 	if code := jsonOut(writeJSON(out)); code != 0 {
@@ -294,7 +304,7 @@ func waitCommitEvent(ctx context.Context, client commitReadClient, source, event
 		}
 		last = out
 		if until == "completed" && out.Receipt != nil && out.Receipt.Publication != nil {
-			return out, fmt.Errorf("event publication has independent subscribers; use --until accepted and inspect recipient evidence")
+			return out, fmt.Errorf("event publication has independent subscribers; use --subscription-id UUID --until completed or --until accepted")
 		}
 		if (until == "accepted" && out.Acceptance == "accepted") || out.Acceptance == "blocked" {
 			return out, nil

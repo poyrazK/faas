@@ -157,6 +157,7 @@ WRAPPER_MODULES = (
     "job_operations_runtime.py",
     "operations.py",
     "event_consumer_transactions.py",
+    "commit_subscriber_wait.py",
     "_event_consumer_contract.py",
     "event_consumer_schema.sql",
     "_operation_contract.py",
@@ -947,6 +948,9 @@ __all__ += (
     "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
     "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
 )
+from .commit_subscriber_wait import await_commit_subscriber
+__all__ += ("await_commit_subscriber",)
+
 '''
 
 

@@ -281,3 +281,7 @@ __all__ += (
     "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
     "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
 )
+
+from .commit_subscriber_wait import await_commit_subscriber as await_commit_subscriber
+
+__all__ += ("await_commit_subscriber",)
