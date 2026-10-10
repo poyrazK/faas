@@ -22,6 +22,12 @@ func Run(args []string) bool {
 		return false
 	}
 	switch args[1] {
+	case "--launch-snapshot-output-setup":
+		if err := awaitSnapshotOutputSetup(args); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: native snapshot handoff: %v\n", err)
+			os.Exit(1)
+		}
+		return true
 	case "--launch-jail-device-setup":
 		if err := awaitDeviceSetup(args); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: native jail device setup: %v\n", err)

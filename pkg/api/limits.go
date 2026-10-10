@@ -303,6 +303,14 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
+// synthetic queue message before it is stored with frozen candidate inputs.
+const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10
+
+// EnvironmentGitOpsMaxQueueSmokeMessages bounds the number of sequential
+// private synthetic queue deliveries in one worker qualification attempt.
+const EnvironmentGitOpsMaxQueueSmokeMessages = 16
+
 // Overrides expire without operator intervention; renewal requires a new reason.
 const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
 const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
@@ -356,6 +364,7 @@ const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
 const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsJobQualificationLeaseDuration = 8 * time.Minute
 const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 
 // Check revocation while a qualification VM effect or evidence check is running.
@@ -371,6 +380,38 @@ const EnvironmentGitOpsQualificationDispatchBatchMax = 100
 
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
+
+// Receipt-bound compressed artifact reads cap the decoder's streaming window;
+// logical size and digest are verified separately through the complete reader.
+const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
+const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
+// NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
+// already-authorized artifact retirement records.
+const NativeSnapshotPublicationRecoveryBatchMax = 64
+
+// A receipt-bound restore sidecar carries only version and two image digests.
+// Refuse oversized metadata before any restore input is materialized.
+const NativeSnapshotBackingRecordMaxBytes = 4096
+
+// Captured kernel/base paths are single Linux jail filenames, never host paths.
+const NativeSnapshotBackingNameMaxBytes = 255
+
+// Restore effect evidence contains five fixed image witnesses and six phases.
+const NativeQualificationRestoreLoadRecordMaxBytes = 8192
+
+// Private restored platform channels never outlive their original target or
+// let a slow guest retain unbounded host handlers.
+const NativeQualificationRestoreMaxStreams = 64
+const NativeQualificationRestoreStreamTimeout = 5 * time.Second
+
+// Native snapshot retirement can scan the unified hierarchy to distinguish a
+// removed original inode from a retained cgroup. Exceeding these parser bounds
+// retains ownership; these are diagnostic limits, not tenant quotas.
+const (
+	NativeSnapshotCgroupInventoryMaxDirectories = 65_536
+	NativeSnapshotCgroupInventoryReadBatch      = 128
+)
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
@@ -9353,44 +9394,75 @@ const (
 
 // Internal durable-entity prototype budgets, not plan availability.
 const (
-	MaxDurableEntitySnapshotBytes        = 1 << 20
-	MaxDurableEntityManifestBytes        = 16 << 10
-	MaxDurableEntityIdentityBytes        = 256
-	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
-	MaxDurableEntityReceiptBytes         = 1 << 20
-	MaxDurableEntityJournalBytes         = 16 << 10
-	MaxDurableEntityOutboxPerTransition  = 16
-	MaxDurableEntityOutboxPending        = 128
-	MaxDurableEntityOutboxPayloadBytes   = 64 << 10
-	MaxDurableEntityOutboxBytes          = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
-	DurableEntityCleanupPageSize         = 32
-	DurableEntityCleanupTimeout          = 20 * time.Second
-	DurableEntityInventoryPageSize       = 32
-	DurableEntityInventoryTimeout        = 20 * time.Second
-	MaxDurableEntityInventoryBytes       = 1 << 20
-	MaxDurableEntityInventoryPending     = 65 * 16
-	DurableEntityMaintenanceScanPageSize = 8
-	MaxDurableEntityMaintenanceBytes     = 128 << 10
-	DurableEntityMaintenanceTimeout      = 45 * time.Second
-	DurableEntityMaintenanceReadTimeout  = 2 * time.Second
-	DurableEntityMaintenancePollInterval = 30 * time.Second
-	DefaultDurableEntityLease            = 30 * time.Second
-	MaxDurableEntityLease                = 5 * time.Minute
-	MaxDurableEntityInvocationBytes      = 2 << 20
-	DurableEntityInvokeTimeout           = 25 * time.Second
-	DurableEntityReleaseTimeout          = 2 * time.Second
-	DurableEntityResultPollInterval      = 250 * time.Millisecond
-	DurableEntityHandlerPath             = "/__gregale/entities"
-	DurableEntityProtocolVersion         = 1
-	DurableEntityAlarmScanPageSize       = 8
-	DurableEntityAlarmReadTimeout        = 2 * time.Second
-	DurableEntityAlarmScanTimeout        = 20 * time.Second
-	DurableEntityAlarmPollInterval       = 5 * time.Second
-	MaxDurableEntityAlarmIndexBytes      = 4 << 10
-	DurableEntityAlarmIndexTimeout       = 2 * time.Second
-	MaxDurableEntityAlarmAttempts        = 5
-	DurableEntityAlarmRetryBase          = 30 * time.Second
-	DurableEntityAlarmRetryMax           = 5 * time.Minute
+	MaxDurableEntitySnapshotBytes = 1 << 20
+	// ADR-942: operator backups are separately retained private application data.
+	DurableEntityBackupInterval                         = time.Hour
+	DurableEntityBackupRetention                        = 7 * 24 * time.Hour
+	DurableEntityBackupPollInterval                     = 30 * time.Second
+	DurableEntityBackupScanPageSize                     = 8
+	DurableEntityBackupListPageSize                     = 32
+	DurableEntityBackupScanTimeout                      = 20 * time.Second
+	DurableEntityBackupReadTimeout                      = 2 * time.Second
+	MaxDurableEntityBackupBytes                         = MaxDurableEntityInvocationBytes
+	MaxDurableEntityManifestBytes                       = 16 << 10
+	MaxDurableEntityIdentityBytes                       = 256
+	MaxDurableEntityReceipts                            = 1024 // Legacy inline receipts only; journal receipts do not expire.
+	MaxDurableEntityReceiptBytes                        = 1 << 20
+	MaxDurableEntityJournalBytes                        = 16 << 10
+	MaxDurableEntityOutboxPerTransition                 = 16
+	MaxDurableEntityOutboxPending                       = 128
+	MaxDurableEntityOutboxPayloadBytes                  = 64 << 10
+	MaxDurableEntityOutboxBytes                         = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
+	MaxDurableEntityOutboxDeliveryBytes                 = MaxDurableEntityOutboxPayloadBytes + (8 << 10)
+	MaxDurableEntityOutboxAttempts                      = 5
+	DurableEntityOutboxRetryBase                        = 30 * time.Second
+	DurableEntityOutboxRetryMax                         = 5 * time.Minute
+	DurableEntityOutboxScanPageSize                     = 8
+	DurableEntityOutboxReadTimeout                      = 2 * time.Second
+	DurableEntityOutboxScanTimeout                      = 20 * time.Second
+	DurableEntityOutboxPollInterval                     = 5 * time.Second
+	MaxDurableEntityOutboxIndexBytes                    = 4 << 10
+	DurableEntityOutboxIndexTimeout                     = 2 * time.Second
+	DurableEntityHealthScanPageSize                     = 8
+	DurableEntityHealthReadTimeout                      = 2 * time.Second
+	DurableEntityHealthScanTimeout                      = 20 * time.Second
+	DurableEntityHealthPollInterval                     = 30 * time.Second
+	DurableEntityCleanupPageSize                        = 32
+	DurableEntityCleanupTimeout                         = 20 * time.Second
+	DurableEntityInventoryPageSize                      = 32
+	DurableEntityInventoryTimeout                       = 20 * time.Second
+	MaxDurableEntityInventoryBytes                      = 1 << 20
+	MaxDurableEntityInventoryPending                    = 65 * 16
+	DurableEntityMaintenanceScanPageSize                = 8
+	MaxDurableEntityMaintenanceBytes                    = 128 << 10
+	DurableEntityMaintenanceTimeout                     = 45 * time.Second
+	DurableEntityMaintenanceReadTimeout                 = 2 * time.Second
+	DurableEntityMaintenancePollInterval                = 30 * time.Second
+	DefaultDurableEntityLease                           = 30 * time.Second
+	MaxDurableEntityLease                               = 5 * time.Minute
+	MaxDurableEntityInvocationBytes                     = 2 << 20
+	DurableEntityInvokeTimeout                          = 25 * time.Second
+	DurableEntityReleaseTimeout                         = 2 * time.Second
+	DurableEntityResultPollInterval                     = 250 * time.Millisecond
+	DurableEntityHandlerPath                            = "/__gregale/entities"
+	MaxDurableEntityValidatorRegistryBytes              = 4 << 20
+	MaxDurableEntityValidatorBuildArchiveBytes    int64 = 256 << 20
+	MaxDurableEntityValidatorBundles                    = 128
+	DurableEntityRestoreIsolationTimeout                = 10 * time.Second
+	DurableEntityRestoreValidationProtocolVersion       = 1
+	DurableEntityRestoreValidationPath                  = "/__gregale/entities/validate-restore"
+	MaxDurableEntityRestoreValidationBytes              = 1024
+	DurableEntityProtocolVersion                        = 1
+	DurableEntityOutboxProtocolVersion                  = 2
+	DurableEntityAlarmScanPageSize                      = 8
+	DurableEntityAlarmReadTimeout                       = 2 * time.Second
+	DurableEntityAlarmScanTimeout                       = 20 * time.Second
+	DurableEntityAlarmPollInterval                      = 5 * time.Second
+	MaxDurableEntityAlarmIndexBytes                     = 4 << 10
+	DurableEntityAlarmIndexTimeout                      = 2 * time.Second
+	MaxDurableEntityAlarmAttempts                       = 5
+	DurableEntityAlarmRetryBase                         = 30 * time.Second
+	DurableEntityAlarmRetryMax                          = 5 * time.Minute
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.

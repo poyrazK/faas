@@ -1,0 +1,11 @@
+{
+  "name": "gregale-durable-entity-reservations",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.10.0" },
+  "scripts": {
+    "start": "node server.mjs",
+    "bundle": "node bundle.mjs",
+    "test": "node --test reservations.test.mjs"
+  }
+}

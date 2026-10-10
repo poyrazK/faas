@@ -123,8 +123,8 @@ type Transition struct {
 	Data    json.RawMessage `json:"data"`
 	Result  json.RawMessage `json:"result"`
 	AlarmAt *time.Time      `json:"alarm_at,omitempty"`
-	// Outbox is internal engine authority only. Guest protocol v1 rejects it
-	// until a qualified delivery worker and destination admission are available.
+	// Outbox stays outside the v1 JSON representation. The separately gated v2
+	// decoder admits intents only after platform destination checks.
 	Outbox []OutboxIntent `json:"-"`
 }
 
@@ -164,18 +164,19 @@ type journalRef struct {
 }
 
 type manifest struct {
-	Schema            int            `json:"schema"`
-	ID                ID             `json:"entity"`
-	OwnerID           string         `json:"owner_id"`
-	Token             string         `json:"claim_token"`
-	Epoch             uint64         `json:"epoch"`
-	Revision          string         `json:"revision"`
-	ExpiresAt         time.Time      `json:"expires_at"`
-	SnapshotKey       string         `json:"snapshot_key"`
-	SnapshotHash      string         `json:"snapshot_hash"`
-	Version           uint64         `json:"state_version"`
-	Generation        uint64         `json:"storage_generation,omitempty"`
-	StorageLimitBytes int64          `json:"storage_limit_bytes,omitempty"`
-	StorageUsage      *StorageUsage  `json:"storage_usage,omitempty"`
-	AlarmDelivery     *alarmDelivery `json:"alarm_delivery,omitempty"`
+	Schema            int             `json:"schema"`
+	ID                ID              `json:"entity"`
+	OwnerID           string          `json:"owner_id"`
+	Token             string          `json:"claim_token"`
+	Epoch             uint64          `json:"epoch"`
+	Revision          string          `json:"revision"`
+	ExpiresAt         time.Time       `json:"expires_at"`
+	SnapshotKey       string          `json:"snapshot_key"`
+	SnapshotHash      string          `json:"snapshot_hash"`
+	Version           uint64          `json:"state_version"`
+	Generation        uint64          `json:"storage_generation,omitempty"`
+	StorageLimitBytes int64           `json:"storage_limit_bytes,omitempty"`
+	StorageUsage      *StorageUsage   `json:"storage_usage,omitempty"`
+	AlarmDelivery     *alarmDelivery  `json:"alarm_delivery,omitempty"`
+	OutboxDelivery    *outboxDelivery `json:"outbox_delivery,omitempty"`
 }

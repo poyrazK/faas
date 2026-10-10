@@ -16,6 +16,7 @@ func wireSnapshot(frame state.EnvironmentQualificationExecution) state.Environme
 	mem := state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, id)
 	s := state.Snapshot{StorageKey: mem}
 	return state.EnvironmentQualificationSnapshot{CaptureID: id, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(),
+		FCVersion:  "1.7.0",
 		StorageKey: mem, VMStateStorageKey: state.SnapshotVMStateKey(s), DriveStorageKey: state.SnapshotDriveKey(s), BackingStorageKey: state.SnapshotBackingKey(s),
 		MemBytes: 1 << 33, VMStateBytes: 1 << 32, StoredBytes: 1 << 34}
 }

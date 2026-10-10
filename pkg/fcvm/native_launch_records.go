@@ -94,6 +94,9 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 		return errors.New("native journal: resource acknowledgement identity changed")
 	}
 	helpers := nativeHostHelperJournal{owner: j}
+	if err := helpers.requireSnapshotMemoryDisposed(record); err != nil {
+		return err
+	}
 	if err := helpers.requireRetired(record); err != nil {
 		return err
 	}
@@ -146,6 +149,9 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 		return record, errors.New("native journal: prior launch is not replaceable by this owner")
 	}
 	helpers := nativeHostHelperJournal{owner: j}
+	if err := helpers.requireSnapshotMemoryDisposed(old); err != nil {
+		return record, err
+	}
 	if err := helpers.requireRetired(old); err != nil {
 		return record, err
 	}

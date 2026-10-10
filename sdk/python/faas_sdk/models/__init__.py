@@ -891,8 +891,33 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_alarm_inspection import DurableEntityAlarmInspection
+from .durable_entity_backup import DurableEntityBackup
+from .durable_entity_backup_info import DurableEntityBackupInfo
+from .durable_entity_backup_page import DurableEntityBackupPage
+from .durable_entity_head_delivery import DurableEntityHeadDelivery
+from .durable_entity_head_delivery_status import DurableEntityHeadDeliveryStatus
+from .durable_entity_inspect_response import DurableEntityInspectResponse
 from .durable_entity_invoke_request import DurableEntityInvokeRequest
 from .durable_entity_invoke_response import DurableEntityInvokeResponse
+from .durable_entity_outbox_inspection import DurableEntityOutboxInspection
+from .durable_entity_restore_preview import DurableEntityRestorePreview
+from .durable_entity_restore_preview_compatibility import DurableEntityRestorePreviewCompatibility
+from .durable_entity_restore_preview_schema_relation import DurableEntityRestorePreviewSchemaRelation
+from .durable_entity_restore_request import DurableEntityRestoreRequest
+from .durable_entity_restore_response import DurableEntityRestoreResponse
+from .durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
+from .durable_entity_restore_validation_response_isolation import DurableEntityRestoreValidationResponseIsolation
+from .durable_entity_retry_request import DurableEntityRetryRequest
+from .durable_entity_retry_request_target import DurableEntityRetryRequestTarget
+from .durable_entity_retry_response import DurableEntityRetryResponse
+from .durable_entity_retry_response_target import DurableEntityRetryResponseTarget
+from .durable_entity_scope import DurableEntityScope
+from .durable_entity_state_export import DurableEntityStateExport
+from .durable_entity_state_export_format import DurableEntityStateExportFormat
+from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
+from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
+from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
@@ -998,20 +1023,27 @@ from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpe
 from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
 from .environment_git_source_update import EnvironmentGitSourceUpdate
 from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
+from .environment_job_schedule import EnvironmentJobSchedule
+from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
+from .environment_queue_smoke import EnvironmentQueueSmoke
+from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
+from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
+from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
@@ -4387,8 +4419,33 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityAlarmInspection",
+    "DurableEntityBackup",
+    "DurableEntityBackupInfo",
+    "DurableEntityBackupPage",
+    "DurableEntityHeadDelivery",
+    "DurableEntityHeadDeliveryStatus",
+    "DurableEntityInspectResponse",
     "DurableEntityInvokeRequest",
     "DurableEntityInvokeResponse",
+    "DurableEntityOutboxInspection",
+    "DurableEntityRestorePreview",
+    "DurableEntityRestorePreviewCompatibility",
+    "DurableEntityRestorePreviewSchemaRelation",
+    "DurableEntityRestoreRequest",
+    "DurableEntityRestoreResponse",
+    "DurableEntityRestoreValidationResponse",
+    "DurableEntityRestoreValidationResponseIsolation",
+    "DurableEntityRetryRequest",
+    "DurableEntityRetryRequestTarget",
+    "DurableEntityRetryResponse",
+    "DurableEntityRetryResponseTarget",
+    "DurableEntityScope",
+    "DurableEntityStateExport",
+    "DurableEntityStateExportFormat",
+    "DurableEntityValidatorDeploymentInfo",
+    "DurableEntityValidatorDeploymentInfoSource",
+    "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
@@ -4494,20 +4551,27 @@ __all__ = (
     "EnvironmentGitSourceSpecMode",
     "EnvironmentGitSourceUpdate",
     "EnvironmentGitSourceUpdateMode",
+    "EnvironmentJobSchedule",
+    "EnvironmentJobSmoke",
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
+    "EnvironmentQueueSmoke",
+    "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
+    "EnvironmentWorkloadActivationEvidence",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
+    "EnvironmentWorkloadQueueSmoke",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
     "EnvironmentWorkloadSourceKind",
+    "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",

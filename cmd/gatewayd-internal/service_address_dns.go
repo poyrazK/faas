@@ -48,7 +48,7 @@ func newServiceAddressLookup(store state.Store, nodeName string, log *slog.Logge
 		if err != nil || !caller.ServiceAddressCapable() {
 			return netip.Addr{}, false
 		}
-		key := serviceAddressCacheKey{callerAppID: caller.AppID, service: service}
+		key := serviceAddressCacheKey{callerAppID: caller.AppID, callerDeploymentID: caller.DeploymentID, service: service}
 		if addr, ok, hit := cache.get(key); hit {
 			return addr, ok
 		}
@@ -59,15 +59,32 @@ func newServiceAddressLookup(store state.Store, nodeName string, log *slog.Logge
 }
 
 func resolveServiceAddress(ctx context.Context, store state.Store, resolve gateway.ServiceProxyResolver, caller state.ServiceAddressCaller, service string, log *slog.Logger) (netip.Addr, bool) {
-	target, found, err := resolve(ctx, caller.AppID, service)
-	if err != nil {
-		log.Debug("gatewayd: service address lookup fell back to the bridge", "service", service, "err", err)
-		return netip.Addr{}, false
+	targetAppID := ""
+	if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
+		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, caller.AppID, caller.DeploymentID, service)
+		if err != nil {
+			log.Debug("gatewayd: GitOps service address lookup fell back to the bridge", "service", service, "err", err)
+			return netip.Addr{}, false
+		}
+		if managed {
+			if !found || route.TargetAppID == "" {
+				return netip.Addr{}, false
+			}
+			targetAppID = route.TargetAppID
+		}
 	}
-	if !found || target.AppID == "" {
-		return netip.Addr{}, false
+	if targetAppID == "" {
+		target, found, err := resolve(ctx, caller.AppID, service)
+		if err != nil {
+			log.Debug("gatewayd: service address lookup fell back to the bridge", "service", service, "err", err)
+			return netip.Addr{}, false
+		}
+		if !found || target.AppID == "" {
+			return netip.Addr{}, false
+		}
+		targetAppID = target.AppID
 	}
-	app, err := store.AppByID(ctx, target.AppID)
+	app, err := store.AppByID(ctx, targetAppID)
 	if err != nil || app.Status == state.AppDeleted || app.AccountID != caller.AccountID {
 		return netip.Addr{}, false
 	}
@@ -78,7 +95,7 @@ func resolveServiceAddress(ctx context.Context, store state.Store, resolve gatew
 	return api.ServiceAddressForIndex(index)
 }
 
-type serviceAddressCacheKey struct{ callerAppID, service string }
+type serviceAddressCacheKey struct{ callerAppID, callerDeploymentID, service string }
 
 type serviceAddressCacheEntry struct {
 	addr    netip.Addr

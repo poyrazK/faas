@@ -21,6 +21,12 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 	if !isSparseArtifactKey(key) {
 		return copyContext(ctx, dst, src)
 	}
+	return copySparseArtifactContext(ctx, dst, src)
+}
+
+// Exclusive publication also uses this copy directly: prefix routing may strip
+// the logical artifact type, but must not materialize holes in a private drive.
+func copySparseArtifactContext(ctx context.Context, dst *os.File, src io.Reader) (int64, error) {
 	written, _, err := CopySparse(ctx, dst, src)
 	return written, err
 }
@@ -34,6 +40,7 @@ func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data
 	const page = 4096
 	buf := make([]byte, quantum)
 	zero := make([]byte, page)
+	writer := boundedFileWrites(dst)
 	for {
 		if err := ctx.Err(); err != nil {
 			return written, data, err
@@ -55,7 +62,7 @@ func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data
 				}
 				written += int64(end - start)
 			} else {
-				w, err := dst.Write(buf[start:end])
+				w, err := writer.Write(buf[start:end])
 				written += int64(w)
 				data += int64(w)
 				if err != nil {
