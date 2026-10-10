@@ -35,6 +35,14 @@ connection. Python supports synchronous and asynchronous psycopg connections and
 requires an exclusively leased idle autocommit connection so completion cannot
 return before an outer transaction commits.
 
+The callback may enqueue follow-up managed work in the existing Commit outbox
+in the same application database. Go exposes a minimal insert transaction adapter
+without changing the existing *sql.Tx helper; Python provides matching synchronous
+and asynchronous insert helpers with shared validation. Node's existing query
+adapter already composes. Business writes, the outbox row, and the consumer receipt
+commit together. Commit retains its configured destination and independent relay;
+this does not add event-subscriber publication or synchronous follow-up execution.
+
 ## Consequences
 
 One retained receipt permits one committed set of callback writes when the

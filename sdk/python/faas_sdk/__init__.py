@@ -45,7 +45,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .commit import CommitEventRouting, insert_commit_event
+from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
@@ -200,6 +200,7 @@ __all__ = (
     "current_dev_bridge_context",
     "with_dev_bridge_context",
     "insert_commit_event",
+    "ainsert_commit_event",
     "CommitEventRouting",
     "CustomerOperationRequest",
     "customer_operation_request_from_headers",

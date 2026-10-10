@@ -766,3 +766,5 @@ across retries/replay. Changed content raises `EventConsumerConflictError` witho
 running the callback. On `EventConsumerCommitUnknownError`, retry the same input.
 Do not control transaction lifecycle or perform external effects in the callback.
 See [synchronous and asynchronous examples](../../docs/event-consumer-transactions.md).
+
+Enqueue follow-up Commit work inside the event-consumer callback with `insert_commit_event(cursor, ...)` or awaited `ainsert_commit_event(cursor, ...)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).

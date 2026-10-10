@@ -200,3 +200,79 @@ can raise `EventConsumerCommitUnknownError`. Retry the same identity and bytes.
 All adapters use the same table, SHA-256 framing and advisory lock namespace. A
 receipt written by one SDK can be read by another without repeating committed
 writes, provided the original request bytes, scope and acceptance are preserved.
+
+## Update and enqueue follow-up work atomically
+
+Install both the consumer receipt schema and the existing
+[Commit outbox schema](gregale-commit.md) in the **same application database**.
+Configure a Commit source bound to the follow-up application and queue, and enable
+its relay under the documented Commit deployment requirements. Inserting an
+outbox row alone does not configure or enable delivery. Commit starts managed
+Operations at that fixed destination; this is not publication to event subscribers.
+
+Inside the consumer callback, update business rows and insert follow-up work using
+only its supplied transaction. For example, after marking an invoice paid, enqueue
+receipt generation and include its outbox ID in the saved response:
+
+```go
+// Inside WithEventConsumerTransaction's callback, after the business update:
+followUpID, err := faas.InsertCommitEventInTransaction(ctx, tx,
+    faas.CommitEventRequest{
+        Type: "invoice.receipt.generate",
+        Data: json.RawMessage(`{"invoice_id":"123"}`),
+    })
+if err != nil {
+    return nil, err
+}
+return json.Marshal(map[string]string{"follow_up_id": followUpID})
+```
+
+The Go adapter accepts the restricted `EventConsumerSQLTransaction` without
+exposing transaction lifecycle methods. Existing `InsertCommitEvent(ctx, *sql.Tx,
+event)` callers remain compatible. Both helpers perform the same validation.
+
+```js
+import { insertCommitEvent } from '@gregale/sdk-node';
+
+// Inside withEventConsumerTransaction's async callback, after the update:
+const followUpId = await insertCommitEvent(tx, {
+  type: 'invoice.receipt.generate', data: { invoice_id: '123' }
+});
+return JSON.stringify({ follow_up_id: followUpId });
+```
+
+```python
+from faas_sdk import insert_commit_event, ainsert_commit_event
+
+# Inside the synchronous callback, after the business update:
+follow_up_id = insert_commit_event(
+    cursor, "invoice.receipt.generate", {"invoice_id": "123"}
+)
+return json.dumps({"follow_up_id": follow_up_id})
+```
+
+```python
+# Inside the asynchronous callback, after the awaited business update:
+follow_up_id = await ainsert_commit_event(
+    cursor, "invoice.receipt.generate", {"invoice_id": "123"}
+)
+return json.dumps({"follow_up_id": follow_up_id})
+```
+
+Propagate insertion errors to the transaction wrapper. A rollback leaves no
+business update, follow-up row or consumer receipt. A committed input retry reads
+the saved response without invoking the callback or inserting another follow-up.
+If commit acknowledgement is uncertain, retry the same consumer input and original
+body rather than enqueueing separately. Generated outbox IDs from rolled-back
+attempts have no committed work; the committed ID remains in the saved response.
+Explicit IDs must be stable UUIDs unique to each intended follow-up, including its
+consumer scope when different subscriptions produce independent work. Duplicate
+outbox IDs remain errors, not successful no-ops.
+
+The relay can accept the follow-up after the transaction commits, even before the
+consumer's HTTP response arrives. Consumer completion, Commit acceptance and the
+follow-up Operation's completion are separate facts. A saved follow-up ID confirms
+its atomic enqueue, not execution success. Keep application receipts across all
+relevant replay paths; deleting one can allow another enqueue. Follow-up consumers
+still need idempotent business effects, and external calls must not happen inside
+this database callback.

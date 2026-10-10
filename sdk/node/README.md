@@ -2350,3 +2350,5 @@ Acceptance IDs are canonical decimal strings, preserving values above 2^53. Reta
 receipts across all relevant retries/replays. Do not control transaction lifecycle
 or make external effects in the callback. Acknowledge only after success.
 See [handler examples and the shared contract](../../docs/event-consumer-transactions.md).
+
+Enqueue follow-up Commit work inside the event-consumer callback with `insertCommitEvent(tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).

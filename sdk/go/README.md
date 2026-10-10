@@ -745,3 +745,5 @@ arbitrary public server. Callback code must use only its supplied transaction an
 must not perform external effects or control the transaction lifecycle.
 
 See [the transaction contract and retention rules](../../docs/event-consumer-transactions.md).
+
+Enqueue follow-up Commit work inside the event-consumer callback with `InsertCommitEventInTransaction(ctx, tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
