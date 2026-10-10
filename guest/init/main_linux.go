@@ -2448,6 +2448,11 @@ func pivotInto(root string) error {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
 	}
+	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
+	// images expect from a container runtime (nginx logs to /dev/stderr).
+	if err := ensureStandardDevLinks("/dev"); err != nil {
+		slog.Default().Warn("post-pivot standard /dev links", "err", err)
+	}
 	return nil
 }
 
