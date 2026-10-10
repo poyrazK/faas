@@ -347,7 +347,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Shard 4 gives cmd/apid its own PostgreSQL service. Its tests create
+        # databases while pkg/state clone tests pin the complete catalogue.
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -428,8 +430,12 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
-          SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 4 < "$RUNNER_TEMP/changed-paths.txt")"
+          if [[ "$SHARD" == 4 ]]; then
+            SPLIT=""
+          else
+            SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0

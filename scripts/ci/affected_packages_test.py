@@ -72,6 +72,14 @@ class SelectTest(unittest.TestCase):
 
 
 class ShardTest(unittest.TestCase):
+    def test_apid_uses_its_own_postgres_service_shard(self):
+        dirs = ["cmd/apid", "pkg/state", "pkg/api", "pkg/sched"]
+        shards = [ap.shard(dirs, i, 4) for i in (1, 2, 3, 4)]
+        self.assertEqual(shards[3], ["cmd/apid"])
+        self.assertEqual(sorted(d for s in shards for d in s),
+                         sorted(d for d in dirs if d != "pkg/state"))
+        self.assertNotIn("cmd/apid", [d for s in shards[:3] for d in s])
+
     def test_shards_partition_the_set_deterministically(self):
         dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/apid"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
