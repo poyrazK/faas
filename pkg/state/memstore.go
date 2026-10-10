@@ -8650,6 +8650,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 
 	proposal := d
 	proposal.Status = DeployLive
+	if err := m.checkRuntimeUpgradeTrafficLocked(proposal); err != nil {
+		return err
+	}
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}

@@ -19,7 +19,7 @@ func nativeBackingRecordFixture(t *testing.T) (nativeCaptureOutputFixture, nativ
 	t.Helper()
 	f := nativeCaptureOutputsFixture(t)
 	r := nativeSnapshotBackingRecord{Version: 1, Capture: f.capture,
-		Backing: BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}}
+		Backing: BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}}
 	for i, name := range []string{"original-vmlinux", "original-base.ext4"} {
 		r.Images[i] = nativeSnapshotBackingImage{Epoch: uuid.NewString(), ReferenceID: uuid.NewString(), Name: name,
 			Identity: nativeLoopIdentity{Device: 11, Inode: uint64(20 + i)}, LogicalBytes: 17, SHA256: strings.Repeat(string(rune('a'+i)), 64)}

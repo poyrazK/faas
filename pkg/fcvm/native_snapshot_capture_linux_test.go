@@ -246,7 +246,7 @@ func (b *nativeCaptureSequenceStore) Delete(context.Context, string) error {
 func nativeCaptureSequence(t *testing.T) *nativeCaptureSequenceFixture {
 	t.Helper()
 	f := &nativeCaptureSequenceFixture{nativeCaptureOutputFixture: nativeCaptureOutputsFixture(t), t: t,
-		backing: BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}}
+		backing: BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}}
 	b := &nativeCaptureSequenceImages{nativeSnapshotOutputFixture: f.b, f: f}
 	f.v.nativeImageStagingRoot = f.directory
 	f.v.nativeRecovery.imageSources, f.q.owner.imageSources, f.j.backend = b, b, b

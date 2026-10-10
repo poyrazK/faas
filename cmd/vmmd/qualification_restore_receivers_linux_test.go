@@ -68,10 +68,10 @@ func TestQualificationRestoreIdentityAndRuntimeConfigStayUnavailable(t *testing.
 	workload := &WorkloadIdentityReceiver{}
 	client, server := net.Pipe()
 	workloadDone := make(chan error, 1)
-	go func() {
+	go func(server net.Conn) {
 		workloadDone <- workload.handleQualificationRestoreStream(context.Background(), state.EnvironmentQualificationExecution{}, server)
 		_ = server.Close()
-	}()
+	}(server)
 	body, err := readIdentityFrame(client)
 	_ = client.Close()
 	if err != nil {
@@ -88,10 +88,10 @@ func TestQualificationRestoreIdentityAndRuntimeConfigStayUnavailable(t *testing.
 	config := &runtimeConfigReceiver{}
 	client, server = net.Pipe()
 	configDone := make(chan error, 1)
-	go func() {
+	go func(server net.Conn) {
 		configDone <- config.handleQualificationRestoreStream(context.Background(), state.EnvironmentQualificationExecution{}, server)
 		_ = server.Close()
-	}()
+	}(server)
 	body, err = readRuntimeConfigFrameLimit(client, runtimeConfigMaxFrame)
 	_ = client.Close()
 	if err != nil {

@@ -155,7 +155,7 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	get = dashboardGet(handler, target, cookie)
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), sha) {
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "partial") || !strings.Contains(get.Body.String(), sha) {
 		t.Fatalf("history page: %d %s", get.Code, get.Body.String())
 	}
 	for _, suspended := range []bool{true, false} {
@@ -172,7 +172,7 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 			t.Fatalf("suspended=%v controls: %d %s", suspended, post.Code, post.Body.String())
 		}
 		get = dashboardGet(handler, target, cookie)
-		if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), `name="suspended"`) {
+		if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "partial") || !strings.Contains(get.Body.String(), `name="suspended"`) {
 			t.Fatalf("suspended=%v status and controls unavailable: %d %s", suspended, get.Code, get.Body.String())
 		}
 		if strings.Contains(get.Body.String(), "Git checks are suspended.") != suspended {

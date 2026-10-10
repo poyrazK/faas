@@ -68,7 +68,7 @@ func (r *nativeSnapshotBackingRecord) UnmarshalJSON(body []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := nativeJournalObjectFields(fields["backing"], []string{"version", "kernel", "base"}); err != nil {
+	if _, err := nativeJournalObjectFields(fields["backing"], []string{"version", "kernel", "base", "timer"}); err != nil {
 		return err
 	}
 	var images []json.RawMessage

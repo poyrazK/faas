@@ -443,10 +443,14 @@
       "app_id",
       "created_at",
       "environment_id",
+      "job_id",
       "runtime",
+      "schedule",
+      "service_bindings",
       "source",
       "source_revision",
-      "updated_at"
+      "updated_at",
+      "variables"
     ],
     "kind": "configuration"
   },
@@ -2310,6 +2314,7 @@
       "deployed_from_ip",
       "deployed_via",
       "disable_startup_cpu_boost",
+      "environment_workload_held",
       "environment_workload_runtime",
       "error",
       "error_code",
@@ -2739,8 +2744,22 @@
     "kind": "configuration"
   },
   {
+    "table": "environment_qualification_config_receipts",
+    "columns": [
+      "api_env_sha256",
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_executions",
     "columns": [
+      "capture_instance_id",
       "cleanup_token",
       "created_at",
       "dispatch_started",
@@ -2749,6 +2768,87 @@
       "request_id",
       "retired_at",
       "retirement"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_framework_ready_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "recorded_at",
+      "request_id",
+      "runtime",
+      "warmup_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_job_smoke_receipts",
+    "columns": [
+      "attempt",
+      "error_class",
+      "exit_code",
+      "graph_id",
+      "instance_id",
+      "policy_id",
+      "policy_sha256",
+      "recorded_at",
+      "request_id",
+      "resource",
+      "result_sha256",
+      "signal"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_restore_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "instance_id",
+      "recorded_at",
+      "request_id",
+      "runtime_inputs"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_restore_reservations",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "created_at",
+      "instance_id",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_smoke_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "policy_id",
+      "policy_sha256",
+      "recorded_at",
+      "request_id",
+      "resource",
+      "result_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_snapshot_receipts",
+    "columns": [
+      "inputs",
+      "instance_id",
+      "recorded_at",
+      "snapshot"
     ],
     "kind": "operational"
   },
@@ -2792,6 +2892,59 @@
       "worker_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "environment_workload_serving_queue_acks",
+    "columns": [
+      "acknowledged_at",
+      "app_id",
+      "binding_id",
+      "deployment_id",
+      "graph_id",
+      "invocation_id",
+      "mode",
+      "trigger_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_receipts",
+    "columns": [
+      "expected_gateways",
+      "graph_id",
+      "intent_version",
+      "phase",
+      "plan_hash",
+      "release_set_id",
+      "revision_id",
+      "served_at",
+      "source_generation",
+      "source_id",
+      "started_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_route_acks",
+    "columns": [
+      "acknowledged_at",
+      "graph_id",
+      "node_name",
+      "route_generation"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_routes",
+    "columns": [
+      "app_id",
+      "cutover_required",
+      "deployment_id",
+      "graph_id",
+      "route_generation"
+    ],
+    "kind": "operational"
   },
   {
     "table": "event_delivery_capacity",

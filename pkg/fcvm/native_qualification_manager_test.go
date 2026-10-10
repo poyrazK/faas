@@ -291,7 +291,7 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: source.InstanceID, CaptureID: incoming.Generation,
 		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: incoming.AcceptedAt.Add(time.Millisecond),
 		CompletedAt: incoming.AcceptedAt.Add(2 * time.Millisecond), FCVersion: "1.7.0", Info: SnapshotInfo{MemBytes: 100, VMStateBytes: 50, StoredBytes: 200},
-		Backing: BackingIdentity{Version: 1, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base"}}
+		Backing: BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base", Timer: guestTimerArgs}}
 	writeCompleteNativeQualificationCapture(t, q, incoming, capture)
 	if _, err := q.revoke(ctx, source); err != nil {
 		t.Fatal(err)

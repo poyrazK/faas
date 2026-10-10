@@ -322,11 +322,8 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	startHeld := false
 	var sealedEnv []fcvm.SealedEnvEntry
-	var secretCandidates []state.AppSecretDeliveryCandidate
 	var runtimeInputs *state.RuntimeConfigInputs
 	var runtimeInputsAppID string
-	deliveryStatus := state.SecretDeliveryFailed
-	deliveryErrorCode := "runtime_start_failed"
 	var startGateReleaser interface {
 		ReleaseJobStart(context.Context, JobStartSpec) error
 	}
@@ -363,15 +360,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed runtime inputs: %w", inputErr)
 			}
 			runtimeInputs, runtimeInputsAppID = &inputs, intent.AppID
-			sealedEnv, secretCandidates = sealedDelivery.Entries, sealedDelivery.Candidates
-			if len(secretCandidates) > 0 {
-				defer func() {
-					e.recordAppSecretDelivery(ctx, bootInput{
-						accountID: accountID, appID: intent.AppID, wakeID: instanceID, insID: instanceID,
-						secretDeliveries: secretCandidates,
-					}, deliveryStatus, deliveryErrorCode)
-				}()
-			}
+			// App secret delivery receipts require an app deployment instance.
+			// Job task instances have neither, so do not claim an app delivery.
+			sealedEnv = sealedDelivery.Entries
 			var canRelease bool
 			startGateReleaser, canRelease = e.jobVmmClient.(interface {
 				ReleaseJobStart(context.Context, JobStartSpec) error
@@ -458,7 +449,6 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 			fresh, freshnessErr = receipts.RuntimeConfigInputsFresh(ctx, runtimeInputsAppID, *runtimeInputs)
 		}
 		if !ok || freshnessErr != nil || !fresh {
-			deliveryErrorCode = "runtime_config_changed_during_boot"
 			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 				"job_gitops_runtime_inputs_stale", "managed Job configuration changed during boot; retry the run")
 			if freshnessErr != nil {
@@ -485,8 +475,6 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 			// bounded hold timeout reports infrastructure failure if it stayed shut.
 			e.log.Error("sched: managed job start-gate release failed", "run", runID,
 				"task", taskIndex, "instance", instanceID, "err", err)
-		} else if len(secretCandidates) > 0 {
-			deliveryStatus, deliveryErrorCode = state.SecretDeliveryDelivered, ""
 		}
 	}
 	exitDeadline := fcvm.EffectiveDestroyWait(taskTimeoutSec)

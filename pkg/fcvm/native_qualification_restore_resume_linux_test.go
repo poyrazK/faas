@@ -60,7 +60,7 @@ func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(
 					done <- errors.New("native hook changed original port")
 					return
 				}
-				if _, err := connection.Write([]byte("OK 1\n")); err != nil {
+				if _, err := connection.Write(append([]byte("OK 1\n"), resumeCapUserspaceReseed)); err != nil {
 					done <- err
 					return
 				}

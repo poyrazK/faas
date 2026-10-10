@@ -44,7 +44,7 @@ func nativeRestoreLoadRecordFixture(t *testing.T) (*nativeQualificationRestoreLo
 	}
 	capture.Info.MemBytes = int64(frame.RAMMB) << 20
 	capture.FCVersion = "1.7.0"
-	capture.Backing = BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}
+	capture.Backing = BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}
 	writeTamperedNativeQualificationCapture(t, j.incoming, source, capture)
 	initial := capture
 	initial.CompletedAt, initial.Info, initial.Backing = time.Time{}, SnapshotInfo{}, BackingIdentity{}

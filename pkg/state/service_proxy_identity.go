@@ -16,8 +16,8 @@ func (s *PgStore) LiveInstancesByHostIP(ctx context.Context, nodeID, hostIP stri
 	if err != nil {
 		return nil, ErrInvalidArgument
 	}
-	query := `select distinct coalesce(i.app_id::text, managed_job.app_id),
-		coalesce(i.deployment_id::text, managed_job.deployment_id)
+	query := `select distinct coalesce(i.app_id::text, managed_job.app_id, ''),
+		coalesce(i.deployment_id::text, managed_job.deployment_id, '')
 		from instances i
 		left join lateral (
 			select intent.app_id::text as app_id, member.deployment_id::text as deployment_id

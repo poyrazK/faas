@@ -141,7 +141,7 @@ func readNativeRestoreBacking(file *os.File) (backing BackingIdentity, result er
 	if _, err := file.ReadAt(body, 0); err != nil {
 		return backing, err
 	}
-	if _, err := nativeJournalObjectFields(body, []string{"version", "kernel", "base"}); err != nil {
+	if _, err := nativeJournalObjectFields(body, []string{"version", "kernel", "base", "timer"}); err != nil {
 		return backing, err
 	}
 	d := json.NewDecoder(bytes.NewReader(body))

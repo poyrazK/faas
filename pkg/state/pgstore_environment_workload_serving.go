@@ -157,7 +157,7 @@ func recordEnvironmentGitOpsQueueServingAcknowledgementTx(ctx context.Context, t
 			AND (($7='push' AND queue_trigger.id IS NOT NULL
 				AND queue_binding.value->>'trigger_id'=queue_trigger.id::text
 				AND EXISTS (SELECT 1 FROM trigger_records record WHERE record.trigger_id=queue_trigger.id
-					AND record.item_identifier=$6 AND record.state='succeeded')) OR
+					AND record.item_identifier=$6::text AND record.state='succeeded')) OR
 				($7='pull' AND queue_trigger.id IS NULL
 				AND coalesce(queue_binding.value->>'trigger_id','')=''))
 			AND (graph_member.value->>'candidate_deployment_id'=$5::text OR

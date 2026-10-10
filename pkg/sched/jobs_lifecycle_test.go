@@ -340,7 +340,7 @@ func TestEngineWakeJobPublishesRuntimeIdentityBeforeReleasingServiceBindings(t *
 	}
 }
 
-func TestEngineWakeJobDeliversOnlyReviewedScopedSecrets(t *testing.T) {
+func TestEngineWakeJobUsesOnlyReviewedScopedSecrets(t *testing.T) {
 	base := state.NewMemStore()
 	account, run, intent := seedGitOpsBoundScheduledJobRun(t, base)
 	if err := base.UpsertAppSecretInScope(context.Background(), account.ID, intent.AppID, "staging", "TOKEN_SOURCE", []byte("sealed-token")); err != nil {
@@ -374,8 +374,8 @@ func TestEngineWakeJobDeliversOnlyReviewedScopedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, secret := range secrets {
-		if secret.Key == "TOKEN_SOURCE" && secret.DeliveryStatus != state.SecretDeliveryDelivered {
-			t.Fatalf("delivered secret status = %s, want delivered", secret.DeliveryStatus)
+		if secret.Key == "TOKEN_SOURCE" && secret.DeliveryStatus == state.SecretDeliveryDelivered {
+			t.Fatal("job task was recorded as an app-instance secret delivery")
 		}
 		if secret.Key == "UNRELATED" && secret.DeliveryStatus == state.SecretDeliveryDelivered {
 			t.Fatal("unreferenced secret was marked delivered")

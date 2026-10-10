@@ -74,7 +74,7 @@ func nativeRestoreInputsFixture(t *testing.T, sidecar []byte) nativeRestoreInput
 	if err != nil {
 		t.Fatal(err)
 	}
-	backing := BackingIdentity{Version: 1, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base"}
+	backing := BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base", Timer: guestTimerArgs}
 	if sidecar == nil {
 		sidecar, err = json.Marshal(backing)
 		if err != nil {

@@ -186,7 +186,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	if _, err := images.stageWritable(ctx, owner, root, source, layerImageName); err != nil {
 		t.Fatal(err)
 	}
-	backing := BackingIdentity{Version: 1}
+	backing := BackingIdentity{Version: backingIdentityVersion, Timer: strings.TrimSpace(guestTimerArgs)}
 	for i, name := range []string{"protocol-kernel", "protocol-base.ext4"} {
 		body := []byte("original-" + name)
 		path := filepath.Join(disk, name)
