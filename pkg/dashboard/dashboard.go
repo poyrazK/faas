@@ -973,6 +973,34 @@ type AppEdgeRulesData struct {
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+	// Events is the ADR-964 security-events section.
+	Events EdgeRuleEventsPageData
+}
+
+// EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
+// Filter values echo the request; NextURL continues the listing.
+type EdgeRuleEventsPageData struct {
+	Rule         string
+	Outcome      string
+	Since        string
+	SinceLabel   string
+	Events       []EdgeRuleEventPageItem
+	NextURL      string
+	ErrorMessage string
+}
+
+// EdgeRuleEventPageItem is one sampled rule match.
+type EdgeRuleEventPageItem struct {
+	OccurredAt string
+	RuleID     string
+	RuleLabel  string
+	Outcome    string
+	Method     string
+	HostPath   string
+	ClientIP   string
+	Country    string
+	UserAgent  string
+	RequestID  string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only
@@ -1007,6 +1035,11 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// ADR-960/964: name, mode and 24 h hit counts.
+	Name       string
+	Mode       string
+	Matched24h int64
+	Logged24h  int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -1726,23 +1759,40 @@ type BuildPlanView struct {
 // what was checked, and what artifact went live?" without exposing storage
 // internals such as the rootfs key.
 type HostingReceiptView struct {
-	AppURL          string
-	SourceKind      string
-	SourceURL       string
-	CommitSHA       string
-	ImageDigest     string
-	ProfileVersion  string
-	Framework       string
-	FrameworkVer    string
-	Port            int
-	HealthPath      string
-	SmokeStatus     string
-	SmokePath       string
-	SmokeStatusCode int
-	SmokeLatencyMS  int64
-	SmokeVerifiedAt string
-	SmokeErrorCode  string
-	SmokeError      string
+	AppURL                   string
+	SourceKind               string
+	SourceURL                string
+	CommitSHA                string
+	ImageDigest              string
+	ProfileVersion           string
+	Framework                string
+	FrameworkVer             string
+	Port                     int
+	HealthPath               string
+	SmokeStatus              string
+	SmokePath                string
+	SmokeStatusCode          int
+	SmokeLatencyMS           int64
+	SmokeVerifiedAt          string
+	SmokeErrorCode           string
+	SmokeError               string
+	RouteCheckSetStatus      string
+	RouteCheckDocumentSHA256 string
+	RouteChecks              []HostingRouteCheckView
+}
+
+// HostingRouteCheckView is the safe deployment-page projection of one
+// OpenAPI-selected candidate route check. It intentionally omits transport
+// request IDs and other receipt fields the page does not need.
+type HostingRouteCheckView struct {
+	Method     string
+	Path       string
+	Status     string
+	StatusCode int
+	LatencyMS  int64
+	VerifiedAt string
+	ErrorCode  string
+	Error      string
 }
 
 // DeploymentAuditRow is the dashboard-local projection of one

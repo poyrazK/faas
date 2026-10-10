@@ -10,6 +10,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.automation_check_evidence import AutomationCheckEvidence
     from ..models.workflow_spec import WorkflowSpec
 
 
@@ -35,6 +36,11 @@ class AutomationRevisionResponse:
     """True for the one current publication copied into history during rollout; older history was not retained."""
     published_by_account_id: UUID
     """Account that published this revision, or owned the legacy snapshot at rollout."""
+    check_evidence: AutomationCheckEvidence | Unset = UNSET
+    """Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
+    plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no
+    sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock
+    skew allowed)."""
     published_by_api_key_id: UUID | Unset = UNSET
     """API key used for the publish when the request used key authentication; omitted for session authentication
     and legacy snapshots."""
@@ -52,6 +58,10 @@ class AutomationRevisionResponse:
 
         published_by_account_id = str(self.published_by_account_id)
 
+        check_evidence: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.check_evidence, Unset):
+            check_evidence = self.check_evidence.to_dict()
+
         published_by_api_key_id: str | Unset = UNSET
         if not isinstance(self.published_by_api_key_id, Unset):
             published_by_api_key_id = str(self.published_by_api_key_id)
@@ -68,6 +78,8 @@ class AutomationRevisionResponse:
                 "published_by_account_id": published_by_account_id,
             }
         )
+        if check_evidence is not UNSET:
+            field_dict["check_evidence"] = check_evidence
         if published_by_api_key_id is not UNSET:
             field_dict["published_by_api_key_id"] = published_by_api_key_id
 
@@ -75,6 +87,7 @@ class AutomationRevisionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.automation_check_evidence import AutomationCheckEvidence
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
@@ -90,6 +103,13 @@ class AutomationRevisionResponse:
 
         published_by_account_id = UUID(d.pop("published_by_account_id"))
 
+        _check_evidence = d.pop("check_evidence", UNSET)
+        check_evidence: AutomationCheckEvidence | Unset
+        if isinstance(_check_evidence, Unset):
+            check_evidence = UNSET
+        else:
+            check_evidence = AutomationCheckEvidence.from_dict(_check_evidence)
+
         _published_by_api_key_id = d.pop("published_by_api_key_id", UNSET)
         published_by_api_key_id: UUID | Unset
         if isinstance(_published_by_api_key_id, Unset):
@@ -104,6 +124,7 @@ class AutomationRevisionResponse:
             recorded_at=recorded_at,
             legacy_snapshot=legacy_snapshot,
             published_by_account_id=published_by_account_id,
+            check_evidence=check_evidence,
             published_by_api_key_id=published_by_api_key_id,
         )
 

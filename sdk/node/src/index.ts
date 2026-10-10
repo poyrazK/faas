@@ -97,6 +97,11 @@ export {
 export {
   consumeRealtimeChannel,
   consumeRealtimeChannels,
+  consumeRealtimeInbox,
+  RealtimeInboxResyncRequiredError,
+  type ConsumeRealtimeInboxOptions,
+  type RealtimeInboxConsumerOptions,
+  type RealtimeInboxMessage,
   REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
   RealtimeConfigurationError,
@@ -105,9 +110,39 @@ export {
   type ConsumeRealtimeChannelOptions,
   type ConsumeRealtimeChannelsOptions,
   type RealtimeChannelConsumerOptions,
+  type RealtimeChannelActions,
   type RealtimeConnectionOptions,
   type RealtimeCursorStore,
+  type RealtimeDirectMessage,
+  type RealtimeEphemeralRejection,
   type RealtimeMessage,
+  type RealtimePresenceEvent,
+  type RealtimePresenceMember,
+  type RealtimeSignal,
+  type RealtimeReadProgress,
+  type RealtimeReadActions,
+  type RealtimePushRegistration,
+  type RealtimeNotificationPreferences,
+  type RealtimePushActions,
+  realtimeWebPushRegistration,
+  recoverRealtimeChannelSnapshot,
+  publishRealtimeChannelBatch,
+  realtimeEventSchemaMetadata,
+  realtimeReducerEvent,
+  realtimeExpectedSequence,
+  type RealtimeReducerOperation, type RealtimeReducerCondition,
+  realtimeScheduledEvent, type RealtimeScheduleRequest, type RealtimeSchedule, type RealtimeScheduleCondition,
+  realtimeScheduleRetry, type RealtimeScheduleRetryRequest,
+  type RealtimeScheduleHistory, type RealtimeScheduleHistoryEvent,
+  type RealtimeScheduleCompletionWebhookPayload,
+  realtimeActivityScopeChannel,
+  createRealtimeSignalCoalescer, type RealtimeSignalCoalescer, type RealtimeSignalCoalescerOptions,
+  realtimeBackendSignal, type RealtimeBackendSignalRequest, type RealtimeBackendSignalResponse,
+  realtimeScheduleGroupRequest, type RealtimeScheduleGroupRequest, type RealtimeScheduleList, type RealtimeScheduleTotals,
+  type RealtimeBatchRequest,
+  type RealtimeBatchResult,
+  type RealtimeChannelSnapshot,
+  type RealtimeReadError,
   type RealtimeSocket,
 } from './realtime-resume.js';
 
@@ -169,11 +204,22 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessRequest, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview, type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessRequest, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview, type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowPerformanceGroup, type OperationWorkflowPerformanceInstanceOptions, type OperationWorkflowPerformanceInstance, type OperationWorkflowPerformanceInstancesResponse, type OperationWorkflowStateSLA, type OperationWorkflowPerformanceOptions, type OperationWorkflowPerformanceSummary, type OperationWorkflowDurationDistribution, type OperationWorkflowPerformanceCoverageReason, type OperationWorkflowPerformanceCohort, type OperationWorkflowStatePerformance, type OperationWorkflowBlockerPerformance, type OperationWorkflowVerificationPerformance, type OperationWorkflowBottlenecks, type OperationWorkflowStateDuration, type OperationWorkflowBlockerDuration, type OperationWorkflowVerificationDuration, type OperationWorkflowResolutionVerification, type OperationWorkflowBlockerEscalation, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef } from './customer-operations.js';
 export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext, type OperationRequestHeaders, type OperationArtifactInput, type OperationArtifactUpload, type PreparedOperationArtifact } from './operations-runtime.js';
 export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
 export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
 export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
+
+export {
+  decodeDurableEntityHandlerRequest, durableEntityWebhookIntent, encodeDurableEntityTransition,
+  type DurableEntityIdentity, type DurableEntityHandlerLimits, type DurableEntityHandlerRequest,
+  type DurableEntityWebhookIntent, type DurableEntityTransition,
+} from './durable-entity-handler.js';
+export {
+  DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION,
+  DURABLE_ENTITY_MAX_REQUEST_BYTES, DURABLE_ENTITY_MAX_TRANSITION_BYTES, DURABLE_ENTITY_HANDLER_PATH,
+  DURABLE_ENTITY_RESTORE_VALIDATION_PROTOCOL_VERSION, DURABLE_ENTITY_RESTORE_VALIDATION_PATH, DURABLE_ENTITY_RESTORE_VALIDATION_MAX_RESPONSE_BYTES,
+} from './durable-entity-contract.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
@@ -206,6 +252,24 @@ export type { OperationDirectUploadInput } from './operation-upload.js';
 export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
 export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
 
+export {
+  createRealtimeSignalTracker,
+  type RealtimeSignalTracker,
+  type RealtimeTemporarySignal,
+} from './realtime-signals.js';
+
+export {
+  createRealtimeActivityTracker,
+  type RealtimeActivity,
+  type RealtimeActivityTracker,
+  type RealtimeActivityTrackerOptions,
+} from './realtime-activity.js';
+
+export {
+  aggregateRealtimeActivity, formatRealtimeTypingSummary, createRealtimePresenceDirectory,
+  type RealtimeActivityParticipant, type RealtimeActivitySummary, type RealtimeActivitySummaryOptions,
+  type RealtimePresenceDirectory, type RealtimePresenceDirectoryOptions,
+} from './realtime-activity-summary.js';
 export { CustomerOperationReadinessError, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
 
 export { businessDecisionPayload, type OperationBusinessDecision, type OperationBusinessDecisionPayload } from './customer-operation-decisions.js';
@@ -237,3 +301,14 @@ export type { OperationWorkflowPlannedEffect } from './generated/models/Operatio
 export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
+
+export { inspectDurableEntity, type DurableEntityInspectOptions } from './durable-entities.js';
+export { retryDurableEntity, type DurableEntityRetryOptions } from './durable-entities.js';
+export { exportDurableEntity, restoreDurableEntity, type DurableEntityExportOptions, type DurableEntityRestoreOptions } from './durable-entities.js';
+export { listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityRestore, type DurableEntityBackupListOptions, type DurableEntityBackupGetOptions, type DurableEntityRestorePreviewOptions } from './durable-entities.js';
+export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, type DurableEntityRestoreValidationRequest } from './durable-entity-restore-validation.js';
+export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
+
+export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
+export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
+export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';

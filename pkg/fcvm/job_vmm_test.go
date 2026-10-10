@@ -289,6 +289,68 @@ func TestSignalJobGuestUsesHostInitiatedConnect(t *testing.T) {
 	}
 }
 
+func TestReleaseJobStartUsesHostInitiatedConnect(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "fj-start-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	v := NewJailerVMM(base, time.Second)
+	lease := Lease{Instance: "job-held-1"}
+	sock := v.vsockUDSSock(lease.Instance)
+	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if line != fmt.Sprintf("CONNECT %d\n", VsockJobControlPort) {
+			serverErr <- fmt.Errorf("CONNECT frame = %q", line)
+			return
+		}
+		if _, err := io.WriteString(conn, "OK 42\n"); err != nil {
+			serverErr <- err
+			return
+		}
+		var frame [8]byte
+		if _, err := io.ReadFull(reader, frame[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		if got := binary.BigEndian.Uint32(frame[:4]); got != VsockJobStartMsgType || binary.BigEndian.Uint32(frame[4:]) != 0 {
+			serverErr <- fmt.Errorf("start frame = %x", frame)
+			return
+		}
+		_, err = conn.Write([]byte{vsockJobControlAckOK})
+		serverErr <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := v.ReleaseJobStart(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProcessExitedDoesNotRelayExpectedJobShutdown(t *testing.T) {
 	called := false
 	m := &Manager{

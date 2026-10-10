@@ -23,6 +23,8 @@ import (
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
+	MCPTaskDefaultMaxRunning             = 16
+	MCPTaskDefaultMaxRunningPerOwner     = 4
 	MCPTaskDefaultMaxOutstanding         = 1000
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256
@@ -286,6 +288,14 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
+// synthetic queue message before it is stored with frozen candidate inputs.
+const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10
+
+// EnvironmentGitOpsMaxQueueSmokeMessages bounds the number of sequential
+// private synthetic queue deliveries in one worker qualification attempt.
+const EnvironmentGitOpsMaxQueueSmokeMessages = 16
+
 // Overrides expire without operator intervention; renewal requires a new reason.
 const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
 const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
@@ -339,6 +349,7 @@ const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
 const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsJobQualificationLeaseDuration = 8 * time.Minute
 const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 
 // Check revocation while a qualification VM effect or evidence check is running.
@@ -354,6 +365,38 @@ const EnvironmentGitOpsQualificationDispatchBatchMax = 100
 
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
+
+// Receipt-bound compressed artifact reads cap the decoder's streaming window;
+// logical size and digest are verified separately through the complete reader.
+const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
+const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
+// NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
+// already-authorized artifact retirement records.
+const NativeSnapshotPublicationRecoveryBatchMax = 64
+
+// A receipt-bound restore sidecar carries only version and two image digests.
+// Refuse oversized metadata before any restore input is materialized.
+const NativeSnapshotBackingRecordMaxBytes = 4096
+
+// Captured kernel/base paths are single Linux jail filenames, never host paths.
+const NativeSnapshotBackingNameMaxBytes = 255
+
+// Restore effect evidence contains five fixed image witnesses and six phases.
+const NativeQualificationRestoreLoadRecordMaxBytes = 8192
+
+// Private restored platform channels never outlive their original target or
+// let a slow guest retain unbounded host handlers.
+const NativeQualificationRestoreMaxStreams = 64
+const NativeQualificationRestoreStreamTimeout = 5 * time.Second
+
+// Native snapshot retirement can scan the unified hierarchy to distinguish a
+// removed original inode from a retained cgroup. Exceeding these parser bounds
+// retains ownership; these are diagnostic limits, not tenant quotas.
+const (
+	NativeSnapshotCgroupInventoryMaxDirectories = 65_536
+	NativeSnapshotCgroupInventoryReadBatch      = 128
+)
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
@@ -433,76 +476,88 @@ const (
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
-	OperationJSONMaxDepth                                = 64
-	OperationJSONMaxNumberBytes                          = 256
-	OperationJSONMaxExponent                             = 10000
-	OperationNameMaxBytes                                = 64
-	OperationSubjectIDMaxBytes                           = 256
-	OperationWorkflowInstanceIDMaxBytes                  = 256
-	OperationWorkflowNameMaxBytes                        = 63
-	OperationMilestoneDeclarationsMax                    = 16
-	OperationMilestoneSchemasMaxBytes                    = 16 << 10
-	OperationMilestonePayloadMaxBytes                    = 8 << 10
-	OperationMilestonesMaxPerOperation                   = 64
-	OperationMilestoneBatchMaxBytes                      = 64 << 10
-	OperationWorkflowsMaxPerApp                          = 32
-	OperationWorkflowStepsMax                            = 32
-	OperationWorkflowStepsMaxPerOperation                = 32
-	OperationWorkflowStatesMax                           = 32
-	OperationWorkflowTransitionsMax                      = 128
-	OperationWorkflowContractVersionMax                  = 1_000_000
-	OperationWorkflowTransitionEvidenceMax               = 16
-	OperationWorkflowStateEvidenceMax                    = 16
-	OperationWorkflowStateBatchMaxBytes                  = 131072
-	OperationWorkflowStateMaxBytes                       = 64
-	OperationWorkflowStateReportsMaxPerTransaction       = 64
-	OperationWorkflowTitleMaxBytes                       = 128
-	OperationWorkflowLabelMaxBytes                       = 128
-	OperationPathMaxBytes                                = 2048
-	OperationIdempotencyKeyMaxBytes                      = 128
-	OperationReportIDMaxBytes                            = 128
-	OperationRecoveryEvidenceMaxBytes                    = 4096
-	OperationEventsPageMax                               = 100
-	OperationDeliveryRetryMaxBytes                       = 4096
-	OperationDeliveryReceiptMaxBytes                     = 8192
-	OperationDeliveryRetriesMax                          = 32
-	OperationHistoryPageDefault                          = 20
-	OperationHistoryPageMax                              = 100
-	OperationHistoryCursorMaxBytes                       = 512
-	OperationRetentionPageMax                            = 500
-	OperationDefinitionBodyMaxBytes                      = 160000
-	OperationReportBodyMaxBytes                          = 16384
-	OperationRecoveryBodyOverheadBytes                   = 8192
-	OperationSubmissionMaxBytes                          = 1 << 20
-	OperationStartBodyOverheadBytes                      = 1024
-	OperationDoctorChecksMax                             = 1024
-	OperationDoctorMaxDuration                           = 10 * time.Second
-	OperationSubmissionReceiptMaxBytes                   = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
-	SourceManifestMaxBytes                               = 1 << 20
-	OperationArtifactNameMaxBytes                        = 128
-	OperationArtifactKeyMaxBytes                         = 1024
-	OperationArtifactURIMaxBytes                         = 2048
-	OperationArtifactSpoolMaxBytes                 int64 = 256 << 20
-	OperationArtifactTransfersPerAccount                 = 4
-	OperationArtifactTransfersPerNode                    = 8
-	OperationArtifactTransferTimeout                     = 30 * time.Second
-	OperationArtifactStagingLifetime                     = 2 * time.Minute
-	OperationArtifactCleanupLease                        = time.Minute
-	OperationArtifactCleanupRetry                        = 5 * time.Minute
-	OperationArtifactCleanupInterval                     = time.Minute
-	OperationArtifactCleanupBatch                        = 20
-	OperationPreviewPolicyMaxBytes                       = 64 << 10
-	OperationPreviewCohortsMax                           = 10
-	OperationPreviewTenantsPerCohortMax                  = 10
-	OperationPreviewWindowMax                            = time.Hour
-	OperationControlPollIntervalMS                       = 1000
-	OperationControlPollMinIntervalMS                    = 100
-	WorkflowStepDefaultTimeout                           = 30 * time.Second
-	OperationSubmissionLookupMaxBytes                    = 4096
-	OperationBrowserReceiptMaxBytes                      = 8192
-	OperationBrowserReceiptReplaySeconds                 = 86400
-	OperationRecoveryReceiptMaxBytes                     = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
-	OperationArtifactUploadDefaultBytes                  = 8 << 20
+	OperationJSONMaxDepth                                   = 64
+	OperationJSONMaxNumberBytes                             = 256
+	OperationJSONMaxExponent                                = 10000
+	OperationWorkflowBlockerEscalationsMax                  = 32
+	OperationWorkflowBlockerEscalationMaxSeconds      int64 = 315360000
+	OperationWorkflowBlockerActorMaxBytes                   = 128
+	OperationWorkflowBlockerActionMaxBytes                  = 512
+	OperationWorkflowBlockerImpactMaxBytes                  = 512
+	OperationWorkflowStateSLAMaxSeconds               int64 = 315360000
+	OperationWorkflowStateSLAWarningMinPercent        int64 = 1
+	OperationWorkflowStateSLAWarningMaxPercent        int64 = 99
+	OperationWorkflowPerformanceCohortMax                   = 100
+	OperationWorkflowBottleneckHistoryMax                   = 1024
+	OperationWorkflowBottleneckGroupsMax                    = 32
+	OperationWorkflowResolutionVerificationPreviewMax       = 16
+	OperationNameMaxBytes                                   = 64
+	OperationSubjectIDMaxBytes                              = 256
+	OperationWorkflowInstanceIDMaxBytes                     = 256
+	OperationWorkflowNameMaxBytes                           = 63
+	OperationMilestoneDeclarationsMax                       = 16
+	OperationMilestoneSchemasMaxBytes                       = 16 << 10
+	OperationMilestonePayloadMaxBytes                       = 8 << 10
+	OperationMilestonesMaxPerOperation                      = 64
+	OperationMilestoneBatchMaxBytes                         = 64 << 10
+	OperationWorkflowsMaxPerApp                             = 32
+	OperationWorkflowStepsMax                               = 32
+	OperationWorkflowStepsMaxPerOperation                   = 32
+	OperationWorkflowStatesMax                              = 32
+	OperationWorkflowTransitionsMax                         = 128
+	OperationWorkflowContractVersionMax                     = 1_000_000
+	OperationWorkflowTransitionEvidenceMax                  = 16
+	OperationWorkflowStateEvidenceMax                       = 16
+	OperationWorkflowStateBatchMaxBytes                     = 131072
+	OperationWorkflowStateMaxBytes                          = 64
+	OperationWorkflowStateReportsMaxPerTransaction          = 64
+	OperationWorkflowTitleMaxBytes                          = 128
+	OperationWorkflowLabelMaxBytes                          = 128
+	OperationPathMaxBytes                                   = 2048
+	OperationIdempotencyKeyMaxBytes                         = 128
+	OperationReportIDMaxBytes                               = 128
+	OperationRecoveryEvidenceMaxBytes                       = 4096
+	OperationEventsPageMax                                  = 100
+	OperationDeliveryRetryMaxBytes                          = 4096
+	OperationDeliveryReceiptMaxBytes                        = 8192
+	OperationDeliveryRetriesMax                             = 32
+	OperationHistoryPageDefault                             = 20
+	OperationHistoryPageMax                                 = 100
+	OperationHistoryCursorMaxBytes                          = 512
+	OperationRetentionPageMax                               = 500
+	OperationDefinitionBodyMaxBytes                         = 160000
+	OperationReportBodyMaxBytes                             = 16384
+	OperationRecoveryBodyOverheadBytes                      = 8192
+	OperationSubmissionMaxBytes                             = 1 << 20
+	OperationStartBodyOverheadBytes                         = 1024
+	OperationDoctorChecksMax                                = 1024
+	OperationDoctorMaxDuration                              = 10 * time.Second
+	OperationSubmissionReceiptMaxBytes                      = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
+	SourceManifestMaxBytes                                  = 1 << 20
+	OperationArtifactNameMaxBytes                           = 128
+	OperationArtifactKeyMaxBytes                            = 1024
+	OperationArtifactURIMaxBytes                            = 2048
+	OperationArtifactSpoolMaxBytes                    int64 = 256 << 20
+	OperationArtifactTransfersPerAccount                    = 4
+	OperationArtifactTransfersPerNode                       = 8
+	OperationArtifactTransferTimeout                        = 30 * time.Second
+	OperationArtifactStagingLifetime                        = 2 * time.Minute
+	OperationArtifactCleanupLease                           = time.Minute
+	OperationArtifactCleanupRetry                           = 5 * time.Minute
+	OperationArtifactCleanupInterval                        = time.Minute
+	OperationArtifactCleanupBatch                           = 20
+	OperationPreviewPolicyMaxBytes                          = 64 << 10
+	OperationPreviewCohortsMax                              = 10
+	OperationPreviewTenantsPerCohortMax                     = 10
+	OperationPreviewWindowMax                               = time.Hour
+	OperationControlPollIntervalMS                          = 1000
+	OperationControlPollMinIntervalMS                       = 100
+	WorkflowStepDefaultTimeout                              = 30 * time.Second
+	OperationSubmissionLookupMaxBytes                       = 4096
+	OperationBrowserReceiptMaxBytes                         = 8192
+	OperationBrowserReceiptReplaySeconds                    = 86400
+	OperationRecoveryReceiptMaxBytes                        = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
+	OperationArtifactUploadDefaultBytes                     = 8 << 20
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
@@ -1728,6 +1783,16 @@ type Limits struct {
 	// slice iterates in priority order at request time, so the per-
 	// request cost is O(rules_per_app) — bounded by this cap).
 	EdgeRulesPerApp int
+	// EdgeRuleListsPerAccount caps how many reusable edge-rule lists
+	// (ADR-963) an account may hold. Zero disables lists on the plan.
+	EdgeRuleListsPerAccount int
+	// EdgeRuleListMaxItems caps the items in one edge-rule list. The
+	// gateway scans IP lists linearly per matched rule, so this bounds
+	// the per-request cost of an in_list condition.
+	EdgeRuleListMaxItems int
+	// EdgeRuleEventsWindowHours is how far back the plan can read sampled
+	// edge-rule security events (ADR-964). Events are stored 7 days.
+	EdgeRuleEventsWindowHours int
 	// EdgeRulesJWTAllowed gates kind='jwt' rules on the plan.
 	// Hobby/Pro/Scale opt in; Free stays off (the apid handler
 	// returns 402 CodePlanEdgeRuleKindNotAllowed before insert).
@@ -2784,9 +2849,12 @@ var planLimits = map[Plan]Limits{
 		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
-		EdgeRulesPerApp:     5,
-		EdgeRulesJWTAllowed: false,
-		EdgeRulesIPAllowed:  false,
+		EdgeRulesPerApp:           5,
+		EdgeRuleListsPerAccount:   0,
+		EdgeRuleListMaxItems:      0,
+		EdgeRuleEventsWindowHours: 24,
+		EdgeRulesJWTAllowed:       false,
+		EdgeRulesIPAllowed:        false,
 		// Per-kind geo quota (ADR-091 D21/D22). Free gets exactly 1
 		// geo rule — the abuse-desk customer ("block everything
 		// except DE") is one rule. The upgrade path raises the cap
@@ -3207,10 +3275,13 @@ var planLimits = map[Plan]Limits{
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
-		EdgeRulesPerApp:     25,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  5,
+		EdgeRulesPerApp:           25,
+		EdgeRuleListsPerAccount:   5,
+		EdgeRuleListMaxItems:      100,
+		EdgeRuleEventsWindowHours: 72,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        5,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 5,
@@ -3609,10 +3680,13 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerAccount:          30,
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
-		EdgeRulesPerApp:     100,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  25,
+		EdgeRulesPerApp:           100,
+		EdgeRuleListsPerAccount:   20,
+		EdgeRuleListMaxItems:      1000,
+		EdgeRuleEventsWindowHours: 168,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        25,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 25,
@@ -3996,10 +4070,13 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerAccount:          100,
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
-		EdgeRulesPerApp:     500,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  100,
+		EdgeRulesPerApp:           500,
+		EdgeRuleListsPerAccount:   100,
+		EdgeRuleListMaxItems:      10000,
+		EdgeRuleEventsWindowHours: 168,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        100,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 100,
@@ -5877,43 +5954,60 @@ var (
 )
 
 const (
-	AutomationSimulationRequestMaxBytes     int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes    int64 = 4 << 20
-	AutomationSimulationMaxSteps                  = 128
-	AutomationSimulationMaxTraceEntries           = 1024
-	AutomationDefinitionMaxBytes            int64 = 1 << 20
-	AutomationNameMaxBytes                        = 128
-	WorkflowRunInputMaxBytes                int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes          int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                 = 32 << 10
-	WorkflowWebhookNameMaxBytes                   = 128
-	WorkflowWebhookEventMaxBytes                  = 256
-	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps       = 10
-	WorkflowAutomationHealthReadTimeout           = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout             = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount           = 5
-	WorkflowSchedulePreviewMaxCount               = 20
-	WorkflowSchedulePreviewReadTimeout            = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds          = 300
-	WorkflowBacklogAlertCooldownMinutes           = 30
-	WorkflowAlertSnapshotReadTimeout              = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes              = 128
-	WorkflowResumeRequestMaxBytes           int64 = 4096
-	WorkflowRunMaxResumes                         = 16
-	WorkflowForEachMaxItems                       = 128
-	WorkflowForEachMaxParallelLimit               = 16
-	WorkflowForEachNameMaxBytes                   = 64
-	WorkflowForEachMaxInputBytes            int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes           int64 = 1 << 20
-	WorkflowJoinMaxDependencies                   = 128
-	WorkflowGuardMaxBytes                         = 16 << 10
-	WorkflowGuardMaxDepth                         = 8
-	WorkflowGuardMaxNodes                         = 32
-	WorkflowGuardNumberMaxBytes                   = 4096
-	WorkflowGuardNumberMaxExponent                = 4096
+	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
+	AutomationPublishCheckMaxScenarios          = 32
+	AutomationPublishCheckMaxExpectations       = 4096
+	AutomationPublishCheckMaxExclusions         = 256
+	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+
+	AutomationSimulationRequestMaxBytes         int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes        int64 = 4 << 20
+	AutomationSimulationMaxSteps                      = 128
+	AutomationSimulationMaxTraceEntries               = 1024
+	AutomationDefinitionMaxBytes                int64 = 1 << 20
+	AutomationNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                    int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                     = 32 << 10
+	WorkflowWebhookNameMaxBytes                       = 128
+	WorkflowWebhookEventMaxBytes                      = 256
+	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
+	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
+	WorkflowAutomationHealthMaxFailureSteps           = 10
+	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount               = 5
+	WorkflowSchedulePreviewMaxCount                   = 20
+	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds              = 300
+	WorkflowBacklogAlertCooldownMinutes               = 30
+	AutomationFailurePolicyMaxCount                   = 10000
+	AutomationFailurePolicyMinWindowSeconds           = 60
+	AutomationFailurePolicyMaxWindowSeconds           = 86400
+	AutomationFailurePolicyDefaultWindowSeconds       = 300
+	AutomationFailurePolicyDefaultThreshold           = 3
+	AutomationFailurePolicyDefaultMinRuns             = 5
+	AutomationFailurePolicyHistoryLimit               = 100
+	AutomationFailurePolicyBatch                      = 100
+	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                     = 1
+	WorkflowFailureAlertCooldownMinutes               = 30
+	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                  = 128
+	WorkflowResumeRequestMaxBytes               int64 = 4096
+	WorkflowRunMaxResumes                             = 16
+	WorkflowForEachMaxItems                           = 128
+	WorkflowForEachMaxParallelLimit                   = 16
+	WorkflowForEachNameMaxBytes                       = 64
+	WorkflowForEachMaxInputBytes                int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
+	WorkflowJoinMaxDependencies                       = 128
+	WorkflowGuardMaxBytes                             = 16 << 10
+	WorkflowGuardMaxDepth                             = 8
+	WorkflowGuardMaxNodes                             = 32
+	WorkflowGuardNumberMaxBytes                       = 4096
+	WorkflowGuardNumberMaxExponent                    = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -8863,6 +8957,9 @@ const (
 	// through one node's proxy across all accounts, independent of the
 	// per-account plan cap.
 	ServiceTCPSessionsPerNodeMax = 8192
+	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
+	ScenarioTCPChaosMaxRoutesPerNode    = 256
+	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service
@@ -9095,6 +9192,37 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
 
+// RouteHealthSeed bounds the report-mode selectors apid saves for an app that
+// never configured route health when its first canary advances (ADR-844).
+const (
+	RouteHealthSeedRoutes   = 10
+	RouteHealthSeedLookback = 7 * 24 * time.Hour
+)
+
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
+// requests per route and deployment, only while a canary is in flight.
+// Probe requests are never written to request telemetry or usage.
+const (
+	RouteHealthProbeMaxRoutes         = 5
+	RouteHealthProbeRequestsPerMinute = 10
+	RouteHealthProbeRequestTimeout    = 10 * time.Second
+	RouteHealthProbeChallengeTTL      = 2 * time.Minute
+	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbeRetention         = 24 * time.Hour
+	// A probe window is unknown when at least this share of responses were
+	// 401/403: customer auth gates stay in force for probes.
+	RouteHealthProbeUnauthenticatedShare = 0.5
+)
+
+// RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// covering at most the newest RouteHealthPooledMaxSpan of the stage.
+const (
+	RouteHealthPooledMinSpan = 4 * time.Minute
+	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
@@ -9150,6 +9278,11 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// error-budget incident must open within this long after the deployment
+// started serving all traffic.
+const RouteMonitorRollbackWindow = 30 * time.Minute
+
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
 	RouteMonitorVersion                               = 1
@@ -9175,44 +9308,75 @@ const (
 
 // Internal durable-entity prototype budgets, not plan availability.
 const (
-	MaxDurableEntitySnapshotBytes        = 1 << 20
-	MaxDurableEntityManifestBytes        = 16 << 10
-	MaxDurableEntityIdentityBytes        = 256
-	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
-	MaxDurableEntityReceiptBytes         = 1 << 20
-	MaxDurableEntityJournalBytes         = 16 << 10
-	MaxDurableEntityOutboxPerTransition  = 16
-	MaxDurableEntityOutboxPending        = 128
-	MaxDurableEntityOutboxPayloadBytes   = 64 << 10
-	MaxDurableEntityOutboxBytes          = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
-	DurableEntityCleanupPageSize         = 32
-	DurableEntityCleanupTimeout          = 20 * time.Second
-	DurableEntityInventoryPageSize       = 32
-	DurableEntityInventoryTimeout        = 20 * time.Second
-	MaxDurableEntityInventoryBytes       = 1 << 20
-	MaxDurableEntityInventoryPending     = 65 * 16
-	DurableEntityMaintenanceScanPageSize = 8
-	MaxDurableEntityMaintenanceBytes     = 128 << 10
-	DurableEntityMaintenanceTimeout      = 45 * time.Second
-	DurableEntityMaintenanceReadTimeout  = 2 * time.Second
-	DurableEntityMaintenancePollInterval = 30 * time.Second
-	DefaultDurableEntityLease            = 30 * time.Second
-	MaxDurableEntityLease                = 5 * time.Minute
-	MaxDurableEntityInvocationBytes      = 2 << 20
-	DurableEntityInvokeTimeout           = 25 * time.Second
-	DurableEntityReleaseTimeout          = 2 * time.Second
-	DurableEntityResultPollInterval      = 250 * time.Millisecond
-	DurableEntityHandlerPath             = "/__gregale/entities"
-	DurableEntityProtocolVersion         = 1
-	DurableEntityAlarmScanPageSize       = 8
-	DurableEntityAlarmReadTimeout        = 2 * time.Second
-	DurableEntityAlarmScanTimeout        = 20 * time.Second
-	DurableEntityAlarmPollInterval       = 5 * time.Second
-	MaxDurableEntityAlarmIndexBytes      = 4 << 10
-	DurableEntityAlarmIndexTimeout       = 2 * time.Second
-	MaxDurableEntityAlarmAttempts        = 5
-	DurableEntityAlarmRetryBase          = 30 * time.Second
-	DurableEntityAlarmRetryMax           = 5 * time.Minute
+	MaxDurableEntitySnapshotBytes = 1 << 20
+	// ADR-942: operator backups are separately retained private application data.
+	DurableEntityBackupInterval                         = time.Hour
+	DurableEntityBackupRetention                        = 7 * 24 * time.Hour
+	DurableEntityBackupPollInterval                     = 30 * time.Second
+	DurableEntityBackupScanPageSize                     = 8
+	DurableEntityBackupListPageSize                     = 32
+	DurableEntityBackupScanTimeout                      = 20 * time.Second
+	DurableEntityBackupReadTimeout                      = 2 * time.Second
+	MaxDurableEntityBackupBytes                         = MaxDurableEntityInvocationBytes
+	MaxDurableEntityManifestBytes                       = 16 << 10
+	MaxDurableEntityIdentityBytes                       = 256
+	MaxDurableEntityReceipts                            = 1024 // Legacy inline receipts only; journal receipts do not expire.
+	MaxDurableEntityReceiptBytes                        = 1 << 20
+	MaxDurableEntityJournalBytes                        = 16 << 10
+	MaxDurableEntityOutboxPerTransition                 = 16
+	MaxDurableEntityOutboxPending                       = 128
+	MaxDurableEntityOutboxPayloadBytes                  = 64 << 10
+	MaxDurableEntityOutboxBytes                         = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
+	MaxDurableEntityOutboxDeliveryBytes                 = MaxDurableEntityOutboxPayloadBytes + (8 << 10)
+	MaxDurableEntityOutboxAttempts                      = 5
+	DurableEntityOutboxRetryBase                        = 30 * time.Second
+	DurableEntityOutboxRetryMax                         = 5 * time.Minute
+	DurableEntityOutboxScanPageSize                     = 8
+	DurableEntityOutboxReadTimeout                      = 2 * time.Second
+	DurableEntityOutboxScanTimeout                      = 20 * time.Second
+	DurableEntityOutboxPollInterval                     = 5 * time.Second
+	MaxDurableEntityOutboxIndexBytes                    = 4 << 10
+	DurableEntityOutboxIndexTimeout                     = 2 * time.Second
+	DurableEntityHealthScanPageSize                     = 8
+	DurableEntityHealthReadTimeout                      = 2 * time.Second
+	DurableEntityHealthScanTimeout                      = 20 * time.Second
+	DurableEntityHealthPollInterval                     = 30 * time.Second
+	DurableEntityCleanupPageSize                        = 32
+	DurableEntityCleanupTimeout                         = 20 * time.Second
+	DurableEntityInventoryPageSize                      = 32
+	DurableEntityInventoryTimeout                       = 20 * time.Second
+	MaxDurableEntityInventoryBytes                      = 1 << 20
+	MaxDurableEntityInventoryPending                    = 65 * 16
+	DurableEntityMaintenanceScanPageSize                = 8
+	MaxDurableEntityMaintenanceBytes                    = 128 << 10
+	DurableEntityMaintenanceTimeout                     = 45 * time.Second
+	DurableEntityMaintenanceReadTimeout                 = 2 * time.Second
+	DurableEntityMaintenancePollInterval                = 30 * time.Second
+	DefaultDurableEntityLease                           = 30 * time.Second
+	MaxDurableEntityLease                               = 5 * time.Minute
+	MaxDurableEntityInvocationBytes                     = 2 << 20
+	DurableEntityInvokeTimeout                          = 25 * time.Second
+	DurableEntityReleaseTimeout                         = 2 * time.Second
+	DurableEntityResultPollInterval                     = 250 * time.Millisecond
+	DurableEntityHandlerPath                            = "/__gregale/entities"
+	MaxDurableEntityValidatorRegistryBytes              = 4 << 20
+	MaxDurableEntityValidatorBuildArchiveBytes    int64 = 256 << 20
+	MaxDurableEntityValidatorBundles                    = 128
+	DurableEntityRestoreIsolationTimeout                = 10 * time.Second
+	DurableEntityRestoreValidationProtocolVersion       = 1
+	DurableEntityRestoreValidationPath                  = "/__gregale/entities/validate-restore"
+	MaxDurableEntityRestoreValidationBytes              = 1024
+	DurableEntityProtocolVersion                        = 1
+	DurableEntityOutboxProtocolVersion                  = 2
+	DurableEntityAlarmScanPageSize                      = 8
+	DurableEntityAlarmReadTimeout                       = 2 * time.Second
+	DurableEntityAlarmScanTimeout                       = 20 * time.Second
+	DurableEntityAlarmPollInterval                      = 5 * time.Second
+	MaxDurableEntityAlarmIndexBytes                     = 4 << 10
+	DurableEntityAlarmIndexTimeout                      = 2 * time.Second
+	MaxDurableEntityAlarmAttempts                       = 5
+	DurableEntityAlarmRetryBase                         = 30 * time.Second
+	DurableEntityAlarmRetryMax                          = 5 * time.Minute
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.

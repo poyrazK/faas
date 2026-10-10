@@ -60,3 +60,72 @@ func TestEdgeRulePopulatedEntriesHaveBoundedFallbackExpiry(t *testing.T) {
 		})
 	}
 }
+
+// A rule mutation drops only the hosts its match_host patterns cover, so one
+// tenant's edit leaves every other tenant's compiled rules cached; an empty
+// pattern list (unknown scope) still resets everything.
+func TestEdgeRuleCacheInvalidateHostsIsScopedToPatterns(t *testing.T) {
+	c := NewEdgeRuleCache(10)
+	for _, host := range []string{"api.a.example", "www.a.example", "api.b.example"} {
+		c.Put(host, &HostEntry{})
+	}
+	generation := c.Generation()
+	c.InvalidateHosts([]string{"*.A.example"})
+	if _, hit := c.Get("api.a.example"); hit {
+		t.Fatal("wildcard-covered host survived")
+	}
+	if _, hit := c.Get("www.a.example"); hit {
+		t.Fatal("wildcard-covered host survived")
+	}
+	if _, hit := c.Get("api.b.example"); !hit {
+		t.Fatal("unrelated tenant host was flushed")
+	}
+	if c.Generation() == generation {
+		t.Fatal("scoped invalidation did not fence in-flight loads")
+	}
+	c.InvalidateHosts(nil)
+	if c.Len() != 0 {
+		t.Fatalf("unknown scope left %d entries, want wholesale reset", c.Len())
+	}
+}
+
+// A time-boxed rule must stop applying on schedule: the entry's NotAfter
+// (earliest rule expiry) caps its cache lifetime, and the outage fallback
+// never replays a set that contains an expired rule.
+func TestEdgeRuleEntryNotAfterBoundsCacheAndFallback(t *testing.T) {
+	c := NewEdgeRuleCache(2)
+	now := time.Unix(100, 0)
+	c.SetClock(func() time.Time { return now })
+	c.Put("host", &HostEntry{
+		NotAfter:    now.Add(5 * time.Second),
+		Maintenance: []EdgeRuleMaintenanceResolved{{ID: "window"}},
+	})
+	now = now.Add(5 * time.Second)
+	if _, hit := c.GetMaintenance("host"); hit {
+		t.Fatal("entry served past its earliest rule expiry")
+	}
+	if _, ok := c.GetLastKnownHost("host"); ok {
+		t.Fatal("outage fallback replayed an expired maintenance window")
+	}
+}
+
+// An expired entry is no longer served as current, but stays available as the
+// last-known-good set for loaders whose reload fails; Reset still drops it.
+func TestEdgeRuleExpiredEntryRemainsLastKnownUntilReset(t *testing.T) {
+	c := NewEdgeRuleCache(2)
+	now := time.Unix(100, 0)
+	c.SetClock(func() time.Time { return now })
+	c.Put("host", &HostEntry{IP: []EdgeRuleIPResolved{{ID: "deny"}}})
+	now = now.Add(edgeRuleCacheTTL)
+	if _, hit := c.GetIP("host"); hit {
+		t.Fatal("expired entry served as current")
+	}
+	last, ok := c.GetLastKnownHost("host")
+	if !ok || len(last.IP) != 1 || last.IP[0].ID != "deny" {
+		t.Fatalf("GetLastKnownHost = %+v, %v; want the expired deny rule", last, ok)
+	}
+	c.Reset()
+	if _, ok := c.GetLastKnownHost("host"); ok {
+		t.Fatal("last-known entry survived rule invalidation")
+	}
+}

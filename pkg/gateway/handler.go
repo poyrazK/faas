@@ -946,7 +946,10 @@ type Handler struct {
 	accountLimiter *Limiter
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
-	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetStore TenantRequestBudgetStore
+	// consumerPlanStore and its policy cache enforce consumer plans (ADR-847).
+	consumerPlanStore          ConsumerPlanStore
+	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
 	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
@@ -1163,6 +1166,9 @@ type Handler struct {
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
 	routeSets sync.Map // appID(string) → *routeLabelSet
+	// billingRouteSets bounds each app's billing route labels independently
+	// of route metrics, so opting out of metrics never changes billing.
+	billingRouteSets sync.Map // appID(string) → *routeLabelSet
 	// routeSetsPi (ADR-093) deduplicates Metrics.PreInstantiateAppRoute
 	// calls keyed by (appID, routeLabel). The closed `class` set is
 	// written once per app per route; the dedupe map is never
@@ -1258,6 +1264,10 @@ type Handler struct {
 	// A matched policy fails closed when the reader is unavailable;
 	// the daemon itself can still boot without a DB-IP file.
 	geoReader CountryReader
+	// asnReader resolves the asn match field (ADR-966); nil = absent.
+	asnReader ASNReader
+	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
+	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
 	// swap the gateway.App when a `kind=route` rule fires.
 	// It returns (App{}, false) when the slug is not found
@@ -1904,6 +1914,12 @@ type CountryReader interface {
 // allowed at boot, but any matched policy that needs it fails closed with 503.
 func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 	h.geoReader = r
+	return h
+}
+
+// WithEdgeRuleHitRecorder arms per-rule hit counting (ADR-960). nil disables it.
+func (h *Handler) WithEdgeRuleHitRecorder(r EdgeRuleHitRecorder) *Handler {
+	h.edgeRuleHits = r
 	return h
 }
 
@@ -2886,6 +2902,12 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		verifyRule = &cloned
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
+	if errors.Is(err, ErrJWTKeysUnavailable) {
+		// The IdP's keys could not be fetched: the token was never judged,
+		// so this is a dependency outage (503), not a client error (401).
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwks_unavailable")
+		return true
+	}
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
@@ -4425,12 +4447,12 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		if unavailableReason != "" {
 			if unavailableReason == "caller_ip_untrusted" {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-					"Caller IP not in trusted set", "X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a country-keyed throttle"))
+					"Caller IP not in trusted set", fmt.Sprintf("X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a %s-keyed throttle", rule.KeyBy)))
 				if h.edgeRuleAudit != nil {
 					h.edgeRuleAudit.Emit(r.Context(), "edge_rule.caller_ip_forged", nil, map[string]any{
 						"rule_id": rule.ID, "from_host": r.Host,
 						"xff_count": len(r.Header.Values("X-Forwarded-For")),
-						"policy":    "throttle_country",
+						"policy":    "throttle_" + rule.KeyBy,
 					})
 				}
 				if h.metrics != nil {
@@ -4481,22 +4503,37 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	// dimensional rules derive a deterministic bounded shard from the rule,
 	// dimension kind, and value inside AllowWithCentralConsumerKey.
 	centralKey := "rule:" + rule.ID + ":" + string(app.Plan)
-	allowed := false
+	// When MaxKeysPerRule == 0 (resolver-default; cmd-side
+	// compileThrottleRules substitutes the plan default) use the
+	// platform default as defence-in-depth against a direct-DB write.
+	cap := rule.MaxKeysPerRule
+	if cap <= 0 {
+		cap = api.ThrottleMaxKeysPerRuleDefault
+	}
+	charge := func(ctx context.Context) bool {
+		if dimensional {
+			return h.routeConsumerLimiter.AllowWithCentralConsumerKey(
+				ctx, bucketKey, rule.KeyBy, consumerID,
+				rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
+			)
+		}
+		return h.routeLimiter.AllowWithCentralParams(ctx, bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey)
+	}
+	var allowed bool
+	if len(rule.CountStatuses) > 0 && hasResponseStatusHooks(r.Context()) {
+		// ADR-965: admit while the bucket has a token; charge it only when
+		// the response status is one the rule counts.
+		allowed = h.throttleHasToken(rule, dimensional, bucketKey, consumerID, cap)
+		if allowed {
+			h.chargeThrottleOnResponse(r.Context(), rule, dimensional, charge)
+		}
+	} else {
+		allowed = charge(r.Context())
+	}
 	deniedLimiter := h.routeLimiter
 	deniedBucketKey := bucketKey
 	policy := rateLimitScopeRoute
 	if dimensional {
-		// When MaxKeysPerRule == 0 (resolver-default; cmd-side
-		// compileThrottleRules substitutes the plan default) use the
-		// platform default as defence-in-depth against a direct-DB write.
-		cap := rule.MaxKeysPerRule
-		if cap <= 0 {
-			cap = api.ThrottleMaxKeysPerRuleDefault
-		}
-		allowed = h.routeConsumerLimiter.AllowWithCentralConsumerKey(
-			r.Context(), bucketKey, rule.KeyBy, consumerID,
-			rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
-		)
 		deniedLimiter = h.routeConsumerLimiter
 		deniedBucketKey = h.routeConsumerLimiter.consumerBucketKey(bucketKey, consumerID)
 		policy = "per-consumer"
@@ -4507,10 +4544,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			}
 			h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, outcome)
 		}
-	} else {
-		allowed = h.routeLimiter.AllowWithCentralParams(
-			r.Context(), bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey,
-		)
 	}
 	if !allowed {
 		w.Header().Set("Retry-After", "1")
@@ -4571,6 +4604,23 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 // configured GeoIP database. A missing database, forged XFF, lookup error, or
 // uncovered address is unavailable and fails closed.
 func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
+	if rule.KeyBy == api.ThrottleKeyByComposite {
+		return h.resolveCompositeThrottleKey(r, rule)
+	}
+	return h.resolveThrottleField(r, rule.KeyBy, rule.JWTClaimName)
+}
+
+// resolveThrottleField resolves one dimension (a single key_by value or one
+// composite key field) with the same trust and fail-closed rules.
+func (h *Handler) resolveThrottleField(r *http.Request, keyBy, claimName string) (string, bool, string) {
+	rule := &EdgeRuleThrottleResolved{KeyBy: keyBy, JWTClaimName: claimName}
+	if rule.KeyBy == api.ThrottleKeyByIP {
+		clientIP, ok := clientIPFromTrustedXFF(r)
+		if !ok {
+			return "", false, "caller_ip_untrusted"
+		}
+		return throttleIPKey(clientIP), true, ""
+	}
 	if rule.KeyBy != api.ThrottleKeyByCountry {
 		value, ok := resolveConsumerKey(rule.KeyBy, rule.JWTClaimName, authenticatedFrom(r.Context()))
 		return value, ok, ""
@@ -4619,6 +4669,17 @@ func geoFailReason(lerr error, found bool) string {
 //
 // Returns (zero, false) on parse failure — the caller's deny
 // posture is enforced at the caller.
+// throttleIPKey is the key_by=ip bucket identity: the IPv4 address itself,
+// or the /64 an IPv6 client sits in. An IPv6 host usually controls a whole
+// /64, so keying on the full address would let it mint a fresh bucket per
+// request by rotating its interface identifier.
+func throttleIPKey(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
+}
+
 func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) != 1 {
@@ -5705,8 +5766,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
+	// ADR-962: the snapshot rule conditions read. The client IP is only the
+	// single trusted forwarded hop; country is looked up lazily.
+	trustedIP, _ := clientIPFromTrustedXFF(r)
+	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
+	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
+	// ADR-965: response-counted throttles charge once the status is known.
+	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() {
+		statusHooks.run(rec.status)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
 	}()
@@ -5782,18 +5852,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A two-phase edge-rule mutation fences this hostname before apid commits
-	// the new policy. Fail closed for the bounded convergence window so a
-	// request cannot slip through a gateway that still has the old generation.
-	if h.edgeRules != nil && h.edgeRules.Converging(host) {
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-			api.CodeCapacity, "Edge policy update in progress",
-			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
-		h.observe(r, rec.status, "", "", false, Target{})
-		return
-	}
-
 	// ADR-590: resolve source-host readiness before route substitution. Once
 	// ready, the ADR-089 route matcher may select another app whose auth,
 	// admission and proxy settings apply to the rest of the request.
@@ -5804,6 +5862,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	lookedApp, ok = h.backend.Lookup(r.Context(), appHost)
+
+	// A two-phase edge-rule mutation fences this hostname before apid commits
+	// the new policy. Fail closed for the bounded convergence window so a
+	// request cannot slip through a gateway that still has the old generation.
+	// The fence is scoped to the host's owner (resolved above, before any
+	// route substitution or edge rule runs): another account's mutation,
+	// even on match_host "*", cannot change this host's policy.
+	var fenceOwner string
+	if ok {
+		fenceOwner = lookedApp.AccountID
+	}
+	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceOwner) {
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeCapacity, "Edge policy update in progress",
+			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
 	// A source host under preparation cannot escape its readiness gate through
 	// a route rewrite to another workload or through an edge answer.
 	if ok && lookedApp.EnvironmentNotReady {
@@ -5870,6 +5947,19 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-847: a route probe pins one live deployment and keeps every customer
+	// auth gate; it is never combined with the smoke bypass.
+	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
+	if deploymentSmoke {
+		probeDeploymentID, probeToken, routeProbe = "", "", false
+	} else if probeHeaders && !routeProbe {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Route probe not authorized", "the probe challenge is unknown or expired on this gateway"))
+		return
+	}
+	if routeProbe {
+		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken))
+	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5962,7 +6052,10 @@ haveApp:
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	// Consumer-attributed traffic always carries a bounded billing route so
+	// rate cards can weight routes (ADR-846); consumer auth ran above.
+	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5972,6 +6065,9 @@ haveApp:
 		preLabel := observedRouteLabel(r.Method, path)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
+		}
+		if consumerAttributed {
+			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
 		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
@@ -6073,17 +6169,15 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	// Issue #561 / ADR-091 PR 5 — kind=jwt + kind=ip gates run
-	// AFTER rewrite/headers (so a rewritten path is the one being
-	// auth'd / IP-filtered) and BEFORE require_authn / public_auth
-	// (so a JWT-failed or IP-denied request never reaches the
-	// per-deployment auth chain — saves the bearer lookup on
-	// already-rejected traffic). Each helper writes the deny
-	// response + audit + metric on its own; caller MUST `return`.
-	if h.applyEdgeRuleJWT(w, r, app) {
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
-	}
+	// Issue #561 / ADR-091 PR 5 — the network-level gates (ingress
+	// allowlist, internal_only, kind=ip, kind=geo) run first, then kind=jwt,
+	// all AFTER rewrite/headers (so a rewritten path is the one being
+	// filtered / auth'd) and BEFORE require_authn / public_auth. ADR-091 D4
+	// makes kind=ip the cheap deny before auth: a request from a denied
+	// address or country must not cost a token parse, a JWKS fetch, or a
+	// JWT audit row first. Each helper writes the deny response + audit +
+	// metric on its own; caller MUST `return`.
+	//
 	// ADR-118: per-app ingress IP allowlist runs BEFORE applyEdgeRuleIP
 	// (kind=ip) so an IP-blocked request short-circuits all edge-rule
 	// work and never wakes a Firecracker microVM — same invariant as
@@ -6127,6 +6221,10 @@ haveApp:
 	// fail-open on lookup failure (see applyEdgeRuleGeo for the
 	// metric + audit + slog path).
 	if h.applyEdgeRuleGeo(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if h.applyEdgeRuleJWT(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6593,6 +6691,9 @@ haveApp:
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
+	if !h.enforceConsumerPlan(w, r, rec, app, deploymentSmoke) {
+		return
+	}
 	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
 		return
 	}
@@ -6679,6 +6780,13 @@ haveApp:
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Project release unavailable"
 		exactUnavailableDetail = "the selected release member has no routable target"
+	}
+	if routeProbe {
+		exactDeploymentID = probeDeploymentID
+		exactDeploymentScope = app.Scope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Route probe unavailable"
+		exactUnavailableDetail = "the probed deployment has no routable target"
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -7041,6 +7149,10 @@ haveApp:
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
+	} else if routeProbe && target.DeploymentID == probeDeploymentID {
+		// The same upstream-only proof lets the prober attribute a response
+		// to the probed deployment (ADR-847).
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -7691,7 +7803,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	if h.requestTelemetry != nil || h.usageOutbox != nil {
+	// Route probes (ADR-847) record their own results; they never become
+	// customer telemetry or usage.
+	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
@@ -7786,6 +7900,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 			}
+			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
 				// cannot become billable via either the outbox or debugger fallback.
@@ -7795,13 +7910,20 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				if status >= 400 {
 					errorCount = 1
 				}
+				billableUnits := int64(1)
+				if platformFailure {
+					billableUnits = 0
+				}
 				usageEvent := usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
 					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
 					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
 					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
+				}
+				if row.ConsumerID != "" {
+					usageEvent.BillingRoute = billingRouteFrom(r)
 				}
 				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 					usageEvent.DiscoveredRoute = auditRouteFrom(r)
@@ -7857,9 +7979,16 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
+					// The debugger fallback bills every row it writes, so a
+					// platform failure must not reach it.
+					row.UsageOutboxed = platformFailure
 				} else {
 					row.UsageOutboxed = true
 				}
+			} else if platformFailure {
+				// Without an outbox the debugger fallback is the only ledger
+				// writer and bills every row; keep platform failures out of it.
+				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
 				h.requestTelemetry.RecordFromObserve(row)

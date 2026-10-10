@@ -127,7 +127,7 @@ func writeMarkdownExamples(w io.Writer, examples []string) {
 
 func mdSynopsis(c cliCommand) string {
 	parts := []string{"gregale", c.Name}
-	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals {
+	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals && c.Name != "logs" {
 		parts = append(parts, "[<subcommand>]")
 	}
 	parts = append(parts, c.Positionals...)

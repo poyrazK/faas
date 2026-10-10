@@ -43,6 +43,13 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(
 		t.Fatal(err)
 	}
 	windows := routehealth.Windows(time.Now())
+	// The report reads the database clock after setup. If the ingestion
+	// allowance boundary passes meanwhile, its two closed windows move ahead
+	// by one minute; seed that next window too so both remain comparable.
+	seedWindows := append(windows, api.RouteHealthWindowEvidence{
+		Start: windows[len(windows)-1].End,
+		End:   windows[len(windows)-1].End.Add(api.RouteHealthWindow),
+	})
 	q := &sqlc.Queries{}
 	insert := func(dep, tenantID, method, path, wakeID, instanceID string, at time.Time, count, latency, guest, spanMS int32) {
 		t.Helper()
@@ -73,7 +80,7 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(
 			t.Fatal(err)
 		}
 	}
-	for _, w := range windows {
+	for _, w := range seedWindows {
 		insert(other.ID, tenant.ID, "POST", "/checkout", "", "", w.Start, 999, 9999, 9999, 9999)
 		wake, instance := uuid.NewString(), uuid.NewString()
 		emitWake(wake, instance, app.ID, w.Start, 250)
@@ -96,7 +103,7 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(
 			insert(dep, "", "POST", "/checkout", "", "", w.Start, 999, 9999, 9999, 9999)
 			insert(dep, tenant.ID, "GET", "/checkout", "", "", w.Start, 999, 9999, 9999, 9999)
 			insert(dep, tenant.ID, "POST", "/checkout/123", "", "", w.Start, 999, 9999, 9999, 9999)
-			insert(dep, tenant.ID, "POST", "/checkout", "", "", windows[1].End, 999, 9999, 9999, 9999)
+			insert(dep, tenant.ID, "POST", "/checkout", "", "", seedWindows[len(seedWindows)-1].End, 999, 9999, 9999, 9999)
 		}
 	}
 	opts := api.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", Signal: "latency", CustomerID: tenant.ID}

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
 
 T = TypeVar("T", bound="OperationWorkflowStateHistoryEntry")
@@ -35,6 +36,8 @@ class OperationWorkflowStateHistoryEntry:
     contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
+    resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+    """Current retained-evidence status for verification obligations in this history report."""
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
     """At this retained historical revision, full replacement snapshot of direct prerequisite references."""
     dependencies_only: bool | Unset = UNSET
@@ -62,7 +65,7 @@ class OperationWorkflowStateHistoryEntry:
     """At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and
     no milestone evidence; not a business transition."""
     from_state: str | Unset = UNSET
-    """App state immediately before this retained revision"""
+    """App state immediately before this retained revision, when the transition was declared."""
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
     """Account-owner tenant identifier attached to this report in operator feeds."""
@@ -85,6 +88,13 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
+
+        resolution_verifications: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.resolution_verifications, Unset):
+            resolution_verifications = []
+            for resolution_verifications_item_data in self.resolution_verifications:
+                resolution_verifications_item = resolution_verifications_item_data.to_dict()
+                resolution_verifications.append(resolution_verifications_item)
 
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -151,6 +161,8 @@ class OperationWorkflowStateHistoryEntry:
                 "published_at": published_at,
             }
         )
+        if resolution_verifications is not UNSET:
+            field_dict["resolution_verifications"] = resolution_verifications
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if dependencies_only is not UNSET:
@@ -186,6 +198,7 @@ class OperationWorkflowStateHistoryEntry:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -205,6 +218,17 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
+
+        _resolution_verifications = d.pop("resolution_verifications", UNSET)
+        resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+        if _resolution_verifications is not UNSET:
+            resolution_verifications = []
+            for resolution_verifications_item_data in _resolution_verifications:
+                resolution_verifications_item = OperationWorkflowResolutionVerification.from_dict(
+                    resolution_verifications_item_data
+                )
+
+                resolution_verifications.append(resolution_verifications_item)
 
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -280,6 +304,7 @@ class OperationWorkflowStateHistoryEntry:
             contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
+            resolution_verifications=resolution_verifications,
             depends_on=depends_on,
             dependencies_only=dependencies_only,
             outcome_code=outcome_code,

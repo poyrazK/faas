@@ -39,7 +39,7 @@ func (h *Handler) verifyHostingCandidate(ctx context.Context, app state.App, dep
 		return fmt.Errorf("hosting verification interrupted: %w", err)
 	}
 	if code := apihostingreceipt.VerificationRecoveryCode(smokeErr); code != "" {
-		return h.retryHostingVerification(ctx, app, dep, progress, started, code, smokeErr)
+		return h.retryHostingVerification(ctx, app, dep, progress, started, code, smokeErr, smoke.RouteChecks)
 	}
 	if err := h.completeHostingVerification(ctx, dep, progress); err != nil {
 		return err

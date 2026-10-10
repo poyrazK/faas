@@ -72,23 +72,37 @@ class SelectTest(unittest.TestCase):
 
 
 class ShardTest(unittest.TestCase):
+    def test_apid_uses_its_own_postgres_service_shards(self):
+        dirs = ["cmd/apid", "pkg/state", "pkg/api", "pkg/sched"]
+        shards = [ap.shard(dirs, i, 6) for i in range(1, 7)]
+        self.assertEqual(shards[3:], [["cmd/apid"]] * 3)
+        self.assertEqual(shards[:3], [
+            [d for d in ap.shard(dirs, i, 3) if d != "cmd/apid"]
+            for i in range(1, 4)
+        ])
+        self.assertEqual(sorted(d for s in shards[:3] for d in s),
+                         sorted(d for d in dirs if d not in {"pkg/state", "cmd/apid"}))
+        self.assertNotIn("cmd/apid", [d for s in shards[:3] for d in s])
+
     def test_shards_partition_the_set_deterministically(self):
-        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/apid"]
+        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/gregale"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
         flat = sorted(d for s in shards for d in s)
         self.assertEqual(flat, sorted(dirs))
         self.assertEqual(shards, [ap.shard(dirs, i, 3) for i in (1, 2, 3)])
 
     def test_heaviest_package_gets_a_shard_to_itself(self):
-        dirs = ["cmd/apid", "pkg/x", "pkg/y"]
+        dirs = ["cmd/gregale", "pkg/x", "pkg/y"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
-        self.assertIn(["cmd/apid"], shards)
+        self.assertIn(["cmd/gregale"], shards)
 
     def test_split_packages_are_never_assigned_whole(self):
-        # pkg/state runs by test name across every shard instead.
-        shards = [ap.shard(["pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
-        self.assertNotIn("pkg/state", [d for s in shards for d in s])
-        self.assertIn("pkg/state", ap.SPLIT_PACKAGES)
+        # API and state tests run by name across every shard instead.
+        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3)
+                  for i in (1, 2, 3)]
+        self.assertEqual([d for s in shards for d in s], ["pkg/x"])
+        for pkg in ("cmd/apid", "pkg/state"):
+            self.assertIn(pkg, ap.SPLIT_PACKAGES)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,23 @@ func TestManifestDefaults(t *testing.T) {
 	if m.EffectiveWorkingDir() != "/" {
 		t.Errorf("workdir default = %q, want /", m.EffectiveWorkingDir())
 	}
+	if got := m.EffectiveServiceBindingTransport(); got != ServiceBindingTransportHTTP {
+		t.Errorf("service binding transport default = %q, want %q", got, ServiceBindingTransportHTTP)
+	}
+}
+
+func TestAppManifestServiceBindingTransportValidation(t *testing.T) {
+	manifest := AppManifest{Entrypoint: []string{"/app"}, ServiceBindingTransport: ServiceBindingTransportHTTPS}
+	if got := manifest.EffectiveServiceBindingTransport(); got != ServiceBindingTransportHTTPS {
+		t.Fatalf("effective service binding transport = %q, want %q", got, ServiceBindingTransportHTTPS)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("valid HTTPS service binding transport: %v", err)
+	}
+	manifest.ServiceBindingTransport = ServiceBindingTransport("cleartext")
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("accepted unsupported service binding transport")
+	}
 }
 
 func TestAppManifestWorkerMode(t *testing.T) {

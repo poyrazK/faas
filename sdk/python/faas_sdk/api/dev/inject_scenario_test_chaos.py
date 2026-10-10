@@ -80,7 +80,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: InjectScenarioTestChaosRequest,
 ) -> Response[InjectScenarioTestChaosResponse | Problem]:
-    """Install a bounded request-level fault plan for an isolated scenario run.
+    """Install a bounded fault plan for an isolated scenario run.
 
      Rules apply only to authenticated internal service calls between registered members, expire
     automatically, and cannot affect production or public traffic.
@@ -116,7 +116,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: InjectScenarioTestChaosRequest,
 ) -> InjectScenarioTestChaosResponse | Problem | None:
-    """Install a bounded request-level fault plan for an isolated scenario run.
+    """Install a bounded fault plan for an isolated scenario run.
 
      Rules apply only to authenticated internal service calls between registered members, expire
     automatically, and cannot affect production or public traffic.
@@ -147,7 +147,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: InjectScenarioTestChaosRequest,
 ) -> Response[InjectScenarioTestChaosResponse | Problem]:
-    """Install a bounded request-level fault plan for an isolated scenario run.
+    """Install a bounded fault plan for an isolated scenario run.
 
      Rules apply only to authenticated internal service calls between registered members, expire
     automatically, and cannot affect production or public traffic.
@@ -181,7 +181,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: InjectScenarioTestChaosRequest,
 ) -> InjectScenarioTestChaosResponse | Problem | None:
-    """Install a bounded request-level fault plan for an isolated scenario run.
+    """Install a bounded fault plan for an isolated scenario run.
 
      Rules apply only to authenticated internal service calls between registered members, expire
     automatically, and cannot affect production or public traffic.

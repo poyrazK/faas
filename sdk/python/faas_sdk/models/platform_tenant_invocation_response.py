@@ -28,7 +28,7 @@ class PlatformTenantInvocationResponse:
     attempts: int
     created_at: datetime.datetime
     result: Any | Unset = UNSET
-    """JSON result returned by the guest"""
+    """JSON result returned by the guest, when available."""
     last_error: str | Unset = UNSET
     outcome: None | str | Unset = UNSET
     completed_at: datetime.datetime | None | Unset = UNSET

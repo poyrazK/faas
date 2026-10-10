@@ -196,6 +196,45 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_plan_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_plan_assignments",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_plans",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_requests_per_minute",
+      "max_units_per_month",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "api_consumer_rate_cards",
     "columns": [
       "account_id",
@@ -204,10 +243,27 @@
       "currency",
       "effective_from",
       "id",
+      "included_units_per_month",
+      "plan_id",
       "price_millicents_per_unit",
+      "route_weights",
+      "tiers",
       "unit"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "consumer_key",
+      "route",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_usage_events",
@@ -274,6 +330,7 @@
       "period_end",
       "period_start",
       "priced",
+      "revision",
       "status",
       "unpriced_units"
     ],
@@ -443,10 +500,14 @@
       "app_id",
       "created_at",
       "environment_id",
+      "job_id",
       "runtime",
+      "schedule",
+      "service_bindings",
       "source",
       "source_revision",
-      "updated_at"
+      "updated_at",
+      "variables"
     ],
     "kind": "configuration"
   },
@@ -2311,6 +2372,7 @@
       "deployed_from_ip",
       "deployed_via",
       "disable_startup_cpu_boost",
+      "environment_workload_held",
       "environment_workload_runtime",
       "error",
       "error_code",
@@ -2502,6 +2564,62 @@
     "kind": "operational"
   },
   {
+    "table": "edge_rule_events",
+    "columns": [
+      "app_id",
+      "client_ip",
+      "country",
+      "host",
+      "id",
+      "method",
+      "occurred_at",
+      "outcome",
+      "path",
+      "request_id",
+      "rule_id",
+      "user_agent"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "edge_rule_hit_counts",
+    "columns": [
+      "app_id",
+      "bucket_start",
+      "hits",
+      "outcome",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "edge_rule_lists",
+    "columns": [
+      "account_id",
+      "created_at",
+      "description",
+      "id",
+      "items",
+      "kind",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "edge_rule_set_versions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "id",
+      "rule_count",
+      "rules",
+      "rules_sha256",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "edge_rules",
     "columns": [
       "account_id",
@@ -2509,14 +2627,19 @@
       "app_id",
       "cors_preset_id",
       "created_at",
+      "description",
       "enabled",
+      "expires_at",
       "id",
       "kind",
       "manifest_key",
+      "match_expr",
       "match_headers",
       "match_host",
       "match_methods",
       "match_path",
+      "mode",
+      "name",
       "priority",
       "updated_at",
       "validate_mode"
@@ -2559,6 +2682,17 @@
       "token_hash"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "entity_outbox_acceptances",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "fingerprint",
+      "message_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "environment_desired_revisions",
@@ -2770,8 +2904,22 @@
     "kind": "configuration"
   },
   {
+    "table": "environment_qualification_config_receipts",
+    "columns": [
+      "api_env_sha256",
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_executions",
     "columns": [
+      "capture_instance_id",
       "cleanup_token",
       "created_at",
       "dispatch_started",
@@ -2780,6 +2928,87 @@
       "request_id",
       "retired_at",
       "retirement"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_framework_ready_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "recorded_at",
+      "request_id",
+      "runtime",
+      "warmup_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_job_smoke_receipts",
+    "columns": [
+      "attempt",
+      "error_class",
+      "exit_code",
+      "graph_id",
+      "instance_id",
+      "policy_id",
+      "policy_sha256",
+      "recorded_at",
+      "request_id",
+      "resource",
+      "result_sha256",
+      "signal"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_restore_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "instance_id",
+      "recorded_at",
+      "request_id",
+      "runtime_inputs"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_restore_reservations",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "created_at",
+      "instance_id",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_smoke_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "graph_id",
+      "instance_id",
+      "policy_id",
+      "policy_sha256",
+      "recorded_at",
+      "request_id",
+      "resource",
+      "result_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_snapshot_receipts",
+    "columns": [
+      "inputs",
+      "instance_id",
+      "recorded_at",
+      "snapshot"
     ],
     "kind": "operational"
   },
@@ -2823,6 +3052,59 @@
       "worker_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "environment_workload_serving_queue_acks",
+    "columns": [
+      "acknowledged_at",
+      "app_id",
+      "binding_id",
+      "deployment_id",
+      "graph_id",
+      "invocation_id",
+      "mode",
+      "trigger_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_receipts",
+    "columns": [
+      "expected_gateways",
+      "graph_id",
+      "intent_version",
+      "phase",
+      "plan_hash",
+      "release_set_id",
+      "revision_id",
+      "served_at",
+      "source_generation",
+      "source_id",
+      "started_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_route_acks",
+    "columns": [
+      "acknowledged_at",
+      "graph_id",
+      "node_name",
+      "route_generation"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_workload_serving_routes",
+    "columns": [
+      "app_id",
+      "cutover_required",
+      "deployment_id",
+      "graph_id",
+      "route_generation"
+    ],
+    "kind": "operational"
   },
   {
     "table": "event_delivery_capacity",
@@ -4589,6 +4871,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_realtime_channel_batches",
+    "columns": [
+      "batch_id",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "first_sequence",
+      "message_count",
+      "payload_hash"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_channel_heads",
     "columns": [
       "channel",
@@ -4604,10 +4899,29 @@
       "channel",
       "created_at",
       "data",
+      "deleted",
       "endpoint_id",
       "idempotency_key",
       "is_binary",
-      "sequence"
+      "message_event",
+      "metadata",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_channel_reducers",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "entities",
+      "entity_expirations",
+      "entity_versions",
+      "next_expiry",
+      "sequence",
+      "updated_at"
     ],
     "kind": "customer_data"
   },
@@ -4662,6 +4976,19 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_channel_snapshots",
+    "columns": [
+      "channel",
+      "data",
+      "endpoint_id",
+      "expires_at",
+      "is_binary",
+      "sequence",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -4670,6 +4997,35 @@
       "lease_token",
       "node_id",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_deliveries",
+    "columns": [
+      "ack_supported",
+      "acknowledged_at",
+      "connection_id",
+      "created_at",
+      "endpoint_id",
+      "message_id",
+      "node_id",
+      "queue_status",
+      "queued_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_receipts",
+    "columns": [
+      "created_at",
+      "dispatch_complete",
+      "dispatch_lease_until",
+      "endpoint_id",
+      "expires_at",
+      "message_id",
+      "payload_fingerprint",
+      "summary"
     ],
     "kind": "operational"
   },
@@ -4706,6 +5062,18 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_durable_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_endpoints",
     "columns": [
       "account_id",
@@ -4732,6 +5100,271 @@
       "max_message_bytes",
       "message_path",
       "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_event_schemas",
+    "columns": [
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_type",
+      "schema",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_inbox_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "gap_reported",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_fallbacks",
+    "columns": [
+      "category",
+      "collapse_key",
+      "deadline",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "message_id",
+      "not_before",
+      "principal",
+      "priority",
+      "sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_heads",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "next_sequence",
+      "oldest_sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_messages",
+    "columns": [
+      "channel",
+      "created_at",
+      "data",
+      "deleted",
+      "endpoint_id",
+      "fallback_after_seconds",
+      "idempotency_key",
+      "is_binary",
+      "message_event",
+      "metadata",
+      "notification_category",
+      "notification_collapse_key",
+      "notification_group_key",
+      "notification_group_label",
+      "notification_not_before",
+      "notification_priority",
+      "notification_ttl_seconds",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_notification_timeline",
+    "columns": [
+      "attempts",
+      "delivery_id",
+      "device",
+      "endpoint_id",
+      "event",
+      "id",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "occurred_at",
+      "principal",
+      "reason",
+      "status_code"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_presence_leases",
+    "columns": [
+      "channel",
+      "connection_id",
+      "endpoint_id",
+      "expires_at",
+      "member_id",
+      "node_id",
+      "principal",
+      "state",
+      "state_updated_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_push_deliveries",
+    "columns": [
+      "attempts",
+      "category",
+      "code",
+      "collapse_key",
+      "created_at",
+      "device",
+      "digest_at",
+      "digest_count",
+      "digest_id",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "hard_expires_at",
+      "id",
+      "lease",
+      "lease_until",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "principal",
+      "priority",
+      "provider",
+      "sequence",
+      "status",
+      "status_code",
+      "updated_at",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_push_devices",
+    "columns": [
+      "device",
+      "enabled",
+      "endpoint_id",
+      "fingerprint",
+      "principal",
+      "provider",
+      "sealed",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_preferences",
+    "columns": [
+      "endpoint_id",
+      "preferences",
+      "principal",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_providers",
+    "columns": [
+      "enabled",
+      "endpoint_id",
+      "provider",
+      "sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_rate_reservations",
+    "columns": [
+      "digest_id",
+      "endpoint_id",
+      "principal",
+      "reserved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_read_progress",
+    "columns": [
+      "endpoint_id",
+      "inbox",
+      "principal",
+      "sequence",
+      "stream",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_schedule_history",
+    "columns": [
+      "attempts",
+      "channel",
+      "completed_occurrences",
+      "cycle_attempts",
+      "deliver_at",
+      "endpoint_id",
+      "event",
+      "failure_code",
+      "next_attempt_at",
+      "occurred_at",
+      "occurrence",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_schedules",
+    "columns": [
+      "attempts",
+      "backoff_seconds",
+      "channel",
+      "completed_occurrences",
+      "conditions",
+      "created_at",
+      "cycle_attempts",
+      "data",
+      "deliver_at",
+      "end_at",
+      "endpoint_id",
+      "initial_deliver_at",
+      "interval_seconds",
+      "is_binary",
+      "last_attempt_at",
+      "last_error",
+      "max_attempts",
+      "max_occurrences",
+      "metadata",
+      "next_attempt_at",
+      "occurrence",
+      "on_condition_failure",
+      "schedule_group",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "updated_at",
+      "version"
     ],
     "kind": "configuration"
   },
@@ -7466,6 +8099,7 @@
       "last_deployment_id",
       "last_healthy_deployment",
       "next_check_at",
+      "on_violation",
       "revision",
       "routes",
       "updated_at"
@@ -7482,6 +8116,30 @@
       "idempotency_key",
       "receipt",
       "request_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_observations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "deployment_id",
+      "method",
+      "path",
+      "requests",
+      "server_errors",
+      "unauthenticated",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_rounds",
+    "columns": [
+      "app_id",
+      "claimed_at",
+      "window_start"
     ],
     "kind": "operational"
   },
@@ -7944,11 +8602,25 @@
     "kind": "configuration"
   },
   {
+    "table": "scenario_test_chaos_matches",
+    "columns": [
+      "account_id",
+      "caller_app_id",
+      "generation",
+      "matches",
+      "rule_id",
+      "run_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_test_members",
     "columns": [
       "account_id",
       "app_id",
       "chaos_expires_at",
+      "chaos_generation",
       "chaos_rules",
       "run_id",
       "workload_name"
@@ -8443,10 +9115,75 @@
     ]
   },
   {
+    "table": "workflow_automation_failure_guards",
+    "columns": [
+      "app_id",
+      "generation",
+      "monitoring_since",
+      "name",
+      "paused_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_history",
+    "columns": [
+      "actor_account_id",
+      "app_id",
+      "completed_runs",
+      "failures",
+      "generation",
+      "id",
+      "name",
+      "policy_version",
+      "reason",
+      "recorded_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "min_completed_runs",
+      "name",
+      "version",
+      "window_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_publish_policies",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "mode",
+      "version"
+    ]
+  },
+  {
+    "table": "workflow_automation_publish_receipts",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "api_key_id",
+      "app_id",
+      "evidence",
+      "expires_at",
+      "name",
+      "policy_version",
+      "token_hash"
+    ]
+  },
+  {
     "table": "workflow_automation_revisions",
     "kind": "configuration",
     "columns": [
       "app_id",
+      "check_evidence",
       "definition",
       "legacy_snapshot",
       "name",

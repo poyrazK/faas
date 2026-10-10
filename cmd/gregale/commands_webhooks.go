@@ -485,18 +485,30 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 // --event flag. The delivery ledger retains historical values, while new
 // subscriptions expose only events that the running platform can emit.
 var validAppWebhookEvents = map[string]struct{}{
-	"app.parked":                {},
-	"app.woken":                 {},
-	"app.health.changed":        {},
-	"deployment.live":           {},
-	"deployment.failed":         {},
-	"rollout.completed":         {},
-	"rollout.aborted":           {},
-	"job.finished":              {},
-	"usage_statement.finalized": {},
+	"realtime.notification.sent":       {},
+	"realtime.notification.failed":     {},
+	"realtime.notification.expired":    {},
+	"realtime.notification.cancelled":  {},
+	"realtime.notification.superseded": {},
+
+	"realtime.message.read":            {},
+	"realtime.inbox.fallback_required": {},
+	"realtime.inbox.acknowledged":      {},
+	"realtime.inbox.gap":               {},
+	"app.parked":                       {},
+	"app.woken":                        {},
+	"deployment.live":                  {},
+	"deployment.failed":                {},
+	"rollout.completed":                {},
+	"rollout.aborted":                  {},
+	"job.finished":                     {},
+	"usage_statement.finalized":        {},
+	"app.health.changed":               {},
 }
 
 var webhookEventVocab = []string{
+	"realtime.message.read",
+	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
 	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",

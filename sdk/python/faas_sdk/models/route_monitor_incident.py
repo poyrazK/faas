@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.route_monitor_deployment_baseline import RouteMonitorDeploymentBaseline
     from ..models.route_monitor_evidence import RouteMonitorEvidence
     from ..models.route_monitor_incident_escalation import RouteMonitorIncidentEscalation
+    from ..models.route_monitor_incident_rollback import RouteMonitorIncidentRollback
     from ..models.route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
     from ..models.route_monitor_report import RouteMonitorReport
 
@@ -59,6 +60,9 @@ class RouteMonitorIncident:
     """Newest newly violated route/signal transitions with bounded evidence captured at each transition."""
     escalations_truncated: bool | Unset = UNSET
     """True when older escalation records were dropped to preserve the newest transition details and incident size."""
+    rollback: RouteMonitorIncidentRollback | Unset = UNSET
+    """The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is
+    transient while the checked rollback is requested."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +119,10 @@ class RouteMonitorIncident:
 
         escalations_truncated = self.escalations_truncated
 
+        rollback: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback, Unset):
+            rollback = self.rollback.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -145,6 +153,8 @@ class RouteMonitorIncident:
             field_dict["escalations"] = escalations
         if escalations_truncated is not UNSET:
             field_dict["escalations_truncated"] = escalations_truncated
+        if rollback is not UNSET:
+            field_dict["rollback"] = rollback
 
         return field_dict
 
@@ -153,6 +163,7 @@ class RouteMonitorIncident:
         from ..models.route_monitor_deployment_baseline import RouteMonitorDeploymentBaseline
         from ..models.route_monitor_evidence import RouteMonitorEvidence
         from ..models.route_monitor_incident_escalation import RouteMonitorIncidentEscalation
+        from ..models.route_monitor_incident_rollback import RouteMonitorIncidentRollback
         from ..models.route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
         from ..models.route_monitor_report import RouteMonitorReport
 
@@ -225,6 +236,13 @@ class RouteMonitorIncident:
 
         escalations_truncated = d.pop("escalations_truncated", UNSET)
 
+        _rollback = d.pop("rollback", UNSET)
+        rollback: RouteMonitorIncidentRollback | Unset
+        if isinstance(_rollback, Unset):
+            rollback = UNSET
+        else:
+            rollback = RouteMonitorIncidentRollback.from_dict(_rollback)
+
         route_monitor_incident = cls(
             version=version,
             id=id,
@@ -243,6 +261,7 @@ class RouteMonitorIncident:
             timeline_truncated=timeline_truncated,
             escalations=escalations,
             escalations_truncated=escalations_truncated,
+            rollback=rollback,
         )
 
         route_monitor_incident.additional_properties = d

@@ -76,7 +76,7 @@ func TestPlatformTenantStatementCrossAppAndLateUsage(t *testing.T) {
 		t.Fatalf("handoff: %d %s", claim.Code, claim.Body)
 	}
 	appStatement, _, err := e.store.CreateAPIConsumerUsageStatement(context.Background(), state.APIConsumerUsageStatementInput{
-		AccountID: e.acct.ID, AppID: appA, ConsumerID: consumerA.ID, PeriodStart: minute, PeriodEnd: end,
+		AccountID: e.acct.ID, AppID: appA, ConsumerID: consumerA.ID, Revision: 1, PeriodStart: minute, PeriodEnd: end,
 		Currency: "EUR", BillableUnits: 3, AmountMillicents: 30, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: minute, BillableUnits: 3, RateCardID: first.Lines[0].RateCardID,
 			Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 30}},

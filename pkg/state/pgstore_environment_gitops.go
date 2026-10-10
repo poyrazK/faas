@@ -317,13 +317,13 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 		return err
 	}
 	q := sqlc.New()
+	source, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(lease.Source.ID))
+	if err != nil {
+		return mapErr(err)
+	}
 	if status == "converged" {
 		var verified environmentsync.Plan
 		_ = json.Unmarshal(plan, &verified) // validated before opening the transaction
-		source, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(lease.Source.ID))
-		if err != nil {
-			return mapErr(err)
-		}
 		if source.IntentVersion != verified.ObservedVersion {
 			return ErrConflict
 		}
@@ -361,6 +361,15 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 			return mapErr(err)
 		}
 	}
+	rows, err := q.ListEnvironmentGitOpsOverrideExpirations(ctx, tx, source.ID)
+	if err != nil {
+		return mapErr(err)
+	}
+	overrides := make([]environmentsync.Override, 0, len(rows))
+	for _, row := range rows {
+		overrides = append(overrides, environmentsync.Override{Resource: row.Resource, Path: row.FieldPath, ExpiresAt: row.ExpiresAt.Time})
+	}
+	next = gitOpsNextAttempt(lease, plan, source.IntentVersion, overrides, now, next)
 	if _, err := q.ReleaseEnvironmentGitOpsLease(ctx, tx, sqlc.ReleaseEnvironmentGitOpsLeaseParams{SourceID: mustPgUUID(lease.Source.ID), LeaseToken: lease.LeaseToken, NextAttemptAt: gitOpsTime(next)}); err != nil {
 		return mapErr(err)
 	}

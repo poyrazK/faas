@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -103,5 +104,30 @@ func TestMemAppWebhookEventOutboxHealthTracksPendingOnly(t *testing.T) {
 	cleared, err := store.AppWebhookEventOutboxHealth(ctx)
 	if err != nil || cleared.PendingCount != 0 || cleared.OldestPendingAt != nil {
 		t.Fatalf("empty event outbox health = %+v, %v", cleared, err)
+	}
+}
+
+func TestMemAppParkRejectsChangedDeployment(t *testing.T) {
+	store, ctx, _, app := webhookFixture(t)
+	first, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:first", Status: DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:second", Status: DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppActive, first.ID); !errors.Is(err, ErrConflict) || changed {
+		t.Fatalf("stale park: changed=%v err=%v", changed, err)
+	}
+	current, _ := store.AppByID(ctx, app.ID)
+	if current.Status != AppActive {
+		t.Fatalf("stale park changed status: %s", current.Status)
+	}
+	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppActive, second.ID); err != nil || !changed {
+		t.Fatalf("current park: changed=%v err=%v", changed, err)
+	}
+	if _, _, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppEvictedCold, first.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale retry: %v", err)
 	}
 }

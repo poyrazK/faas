@@ -1,6 +1,26 @@
 package gateway
 
-import "github.com/onebox-faas/faas/pkg/usageoutbox"
+import (
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
+)
+
+// platformFailureUnbillable reports whether a request ended in a 5xx that the
+// guest never started answering: wake/capacity failures, queue timeouts,
+// unreachable or vanished targets, and other gateway-authored errors. The
+// first-byte recorder is stamped only after upstream response headers arrive
+// (proxy and bridge paths alike), so an absent stamp proves the platform, not
+// the customer's application, produced the failure. Such requests remain
+// visible as request/error counts but carry zero billable units. A 5xx the
+// guest itself returned is still billable.
+func platformFailureUnbillable(r *http.Request, status int) bool {
+	if status < http.StatusInternalServerError {
+		return false
+	}
+	_, guestResponded := FirstByteFrom(r)
+	return !guestResponded
+}
 
 // unattributedUsage reports whether a consumer-usage event carries nothing any
 // reader uses (ADR-234 amendment). That means no consumer, no platform tenant,

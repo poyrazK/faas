@@ -141,12 +141,29 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_DURABLE_ENTITIES_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 operator invocation preview; explicit 1 requires an app allowlist and private conditional-state backend; off pending native and live-provider qualification |
 | `FAAS_DURABLE_ENTITY_ALARMS_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in alarm delivery; requires the invocation preview and private delimiter listing |
-| `FAAS_DURABLE_ENTITY_APPS` | apid | `default` |  |  | `` | ADR-712 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_APPS` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-712 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
 | `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-712 configured private conditional-state backend ID; required only when the invocation preview is enabled; S3 ETags or native GCS generations |
 | `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-712 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BACKUPS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-712 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
+| `FAAS_DURABLE_ENTITY_HEALTH_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
 | `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-712 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
+| `FAAS_DURABLE_ENTITY_OUTBOX_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE` | apid | `default` |  |  | `` | Legacy startup validator registry; unused with shared artifact storage. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ACCESS_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ARTIFACTS_ENABLED` | apid, builderd, imaged, schedd, shared | `default` |  | 0 | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_BUCKET` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ENDPOINT` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_GCS_IMPERSONATE_SERVICE_ACCOUNT` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_PROVIDER` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_REGION` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_SECRET_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_SESSION_TOKEN` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
@@ -159,6 +176,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH` | schedd | `default` |  | 0 | `` | explicit opt-in for preview qualification dispatch; leave off until dedicated native Linux acceptance passes |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL` | schedd | `default` |  |  | `url` | optional local private HTTPS service proxy URL for qualification; unset rejects HTTPS service-bound graphs before VM admission |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL` | schedd | `default` |  |  | `url` | optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission |
 | `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED` | apid | `default` |  | false | `` | ADR-568 opt-in continuous Git-owned environment drift reporting; disabled unless explicitly true; grants no intent execution or qualification dispatch |
 | `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED` | apid | `default` |  | true | `` | ADR-568 immutable definition polling and reviewed source approval for registered sources; explicit false disables polling; grants no environment execution authority |
 | `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` | schedd | `default` |  | 1 | `` | ADR-647 independent event recipient routing defaults on when unset; explicit 1 also enables, other nonempty values disable adoption; set 0 during mixed-version API/scheduler upgrades; disabling continues draining adopted receipts |
@@ -200,6 +220,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
+| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
@@ -405,6 +426,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
 | `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
 | `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
@@ -451,6 +473,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
+| `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-911 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

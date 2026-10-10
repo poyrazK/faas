@@ -1,0 +1,74 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestGreetAndAdd(t *testing.T) {
+	_, greeting, err := greet(nil, nil, greetInput{Name: "Ada"})
+	if err != nil || greeting.Greeting != "Hello, Ada!" {
+		t.Fatalf("greet() = (%+v, %v), want Ada greeting", greeting, err)
+	}
+	if _, _, err := greet(nil, nil, greetInput{}); err == nil {
+		t.Fatal("greet() accepted an empty name")
+	}
+	_, sum, err := add(nil, nil, addInput{A: 2.5, B: 3})
+	if err != nil || sum.Result != 5.5 {
+		t.Fatalf("add() = (%+v, %v), want 5.5", sum, err)
+	}
+}
+
+func TestLoadConfigFailsClosedForUnsupportedOrAmbiguousConfig(t *testing.T) {
+	base := `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","legacy":false,"allowed_origins":[],"auth":{"mode":"open"}}`
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "legacy", body: `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","legacy":true,"allowed_origins":[],"auth":{"mode":"open"}}`},
+		{name: "health route collision", body: `{"version":1,"endpoint":"/healthz","transport":"streamable-http","mode":"stateless","allowed_origins":[],"auth":{"mode":"open"}}`},
+		{name: "invalid origin", body: `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":["https://trusted.example:bad"],"auth":{"mode":"open"}}`},
+		{name: "empty origin port", body: `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":["https://trusted.example:"],"auth":{"mode":"open"}}`},
+		{name: "multiple JSON values", body: base + ` {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "gregale-mcp.json")
+			if err := os.WriteFile(file, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadConfig(file); err == nil {
+				t.Fatal("loadConfig() accepted unsupported or ambiguous configuration")
+			}
+		})
+	}
+}
+
+func TestOriginPolicy(t *testing.T) {
+	handler := originPolicy([]string{"https://trusted.example"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		name   string
+		origin string
+		want   int
+	}{
+		{name: "non-browser client", want: http.StatusNoContent},
+		{name: "allowed browser origin", origin: "https://trusted.example", want: http.StatusNoContent},
+		{name: "untrusted origin", origin: "https://evil.example", want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("HTTP status = %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}

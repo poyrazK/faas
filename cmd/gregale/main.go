@@ -425,6 +425,8 @@ func run(args []string) (status int) {
 		return cmdFlags(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
+	case "consumers":
+		return cmdConsumers(args[1:])
 	case "edge-rules":
 		// PR 2 of Edge Rules rollout: customer CLI wrapper around the
 		// /v1/apps/{slug}/edge-rules CRUD surface (PR 1 #799). Sub-
@@ -432,6 +434,9 @@ func run(args []string) (status int) {
 		// itself is cmdEdgeRules. --json round-trips through the
 		// pkg/api SDK methods (ListEdgeRules / CreateEdgeRule / etc.).
 		return cmdEdgeRules(args[1:])
+	case "edge-rule-lists":
+		// ADR-963 reusable lists referenced from edge-rule match conditions.
+		return cmdEdgeRuleLists(args[1:])
 	case "openapi":
 		// Issue #976 / ADR-122 / SAFE-RELEASES-D: pre-publish
 		// schema-drift gate. Single subcommand `diff`
@@ -773,7 +778,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
-	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		usage += " <" + command.subcommandChoice() + ">"
 	}
 	for _, positional := range command.Positionals {

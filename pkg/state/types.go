@@ -769,11 +769,15 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
-	DiscoveredAt    time.Time
-	WindowStart     time.Time
-	RequestCount    int64
-	ErrorCount      int64
-	BillableUnits   int64
+	// BillingRoute is the bounded "METHOD /template" label of
+	// consumer-attributed traffic; its billable units are also kept per route
+	// so rate cards can weight routes (ADR-846).
+	BillingRoute  string
+	DiscoveredAt  time.Time
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -824,6 +828,29 @@ type APIConsumerUsageBucket struct {
 	BillableUnits          int64
 }
 
+// APIConsumerRouteUsageBucket is one consumer's billable units on one
+// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// APIConsumerUsageBucket stay authoritative; a minute's route units never
+// exceed them, and routes missing here count at weight 1.
+type APIConsumerRouteUsageBucket struct {
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
+// MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
+const MaxBillingRouteBytes = 256
+
+// ValidBillingRoute reports whether label is a storable billing route: an
+// HTTP method, one space, and a path, without control characters.
+func ValidBillingRoute(label string) bool {
+	method, path, ok := strings.Cut(label, " ")
+	if !ok || method == "" || len(method) > 16 || !strings.HasPrefix(path, "/") || len(label) > MaxBillingRouteBytes {
+		return false
+	}
+	return !strings.ContainsAny(label, "\x00\r\n\t?#")
+}
+
 // APIConsumerRateCard is an immutable, versioned price for one request unit
 // emitted by an app. A later EffectiveFrom supersedes an earlier card for
 // future usage; historical cards remain readable so quotes are auditable.
@@ -835,8 +862,86 @@ type APIConsumerRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
+	Tiers []APIConsumerRateCardTier
+	// RouteWeights counts each request on a listed route label as that many
+	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// allowance and tiers.
+	RouteWeights map[string]int64
+	// PlanID names the consumer plan whose price history this card belongs
+	// to (ADR-847); empty is the app default plan.
+	PlanID        string
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// Route weight bounds: a card weights at most this many route labels, each
+// counting 1..MaxAPIConsumerRouteWeight units per request.
+const (
+	MaxAPIConsumerRouteWeights = 50
+	MaxAPIConsumerRouteWeight  = 1000
+)
+
+// ValidateAPIConsumerRouteWeights checks a card's route weights.
+func ValidateAPIConsumerRouteWeights(weights map[string]int64) error {
+	if len(weights) > MaxAPIConsumerRouteWeights {
+		return fmt.Errorf("rate card route weights: at most %d routes", MaxAPIConsumerRouteWeights)
+	}
+	for route, weight := range weights {
+		if !ValidBillingRoute(route) {
+			return fmt.Errorf("rate card route weights: %q is not a \"METHOD /template\" route", route)
+		}
+		if weight < 1 || weight > MaxAPIConsumerRouteWeight {
+			return fmt.Errorf("rate card route weights: weight for %q must be 1..%d", route, MaxAPIConsumerRouteWeight)
+		}
+	}
+	return nil
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder: units whose
+// position in the consumer's UTC month falls below UpTo (and at or above the
+// previous step's UpTo) cost PriceMillicentsPerUnit. A nil UpTo is unbounded
+// and only valid on the last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+}
+
+// MaxAPIConsumerRateCardTiers bounds a ladder; the column CHECK mirrors it.
+const MaxAPIConsumerRateCardTiers = 10
+
+// ValidateAPIConsumerRateCardTiers checks a graduated ladder: 2..10 steps,
+// strictly increasing positive bounds, an unbounded last step, non-negative
+// prices, and only the first step free so charged units never shrink as a
+// month's usage grows.
+func ValidateAPIConsumerRateCardTiers(tiers []APIConsumerRateCardTier) error {
+	if len(tiers) == 0 {
+		return nil
+	}
+	if len(tiers) < 2 || len(tiers) > MaxAPIConsumerRateCardTiers {
+		return fmt.Errorf("rate card tiers: need 2 to %d steps", MaxAPIConsumerRateCardTiers)
+	}
+	var previous int64
+	for i, tier := range tiers {
+		last := i == len(tiers)-1
+		if last != (tier.UpTo == nil) {
+			return fmt.Errorf("rate card tiers: only the last step is unbounded")
+		}
+		if !last && *tier.UpTo <= previous {
+			return fmt.Errorf("rate card tiers: up_to must increase strictly from a positive value")
+		}
+		if tier.PriceMillicentsPerUnit < 0 || (i > 0 && tier.PriceMillicentsPerUnit == 0) {
+			return fmt.Errorf("rate card tiers: prices must be non-negative and only the first step may be free")
+		}
+		if !last {
+			previous = *tier.UpTo
+		}
+	}
+	return nil
 }
 
 // PlatformTenantRateCard is an immutable, versioned customer-facing request
@@ -854,12 +959,15 @@ type PlatformTenantRateCard struct {
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
-// snapshot. Draft statements can be finalized once all usage is priced.
+// snapshot. Draft statements can be finalized once all usage is priced. A
+// draft whose quote changed before finalization is superseded by the next
+// revision and can never be finalized or handed off.
 type APIConsumerUsageStatementStatus string
 
 const (
-	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
-	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementDraft      APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized  APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 )
 
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
@@ -870,12 +978,36 @@ type APIConsumerUsageStatementBucket struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units this bucket bills at its price
+	// (ADR-844). Nil on buckets written before allowances existed, where
+	// every priced unit was charged; read it through Charged. An adjustment
+	// may charge more units than it adds when late usage used allowance
+	// that later minutes had consumed.
+	ChargedUnits *int64 `json:"charged_units,omitempty"`
+	// TierUnits splits BillableUnits across a tiered card's ladder steps
+	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// price. In an adjustment, entries can be negative when late usage moved
+	// already-billed units into another step.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
+}
+
+// Charged returns the units this bucket bills at its price.
+func (b APIConsumerUsageStatementBucket) Charged() int64 {
+	if b.RateCardID == "" {
+		return 0
+	}
+	if b.ChargedUnits == nil {
+		return b.BillableUnits
+	}
+	return *b.ChargedUnits
 }
 
 // APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
 // usage quote for one period. Once created, its buckets and totals never
-// change; finalization only records the payable lifecycle transition.
+// change; finalization only records the payable lifecycle transition. One
+// period can hold several revisions: every revision after a finalized one
+// carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
 	ID               string
 	AccountID        string
@@ -883,6 +1015,7 @@ type APIConsumerUsageStatement struct {
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
 	Status           APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
@@ -922,13 +1055,17 @@ type APIConsumerUsageStatementHandoffInput struct {
 }
 
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
-// builds it from the usage ledger and immutable rate-card versions.
+// builds it from the usage ledger and immutable rate-card versions. Revision
+// and PriorStatus name the latest revision the quote was planned against, so
+// a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
 	AccountID        string
 	AppID            string
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
+	PriorStatus      APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
 	UnpricedUnits    int64
@@ -2143,16 +2280,21 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
-	// GitOps candidate. It is internal metadata, never an activation receipt.
+	// GitOps candidate. It remains attached after activation so serving runtime
+	// configuration is preserved; it is internal metadata, never a receipt.
 	EnvironmentWorkloadRuntime string `json:"-"`
-	ID                         string
-	AppID                      string
-	BuildID                    string // empty when an image deploy has no build pipeline
-	ImageDigest                string
-	Kind                       DeploymentKind
-	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes                int64
-	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadHeldValue is nil only for legacy in-memory values, in
+	// which case the presence of frozen workload inputs retains the old held
+	// behavior. Persistent rows always carry the explicit flag.
+	EnvironmentWorkloadHeldValue *bool `json:"-"`
+	ID                           string
+	AppID                        string
+	BuildID                      string // empty when an image deploy has no build pipeline
+	ImageDigest                  string
+	Kind                         DeploymentKind
+	SourcePath                   string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                  int64
+	SourceRoot                   string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -3513,6 +3655,18 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
+	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
+	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
+	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
+	AppWebhookEventRealtimeNotificationSent         AppWebhookEvent = "realtime.notification.sent"
+	AppWebhookEventRealtimeNotificationFailed       AppWebhookEvent = "realtime.notification.failed"
+	AppWebhookEventRealtimeNotificationExpired      AppWebhookEvent = "realtime.notification.expired"
+	AppWebhookEventRealtimeNotificationCancelled    AppWebhookEvent = "realtime.notification.cancelled"
+	AppWebhookEventRealtimeNotificationSuperseded   AppWebhookEvent = "realtime.notification.superseded"
+	AppWebhookEventRealtimeMessageRead              AppWebhookEvent = "realtime.message.read"
+	AppWebhookEventRealtimeInboxFallbackRequired    AppWebhookEvent = "realtime.inbox.fallback_required"
+	AppWebhookEventRealtimeInboxAcknowledged        AppWebhookEvent = "realtime.inbox.acknowledged"
+	AppWebhookEventRealtimeInboxGap                 AppWebhookEvent = "realtime.inbox.gap"
 	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
 	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
 	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
@@ -3558,6 +3712,7 @@ const (
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
 	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
@@ -3566,6 +3721,17 @@ const (
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
+	AppWebhookEventRealtimeNotificationSent,
+	AppWebhookEventRealtimeNotificationFailed,
+	AppWebhookEventRealtimeNotificationExpired,
+	AppWebhookEventRealtimeNotificationCancelled,
+	AppWebhookEventRealtimeNotificationSuperseded,
+
+	AppWebhookEventRealtimeMessageRead,
+	AppWebhookEventRealtimeInboxFallbackRequired,
+	AppWebhookEventRealtimeInboxAcknowledged,
+	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
@@ -3605,7 +3771,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
 	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
-	AppWebhookEventWorkflowFinished,
+	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -4067,11 +4233,12 @@ type Invocation struct {
 	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
-	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
-	InstanceID       string           `json:"instance_id,omitempty"`
-	Source           InvocationSource `json:"source"`
-	// EnvironmentID is authenticated operational ownership, never request
-	// intent. Production remains NULL; stage admission persists the UUID.
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	InstanceID       string `json:"instance_id,omitempty"`
+	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	ResolvedDeploymentID string           `json:"-"`
+	Source               InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request intent.
 	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
@@ -7550,6 +7717,7 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
+	RequireExp                     bool                   `json:"require_exp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =
@@ -7779,6 +7947,9 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// ADR-965: composite keys and response-status counting.
+	KeyFields     []string `json:"key_fields,omitempty"`
+	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
 
 // EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
@@ -7948,8 +8119,34 @@ type EdgeRule struct {
 	// release per ADR-128 §D2 so legacy JSONB-only rows
 	// preserve the customer's intended mode.
 	ValidateMode string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Name and Description are operator-facing labels ("" = unset).
+	Name        string
+	Description string
+	// ExpiresAt, when set, is the instant after which the gateway stops
+	// applying the rule. Expired rows are kept for the listing.
+	ExpiresAt *time.Time
+	// Match (ADR-962) is the optional structured condition ANDed with the
+	// fixed selectors; nil applies the rule to every selected request.
+	Match *api.EdgeRuleMatchExpr
+	// MatchLists holds the account lists Match references (ADR-963),
+	// resolved by gatewayd when it loads a host. Never persisted.
+	MatchLists api.EdgeRuleLists
+	// Mode (ADR-960) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// rule is matched and counted but never acts.
+	Mode      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// EdgeRuleExpired reports whether the rule's expiry has passed at now.
+func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
+	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -8090,6 +8287,11 @@ type CreateEdgeRuleParams struct {
 	// re-validates via MergeCorsPresetIntoRule).
 	CorsPresetID *string
 	ValidateMode string
+	Name         string
+	Description  string
+	ExpiresAt    *time.Time
+	Match        *api.EdgeRuleMatchExpr
+	Mode         string // "" = enforce
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8113,6 +8315,15 @@ type UpdateEdgeRuleParams struct {
 	Action       *EdgeRuleAction
 	CorsPresetID **string
 	ValidateMode *string
+	// Name / Description: non-nil sets the value ("" clears it).
+	Name        *string
+	Description *string
+	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
+	ExpiresAt **time.Time
+	// Match: non-nil replaces the condition; ClearMatch removes it.
+	Match      *api.EdgeRuleMatchExpr
+	ClearMatch bool
+	Mode       *string
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

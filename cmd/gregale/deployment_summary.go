@@ -15,14 +15,28 @@ import (
 // deployment UUID, the deployment itself. production-us hunt #4: a bare
 // `deployment summary <uuid>` was rejected although the UUID names its app.
 func cmdDeploymentSummary(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "interactive")
 	fs := newFlagSet("deployment summary", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a release from app history")
 	app := fs.String("app", "", "app slug (defaults to the linked project, or the deployment's own app)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	if *interactive {
+		if len(pos) != 0 {
+			return printErr("Invalid interactive summary arguments", fmt.Errorf("choose the release in the flow instead of supplying an ID"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use deployment summary ID --app APP for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdDeploymentSummaryInteractive(slug)
+	}
 	if len(pos) != 1 || (*app != "" && !validCLISlug(*app)) || !validDeploymentRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> [--app SLUG]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> [--app SLUG] | gregale deployment summary --interactive [--app SLUG]", "deployment")
 		return 1
 	}
 
@@ -49,6 +63,10 @@ func cmdDeploymentSummary(args []string) int {
 		return jsonOut(writeJSON(summary))
 	}
 
+	return renderDeploymentSummary(summary)
+}
+
+func renderDeploymentSummary(summary api.DeploymentSummaryResponse) int {
 	_, _ = fmt.Fprintf(osStdout, "deployment: %s (%s)\n", summary.Deployment.ID, summary.Deployment.Status)
 	if summary.Previous == nil {
 		_, _ = fmt.Fprintln(osStdout, "previous: none (initial deployment)")

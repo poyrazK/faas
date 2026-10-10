@@ -17,7 +17,11 @@ import (
 
 func appliedSourceCandidateFixture(t *testing.T, basic gitOpsTestStore, kind string) (intentTestStore, state.EnvironmentGitOpsLease, state.App, state.Deployment, environmentsync.Plan) {
 	t.Helper()
-	store, source, desired, app, previous, _ := workloadIntentFixture(t, basic, "enforce")
+	appType := state.AppTypeApp
+	if kind == "function" {
+		appType, kind = state.AppTypeFunction, "source"
+	}
+	store, source, desired, app, previous, _ := workloadIntentFixtureType(t, basic, "enforce", appType)
 	adoptWorkloadIntent(t, store, source)
 	w := desired.Definition.Workloads["api"]
 	w.Source = &api.EnvironmentWorkloadSource{Kind: kind, Directory: "apps/api"}
@@ -50,7 +54,7 @@ func sourceArtifact(t *testing.T, request state.EnvironmentWorkloadSourceRequest
 }
 
 func TestEnvironmentGitOpsSourceCandidatesAreAtomicPinnedAndHeld(t *testing.T) {
-	for _, kind := range []string{"source", "dockerfile"} {
+	for _, kind := range []string{"source", "dockerfile", "function"} {
 		t.Run(kind, func(t *testing.T) {
 			stores(t, func(t *testing.T, basic gitOpsTestStore) {
 				store, lease, app, previous, plan := appliedSourceCandidateFixture(t, basic, kind)
@@ -92,6 +96,9 @@ func TestEnvironmentGitOpsSourceCandidatesAreAtomicPinnedAndHeld(t *testing.T) {
 				frozen, err := dep.ScopedWorkloadRuntime()
 				if err != nil || (kind == "dockerfile" && frozen.Source.Dockerfile != "deploy/Dockerfile") || !reflect.DeepEqual(*frozen.SourceArchive, artifact) || string(frozen.Runtime["port"]) != "8080" {
 					t.Fatalf("frozen source: %+v %v", frozen, err)
+				}
+				if kind == "function" && (frozen.AppType != state.AppTypeFunction || frozen.RuntimeBase != "node22") {
+					t.Fatalf("function preparation lost its runtime: %+v", frozen)
 				}
 				build, err := basic.(state.Store).BuildByID(t.Context(), artifact.BuildID)
 				if err != nil || build.DeploymentID != dep.ID || build.Status != state.BuildQueued || build.Kind != state.DeploymentKindGitHub || build.SourceBytes != artifact.Bytes || build.LogPath != artifact.LogPath {

@@ -865,7 +865,7 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded request faults on service
+// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
 // calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
@@ -873,20 +873,35 @@ type InjectScenarioTestChaosRequest struct {
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From       string `json:"from,omitempty"`
-	To         string `json:"to"`
-	Kind       string `json:"kind"`
-	Percent    int    `json:"percent"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Seed       uint64 `json:"seed"`
+	From             string `json:"from,omitempty"`
+	To               string `json:"to"`
+	Kind             string `json:"kind"`
+	Percent          int    `json:"percent"`
+	LatencyMS        int64  `json:"latency_ms,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Seed             uint64 `json:"seed"`
+	Port             int    `json:"port,omitempty"`
+	Direction        string `json:"direction,omitempty"`
+	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	RulesInstalled int       `json:"rules_installed"`
+	Generation     string    `json:"generation"`
+}
+
+type ScenarioTestChaosMatchesResponse struct {
+	Generation string                   `json:"generation,omitempty"`
+	Matches    []ScenarioTestChaosMatch `json:"matches"`
+}
+
+type ScenarioTestChaosMatch struct {
+	RuleID string `json:"rule_id"`
+	Count  int64  `json:"count"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
@@ -1322,21 +1337,46 @@ type APIConsumerUsageResponse struct {
 // price. If effective_from is omitted, the server starts the card at the next
 // UTC minute so no partial minute is priced under two different cards.
 type CreateAPIConsumerRateCardRequest struct {
-	Currency               string     `json:"currency"`
-	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
-	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+	Currency               string `json:"currency"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
+	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// flat price and allowance; price_millicents_per_unit is then ignored.
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights counts each request on a listed "METHOD /template" route
+	// as that many units (ADR-846); unlisted routes count 1.
+	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// empty prices the app default plan.
+	PlanID        string     `json:"plan_id,omitempty"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder. Units whose
+// position in the consumer's UTC month is below up_to (and at or above the
+// previous step's up_to) cost price_millicents_per_unit; a null up_to is the
+// unbounded last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 }
 
 // APIConsumerRateCardResponse is the owner-facing representation of one
 // immutable app-level request price.
 type APIConsumerRateCardResponse struct {
-	ID                     string    `json:"id"`
-	AppID                  string    `json:"app_id"`
-	Currency               string    `json:"currency"`
-	Unit                   string    `json:"unit"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	EffectiveFrom          time.Time `json:"effective_from"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                     string                    `json:"id"`
+	AppID                  string                    `json:"app_id"`
+	Currency               string                    `json:"currency"`
+	Unit                   string                    `json:"unit"`
+	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
+	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
+	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	PlanID                 string                    `json:"plan_id,omitempty"`
+	EffectiveFrom          time.Time                 `json:"effective_from"`
+	CreatedAt              time.Time                 `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1353,7 +1393,12 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1386,17 +1431,28 @@ type APIConsumerUsageStatementBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance. An adjustment may charge units it
+	// does not add when late usage exhausted the allowance sooner.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps. In an
+	// adjustment, entries and amount_millicents can be negative when late
+	// usage moved billed units into a cheaper step; the revision total
+	// never is.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
 // snapshot that can be exported to a customer's payment system through the
-// usage_statement.finalized webhook.
+// usage_statement.finalized webhook. Revision orders the snapshots of one
+// period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
 	PeriodEnd        time.Time                                 `json:"period_end"`
+	Revision         int                                       `json:"revision"`
 	Status           string                                    `json:"status"`
 	Currency         string                                    `json:"currency,omitempty"`
 	BillableUnits    int64                                     `json:"billable_units"`
@@ -2992,7 +3048,8 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	StageState json.RawMessage `json:"stage_state,omitempty"`
+	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
+	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -3713,9 +3770,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped response from
 // GET /v1/capabilities. Enabled is fail-closed for unknown plans.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -8382,6 +8441,10 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string  `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string             `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *MCPResourcePolicy `json:"mcp,omitempty"`
+	// RequireExp rejects tokens without an `exp` claim. Off by default
+	// for compatibility: JWT validation only checks exp when present, so
+	// a token minted without one never expires unless this is set.
+	RequireExp bool `json:"require_exp,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -9180,6 +9243,13 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// KeyFields (ADR-965) are the request fields a key_by="composite" rule
+	// combines into one bucket identity, e.g. ["ip", "path"].
+	KeyFields []string `json:"key_fields,omitempty"`
+	// CountStatuses (ADR-965), when set, makes the rule charge its bucket
+	// only for responses with one of these statuses; requests are still
+	// rejected while the bucket is empty.
+	CountStatuses []int `json:"count_statuses,omitempty"`
 }
 
 // ThrottleKeyByNone is the explicit Phase-3 opt-out value. The empty
@@ -9195,6 +9265,13 @@ const (
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
 	ThrottleKeyByCountry    = "country"
+	// ThrottleKeyByIP keys one bucket per trusted client IP (the single
+	// sanitized X-Forwarded-For hop); IPv6 clients are keyed by their /64 so
+	// one host cannot dodge the limit by rotating addresses in its prefix.
+	ThrottleKeyByIP = "ip"
+	// ThrottleKeyByComposite keys one bucket per combination of KeyFields
+	// values (ADR-965).
+	ThrottleKeyByComposite = "composite"
 
 	// ThrottleMissingKeyShared preserves the permissive historical posture for
 	// a dimensional rule when the request has no usable identity: all such
@@ -9230,11 +9307,79 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry, ThrottleKeyByIP, ThrottleKeyByComposite:
 		return true
 	default:
 		return false
 	}
+}
+
+// ADR-965 bounds.
+const (
+	ThrottleKeyFieldsMax     = 4
+	ThrottleCountStatusesMax = 16
+)
+
+var throttleHeaderNameRegex = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+
+// ThrottleKeyFieldName parses a composite key field: one of the single
+// key_by dimensions, "method", "path", or "header:<name>". It returns the
+// field kind and, for headers, the canonical header name.
+func ThrottleKeyFieldName(field string) (kind, header string, ok bool) {
+	switch field {
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim,
+		ThrottleKeyByCountry, ThrottleKeyByIP, "method", "path":
+		return field, "", true
+	}
+	if name, found := strings.CutPrefix(field, "header:"); found && throttleHeaderNameRegex.MatchString(name) {
+		return "header", http.CanonicalHeaderKey(name), true
+	}
+	return "", "", false
+}
+
+// validateThrottleKeyFields checks a composite rule's fields.
+func validateThrottleKeyFields(a *EdgeRuleThrottleAction) *Problem {
+	if len(a.KeyFields) == 0 || len(a.KeyFields) > ThrottleKeyFieldsMax {
+		return ErrValidation(fmt.Sprintf("throttle action: key_by=\"composite\" needs 1..%d key_fields (got %d)", ThrottleKeyFieldsMax, len(a.KeyFields)))
+	}
+	seen := map[string]bool{}
+	usesClaim := false
+	for _, f := range a.KeyFields {
+		kind, _, ok := ThrottleKeyFieldName(f)
+		if !ok {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is not one of ip, country, api_key, consumer_id, jwt_subject, jwt_claim, method, path, header:<name>", f))
+		}
+		if seen[strings.ToLower(f)] {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is repeated", f))
+		}
+		seen[strings.ToLower(f)] = true
+		usesClaim = usesClaim || kind == ThrottleKeyByJWTClaim
+	}
+	if usesClaim && !jwtClaimNameRegex.MatchString(a.JWTClaimName) {
+		return ErrValidation("throttle action: key field jwt_claim needs jwt_claim_name matching ^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+	}
+	if !usesClaim && a.JWTClaimName != "" {
+		return ErrValidation("throttle action: jwt_claim_name requires the jwt_claim key field")
+	}
+	return nil
+}
+
+// validateThrottleCountStatuses checks count_statuses.
+func validateThrottleCountStatuses(statuses []int) *Problem {
+	if len(statuses) > ThrottleCountStatusesMax {
+		return ErrValidation(fmt.Sprintf("throttle action: at most %d count_statuses (got %d)", ThrottleCountStatusesMax, len(statuses)))
+	}
+	seen := map[int]bool{}
+	for _, code := range statuses {
+		if code < 100 || code > 599 {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is not an HTTP status (100..599)", code))
+		}
+		if seen[code] {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is repeated", code))
+		}
+		seen[code] = true
+	}
+	return nil
 }
 
 // ThrottleValidationContext is the per-plan ceiling that
@@ -9291,6 +9436,12 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 			"throttle action: burst %d exceeds the plan ceiling %d — a throttle rule is strictly a tightening primitive",
 			a.Burst, ctx.PlanMaxBurst))
 	}
+	if prob := validateThrottleCountStatuses(a.CountStatuses); prob != nil {
+		return prob
+	}
+	if a.KeyBy != ThrottleKeyByComposite && len(a.KeyFields) > 0 {
+		return ErrValidation("throttle action: key_fields requires key_by=\"composite\"")
+	}
 	dimensional := ThrottleKeyByIsPerConsumer(a.KeyBy)
 	switch a.MissingKeyPolicy {
 	case "":
@@ -9321,11 +9472,18 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry, ThrottleKeyByIP:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",
 				a.KeyBy))
+		}
+		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
+			return err
+		}
+	case ThrottleKeyByComposite:
+		if prob := validateThrottleKeyFields(a); prob != nil {
+			return prob
 		}
 		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
 			return err
@@ -9344,7 +9502,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\", \"ip\", \"composite\")",
 			a.KeyBy))
 	}
 	return nil
@@ -9682,8 +9840,40 @@ type EdgeRuleResponse struct {
 	Kind         string            `json:"kind"`
 	ValidateMode string            `json:"validate_mode,omitempty"`
 	Action       json.RawMessage   `json:"action"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	Name         string            `json:"name,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	// ExpiresAt is when the gateway stops applying the rule; Expired
+	// reports that it has passed (the row is kept for the listing).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Expired   bool       `json:"expired,omitempty"`
+	// Match (ADR-962) is the optional condition ANDed with the selectors.
+	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
+	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
+	Mode      string    `json:"mode"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
+const (
+	EdgeRuleNameMaxChars        = 100
+	EdgeRuleDescriptionMaxChars = 1000
+)
+
+// ValidateEdgeRuleMetadata checks the operator-facing name, description and
+// expiry. A nil field is not being set. An expiry must lie in the future:
+// a rule created or re-armed already expired would silently never apply.
+func ValidateEdgeRuleMetadata(name, description *string, expiresAt *time.Time, now time.Time) *Problem {
+	if name != nil && utf8.RuneCountInString(strings.TrimSpace(*name)) > EdgeRuleNameMaxChars {
+		return ErrValidation(fmt.Sprintf("name exceeds %d characters", EdgeRuleNameMaxChars))
+	}
+	if description != nil && utf8.RuneCountInString(*description) > EdgeRuleDescriptionMaxChars {
+		return ErrValidation(fmt.Sprintf("description exceeds %d characters", EdgeRuleDescriptionMaxChars))
+	}
+	if expiresAt != nil && !expiresAt.After(now) {
+		return ErrValidation("expires_at must be in the future")
+	}
+	return nil
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -9696,15 +9886,20 @@ type EdgeRuleResponse struct {
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string            `json:"match_host"`
-	MatchPath    string            `json:"match_path"`
-	MatchMethods []string          `json:"match_methods,omitempty"`
-	MatchHeaders map[string]string `json:"match_headers,omitempty"`
-	Priority     *int              `json:"priority,omitempty"`
-	Enabled      *bool             `json:"enabled,omitempty"`
-	Kind         string            `json:"kind"`
-	ValidateMode string            `json:"validate_mode,omitempty"`
-	Action       json.RawMessage   `json:"action"`
+	MatchHost    string             `json:"match_host"`
+	MatchPath    string             `json:"match_path"`
+	MatchMethods []string           `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string  `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	Kind         string             `json:"kind"`
+	ValidateMode string             `json:"validate_mode,omitempty"`
+	Action       json.RawMessage    `json:"action"`
+	Name         string             `json:"name,omitempty"`
+	Description  string             `json:"description,omitempty"`
+	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
+	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
+	Mode         string             `json:"mode,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -9724,6 +9919,139 @@ type UpdateEdgeRuleRequest struct {
 	Enabled      *bool              `json:"enabled,omitempty"`
 	ValidateMode *string            `json:"validate_mode,omitempty"`
 	Action       *json.RawMessage   `json:"action,omitempty"`
+	// Name / Description: an explicit "" clears the label.
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// ExpiresAt sets a new expiry; ClearExpiresAt removes it (the rule
+	// then applies indefinitely). Setting both is rejected.
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
+	// Match replaces the condition (ADR-962); ClearMatch removes it.
+	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
+	ClearMatch bool               `json:"clear_match,omitempty"`
+	Mode       *string            `json:"mode,omitempty"`
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// ValidateEdgeRuleMode accepts "" (unchanged / default enforce), enforce and log.
+func ValidateEdgeRuleMode(mode string) *Problem {
+	switch mode {
+	case "", EdgeRuleModeEnforce, EdgeRuleModeLog:
+		return nil
+	}
+	return ErrValidation(fmt.Sprintf("mode %q must be enforce or log", mode))
+}
+
+// EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+type EdgeRuleHitStatsResponse struct {
+	RuleID  string `json:"rule_id"`
+	Matched int64  `json:"matched"`
+	Logged  int64  `json:"logged"`
+}
+
+// EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
+type EdgeRuleStatsResponse struct {
+	Window string                     `json:"window"`
+	Since  time.Time                  `json:"since"`
+	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
+}
+
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match. RuleName and
+// RuleKind are empty once the rule has been deleted.
+type EdgeRuleEventResponse struct {
+	ID         string    `json:"id"`
+	RuleID     string    `json:"rule_id"`
+	RuleName   string    `json:"rule_name,omitempty"`
+	RuleKind   string    `json:"rule_kind,omitempty"`
+	Outcome    string    `json:"outcome"`
+	OccurredAt time.Time `json:"occurred_at"`
+	RequestID  string    `json:"request_id,omitempty"`
+	Method     string    `json:"method,omitempty"`
+	Host       string    `json:"host,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	ClientIP   string    `json:"client_ip,omitempty"`
+	Country    string    `json:"country,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+}
+
+// EdgeRuleEventsResponse is GET /v1/apps/{slug}/edge-rules/events. Since is
+// the effective window start after the plan clamp; NextCursor continues the
+// listing when more events match.
+type EdgeRuleEventsResponse struct {
+	Since      time.Time               `json:"since"`
+	Events     []EdgeRuleEventResponse `json:"events"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
+// EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
+// is a duration such as 1h, 24h or 7d (default 24h).
+type EdgeRuleEventsQuery struct {
+	RuleID  string
+	Outcome string
+	Since   string
+	Limit   int
+	Cursor  string
+}
+
+// EdgeRuleListResponse (ADR-963) is one account-level list. Items is
+// returned only when a single list is fetched; ReferencedBy names the rules
+// whose match conditions use the list.
+type EdgeRuleListResponse struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Kind         string    `json:"kind"`
+	Description  string    `json:"description,omitempty"`
+	ItemCount    int       `json:"item_count"`
+	Items        []string  `json:"items,omitempty"`
+	ReferencedBy []string  `json:"referenced_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ListEdgeRuleListsResponse is GET /v1/edge-rule-lists.
+type ListEdgeRuleListsResponse struct {
+	Lists []EdgeRuleListResponse `json:"lists"`
+}
+
+// CreateEdgeRuleListRequest is POST /v1/edge-rule-lists.
+type CreateEdgeRuleListRequest struct {
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Description string   `json:"description,omitempty"`
+	Items       []string `json:"items"`
+}
+
+// UpdateEdgeRuleListRequest is PATCH /v1/edge-rule-lists/{name}. Items
+// replaces the whole list and cannot be combined with Add / Remove, which
+// edit it in place (Remove applies after Add).
+type UpdateEdgeRuleListRequest struct {
+	Description *string   `json:"description,omitempty"`
+	Items       *[]string `json:"items,omitempty"`
+	Add         []string  `json:"add,omitempty"`
+	Remove      []string  `json:"remove,omitempty"`
+}
+
+// EdgeRuleSetVersionResponse (ADR-961) describes one recorded state of an
+// app's whole edge-rule set. Rules is populated only when a single version
+// is fetched. Current marks the app's latest version.
+type EdgeRuleSetVersionResponse struct {
+	Version     int                `json:"version"`
+	RuleCount   int                `json:"rule_count"`
+	RulesSHA256 string             `json:"rules_sha256"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Current     bool               `json:"current"`
+	Rules       []EdgeRuleResponse `json:"rules,omitempty"`
+}
+
+// RollbackEdgeRulesRequest restores an app's edge rules to a recorded
+// version. The restore itself is recorded as a new version.
+type RollbackEdgeRulesRequest struct {
+	Version int `json:"version"`
 }
 
 const (

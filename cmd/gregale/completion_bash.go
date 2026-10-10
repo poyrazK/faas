@@ -30,13 +30,16 @@ import (
 )
 
 func cmdCompletionBash() int {
-	w := osStdout
+	renderBashCompletion(osStdout)
+	return 0
+}
+
+func renderBashCompletion(w io.Writer) {
 	renderBashHeader(w)
 	for _, c := range customerCliCommands() {
 		renderBashCommand(w, c)
 	}
 	renderBashFooter(w)
-	return 0
 }
 
 // renderBashHeader writes the script prologue: shebang, the

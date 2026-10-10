@@ -92,6 +92,10 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
+	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task GitOps service bindings: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
@@ -105,7 +109,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		SealedEnv: runtimeValues.MainSecrets.Entries,
-		APIEnv: appendPlatformIdentity(runtimeValues.APIEnv,
+		APIEnv: appendPlatformIdentity(apiEnv,
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:         app.EgressPorts,

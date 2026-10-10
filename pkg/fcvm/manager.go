@@ -434,6 +434,10 @@ type Instance struct {
 	// one command. It retains normal app networking but cannot be used as an
 	// ordinary routed app instance or by the source-execution API.
 	AppTaskOnly bool
+	// QualificationOnly marks an isolated GitOps candidate execution. Its
+	// node-local service-proxy route is the only guest egress path; live app
+	// network reconciles must not widen that private assessment policy.
+	QualificationOnly bool
 	// Paused marks a resident warm-pool restore. Paused instances are kept in
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
@@ -441,6 +445,9 @@ type Instance struct {
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
+	// JobStartGateEnabled marks a held Job whose command can only begin after
+	// the scheduler publishes runtime identity and calls ReleaseJobStart.
+	JobStartGateEnabled bool
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -672,6 +679,9 @@ func (m *Manager) SnapshotLiveEgress() map[string]LiveEgressInstance {
 	defer m.mu.Unlock()
 	out := make(map[string]LiveEgressInstance, len(m.live))
 	for instance, live := range m.live {
+		if live.QualificationOnly {
+			continue
+		}
 		out[instance] = LiveEgressInstance{AppID: live.AppID, AccountID: live.AccountID, Netns: live.Net.Netns}
 	}
 	return out
@@ -762,6 +772,15 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// qualificationInstances owns isolated qualification targets without
+	// making them discoverable through serving lookups, CID routing, health
+	// loops, or app policy fan-out. Guarded by mu.
+	qualificationInstances map[string]*Instance
+	// qualificationConfigReceiptWaiters binds the guest-init environment
+	// acknowledgement to one private qualification boot attempt. The key is
+	// the reserved instance ID; the random token and per-instance vsock channel
+	// fence stale acknowledgements from other boots.
+	qualificationConfigReceiptWaiters map[string]*qualificationConfigReceiptWaiter
 	// appResolved is each app's recently resolved addresses on this node
 	// with their expiry (ADR-373), used to seed a new instance's
 	// egress_resolved set: a restored snapshot may reconnect to addresses
@@ -1177,20 +1196,22 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:                NewAllocator(),
-		run:                  run,
-		vmm:                  vmm,
-		paths:                paths,
-		fcVersion:            fcVersion,
-		log:                  log,
-		live:                 make(map[string]*Instance),
-		readinessLoopCancels: make(map[string]context.CancelFunc),
-		appCPUPolicies:       make(map[string]appCPUPolicy),
-		instanceFlights:      make(map[string]*instanceFlight),
-		pendingProcessExits:  make(map[string]int),
-		processGenerations:   make(map[string]uint64),
-		waking:               make(map[string]struct{}),
-		exportDirs:           make(map[string]string),
+		alloc:                             NewAllocator(),
+		run:                               run,
+		vmm:                               vmm,
+		paths:                             paths,
+		fcVersion:                         fcVersion,
+		log:                               log,
+		live:                              make(map[string]*Instance),
+		qualificationInstances:            make(map[string]*Instance),
+		qualificationConfigReceiptWaiters: make(map[string]*qualificationConfigReceiptWaiter),
+		readinessLoopCancels:              make(map[string]context.CancelFunc),
+		appCPUPolicies:                    make(map[string]appCPUPolicy),
+		instanceFlights:                   make(map[string]*instanceFlight),
+		pendingProcessExits:               make(map[string]int),
+		processGenerations:                make(map[string]uint64),
+		waking:                            make(map[string]struct{}),
+		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.
@@ -1336,7 +1357,7 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	var rules []netns.SMTPAllowlistRule
 	m.mu.Lock()
 	for _, inst := range m.live {
-		if inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
+		if inst.QualificationOnly || inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
 			continue
 		}
 		allowlist, ok := perApp[inst.AppID]
@@ -2722,7 +2743,7 @@ func (m *Manager) HasInstanceOwnership(instance string) bool {
 	_, waking := m.waking[instance]
 	// A stop reservation alone can exist for an unknown ID and does not
 	// establish ownership of any process, lease or resource identity.
-	return m.live[instance] != nil || waking || m.pendingCleanup[instance] != nil
+	return m.live[instance] != nil || m.qualificationInstances[instance] != nil || waking || m.pendingCleanup[instance] != nil
 }
 
 // ExecutionOutboundIdentity returns the current lease-fenced Runs principal
@@ -3201,6 +3222,12 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
+		if len(entries) == 0 && len(secretEntries) == 0 && len(req.Sidecars[i].preparedEnvJSON) > 0 {
+			// Qualification prepares these projections before registering its
+			// guest receipt. Keep the exact prepared bytes and grants when Wake
+			// reaches its ordinary preparation point.
+			continue
+		}
 		req.Sidecars[i].GrantedEnvNames = req.Sidecars[i].GrantedEnvNames[:0]
 		for _, entry := range secretEntries {
 			req.Sidecars[i].GrantedEnvNames = append(req.Sidecars[i].GrantedEnvNames, entry.Key)
@@ -3784,6 +3811,21 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
+	// Unseal only inside vmmd. The scheduler-to-vmmd envelope carries
+	// ciphertext; plaintext exists only long enough to stage the private
+	// per-task secrets.env file before Firecracker starts.
+	var secretsEnvJSON []byte
+	if len(req.SealedEnvEntries) > 0 {
+		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries})
+		if err != nil {
+			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
+		}
+	}
+	qualification, qualificationOnly := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord)
+	if qualificationOnly && (qualification.Execution.InstanceID != req.Instance || qualification.Execution.NodeID != req.NodeID ||
+		qualification.Execution.RAMMB != req.MemSizeMiB || qualification.Execution.Artifact.RootfsKey != req.ImageRef) {
+		return nil, fmt.Errorf("manager: BootJob %s: qualification frame differs from job payload", req.Instance)
+	}
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -3857,6 +3899,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	}
 	nc.ConntrackCap = m.conntrackCap
 	applyTenantEgressPolicy(&nc, req.Plan, nil)
+	if qualificationOnly {
+		// Qualification runs only through the node-local qualification proxy
+		// and pinned DNS. It must never inherit customer tenant egress policy.
+		nc = isolateQualificationJobNetwork(nc)
+	}
 	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
 	}
@@ -3874,10 +3921,12 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		ImageRef:       req.ImageRef,
 		Command:        req.Command,
 		Env:            req.Env,
+		SecretsEnvJSON: secretsEnvJSON,
 		VcpuCount:      req.VcpuCount,
 		MemSizeMiB:     req.MemSizeMiB,
 		Tap:            "tap0",
 		TaskTimeoutSec: req.TaskTimeoutSec,
+		StartHeld:      req.StartHeld,
 		LeaseToken:     req.LeaseToken,
 		AccountID:      req.AccountID,
 		RunID:          req.RunID,
@@ -3893,14 +3942,18 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// stream arrival. Mirrors the Wake path's struct literal at
 	// vmm.go:3003.
 	inst := &Instance{
-		Lease:           lease,
-		Net:             nc,
-		Method:          WakeColdBoot, // jobs are always cold-boot
-		IsJob:           true,
-		AccountID:       req.AccountID,
-		Plan:            req.Plan,
-		Port:            0,  // no listener port
-		HealthcheckPath: "", // no readiness probe
+		Lease:               lease,
+		Net:                 nc,
+		Method:              WakeColdBoot, // jobs are always cold-boot
+		IsJob:               true,
+		JobStartGateEnabled: req.StartHeld,
+		QualificationOnly:   qualificationOnly,
+		AppID:               qualification.Execution.AppID,
+		DeploymentID:        qualification.Execution.DeploymentID,
+		AccountID:           req.AccountID,
+		Plan:                req.Plan,
+		Port:                0,  // no listener port
+		HealthcheckPath:     "", // no readiness probe
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: original launch identity: %w", req.Instance, err)
@@ -3910,8 +3963,12 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
-	m.live[req.Instance] = inst
-	m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
+	if qualificationOnly {
+		m.qualificationInstances[req.Instance] = inst
+	} else {
+		m.live[req.Instance] = inst
+		m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
+	}
 	m.mu.Unlock()
 	// MarkInstanceFrameworkReady isn't called here — the
 	// supervisor doesn't emit a framework-ready receipt. The
@@ -3939,6 +3996,40 @@ func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline tim
 	return m.vmm.WaitJobExit(ctx, lease, deadline)
 }
 
+// ReleaseJobStart opens the guest start gate only for a live Job whose cold
+// boot explicitly requested a held start. The guest treats duplicate release
+// frames as success, so a lost RPC acknowledgement is safe to retry.
+func (m *Manager) ReleaseJobStart(ctx context.Context, instance string) error {
+	if m == nil || instance == "" {
+		return fmt.Errorf("manager: ReleaseJobStart: invalid manager or instance")
+	}
+	m.mu.Lock()
+	inst := m.live[instance]
+	if inst == nil {
+		inst = m.qualificationInstances[instance]
+	}
+	if inst == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("manager: ReleaseJobStart %s: not live", instance)
+	}
+	if !inst.IsJob || !inst.JobStartGateEnabled {
+		m.mu.Unlock()
+		return fmt.Errorf("manager: ReleaseJobStart %s: job start gate is not enabled", instance)
+	}
+	lease := inst.Lease
+	m.mu.Unlock()
+	releaser, ok := m.vmm.(interface {
+		ReleaseJobStart(context.Context, Lease) error
+	})
+	if !ok {
+		return fmt.Errorf("manager: ReleaseJobStart %s: VMM does not support held jobs", instance)
+	}
+	if err := releaser.ReleaseJobStart(ctx, lease); err != nil {
+		return fmt.Errorf("manager: ReleaseJobStart %s: %w", instance, err)
+	}
+	return nil
+}
+
 // JobBootRequest is the Manager.BootJob payload. Mirrors JobVmmSpec
 // in pkg/sched/jobs.go (the schedd-side wire) plus the Manager-side
 // fields every Wake needs (Instance, NodeID, Plan).
@@ -3950,21 +4041,25 @@ func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline tim
 // type add Manager-specific fields (Plan, NodeID) without
 // re-exposing them to schedd.
 type JobBootRequest struct {
-	Instance       string
-	AccountID      string
-	NodeID         string
-	Plan           api.Plan
-	RunID          string
-	TaskIndex      int
-	ImageRef       string
-	KernelKey      string
-	BaseKey        string
-	Command        []string
-	Env            map[string]string
-	VcpuCount      int
-	MemSizeMiB     int
-	TaskTimeoutSec int
-	LeaseToken     string
+	Instance  string
+	AccountID string
+	NodeID    string
+	Plan      api.Plan
+	RunID     string
+	TaskIndex int
+	ImageRef  string
+	KernelKey string
+	BaseKey   string
+	Command   []string
+	Env       map[string]string
+	// SealedEnvEntries are selected ciphertext rows. They are opened only by
+	// vmmd and are never copied into job/run records or the guest manifest.
+	SealedEnvEntries []SealedEnvEntry
+	VcpuCount        int
+	MemSizeMiB       int
+	TaskTimeoutSec   int
+	StartHeld        bool
+	LeaseToken       string
 }
 
 // Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;
@@ -3981,6 +4076,17 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	qualificationOnly := false
+	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
+		if permit.Execution.InstanceID != req.Instance {
+			return nil, fmt.Errorf("wake %s: qualification execution identity differs", req.Instance)
+		}
+		req, err = isolateQualificationWakeRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		qualificationOnly = true
+	}
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4099,6 +4205,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	if qualificationOnly {
+		nc.QualificationOnly = true
+		if err := validateQualificationHostBridge(nc.HostBridgeIP); err != nil {
+			return nil, err
+		}
+	}
 	if req.ExecutionOnly {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
@@ -4301,7 +4413,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// reload. The merge happens after this snapshot; the
 	// per-app cache is the only place the unaugmented slice
 	// survives a SIGHUP-driven operator-bundle change.
-	if req.AppID != "" {
+	if req.AppID != "" && !qualificationOnly {
 		m.perAppAllowlistMu.Lock()
 		if m.perAppAllowlist == nil {
 			m.perAppAllowlist = make(map[string][]netip.Prefix)
@@ -4337,7 +4449,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
+	if !qualificationOnly {
+		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
+	}
 
 	// ADR-098 C11: capture the per-boundary timings (netns+TAP /
 	// restore / guest-ready) on a private struct that bringUp
@@ -4636,7 +4750,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	inst := &Instance{
 		Lease: lease, Net: nc, Method: method,
-		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -4863,6 +4977,15 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		return WakeColdBoot, scanErr
 	}
 	restorable := PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
+	// A paused wake is a restore contract, not an ordinary wake preference.
+	// If the snapshot is stale, version-mismatched, incomplete, or has a
+	// companion-memory shape that cannot be loaded, a cold boot would start a
+	// running VM and violate the caller's explicit paused-state requirement.
+	// Refuse before either VMM path starts; callers can reconcile or retry with
+	// a compatible captured snapshot.
+	if req.KeepPaused && !restorable {
+		return WakeRestore, fmt.Errorf("warm-pool paused restore requires a usable snapshot matching the requested memory shape")
+	}
 	if restorable {
 		// ADR-510: never load a snapshot's RAM onto kernel/base images other
 		// than the ones it was captured with. The refusal happens before any
@@ -6281,7 +6404,7 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	var targets []patchTarget
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID {
+		if inst.AppID != appID || inst.QualificationOnly {
 			continue
 		}
 		prior := make([]netip.Prefix, len(inst.Net.EgressAllowlist))
@@ -6452,7 +6575,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID {
+		if inst.AppID != appID || inst.QualificationOnly {
 			continue
 		}
 		if originalTargets != nil && originalTargets[id] != inst {
@@ -6713,7 +6836,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID == appID {
+		if inst.AppID == appID && !inst.QualificationOnly {
 			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}
@@ -7733,7 +7856,7 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID || inst.Net.Netns == "" {
+		if inst.AppID != appID || inst.QualificationOnly || inst.Net.Netns == "" {
 			continue
 		}
 		ports := tenantEgressPorts(inst.Plan, extra)

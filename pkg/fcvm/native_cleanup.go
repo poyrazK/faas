@@ -91,7 +91,14 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 			return fmt.Errorf("vmm: remove native chroot: %w", err)
 		}
 	}
-	if err := removeNativeCgroup(nativeCgroupScope(record.Lease)); err != nil {
+	handled, err := helpers.removeSnapshotMemoryCgroup(ctx, record)
+	if err != nil {
+		return err
+	}
+	if !handled {
+		err = removeNativeCgroup(nativeCgroupScope(record.Lease))
+	}
+	if err != nil {
 		return fmt.Errorf("vmm: remove native cgroup: %w", err)
 	}
 	if err := v.sweepMaterialised(lease.Instance); err != nil {

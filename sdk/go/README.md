@@ -255,6 +255,39 @@ milestone payloads. Propagate its returned error so the transaction rolls back.
 Run the same command with `--check` in CI. See the
 [binding guide](../../docs/operations.md#generate-application-workflow-bindings).
 
+## Durable entity guest handlers
+
+The separately gated guest protocol v2 accepts registered app-webhook intents
+with a pure state transition. Use `DecodeDurableEntityHandlerRequest` on a body
+bounded with `DurableEntityHandlerMaxRequestBytes`. Decode and validate your
+business input before constructing a response:
+
+```go
+intent, err := call.WebhookIntent(webhookID, "reservation.confirmed", map[string]any{
+    "reservation_key": call.Entity.Key, "quantity": 2,
+})
+if err != nil { return err }
+next := json.RawMessage(`{"status":"reserved","quantity":2}`)
+body, err := call.EncodeTransition(faas.DurableEntityTransition{
+    Data: next, Result: next, Outbox: []faas.DurableEntityWebhookIntent{intent},
+})
+if err != nil { return err }
+// Send body unchanged as application/json; Gregale performs the fenced commit.
+```
+
+The helper produces JSON only. Never send a notification or mutate an external
+system during handler computation. V1 parsing/pure responses remain supported,
+but outgoing work requires negotiated v2. Advertised batch limits come from
+Gregale's central table; complete queue/snapshot/storage bounds remain platform
+checks. Omit Outbox to append nothing; nil AlarmAt clears the alarm. Parsing an
+envelope does not authenticate a public endpoint.
+
+API retries retain the same entity `RequestID` and exact payload bytes; receivers
+deduplicate the platform's stable message ID. Commit, transport acceptance and
+receiver completion are separate outcomes. Both gates remain disabled pending
+testing-agent qualification. See the
+[reservation example](../../examples/durable-entity-reservations/README.md).
+
 ## Idempotency
 
 Every mutating call (POST/PATCH/DELETE) carries an `Idempotency-Key`
@@ -725,3 +758,267 @@ retains its immutable copy; replay the same declaration after response loss.
 A private receipt is published on host-confirmed success with a typed result
 or explicit account success recovery. Approved Job retry clears file receipts.
 Published files use the existing customer-scoped artifact download methods.
+
+## Inspect durable entity metadata
+
+The owner-only preview endpoint `GET /v1/apps/{slug}/entities/inspect` accepts
+required `namespace` and `key`, plus optional `environment` and
+`platform_tenant_id`. It returns the committed version, alarm status and pending
+outbox metadata without running the guest or exposing state/message payloads.
+It requires account `apps:read` or admin permission and preview app enablement.
+Missing delivery history is `unknown`; an empty queue does not prove delivery.
+
+```go
+inspection, err := client.InspectDurableEntity(ctx, "reservations", faas.DurableEntityInspectRequest{
+    Namespace: "reservations", Key: "reservation:123",
+})
+```
+
+## Re-arm exhausted entity work
+
+Use `POST /v1/apps/{slug}/entities/retry` after a fresh inspection reports the
+selected alarm or outbox head as exhausted. Copy its version, recovery revision
+and exact alarm deadline or head ID. Recovery requires account deploy-write or
+admin permission and existing execution admission; diagnostic read permission
+alone does not grant retry authority. Active owners block recovery.
+
+A successful response resets retry metadata only. Workers must be enabled to
+resume processing. Committed state and message identities stay intact; terminal
+receiver deliveries are not resent. After a conflict or uncertain response,
+inspect again before deciding whether to submit another recovery.
+
+```go
+if inspection.Outbox.Exhausted {
+    recovery, err := client.RetryDurableEntity(ctx, "reservations", faas.DurableEntityRetryRequest{
+        Namespace: "reservations", Key: "reservation:123", Target: "outbox",
+        ExpectedVersion: inspection.Version,
+        ExpectedRecoveryRevision: inspection.RecoveryRevision,
+        HeadID: inspection.Outbox.HeadID,
+    })
+    _ = recovery
+    _ = err
+}
+```
+
+For an alarm, use `Target: "alarm"` and `AlarmAt: inspection.Alarm.AlarmAt`,
+omitting `HeadID`. Preserve any environment/customer selectors used for inspection.
+
+## Typed entity handles and pure guest calls
+
+```go
+type CounterResult struct { Count int `json:"count"` }
+handle, err := faas.NewDurableEntityHandle[map[string]int, CounterResult](client, "counter", faas.DurableEntityInspectRequest{
+    Namespace: "counters", Key: "customer:456", Environment: "staging",
+})
+if err != nil { return err }
+result, err := handle.Invoke(ctx, "stable-operation-id", map[string]int{"delta": 1})
+```
+
+Handles retain their app/entity/environment/customer selectors. Invoke always
+requires an explicit request ID. After uncertain responses or result decoding
+errors, retain the same ID and exact payload; result decoding can fail after a
+successful commit. The returned typed result preserves acknowledged version and
+replay status when its value cannot be decoded. `handle.Inspect` and
+`handle.Retry` reuse the bound selectors; recovery never silently refreshes its
+comparison fence.
+
+Inside the existing trusted guest handler, use typed calls and a pure builder:
+
+```go
+type Counter struct { Count int `json:"count"` }
+type Input struct { Delta int `json:"delta"` }
+call, err := faas.DecodeDurableEntityCall[Counter, Input](body, Counter{})
+if err != nil { return nil, err }
+if call.Entity.Namespace != "counters" { return nil, errors.New("unexpected entity namespace") }
+if call.Event == "alarm" { return call.Transition(call.State, nil).ClearAlarm().Encode() }
+next := Counter{Count: call.State.Count + call.Payload.Delta}
+return call.Transition(next, next).Encode()
+```
+
+Validate application fields, integer overflow and persisted schema explicitly.
+Version-zero initialization is JSON-isolated; committed state is never reset on
+decode failure. Transition builders preserve the existing alarm by default.
+Use `ScheduleAlarm(deadline)` or `ClearAlarm()` explicitly, especially when
+consuming alarm events. `Webhook(registeredID, event, payload)` appends an intent
+and performs no send. A rejected intent poisons the builder even if its error is
+ignored; `Encode` also enforces negotiated byte/batch bounds.
+
+Guest computation must remain pure. Envelope decoding is not public endpoint
+authentication, and encoding is not commit acknowledgement. Outgoing intents
+require v2 opt-in. See [the typed example](../../examples/durable-entity-sdk/README.md)
+and [ADR-938](../../docs/adr/938-typed-durable-entity-sdk.md). These local additions
+have not been tested or built in this workspace.
+
+## Application state schema migrations
+
+`DecodeDurableEntitySchemaCall[State, Payload]` opts into stored
+`{"schema_version": n, "data": ...}` envelopes. Supply a positive current
+`DurableEntityStateSchema.Version`, pure `Initial`, `Validate`, and a complete
+`Migrations[n]` chain where each function transforms JSON data from n to n+1.
+Schema versions are uint32 values independent of the entity's commit version.
+
+```go
+schema := faas.DurableEntityStateSchema[Counter]{
+    Version: 2,
+    Initial: func() Counter { return Counter{} },
+    Validate: func(state Counter) error {
+        if state.Count < 0 { return errors.New("negative counter") }
+        return nil
+    },
+    Migrations: map[uint32]func(json.RawMessage) (json.RawMessage, error){
+        1: func(raw json.RawMessage) (json.RawMessage, error) {
+            var old struct { Total *int `json:"total"` }
+            if err := json.Unmarshal(raw, &old); err != nil { return nil, err }
+            if old.Total == nil { return nil, errors.New("missing old total") }
+            return json.Marshal(Counter{Count: *old.Total})
+        },
+    },
+}
+call, err := faas.DecodeDurableEntitySchemaCall[Counter, Input](body, schema)
+if err != nil { return nil, err }
+return call.Transition(call.State, call.State).Encode()
+```
+
+The final example performs a migration-only business transition; it still
+commits through the normal invocation path and increments the commit version.
+Production handlers should explicitly handle invocation/alarm input and consume
+or replace due alarms. Preparation does not write state. `StoredSchemaVersion`
+and `Migrated` describe the local upgrade; the schema call's `Transition` always
+stores the current envelope and validates new state at encoding.
+
+Missing steps, malformed/future envelopes and invalid outputs are rejected.
+Unwrapped committed data requires an explicit `LegacyVersion`; do not set one
+unless its decoder really matches existing data. Go struct decoding alone does
+not enforce required JSON fields; use pointer fields/custom decoding and your
+validator where necessary. All callbacks must be pure and deterministic.
+
+Deploy schema-aware writers at the existing schema before upgrading. Legacy
+application code that ignores the envelope is not fenced by this SDK contract.
+Once upgraded state commits, rollback code must still understand that schema.
+See [ADR-939](../../docs/adr/939-durable-entity-application-schema-migrations.md).
+Tests and builds remain unverified in this workspace.
+
+### Durable entity state export and restore
+
+Owner preview APIs export application data and restore it through an expected
+business version and stable request ID. Export needs read scope; restore needs
+deploy-write scope and the existing mutation gates. Preserve the complete export
+privately. Restore retains current alarms, receipts, outbox and delivery retries;
+it does not invoke guest code or rewind effects. Check application schema
+compatibility before restoring.
+
+After timeout or an uncertain response, retry the identical request ID and body,
+including the original expected version. Start a new operation only after resolving
+the previous outcome. A successful retry can return `replayed: true`. Checksum
+validation requires serialization fidelity; do not edit the exported data.
+
+This implementation is local and unqualified; tests/builds are pending. See
+[ADR-941](../../docs/adr/941-durable-entity-owner-state-recovery-api.md).
+
+Use `client.ExportDurableEntity(ctx, slug, selectors)` and `client.RestoreDurableEntity(ctx, slug, request)`.
+
+### Backups and restore preview
+
+Operator-enabled backups capture application data hourly with eventual seven-day
+retention. Owner read-scope clients can list backup metadata, read an exact backup
+and preview a restore. Preview reports observed versions, recognizable schema
+versions and preserved pending work. Compatibility remains `unverified`; validate
+application data separately. Preview does not reserve a version or promise storage
+capacity. Actual restore still requires deploy-write scope, expected version and
+stable request ID. See [the operator guide](../../docs/runbooks/FaasDurableEntityBackups.md).
+
+Use `ListDurableEntityBackups(ctx, slug, selectors, cursor)`, `GetDurableEntityBackup(ctx, slug, selectors, backupID)` and `PreviewDurableEntityRestore(ctx, slug, request)`.
+
+### Application-validated restore
+
+The default-off operator gate `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1`
+makes every new owner restore require `validation_deployment_id`. First call the
+owner validation endpoint with the same selectors, exported data, expected version
+and stable request ID. It needs deploy-write scope and execution permissions; it
+runs application code and consumes normal invocation resources. A true verdict
+names the checked deployment. Put that ID in the restore request; restore validates
+again under its private claim. A false verdict commits no state. Receipt replay
+skips validation. Keep the identical request, including the pin, for uncertain
+restore retries.
+
+The distinct guest route is `/__gregale/entities/validate-restore`; validators must
+be synchronous and pure, returning only a versioned boolean verdict. No normal
+transition, alarm or outbox output is admitted. External application I/O is not
+independently disabled by the current runtime. Validators do not migrate data.
+The read-only metadata preview remains separate and does not execute the guest.
+Deployment selection is checked before/after validation, but deployment routing
+and bucket publication are not atomic; avoid deployment changes during recovery.
+See [ADR-943](../../docs/adr/943-durable-entity-application-validated-restore.md).
+
+Use `ValidateDurableEntityRestore(ctx, slug, request)` and set `request.ValidationDeploymentID` for restore. Guest helpers are `DecodeDurableEntityRestoreValidationRequest` and `EncodeDurableEntityRestoreValidation`; errors become rejection without exposing error text.
+
+### Blocker responsibility
+
+Workflow blockers accept optional public `Owner` and `NextAction` fields;
+source-linked resolution facts accept `ResolvedBy`. Use the existing workflow
+blocker transaction helper to publish the complete replacement list with the
+business write. Assignment is application-authorized and does not grant platform
+permissions. Upgrade all writers to preserve these fields during metadata updates.
+See [blocker ownership](../../docs/operations.md#assign-blocker-ownership-and-a-next-action)
+for byte limits, reassignment, and resolution tracking.
+
+Attention queues support an exact owner or unassigned-only filter, and summaries
+can group by owner. Empty owner-group values represent unassigned work; shared
+workflows may count in several groups. See [owner queues](../../docs/operations.md#find-work-by-owner)
+for filter and count semantics.
+
+Workflow steps can declare versioned `blocker_escalations` policies by blocker
+code, with `after_seconds` and a recommended `owner`. Attention reads support
+`reason=escalated` and return threshold findings and escalated counts; unknown
+ages remain unknown. See [escalation policies](../../docs/operations.md#declare-blocker-escalation-policies).
+
+Blocker replacements also support paired `acknowledged_at` / `acknowledged_by`
+and an optional `follow_up_at` deadline. Preserve these fields on later reports.
+Acknowledgement keeps the blocker active and preserves its original age. Use
+attention reasons `unacknowledged` and `follow_up_overdue` to find unattended work;
+summary counts are available per owner. See the operations documentation for
+public actor and timestamp validation rules.
+
+Blockers also accept application-reported `priority` (`low`, `normal`, `high`,
+`urgent`) and public `business_impact` (at most 512 UTF-8 bytes without control
+characters). Omitted priority counts as normal. Preserve this context on later
+blocker replacements; changing it keeps age and acknowledgement intact.
+Attention queues and summaries accept a priority filter and expose counts per
+owner. Deadline queue sorting uses the workflow's existing `deadline_at`, with
+undated workflows last; update-time ordering remains the default. Summary groups
+retain group-value ordering. Reuse cursors only with the same filters and order.
+
+Resolution verification is opt-in: provide paired `verification_milestone_id` and
+`verification_milestone_name`, optionally `verification_operation_id` (defaults
+to the resolution's Operation) and a public `verification_owner`. Exact retained
+proof must match the same app/customer/environment/subject/workflow instance and
+resolution contract version. A name alone cannot verify a resolution.
+Use attention reason `awaiting_verification` and owner summaries for outstanding
+proof. Later state reports and terminal states preserve retained obligations.
+Workflow-instance previews are bounded to 16 findings with exact totals;
+paginated selected-instance history exposes each report's verification findings.
+Verification observes retained evidence and never authorizes or runs an action.
+
+### Workflow bottleneck analytics
+
+The selected workflow milestone snapshot exposes `bottlenecks`: state durations, blocked intervals by code/Operation/owner, and verification wait by owner. Analytics use up to 1,024 retained reports independently of history pagination. Each breakdown shows up to 32 groups; totals cover the full window. Inspect `history_complete`, `incomplete_reasons` and truncation flags before treating durations as complete. Unknown verification starts are counted without inferred waits. State/blocker time uses application occurrence timestamps; verification uses publication timestamps. Concurrent blocker and verification groups can overlap.
+
+### Compare workflow performance
+
+The workflow performance summary endpoints require an explicit app, environment and workflow. Account readers can optionally select a customer; customer readers inherit ownership from credentials. Completed and ongoing cohorts each select the latest 100 retained instances, with matching/sample/coverage counts. Only complete retained histories enter state, blocker and verification duration distributions. Groups expose nearest-rank p50/p95 and total seconds from one accumulated duration per eligible workflow. Up to 32 groups are ranked by total time. Ongoing durations are elapsed observations, and completed workflows may still await verification. Inspect coverage and truncation before comparing results.
+
+### Investigate performance contributors
+
+The performance instance endpoints list complete-history contributors ranked by observed duration. Select `cohort` and `dimension`; state groups require state/version, blocker groups require Operation/code/version and an exact owner or `unassigned=true`, and verification owner groups require an exact owner or unassigned selection. Overall dimensions reject group selectors. Pass the summary’s `cohort_token` to preserve its evaluation and cohort; changed retained evidence returns `409 workflow_performance_cohort_changed` and requires refreshing the summary. Without a token this evaluates a fresh cohort. Each result exposes the business subject, current blocker ownership/next action and bounded pending verification findings. Historical contributing ownership can differ from current ownership.
+
+### Workflow state SLA budgets
+
+Workflow steps accept `state_sla_budget_seconds`, a map of declared nonterminal states to positive whole-second budgets. Publish a new workflow contract version when changing budgets. The current workflow state exposes optional `sla` data with `within_budget`, `breached`, or `unknown` status; updates that keep the same state preserve the visit clock. Missing or ambiguous retained entry history produces `unknown`.
+
+Use the attention reason `sla_breached` to find known breaches. Performance cohorts expose configured, evaluated, breached, and unknown workflow counts, and state groups expose evaluated and breached visit counts, including visits that ended before completion. Budgets are observational and do not block application operations.
+
+### SLA early warnings
+
+Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
+
+Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.

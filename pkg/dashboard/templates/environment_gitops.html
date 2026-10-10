@@ -80,6 +80,23 @@
             </form>{{end}}
           </section>
         {{end}}
+        {{with .Status.WorkloadEvidence}}
+          <section class="{{if .BlockingReasons}}blocked{{end}}">
+            <h2>Candidate qualification and activation</h2>
+            <p>Graph phase: <strong>{{.GraphPhase}}</strong>{{if .GraphErrorCode}} · {{.GraphErrorCode}}{{end}} · generation {{.Generation}} · intent version {{.IntentVersion}}</p>
+            <p>Qualification: {{if .Qualified}}complete{{else}}blocked{{end}} · activation: {{if .Activated}}complete{{else}}not recorded{{end}} · serving: {{if .Serving}}converged{{else}}not recorded{{end}}</p>
+            <p>Artifacts prepared: {{.ArtifactsPrepared}} · candidates {{.Candidates}} · retained workloads {{.RetainedWorkloadsRecorded}} · captures {{.CapturesRecorded}} · restores {{.RestoresRecorded}} · guest configuration acknowledgements {{.GuestConfigAcknowledgementsRecorded}} · isolated smokes {{.SmokesRecorded}} · framework readiness acknowledgements {{.FrameworkReadyAcknowledgementsRecorded}}</p>
+            {{if .BlockingReasons}}<h3>Blocking evidence</h3><ul>{{range .BlockingReasons}}<li><code>{{.}}</code></li>{{end}}</ul>{{end}}
+            <p class="muted">These receipts describe the current reviewed graph. They do not authorize candidate activation or serving traffic.</p>
+          </section>
+        {{else}}
+          {{if $source.ApprovedRevisionID}}
+          <section>
+            <h2>Candidate qualification and activation</h2>
+            <p>No current candidate graph has been prepared for the approved definition and environment intent.</p>
+          </section>
+          {{end}}
+        {{end}}
         <section>
           <h2>Source binding</h2>
           <p>In report mode, rebind or disconnect releases Git field ownership and preserves existing values. Rebinding requires a new approval and adoption. Pending execution and retained qualification records block either action.</p>
