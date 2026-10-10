@@ -150,11 +150,12 @@ func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, true, 8080)
 }
 
-// FailingRootImageAboveBase is HelloImageAboveBase whose / answers 500 while
-// /healthz stays healthy: a release that passes its startup gate and then
-// fails real requests. The safe-release drill deploys it as a bad canary.
-func FailingRootImageAboveBase(repo, helloBody string) (fakeImage, string) {
-	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root")
+// FailingAPIImageAboveBase is HelloImageAboveBase whose /api answers 500
+// while / and /healthz stay healthy: a release that passes its startup gate
+// and the post-readiness smoke, then fails real API requests. The
+// safe-release drill deploys it as a bad canary.
+func FailingAPIImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-api")
 }
 
 // HelloImageAboveBaseWithArgs is HelloImageAboveBase with extra hello-server

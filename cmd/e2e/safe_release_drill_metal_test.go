@@ -68,7 +68,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	v1 := registry.AddImage("library/sr-v1", v1Img)
 	v2Img, _ := e2etest.HelloImageAboveBaseWithArgs("library/sr-v2", safeReleaseDrillBody, "-addr", ":8080")
 	v2 := registry.AddImage("library/sr-v2", v2Img)
-	badImg, _ := e2etest.FailingRootImageAboveBase("library/sr-bad", safeReleaseDrillBody)
+	badImg, _ := e2etest.FailingAPIImageAboveBase("library/sr-bad", safeReleaseDrillBody)
 	bad := registry.AddImage("library/sr-bad", badImg)
 	crashImg, _ := e2etest.FailingLivenessImageAboveBase("library/sr-crash", safeReleaseDrillBody)
 	crash := registry.AddImage("library/sr-crash", crashImg)
@@ -122,7 +122,15 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		if raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-quiet/rollback", map[string]any{}); status/100 != 2 {
 			t.Fatalf("rollback: status=%d body=%s", status, raw)
 		}
-		d.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool {
+		// Log the target's progress so a slow rollback is distinguishable from
+		// a stuck one in the drill record.
+		lastLogged := time.Time{}
+		d.waitDeployment(t, stable.ID, 5*time.Minute, func(dep state.Deployment) bool {
+			if time.Since(lastLogged) >= 30*time.Second {
+				t.Logf("DRILL rollback_progress t=%.0fs status=%q rollout=%q traffic=%d error=%q",
+					time.Since(rollbackStarted).Seconds(), dep.Status, dep.RolloutState, dep.TrafficPercent, dep.Error)
+				lastLogged = time.Now()
+			}
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
 		d.waitServing(t, "sr-quiet", time.Minute)
@@ -138,7 +146,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		stable := d.deployLive(t, "sr-bad", api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, "sr-bad", time.Minute)
 		candidate := d.deployLive(t, "sr-bad", api.CreateDeploymentRequest{Image: bad, Canary: customCanary("50", "10m")})
-		stop := d.sendTraffic("sr-bad", 500*time.Millisecond)
+		stop := d.sendTraffic("sr-bad", "/api", 500*time.Millisecond)
 		defer stop()
 		got := d.waitDeployment(t, candidate.ID, 4*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "aborted" || dep.Status != state.DeployLive || dep.TrafficPercent == 0
@@ -159,7 +167,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		candidate := d.deployLive(t, "sr-crash", api.CreateDeploymentRequest{Image: crash, Overrides: liveness, Canary: customCanary("50", "10m")})
 		// A trickle keeps waking the candidate; / stays 200, so only the
 		// liveness restarts can stop this release.
-		stop := d.sendTraffic("sr-crash", 5*time.Second)
+		stop := d.sendTraffic("sr-crash", "/", 5*time.Second)
 		defer stop()
 		got := d.waitDeployment(t, candidate.ID, 5*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "aborted"
@@ -267,8 +275,8 @@ func (d *safeReleaseDrill) waitLease(ready bool, timeout time.Duration) {
 
 func (d *safeReleaseDrill) host(slug string) string { return slug + ".apps.test.example" }
 
-func (d *safeReleaseDrill) get(slug string) int {
-	req, err := http.NewRequest(http.MethodGet, gatewayAppURL(d.h, slug), nil)
+func (d *safeReleaseDrill) get(slug, path string) int {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(gatewayAppURL(d.h, slug), "/")+path, nil)
 	if err != nil {
 		return 0
 	}
@@ -288,7 +296,7 @@ func (d *safeReleaseDrill) waitServing(t *testing.T, slug string, timeout time.D
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		if status := d.get(slug); status == http.StatusOK {
+		if status := d.get(slug, "/"); status == http.StatusOK {
 			return
 		} else if time.Now().After(deadline) {
 			t.Fatalf("%s not serving after %s: last status %d", slug, timeout, status)
@@ -297,8 +305,8 @@ func (d *safeReleaseDrill) waitServing(t *testing.T, slug string, timeout time.D
 	}
 }
 
-// sendTraffic sends sequential requests until stop is called.
-func (d *safeReleaseDrill) sendTraffic(slug string, every time.Duration) (stop func()) {
+// sendTraffic sends sequential requests to path until stop is called.
+func (d *safeReleaseDrill) sendTraffic(slug, path string, every time.Duration) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -310,7 +318,7 @@ func (d *safeReleaseDrill) sendTraffic(slug string, every time.Duration) (stop f
 				return
 			default:
 			}
-			d.get(slug)
+			d.get(slug, path)
 			time.Sleep(every)
 		}
 	}()
