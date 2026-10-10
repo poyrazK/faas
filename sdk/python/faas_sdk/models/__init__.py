@@ -487,6 +487,8 @@ from .commit_event_publication import CommitEventPublication
 from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
+from .commit_publication_history_item import CommitPublicationHistoryItem
+from .commit_publication_history_response import CommitPublicationHistoryResponse
 from .commit_receipt_response import CommitReceiptResponse
 from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
@@ -3911,6 +3913,8 @@ __all__ = (
     "CommitEventRequest",
     "CommitOperationResponse",
     "CommitOperationResponseState",
+    "CommitPublicationHistoryItem",
+    "CommitPublicationHistoryResponse",
     "CommitReceiptResponse",
     "CommitRouting",
     "CommitRoutingVersion",

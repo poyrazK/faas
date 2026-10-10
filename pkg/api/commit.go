@@ -158,3 +158,30 @@ func (c *Client) GetCommitPublicationReceipt(ctx context.Context, publication Co
 	}
 	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
 }
+
+// CommitPublicationHistoryItem contains retained acceptance metadata, never event data.
+type CommitPublicationHistoryItem struct {
+	CommitReceiptResponse
+	Type          string `json:"type"`
+	SchemaVersion string `json:"schema_version,omitempty"`
+}
+type CommitPublicationHistoryResponse struct {
+	Items      []CommitPublicationHistoryItem `json:"items"`
+	NextBefore string                         `json:"next_before,omitempty"`
+}
+
+// ListCommitPublications reads newest-first acceptance history, not delivery completion.
+func (c *Client) ListCommitPublications(ctx context.Context, source, before string, limit int) (CommitPublicationHistoryResponse, error) {
+	var out CommitPublicationHistoryResponse
+	if limit < 0 || limit > CommitPublicationHistoryPageMax {
+		return out, ErrValidation("invalid publication history limit")
+	}
+	query := url.Values{}
+	if before != "" {
+		query.Set("before", before)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source)+"/publications?"+query.Encode(), nil, &out)
+}

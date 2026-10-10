@@ -2851,6 +2851,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotent(s.sendAppMessage))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/commit-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createCommitSource))))
 	mux.HandleFunc("PUT /v1/commit-sources/{source}/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCommitSourceConnection))))
+	mux.HandleFunc("GET /v1/commit-sources/{source}/publications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCommitPublications))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}/blocked-events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCommitBlockedEvents))))
 	mux.HandleFunc("POST /v1/commit-sources/{source}/events/{event}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayCommitBlockedEvent)))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCommitSource))))

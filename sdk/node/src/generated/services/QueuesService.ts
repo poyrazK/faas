@@ -5,6 +5,7 @@
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { CommitBlockedEventsResponse } from '../models/CommitBlockedEventsResponse.js';
 import type { CommitEventRequest } from '../models/CommitEventRequest.js';
+import type { CommitPublicationHistoryResponse } from '../models/CommitPublicationHistoryResponse.js';
 import type { CommitReceiptResponse } from '../models/CommitReceiptResponse.js';
 import type { CommitSourceResponse } from '../models/CommitSourceResponse.js';
 import type { CreateCommitSourceRequest } from '../models/CreateCommitSourceRequest.js';
@@ -415,6 +416,56 @@ export class QueuesService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained publication acceptance receipts for an event source.
+   * Newest-first metadata only. Acceptance does not imply subscriber completion. Pages are live reads; concurrent admissions may require restarting from the first page. Delivery evidence may expire independently.
+   * @returns CommitPublicationHistoryResponse Accepted publications and an optional continuation cursor.
+   * @throws ApiError
+   */
+  public static listCommitPublications({
+    source,
+    before,
+    limit = 50,
+  }: {
+    /**
+     * Event-destination Commit source owned by the authenticated account.
+     */
+    source: string,
+    /**
+     * Opaque source-scoped next_before cursor from the previous page.
+     */
+    before?: string,
+    /**
+     * Maximum number of retained receipts per page.
+     */
+    limit?: number,
+  }): CancelablePromise<CommitPublicationHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/commit-sources/{source}/publications',
+      path: {
+        'source': source,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

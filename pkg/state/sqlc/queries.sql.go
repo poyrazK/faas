@@ -27891,6 +27891,72 @@ func (q *Queries) ListClonePostgresWriteFences(ctx context.Context, db DBTX, ope
 	return items, nil
 }
 
+const listCommitPublications = `-- name: ListCommitPublications :many
+SELECT id::text,source_id::text,event_id::text,event_type,schema_version,accepted_at,
+ publication_acceptance_id,publication_source,publication_event_id
+FROM commit_receipts
+WHERE account_id=$1::text::uuid AND source_id=$2::text::uuid
+ AND publication_acceptance_id IS NOT NULL
+ AND (accepted_at,id) < ($3::timestamptz,$4::text::uuid)
+ORDER BY accepted_at DESC,id DESC LIMIT $5::int
+`
+
+type ListCommitPublicationsParams struct {
+	AccountID string
+	SourceID  string
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  string
+	PageLimit int32
+}
+
+type ListCommitPublicationsRow struct {
+	ID                      string
+	SourceID                string
+	EventID                 string
+	EventType               string
+	SchemaVersion           string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+}
+
+func (q *Queries) ListCommitPublications(ctx context.Context, db DBTX, arg ListCommitPublicationsParams) ([]ListCommitPublicationsRow, error) {
+	rows, err := db.Query(ctx, listCommitPublications,
+		arg.AccountID,
+		arg.SourceID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCommitPublicationsRow{}
+	for rows.Next() {
+		var i ListCommitPublicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.EventID,
+			&i.EventType,
+			&i.SchemaVersion,
+			&i.AcceptedAt,
+			&i.PublicationAcceptanceID,
+			&i.PublicationSource,
+			&i.PublicationEventID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComputeNodeHeartbeats = `-- name: ListComputeNodeHeartbeats :many
 select id, node_id, received_at, last_heartbeat_at, source
 from compute_node_heartbeats

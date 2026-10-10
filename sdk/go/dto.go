@@ -374,3 +374,6 @@ type CreateCommitSourceRequest = api.CreateCommitSourceRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
+
+type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
+type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse

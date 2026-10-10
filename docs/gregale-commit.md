@@ -557,3 +557,37 @@ idempotency. No cross-subscriber execution order is introduced. Relay claims can
 in a different order from business transaction commits; version 3 does not impose
 a producer commit-time order. Configure existing subscription ordering keys for
 the required per-consumer delivery lanes.
+
+### Publication acceptance history
+
+For a version 3 event source, discover accepted work without knowing each outbox
+UUID first:
+
+```sh
+gregale commit history SOURCE --limit 50
+gregale commit history SOURCE --limit 50 --before NEXT_BEFORE
+gregale commit inspect SOURCE EVENT
+```
+
+`GET /v1/commit-sources/{source}/publications` returns metadata-only `items`
+containing the Commit receipt, original event type, optional schema version and
+publication descriptor. It excludes event data. Go `ListCommitPublications`,
+Node `QueuesService.listCommitPublications`, and Python
+`faas_sdk.api.queues.list_commit_publications` expose the same read.
+
+Pages sort by acceptance time and receipt UUID descending, default to 50 items,
+and allow up to 200. Pass `next_before` unchanged for the next page; an absent
+cursor marks the last currently observed page. Cursors are source-scoped.
+These are live reads, not a frozen snapshot or a change feed: concurrent
+transactions can become visible behind a page already read, so restart from the
+first page when reconciling recent admissions. This order does not establish
+producer transaction order or subscriber execution order.
+
+History remains available for paused sources and after ordinary event evidence
+retention. Its publication `receipt_url` includes the acceptance-time guard for
+reading each subscriber's independent delivery results. A 404 means delivery
+evidence is unavailable; a 409 means a replacement acceptance must not be
+attributed to the retained receipt. Neither means the original Commit acceptance
+was undone. Use `commit inspect SOURCE EVENT` to combine retained acceptance
+with available delivery evidence. An accepted history item alone does not prove
+subscriber completion. Operation-destination sources are rejected by this read.

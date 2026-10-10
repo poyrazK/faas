@@ -17466,3 +17466,12 @@ SELECT EXISTS(SELECT 1 FROM event_schemas WHERE account_id=sqlc.arg(account_id):
  AND source=sqlc.arg(source)::text AND event_type=sqlc.arg(event_type)::text) AS required,
  (SELECT schema FROM event_schemas WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND source=sqlc.arg(source)::text AND event_type=sqlc.arg(event_type)::text AND version=sqlc.arg(version)::text) AS schema;
+
+-- name: ListCommitPublications :many
+SELECT id::text,source_id::text,event_id::text,event_type,schema_version,accepted_at,
+ publication_acceptance_id,publication_source,publication_event_id
+FROM commit_receipts
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND source_id=sqlc.arg(source_id)::text::uuid
+ AND publication_acceptance_id IS NOT NULL
+ AND (accepted_at,id) < (sqlc.arg(before_at)::timestamptz,sqlc.arg(before_id)::text::uuid)
+ORDER BY accepted_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;

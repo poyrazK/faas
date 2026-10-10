@@ -257,6 +257,8 @@ export type { CommitBlockedEventsResponse } from './models/CommitBlockedEventsRe
 export type { CommitEventPublication } from './models/CommitEventPublication.js';
 export type { CommitEventRequest } from './models/CommitEventRequest.js';
 export type { CommitOperationResponse } from './models/CommitOperationResponse.js';
+export type { CommitPublicationHistoryItem } from './models/CommitPublicationHistoryItem.js';
+export type { CommitPublicationHistoryResponse } from './models/CommitPublicationHistoryResponse.js';
 export type { CommitReceiptResponse } from './models/CommitReceiptResponse.js';
 export type { CommitRouting } from './models/CommitRouting.js';
 export type { CommitSourceResponse } from './models/CommitSourceResponse.js';

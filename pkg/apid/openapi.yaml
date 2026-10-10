@@ -28399,6 +28399,38 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/commit-sources/{source}/publications:
+    get:
+      tags: [queues]
+      operationId: listCommitPublications
+      summary: List retained publication acceptance receipts for an event source.
+      description: Newest-first metadata only. Acceptance does not imply subscriber completion. Pages are live reads; concurrent admissions may require restarting from the first page. Delivery evidence may expire independently.
+      parameters:
+        - name: source
+          description: Event-destination Commit source owned by the authenticated account.
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: before
+          description: Opaque source-scoped next_before cursor from the previous page.
+          in: query
+          schema: { type: string }
+        - name: limit
+          description: Maximum number of retained receipts per page.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Accepted publications and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitPublicationHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/commit-sources/{source}/blocked-events:
     get:
       tags: [queues]
@@ -43202,6 +43234,28 @@ components:
         blocked_events: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
         destination: { type: string, enum: [operation, event], default: operation }
+    CommitPublicationHistoryItem:
+      description: Retained publication acceptance receipt with event metadata; excludes event data.
+      allOf:
+        - $ref: '#/components/schemas/CommitReceiptResponse'
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, description: Original committed event type. }
+            schema_version: { type: string, description: Selected schema version when supplied. }
+    CommitPublicationHistoryResponse:
+      type: object
+      description: Newest-first retained acceptance history, independent of subscriber evidence retention.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/CommitPublicationHistoryItem' }
+        next_before:
+          type: string
+          description: Opaque source-scoped continuation cursor; absent on the last observed page.
+
     CommitBlockedEventsResponse:
       type: object
       description: Bounded snapshot of blocked source events, with the observation time and snapshot limit.

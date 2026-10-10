@@ -9626,3 +9626,9 @@ const (
 	EventConsumerResultMaxBytes   = 1 << 20
 	EventConsumerIdentityMaxBytes = 4096
 )
+
+// Commit publication history bounds metadata-only reads.
+const CommitPublicationHistoryPageDefault = 50
+const CommitPublicationHistoryPageMax = 200
+
+const CommitPublicationHistoryCursorMaxBytes = 192
