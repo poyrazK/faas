@@ -710,6 +710,7 @@ from .debug_critical_path_segment import DebugCriticalPathSegment
 from .debug_critical_path_segment_type import DebugCriticalPathSegmentType
 from .debug_critical_path_span import DebugCriticalPathSpan
 from .debug_critical_path_span_dependency_type import DebugCriticalPathSpanDependencyType
+from .debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
 from .debug_dependency_impact_edge import DebugDependencyImpactEdge
 from .debug_dependency_impact_exemplar import DebugDependencyImpactExemplar
 from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExemplarWindow
@@ -754,6 +755,8 @@ from .debug_running_flow_summary import DebugRunningFlowSummary
 from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
+from .debug_suspected_dependency import DebugSuspectedDependency
+from .debug_suspected_dependency_type import DebugSuspectedDependencyType
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -3270,6 +3273,7 @@ from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
+from .tracing_config import TracingConfig
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
@@ -4221,6 +4225,7 @@ __all__ = (
     "DebugCriticalPathSegmentType",
     "DebugCriticalPathSpan",
     "DebugCriticalPathSpanDependencyType",
+    "DebugDependencyDeploymentComparison",
     "DebugDependencyImpactEdge",
     "DebugDependencyImpactExemplar",
     "DebugDependencyImpactExemplarWindow",
@@ -4265,6 +4270,8 @@ __all__ = (
     "DebugRunningObservation",
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
+    "DebugSuspectedDependency",
+    "DebugSuspectedDependencyType",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
@@ -6667,6 +6674,7 @@ __all__ = (
     "TraceSpan",
     "TraceSpanAttributes",
     "TraceSpanStatus",
+    "TracingConfig",
     "TransferOwnershipRequest",
     "Trigger",
     "TriggerBrokerPoisonStrategy",

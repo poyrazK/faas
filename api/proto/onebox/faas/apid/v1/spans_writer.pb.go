@@ -173,6 +173,166 @@ func (x *WriteSpansSummaryResponse) GetRetryAfterMs() int64 {
 	return 0
 }
 
+// IngestGuestSpansRequest is one in-guest OTLP export plus the identity
+// vmmd resolved from the vsock peer (ADR-934).
+type IngestGuestSpansRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// account_id, app_id, deployment_id, instance_id — host-owned identity.
+	AccountId    string `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AppId        string `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	DeploymentId string `protobuf:"bytes,3,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	InstanceId   string `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	// codec — the guest frame codec byte (pkg/api TraceCodec*): protobuf or
+	// JSON, optionally gzip-encoded.
+	Codec uint32 `protobuf:"varint,5,opt,name=codec,proto3" json:"codec,omitempty"`
+	// payload — the export body exactly as the SDK sent it.
+	Payload       []byte `protobuf:"bytes,6,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestGuestSpansRequest) Reset() {
+	*x = IngestGuestSpansRequest{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestGuestSpansRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestGuestSpansRequest) ProtoMessage() {}
+
+func (x *IngestGuestSpansRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestGuestSpansRequest.ProtoReflect.Descriptor instead.
+func (*IngestGuestSpansRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *IngestGuestSpansRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *IngestGuestSpansRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *IngestGuestSpansRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *IngestGuestSpansRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *IngestGuestSpansRequest) GetCodec() uint32 {
+	if x != nil {
+		return x.Codec
+	}
+	return 0
+}
+
+func (x *IngestGuestSpansRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// IngestGuestSpansResponse outcome ∈ {accepted, rate_limited, disabled,
+// invalid, unavailable}. vmmd maps it to the guest ack byte.
+type IngestGuestSpansResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Outcome       string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	AcceptedSpans int64                  `protobuf:"varint,2,opt,name=accepted_spans,json=acceptedSpans,proto3" json:"accepted_spans,omitempty"`
+	RejectedSpans int64                  `protobuf:"varint,3,opt,name=rejected_spans,json=rejectedSpans,proto3" json:"rejected_spans,omitempty"`
+	RetryAfterMs  int64                  `protobuf:"varint,4,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestGuestSpansResponse) Reset() {
+	*x = IngestGuestSpansResponse{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestGuestSpansResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestGuestSpansResponse) ProtoMessage() {}
+
+func (x *IngestGuestSpansResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestGuestSpansResponse.ProtoReflect.Descriptor instead.
+func (*IngestGuestSpansResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *IngestGuestSpansResponse) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *IngestGuestSpansResponse) GetAcceptedSpans() int64 {
+	if x != nil {
+		return x.AcceptedSpans
+	}
+	return 0
+}
+
+func (x *IngestGuestSpansResponse) GetRejectedSpans() int64 {
+	if x != nil {
+		return x.RejectedSpans
+	}
+	return 0
+}
+
+func (x *IngestGuestSpansResponse) GetRetryAfterMs() int64 {
+	if x != nil {
+		return x.RetryAfterMs
+	}
+	return 0
+}
+
 var File_onebox_faas_apid_v1_spans_writer_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
@@ -185,9 +345,24 @@ const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
 	"account_id\x18\x03 \x01(\tR\taccountId\"[\n" +
 	"\x19WriteSpansSummaryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
-	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\x81\x01\n" +
+	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc5\x01\n" +
+	"\x17IngestGuestSpansRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12#\n" +
+	"\rdeployment_id\x18\x03 \x01(\tR\fdeploymentId\x12\x1f\n" +
+	"\vinstance_id\x18\x04 \x01(\tR\n" +
+	"instanceId\x12\x14\n" +
+	"\x05codec\x18\x05 \x01(\rR\x05codec\x12\x18\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\"\xa8\x01\n" +
+	"\x18IngestGuestSpansResponse\x12\x18\n" +
+	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12%\n" +
+	"\x0eaccepted_spans\x18\x02 \x01(\x03R\racceptedSpans\x12%\n" +
+	"\x0erejected_spans\x18\x03 \x01(\x03R\rrejectedSpans\x12$\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs2\xf2\x01\n" +
 	"\vSpansWriter\x12r\n" +
-	"\x11WriteSpansSummary\x12-.onebox.faas.apid.v1.WriteSpansSummaryRequest\x1a..onebox.faas.apid.v1.WriteSpansSummaryResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x11WriteSpansSummary\x12-.onebox.faas.apid.v1.WriteSpansSummaryRequest\x1a..onebox.faas.apid.v1.WriteSpansSummaryResponse\x12o\n" +
+	"\x10IngestGuestSpans\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a-.onebox.faas.apid.v1.IngestGuestSpansResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_spans_writer_proto_rawDescOnce sync.Once
@@ -201,16 +376,20 @@ func file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_onebox_faas_apid_v1_spans_writer_proto_goTypes = []any{
 	(*WriteSpansSummaryRequest)(nil),  // 0: onebox.faas.apid.v1.WriteSpansSummaryRequest
 	(*WriteSpansSummaryResponse)(nil), // 1: onebox.faas.apid.v1.WriteSpansSummaryResponse
+	(*IngestGuestSpansRequest)(nil),   // 2: onebox.faas.apid.v1.IngestGuestSpansRequest
+	(*IngestGuestSpansResponse)(nil),  // 3: onebox.faas.apid.v1.IngestGuestSpansResponse
 }
 var file_onebox_faas_apid_v1_spans_writer_proto_depIdxs = []int32{
 	0, // 0: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:input_type -> onebox.faas.apid.v1.WriteSpansSummaryRequest
-	1, // 1: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
+	1, // 2: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
+	3, // 3: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:output_type -> onebox.faas.apid.v1.IngestGuestSpansResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -227,7 +406,7 @@ func file_onebox_faas_apid_v1_spans_writer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc), len(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

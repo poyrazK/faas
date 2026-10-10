@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugSuspectedDependency } from './DebugSuspectedDependency.js';
 /**
  * One regression observation row.
  */
@@ -21,5 +22,6 @@ export type DebugRegressionItem = {
   acknowledged_at?: string;
   dismissed_until?: string;
   resolved_at?: string;
+  suspected_dependency?: DebugSuspectedDependency;
 };
 

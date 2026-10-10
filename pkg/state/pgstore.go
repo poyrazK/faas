@@ -29171,11 +29171,18 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // or named-arg convention. Mirror what `make sqlc-generate`
 // produces so the drift gate stays green.
 func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error {
-	return s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
+	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
 		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
 		Column2: summary,
 		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
 	})
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrRequestTelemetryRowNotFound
+	}
+	return nil
 }
 
 // ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.

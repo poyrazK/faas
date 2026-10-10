@@ -1664,7 +1664,7 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 `
 
 type ApplyRegressionActionParams struct {
@@ -1702,6 +1702,7 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		&i.AcknowledgedAt,
 		&i.DismissedUntil,
 		&i.ResolvedAt,
+		&i.SuspectedDependency,
 	)
 	return i, err
 }
@@ -18033,7 +18034,7 @@ const getRegressionObservation = `-- name: GetRegressionObservation :one
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -18065,6 +18066,7 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.AcknowledgedAt,
 		&i.DismissedUntil,
 		&i.ResolvedAt,
+		&i.SuspectedDependency,
 	)
 	return i, err
 }
@@ -27250,7 +27252,7 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
@@ -27265,18 +27267,19 @@ type ListActiveRegressionsByAppParams struct {
 }
 
 type ListActiveRegressionsByAppRow struct {
-	DeploymentID     pgtype.UUID
-	Route            string
-	P95Ms            int32
-	P95BaseMs        int32
-	AffectedCount    int32
-	RegressionFactor pgtype.Numeric
-	FirstDetectedAt  pgtype.Timestamptz
-	LastDetectedAt   pgtype.Timestamptz
-	State            interface{}
-	AcknowledgedAt   pgtype.Timestamptz
-	DismissedUntil   pgtype.Timestamptz
-	ResolvedAt       pgtype.Timestamptz
+	DeploymentID        pgtype.UUID
+	Route               string
+	P95Ms               int32
+	P95BaseMs           int32
+	AffectedCount       int32
+	RegressionFactor    pgtype.Numeric
+	FirstDetectedAt     pgtype.Timestamptz
+	LastDetectedAt      pgtype.Timestamptz
+	State               interface{}
+	AcknowledgedAt      pgtype.Timestamptz
+	DismissedUntil      pgtype.Timestamptz
+	ResolvedAt          pgtype.Timestamptz
+	SuspectedDependency []byte
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -27307,6 +27310,7 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.AcknowledgedAt,
 			&i.DismissedUntil,
 			&i.ResolvedAt,
+			&i.SuspectedDependency,
 		); err != nil {
 			return nil, err
 		}
@@ -64595,7 +64599,7 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 `
 
 // A detector pass that no longer sees a regression resolves the previous
@@ -64624,6 +64628,7 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 			&i.AcknowledgedAt,
 			&i.DismissedUntil,
 			&i.ResolvedAt,
+			&i.SuspectedDependency,
 		); err != nil {
 			return nil, err
 		}
@@ -70213,7 +70218,7 @@ func (q *Queries) UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
-const updateSpansSummary = `-- name: UpdateSpansSummary :exec
+const updateSpansSummary = `-- name: UpdateSpansSummary :execrows
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -70279,9 +70284,12 @@ type UpdateSpansSummaryParams struct {
 // lookup still hits request_telemetry_trace_idx for the trace_id
 // selectivity; the residual account_id check is a post-fetch
 // row-level filter (one row, microseconds).
-func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error {
-	_, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
-	return err
+func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateTenantWorkflowScheduleLastAdmittedAt = `-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
@@ -71029,17 +71037,19 @@ const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now()
+    $7, 'active', now(), now(), $8::jsonb
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- Keep the last known suspect when a pass could not compute one.
+    suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
         WHEN debug_regression_observations.state = 'resolved'
           OR (debug_regression_observations.state = 'dismissed'
@@ -71078,6 +71088,7 @@ type UpsertRegressionObservationParams struct {
 	P95BaseMs        int32
 	AffectedCount    int32
 	RegressionFactor pgtype.Numeric
+	Column8          []byte
 }
 
 // PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
@@ -71109,6 +71120,7 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.P95BaseMs,
 		arg.AffectedCount,
 		arg.RegressionFactor,
+		arg.Column8,
 	)
 	return err
 }

@@ -12,13 +12,13 @@ from faas_sdk.api.projects import (
     remove_environment_git_ops_override,
 )
 from faas_sdk.models import (
+    AppManifest,
     ApproveEnvironmentGitRevisionRequest,
     ApproveEnvironmentGitRevisionResponse,
     EnvironmentGitOpsStatusResponse,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
-    AppManifest,
 )
 
 
