@@ -100,6 +100,21 @@ func (x *MemoryShareIndex) ShareSnapshotMemory(ctx context.Context, backend Stor
 	return MemoryShareResult{SharedBytes: shared}, nil
 }
 
+// ErrBlockSharingUnsupported reports a filesystem that cannot share blocks
+// (ext4, tmpfs); ADR-911 sharing is then a no-op.
+var ErrBlockSharingUnsupported = errDedupeUnsupported
+
+// ShareMemoryWithImages shares memPath's pages with blocks of the given image
+// files directly, without cache resolution or the processed-once marker.
+// Metal tests use it to restore from a memory file that already shares.
+func ShareMemoryWithImages(ctx context.Context, memPath string, imagePaths []string) (int64, error) {
+	idx, err := indexImageFiles(ctx, imagePaths)
+	if err != nil {
+		return 0, err
+	}
+	return shareMemoryPages(ctx, memPath, idx)
+}
+
 // baseIndexLocked returns the index of every runtime base cached on this
 // node, rebuilding it when the set of cached base files changed.
 func (x *MemoryShareIndex) baseIndexLocked(ctx context.Context, backend StorageBackend) (*blockIndex, error) {
