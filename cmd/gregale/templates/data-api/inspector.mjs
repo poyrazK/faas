@@ -19,6 +19,12 @@ async function refresh() {
     const response = await fetch('session', { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' })
     if (!response.ok) throw new Error('Open the inspector URL printed by gregale data-api dev to connect.')
     session = await response.json()
+    const identity = element('identity').value
+    element('identity').replaceChildren()
+    for (const [name, value] of Object.entries(session.identities)) {
+      const option = document.createElement('option'); option.value = name; option.textContent = `${name} (${value.subject})`; element('identity').append(option)
+    }
+    if (Object.hasOwn(session.identities, identity)) element('identity').value = identity
     show('status', `${session.status} · API ${session.ready ? 'ready' : 'paused'} · client checks ${session.client_checked ? 'passed' : 'not verified'}`)
     show('detail', session.detail ?? '')
     show('fingerprint', `Schema: ${session.fingerprint}`)

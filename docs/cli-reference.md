@@ -9440,18 +9440,41 @@ Create schema-generated PostgreSQL APIs and export application types
 
 `gregale data-api [<subcommand>]`
 
+### data-api install
+
+Install or restore a verified Data API SDK bundle
+
+`gregale data-api install [--bundle <MANIFEST>] [--directory <DIR>] [--client-directory <DIR>] [--base-url <HTTPS_URL>] [--restore] [--from <DIR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--bundle <MANIFEST>` | approved local data-api-bundle.json |  |
+| `--directory <DIR>` | project directory (default .) |  |
+| `--client-directory <DIR>` | client directory relative to the project (default .) |  |
+| `--base-url <HTTPS_URL>` | immutable artifact directory for future restoration |  |
+| `--restore` | restore the committed artifact pin |  |
+| `--from <DIR>` | local artifact directory for restoration |  |
+
+Examples:
+
+```sh
+gregale data-api install --bundle /path/to/data-api-bundle.json
+gregale data-api install --restore
+```
+
 ### data-api dev
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--directory <DIR>` | starter project directory (default .) |  |
+| `--config <FILE>` | project-relative development config (default: data-api.dev.json) |  |
+| `--directory <DIR>` | project directory (default .) |  |
 | `--output <FILE>` | types output relative to the project |  |
 | `--port <PORT>` | loopback gateway port (default 8080; 0 selects a free port) |  |
-| `--check` | run installed client typecheck and tests |  |
+| `--check` | run configured client checks |  |
 | `--once` | verify and exit, removing disposable containers |  |
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |

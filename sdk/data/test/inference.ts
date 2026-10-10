@@ -1,5 +1,5 @@
-import { createDataClient } from '../src/index.js'
-import type { Database } from './database.types.js'
+import { createDataClient, type QueryData, type QueryResult, type QueryError } from '../src/index.js'
+import type { Database, Tables, TablesInsert, TablesUpdate, Enums } from './database.types.js'
 
 const client = createDataClient<Database>({ url:'https://data.example', accessToken:async ()=>'jwt' }).schema('api')
 client.from('notes').insert({subject:'alice',body:'hello',state:'open'})
@@ -61,3 +61,20 @@ createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', on
   void [id, status, duration]
 } })
 createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', onResponse: async () => {} })
+
+const query = client.from('notes').select('id,comments(id,body)')
+type JoinedRows = QueryData<typeof query>
+const rows: JoinedRows = [{ id: 1, comments: [{ id: 2, body: 'reply' }] }]
+// @ts-expect-error Query helpers preserve selected column types.
+const wrongRows: JoinedRows = [{ id: 'wrong', comments: [] }]
+const response: QueryResult<typeof query> = await query
+const queryError: QueryError<typeof query> | null = response.error
+void [rows, wrongRows, queryError]
+
+const input: TablesInsert<"notes"> = {subject:"alice",body:"hello"};
+const update: TablesUpdate<"notes"> = {body:"edited"};
+const state: Enums<"state"> = "open";
+const view: Tables<"note_bodies"> = {id:null,body:null};
+// @ts-expect-error Generated IDs remain read only in helper types.
+const wrongInput: TablesInsert<"notes"> = {id:42,subject:"alice",body:"hello"};
+void [input,update,state,view,wrongInput];

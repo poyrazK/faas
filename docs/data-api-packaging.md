@@ -87,6 +87,28 @@ requires another explicit `pin` operation. Checksums establish consistency with
 the reviewed pin; obtaining that pin and bundle from a trusted source remains
 necessary.
 
+## Install into an existing client
+
+With a trusted CLI already installed, use the verified SDK installer from any
+project containing a client package.json:
+
+```sh
+gregale data-api install --bundle /approved/data-api-bundle.json \
+  --directory /path/to/project --client-directory web
+# On a fresh checkout:
+gregale data-api install --restore --directory /path/to/project \
+  --client-directory web --from /approved
+```
+
+The command verifies the SDK without extracting or replacing the installed CLI.
+It writes `data-api-artifacts.json` at the project root and a file dependency in
+`web/package.json`, plus its npm lock. Commit all three files together. `--base-url`
+can record an immutable HTTPS artifact directory during the initial install;
+restoration supports the same private artifact token and no-redirect behavior as
+the starter tooling. Restore verifies existing bytes and lock integrity before
+running `npm ci --ignore-scripts`. A corrupt existing vendor archive fails rather
+than being replaced. No package is published by this command.
+
 ## Application CI
 
 The initialized starter includes CI workflows. For pull-request client checks and local scenario replay,

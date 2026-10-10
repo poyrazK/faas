@@ -4,7 +4,7 @@ import { randomBytes, createHash } from 'node:crypto'
 
 export const requestLimit = 65536
 const fields = (value, allowed) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => allowed.includes(key))
-export function validateRequests(value) {
+export function validateRequests(value, { identities = ['alice', 'bob'] } = {}) {
   let groups
   if (value?.version === 1 && fields(value, ['version', 'requests']) && Array.isArray(value.requests)) groups = [{ name: 'default', requests: value.requests }]
   else if (value?.version === 2 && fields(value, ['version', 'scenarios']) && Array.isArray(value.scenarios) && value.scenarios.length > 0 && value.scenarios.length <= 100) groups = value.scenarios
@@ -20,7 +20,7 @@ export function validateRequests(value) {
     for (const request of group.requests) {
       if (!fields(request, ['name', 'method', 'path', 'identity', 'body', 'expect', 'capture']) || typeof request.name !== 'string' || !request.name.trim() || request.name.length > 100 || names.has(request.name)) throw new Error('Requests need unique names of 1–100 characters.')
       names.add(request.name)
-      if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(request.method) || !['alice', 'bob'].includes(request.identity)) throw new Error('Use a supported method and Alice or Bob identity.')
+      if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(request.method) || !identities.includes(request.identity)) throw new Error('Use a supported method and a configured test identity.')
       if (typeof request.path !== 'string' || request.path.length > 4096 || !request.path.startsWith('/rest/v1/') || /[\\\s#]/.test(request.path)) throw new Error('Use a relative /rest/v1/ path without fragments or whitespace.')
       const target = new URL(request.path, 'http://127.0.0.1')
       if (target.origin !== 'http://127.0.0.1' || !target.pathname.startsWith('/rest/v1/')) throw new Error('Use a local API path.')
@@ -37,7 +37,7 @@ export function validateRequests(value) {
   if (Buffer.byteLength(JSON.stringify(value)) > requestLimit) throw new Error('Request collection exceeds 64 KiB.')
   return value
 }
-export function requestStore(path) {
+export function requestStore(path, options = {}) {
   let writes = Promise.resolve()
   const read = async (required = false) => {
     let value
@@ -50,7 +50,7 @@ export function requestStore(path) {
         let length = 0
         while (length < buffer.length) { const { bytesRead } = await file.read(buffer, length, buffer.length - length, length); if (!bytesRead) break; length += bytesRead }
         if (length > requestLimit) throw new Error('Request collection exceeds 64 KiB.')
-        value = validateRequests(JSON.parse(buffer.subarray(0, length).toString('utf8')))
+        value = validateRequests(JSON.parse(buffer.subarray(0, length).toString('utf8')), options)
       } finally { await file.close() }
     } catch (error) {
       if (error.code !== 'ENOENT' || required) throw new Error('Cannot read data-api.requests.json; check its format, size and file type.')
@@ -60,7 +60,7 @@ export function requestStore(path) {
   }
   const save = (value, revision) => {
     const operation = writes.then(async () => {
-      validateRequests(value)
+      validateRequests(value, options)
       if ((await read()).revision !== revision) { const error = new Error('Saved requests changed; reload the collection before saving.'); error.status = 409; throw error }
       try { if (!(await lstat(path)).isFile()) throw new Error('Request collection must be a regular file.') } catch (error) { if (error.code !== 'ENOENT') throw error }
       const temporary = `${path}.${randomBytes(12).toString('hex')}.tmp`

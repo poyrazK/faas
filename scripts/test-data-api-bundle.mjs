@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { validateBundle, readJSON, verifyFile, hostArchive, run } from '../cmd/gregale/templates/data-api-starter/tools/artifact-lib.mjs'
@@ -44,7 +44,17 @@ async function main() {
     // Exercise the same local replay command as the starter's client CI using
     // the restored binary, fresh dependencies, and its own embedded runtime.
     run(join(app, '.gregale-tools/gregale'), ['data-api', 'dev', '--port', '0', '--once', '--replay', 'data-api.requests.json'], { cwd: app, env, timeout: 420000, stdio: 'inherit' })
-    console.log('Packaged CLI/SDK fresh starter, clean CI installation and scenario replay passed.')
+    const generic = join(work, 'generic-client')
+    await mkdir(join(generic, 'web'), { recursive: true })
+    await writeFile(join(generic, 'web/package.json'), JSON.stringify({ name: 'generic-client', private: true, type: 'module' }))
+    const cli = join(app, '.gregale-tools/gregale')
+    run(cli, ['data-api', 'install', '--bundle', join(bundleDir, 'data-api-bundle.json'), '--directory', generic, '--client-directory', 'web'], { env, stdio: 'inherit' })
+    assert.deepEqual(JSON.parse(await readFile(join(generic, 'data-api-artifacts.json'), 'utf8')).bundle, bundle)
+    await rm(join(generic, 'web/node_modules'), { recursive: true })
+    await rm(join(generic, 'web/vendor'), { recursive: true })
+    run(cli, ['data-api', 'install', '--restore', '--from', bundleDir, '--directory', generic, '--client-directory', 'web'], { env, stdio: 'inherit' })
+    assert.equal(JSON.parse(await readFile(join(generic, 'web/node_modules/@gregale/data/package.json'), 'utf8')).version, bundle.sdk.version)
+    console.log('Packaged CLI/SDK fresh starter, generic client install/restore, clean CI installation and scenario replay passed.')
   } finally { await rm(work, { recursive: true, force: true }) }
 }
 

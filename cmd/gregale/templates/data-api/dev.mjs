@@ -17,6 +17,7 @@ import { requestStore } from './dev-requests.mjs'
 import { replayRequest, collectionScenarios } from './request-replay.mjs'
 import { inspector } from './dev-inspector.mjs'
 import { permissions } from './rpc-permissions.mjs'
+import { loadDevProject, verifyProject } from './dev-project.mjs'
 
 const execute = promisify(execFile)
 const postgrestImage = 'postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e'
@@ -125,34 +126,17 @@ async function atomicFile(path, content, mode) {
   finally { await unlink(temporary).catch(() => {}) }
 }
 
-export async function verifyIsolation(url, identities, signal = AbortSignal.timeout(30000)) {
-  const request = (subject, method = 'GET', body, query = '') => fetch(`${url}/rest/v1/notes${query}`, {
-    method, signal, headers: { Authorization: `Bearer ${identities[subject].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  })
-  const require = (condition, message) => { if (!condition) throw new Error(message) }
-  require((await fetch(`${url}/rest/v1/notes`, { signal })).status === 401, 'Unauthenticated access was accepted')
-  const inserted = await request('alice', 'POST', { subject: 'alice', body: 'Local RLS verification' })
-  require(inserted.ok, 'Alice could not create a note')
-  const [note] = await inserted.json()
-  try {
-    const rows = await request('bob', 'GET', undefined, `?id=eq.${note.id}`)
-    require(rows.ok && (await rows.json()).length === 0, 'Bob could read Alice’s note')
-    const update = await request('bob', 'PATCH', { body: 'Forbidden' }, `?id=eq.${note.id}`)
-    require(update.ok && (await update.json()).length === 0, 'Bob could update Alice’s note')
-    require(!(await request('alice', 'POST', { subject: 'bob', body: 'Forbidden' })).ok, 'Cross-subject insertion was accepted')
-    const own = await request('alice', 'GET', undefined, `?id=eq.${note.id}`)
-    require(own.ok && (await own.json())[0]?.body === 'Local RLS verification', 'Alice’s note changed unexpectedly')
-  } finally { require((await request('alice', 'DELETE', undefined, `?id=eq.${note.id}`)).ok, 'Verification note cleanup failed') }
-}
-
 export async function run(options) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required')
   if (options.replay && !options.once) throw new DevFailure('--replay requires --once.')
   if (options.scenario && !options.replay) throw new DevFailure('--scenario requires --replay.')
+  let project
+  try { project = await loadDevProject(options) }
+  catch (error) { throw new DevFailure(`Invalid development project: ${error.message}`) }
+  options = { ...options, output: project.output }
   let replayCollection, scenarios
   if (options.replay) {
-    try { replayCollection = await requestStore(options.replay).read(true) }
+    try { replayCollection = await requestStore(options.replay, { identities: Object.keys(project.identities) }).read(true) }
     catch { throw new DevFailure('Cannot read replay collection; check the path, version 1 or 2 format, size and file type.') }
     try { scenarios = collectionScenarios(replayCollection, options.scenario) }
     catch { throw new DevFailure('Unknown replay scenario; select a name present in the collection.') }
@@ -230,10 +214,17 @@ export async function run(options) {
         GRANT CONNECT ON DATABASE gregale_dev TO gregale_data_api;`)
     } finally { await owner.end() }
     phase = 'SQL migrations'
-    const migrationDirectory = join(options.directory, 'migrations', 'sql')
+    const migrationDirectory = project.migrations
     const initialSource = await migrationSource(migrationDirectory)
     const applyMigrations = () => migrate(ownerURL, pathToFileURL(migrationDirectory + '/'))
     await applyMigrations()
+    if (project.seedSQL !== null) {
+      phase = 'local seed data'
+      const seed = new pg.Client({ connectionString: ownerURL })
+      try { await seed.connect(); await seed.query('BEGIN'); await seed.query("SET LOCAL statement_timeout='15s'"); await seed.query(project.seedSQL); await seed.query('COMMIT') }
+      catch (error) { await seed.query('ROLLBACK').catch(() => {}); throw error }
+      finally { await seed.end() }
+    }
     const grants = new pg.Client({ connectionString: ownerURL })
     await grants.connect()
     try {
@@ -269,7 +260,7 @@ export async function run(options) {
     const verify = tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] }))
     let gateway = createServer(config, verify, upstreamPort, readyPort, () => {}).listeners('request')[0]
     let inspectorState = { status: 'starting', ready: false }
-    const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'))
+    const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'), Object.keys(project.identities))
     server = http.createServer((req, res) => {
       if (browser.handle(req, res)) return
       if (gateway) return gateway(req, res)
@@ -284,18 +275,19 @@ export async function run(options) {
       await delay(100, undefined, { signal: controller.signal })
     }
     const identities = {}
-    for (const subject of ['alice', 'bob']) identities[subject] = { subject, token: await new SignJWT({ sub: subject })
+    for (const [name, identity] of Object.entries(project.identities)) identities[name] = { subject: identity.subject, token: await new SignJWT({ ...identity.claims, sub: identity.subject })
       .setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('24h').sign(privateKey) }
-    phase = 'Alice/Bob RLS verification'
-    await verifyIsolation(url, identities, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+    phase = 'required project authorization verification'
+    await verifyProject(url, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
     phase = 'writing generated types'
     await atomicFile(options.output, generate(config.snapshot), 0o644)
     await acceptContract(config.snapshot)
     const checkClient = async () => {
       if (!options.check) return
-      for (const task of ['typecheck', 'test']) {
+      for (const command of project.check.commands) {
+        const task = command[0] === 'npm' ? (command[1] === 'run' ? command[2] : command[1]) : command[0]
         phase = `client ${task} (install the pinned SDK and client dependencies first)`
-        try { await execute('npm', ['run', task], { cwd: join(options.directory, 'client'), signal: controller.signal, timeout: 120000, maxBuffer: 1 << 20 }) }
+        try { await execute(command[0], command.slice(1), { cwd: project.check.directory, signal: controller.signal, timeout: 120000, maxBuffer: 1 << 20 }) }
         catch { throw new Error(`Client ${task} failed; install the pinned SDK and client dependencies first, then check your client code`) }
       }
     }
@@ -334,8 +326,8 @@ export async function run(options) {
     await writeReceipt()
     receiptWritten = true
     clearTimeout(startup)
-    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, client_checked: options.check }))
-    else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\nAlice/Bob RLS isolation verified.`)
+    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check }))
+    else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\n${project.legacy ? 'Alice/Bob RLS isolation verified.' : 'Required project authorization scenarios passed.'}`)
     const event = (status, detail) => {
       inspectorState = { ...inspectorState, status, detail, ready: Boolean(gateway) }
       if (options.json) console.log(JSON.stringify({ status, url, fingerprint: config.fingerprint, output: options.output, ready: Boolean(gateway), detail }))
@@ -367,13 +359,13 @@ export async function run(options) {
         try { if ((await fetch(`http://127.0.0.1:${readyPort}/ready`, { signal: readySignal })).ok) break } catch { readySignal.throwIfAborted() }
         await delay(100, undefined, { signal: readySignal })
       }
-      phase = 'Alice/Bob RLS verification'
+      phase = 'required project authorization verification'
       // Verify through a separate loopback listener before adopting the new
       // handler on the public dev URL. The existing session's JWTs stay valid.
       const candidate = createServer(nextConfig, verify, upstreamPort, readyPort, () => {})
       try {
         await new Promise((resolve, reject) => { candidate.once('error', reject); candidate.listen(0, '127.0.0.1', resolve) })
-        await verifyIsolation(`http://127.0.0.1:${candidate.address().port}`, identities, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+        await verifyProject(`http://127.0.0.1:${candidate.address().port}`, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()
       phase = 'writing generated types'
@@ -389,11 +381,11 @@ export async function run(options) {
     const report = async (status, error) => {
       if (status === 'source_unavailable') pause()
       await writeReceipt(status, false)
-      const diagnostic = phase.startsWith('client ') ? 'Fix client code or dependencies; run npm --prefix client run typecheck and npm --prefix client test for diagnostics.' : migrationDiagnostic(error)
-      event(status, status === 'source_unavailable' ? 'Cannot read migrations/sql; restore the directory or files to retry.' : `${phase}: ${diagnostic} ${gateway ? 'The validated API remains available.' : 'The gateway stays paused until migration files are fixed.'}`)
+      const diagnostic = phase.startsWith('client ') ? 'Fix client code or dependencies; run the configured check commands for diagnostics.' : migrationDiagnostic(error)
+      event(status, status === 'source_unavailable' ? 'Cannot read the configured migration directory; restore the directory or files to retry.' : `${phase}: ${diagnostic} ${gateway ? 'The validated API remains available.' : 'The gateway stays paused until migration files are fixed.'}`)
     }
     if (!options.once && options.watch !== false) {
-      if (!options.json) console.log('Watching migrations/sql; add a new migration to refresh the API and types.')
+      if (!options.json) console.log('Watching the configured migrations; add a new migration to refresh the API and types.')
       await watchMigrations({ directory: migrationDirectory, initial: initialSource, signal: controller.signal, reload, report })
     } else if (!options.once) await new Promise(resolve => {
       if (controller.signal.aborted) resolve()

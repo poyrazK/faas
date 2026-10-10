@@ -70,3 +70,9 @@ export type Database = {
     CompositeTypes: Record<string, never>
   }
 }
+
+type Relations<S extends keyof Database> = Database[S]["Tables"] & Database[S]["Views"]
+export type Tables<Name extends keyof Relations<S>, S extends keyof Database = "api"> = Relations<S>[Name] extends { Row: infer Row } ? Row : never
+export type TablesInsert<Name extends keyof Database[S]["Tables"], S extends keyof Database = "api"> = Database[S]["Tables"][Name] extends { Insert: infer Insert } ? Insert : never
+export type TablesUpdate<Name extends keyof Database[S]["Tables"], S extends keyof Database = "api"> = Database[S]["Tables"][Name] extends { Update: infer Update } ? Update : never
+export type Enums<Name extends keyof Database[S]["Enums"], S extends keyof Database = "api"> = Database[S]["Enums"][Name]

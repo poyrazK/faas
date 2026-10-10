@@ -3525,11 +3525,20 @@ var cliCommands = []cliCommand{
 	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
+			{Name: "install", Short: "Install or restore a verified Data API SDK bundle", Flags: []cliFlag{
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
+				{Name: "directory", Value: "DIR", Short: "project directory (default .)"},
+				{Name: "client-directory", Value: "DIR", Short: "client directory relative to the project (default .)"},
+				{Name: "base-url", Value: "HTTPS_URL", Short: "immutable artifact directory for future restoration"},
+				{Name: "restore", Short: "restore the committed artifact pin"},
+				{Name: "from", Value: "DIR", Short: "local artifact directory for restoration"},
+			}, Examples: []string{"gregale data-api install --bundle /path/to/data-api-bundle.json", "gregale data-api install --restore"}},
 			{Name: "dev", Short: "Run a disposable local Data API with test identities", Flags: []cliFlag{
-				{Name: "directory", Value: "DIR", Short: "starter project directory (default .)"},
+				{Name: "config", Value: "FILE", Short: "project-relative development config (default: data-api.dev.json)"},
+				{Name: "directory", Value: "DIR", Short: "project directory (default .)"},
 				{Name: "output", Value: "FILE", Short: "types output relative to the project"},
 				{Name: "port", Value: "PORT", Short: "loopback gateway port (default 8080; 0 selects a free port)"},
-				{Name: "check", Short: "run installed client typecheck and tests"},
+				{Name: "check", Short: "run configured client checks"},
 				{Name: "once", Short: "verify and exit, removing disposable containers"},
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},

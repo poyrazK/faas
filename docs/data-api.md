@@ -137,7 +137,7 @@ gregale data-api dev --port 0 --check --once
 ```
 
 `--check` runs client typecheck and tests; `--once` verifies and exits.
-`--port 0` selects an available gateway port. `--directory` selects the starter
+`--port 0` selects an available gateway port. `--directory` selects the
 project; `--output` changes the types path relative to that project.
 
 Long-running sessions watch `migrations/sql` by default. Add a new numbered SQL
@@ -205,6 +205,72 @@ prints exact container removal commands.
 A force-killed process cannot clean up; remove its containers marked
 `gregale.data-api.dev=true` manually with their volumes. Local checks do not
 qualify a managed provider or staging deployment.
+
+## Develop your own schema
+
+`data-api dev` reads `data-api.dev.json` at the project root, or an explicit
+`--config FILE`. The [orders example](../examples/data-api-orders/) is a runnable
+project with no notes table or starter client dependency:
+
+```sh
+cd examples/data-api-orders
+gregale data-api dev --port 0 --once
+```
+
+```json
+{
+  "version": 1,
+  "migrations": "migrations",
+  "seed": "seed.sql",
+  "output": "src/database.types.ts",
+  "identities": {
+    "buyer": { "subject": "customer-a", "claims": { "tenant": "shop-a" } },
+    "other": { "subject": "customer-b", "claims": { "tenant": "shop-b" } }
+  },
+  "verify": { "collection": "data-api.requests.json", "scenarios": ["orders-isolation"] },
+  "check": { "directory": "web", "commands": [["npm", "run", "typecheck"], ["npm", "test"]] }
+}
+```
+
+Paths are relative to the project. Migration, seed, verification and check paths
+must stay inside it. `--output` overrides the configured output. Identity names
+are available in saved requests and the inspector; subjects must include at
+least two distinct users. Custom claims cannot replace reserved JWT fields,
+including `sub` or `role`. Tokens remain private to the disposable local session.
+
+Required scenarios must exist and exercise two distinct subjects. Authentication
+rejection and every required assertion must pass before readiness and after
+migration reloads. Failed reloads keep the gateway paused and preserve the last
+accepted contract. Project authors should test cross-user reads, writes and RPCs;
+passing scenarios verify those assertions rather than every possible policy.
+Use captures and cleanup steps so checks can run repeatedly against the same
+local database. `--replay` runs additional selected scenarios after required
+verification.
+
+Seeds run once after initial migrations in an owner transaction, with a 15-second
+statement timeout. Only test data belongs in seeds and saved requests. Restart
+dev after changing configuration, identities or seeds. The watcher tracks the
+configured migration directory. `--check` runs the configured argument arrays
+without a shell; defaults remain the starter client's typecheck and tests.
+Projects without a config retain legacy notes verification. Newly initialized
+starters include their explicit project config, excluded from deployment uploads.
+
+## Hosted owner workspace
+
+Open **Data API** from an app's dashboard. The workspace shows managed Data API
+binding status and offers **Inspect schema**, **Generate TypeScript**, and
+**Refresh Data API**. Schema and type operations require a deployed `data-api`
+runtime and enabled app tasks; each action runs the existing catalog generator
+inside the deployed app. No database credentials or application tokens are
+needed in the browser.
+
+The schema view lists tables, views, columns and approved RPC signatures. A
+completed export provides a `database.types.ts` download and fingerprint.
+Pending tasks refresh the page; terminal results stop polling. Failed, truncated,
+malformed or previous-deployment output cannot become a downloadable contract.
+Results describe the schema at the time of the operation: regenerate after
+migrations. Refresh uses the existing fresh restart and progress page; processing
+completion still requires an application health check using its JWT.
 
 ## Create an API
 

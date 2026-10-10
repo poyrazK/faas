@@ -26,6 +26,42 @@ src/database.types.ts`. Use `--check` in CI to fail when your file differs
 from the database. Refresh the serving schema cache after migrations with
 `gregale data-api refresh my-data` and verify restart completion.
 
+Generated files also export `Tables<'notes'>`, `TablesInsert<'notes'>`,
+`TablesUpdate<'notes'>`, and `Enums<'state'>`. `Tables` includes read-only views;
+write helpers accept tables only and preserve generated-column restrictions.
+An optional second parameter selects an exported schema, for example
+`Tables<'items', 'other'>`. The default is `api` when available.
+
+```ts
+import type { TablesInsert } from './database.types.js'
+import type { QueryData, QueryResult, QueryError } from '@gregale/data'
+
+const input: TablesInsert<'notes'> = { subject: auth.user.id, body: 'Hello' }
+const query = db.from('notes').select('id,comments(id,body)')
+type Rows = QueryData<typeof query>
+type Response = QueryResult<typeof query>
+type Error = QueryError<typeof query>
+```
+
+`QueryData` removes the nullable error result and preserves nested projection
+inference. `QueryResult` describes the full awaited response. `QueryError`
+describes its non-null error type. The SDK also exports PostgREST single,
+maybe-single and array response types.
+
+For an existing application, install an approved bundle without copying starter
+scripts:
+
+```sh
+gregale data-api install --bundle /approved/data-api-bundle.json --directory .
+# Use --client-directory web when package.json is in a project subdirectory.
+gregale data-api install --restore --from /approved --directory .
+```
+
+Commit the artifact pin, client package.json and lockfile together. Restore checks
+both archive checksums and the committed npm integrity before installing locked
+dependencies. This workflow uses approved artifacts; public npm publication
+remains subject to the SDK publishing policy.
+
 The token getter runs on each request. Requests omit browser cookies and refuse
 redirects so access tokens stay at the configured API. The client preserves
 PostgREST relation, insert, update, filter, projection and relationship inference.

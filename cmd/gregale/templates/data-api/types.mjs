@@ -181,6 +181,15 @@ export function generate(snapshot) {
     lines.push('    }', '    CompositeTypes: Record<string, never>', '  }')
   }
   lines.push('}', '')
+  const defaultSchema = JSON.stringify(snapshot.schemas.includes('api') ? 'api' : snapshot.schemas[0])
+  lines.push(
+    'type Relations<S extends keyof Database> = Database[S]["Tables"] & Database[S]["Views"]',
+    `export type Tables<Name extends keyof Relations<S>, S extends keyof Database = ${defaultSchema}> = Relations<S>[Name] extends { Row: infer Row } ? Row : never`,
+    `export type TablesInsert<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Insert: infer Insert } ? Insert : never`,
+    `export type TablesUpdate<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Update: infer Update } ? Update : never`,
+    `export type Enums<Name extends keyof Database[S]["Enums"], S extends keyof Database = ${defaultSchema}> = Database[S]["Enums"][Name]`,
+    ''
+  )
   const result = lines.join('\n')
   if (Buffer.byteLength(result) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   return result

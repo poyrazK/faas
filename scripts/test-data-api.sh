@@ -15,16 +15,17 @@ fi
 # in the CLI/template archive. Test a temporary copy of the exact runtime source.
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-data-api.XXXXXX")"
 trap 'rm -rf "$runtime_dir"' EXIT
-cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,logging.mjs,dev.mjs,dev-inspector.mjs,dev-requests.mjs,request-replay.mjs,inspector.html,inspector.mjs,package.json,package-lock.json} "$runtime_dir/"
+cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,logging.mjs,dev.mjs,dev-project.mjs,starter-verification.json,dev-inspector.mjs,dev-requests.mjs,request-replay.mjs,inspector.html,inspector.mjs,package.json,package-lock.json} "$runtime_dir/"
 cp cmd/gregale/templates/data-api-starter/migrations/{migrate.mjs,rpc-permissions.mjs} "$runtime_dir/"
 mkdir -p "$runtime_dir/rpc-runtime"
 cp cmd/gregale/templates/data-api/{types.mjs,config.mjs} "$runtime_dir/rpc-runtime/"
 cp -R cmd/gregale/templates/data-api/test "$runtime_dir/"
 npm ci --prefix "$runtime_dir" --ignore-scripts
 npm test --prefix "$runtime_dir"
-DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/dev-watch.test.mjs tests/data-api/dev-requests.test.mjs
+DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/dev-watch.test.mjs tests/data-api/dev-requests.test.mjs tests/data-api/dev-project.test.mjs
 npm ci --prefix sdk/data --ignore-scripts
 npm test --prefix sdk/data
+DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/type-helpers.test.mjs
 starter_dir="$runtime_dir/starter"
 cp -R cmd/gregale/templates/data-api-starter "$starter_dir"
 mkdir -p "$starter_dir/migrations/rpc-runtime"

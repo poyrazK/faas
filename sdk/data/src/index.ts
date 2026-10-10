@@ -49,3 +49,9 @@ export function createDataClient<Database>(options: DataClientOptions) {
 }
 
 export { PostgrestError } from '@supabase/postgrest-js'
+
+/** Preserve the exact projection and nested relationship types of a query. */
+export type QueryResult<Query> = Query extends PromiseLike<infer Result> ? Result : never
+export type QueryData<Query> = QueryResult<Query> extends { data: infer Data } ? NonNullable<Data> : never
+export type QueryError<Query> = QueryResult<Query> extends { error: infer Error } ? NonNullable<Error> : never
+export type { PostgrestResponse, PostgrestSingleResponse, PostgrestMaybeSingleResponse } from '@supabase/postgrest-js'

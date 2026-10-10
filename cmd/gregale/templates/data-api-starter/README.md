@@ -123,6 +123,17 @@ Version 2 JSON output adds `scenario` to each `replay_result` and emits `replay_
 
 
 
+## Configure local development
+
+`data-api.dev.json` declares this starter's migrations, identities, required
+`notes-rls` verification, types output and client checks. Change it to develop
+another schema with named test identities and optional seed SQL. Required
+scenarios run before readiness and after migrations, and must exercise two
+subjects. Restart dev after changing configuration or seeds. `--config FILE`
+selects another config and `--output FILE` overrides its types destination.
+The inspector uses the configured identities. Legacy projects without a config
+retain the original Alice/Bob notes checks.
+
 ## Install the client
 
 Use Node.js 22 or newer, npm, curl and tar. Obtain an approved Data API bundle,
