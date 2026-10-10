@@ -61,6 +61,8 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	// New pins the authority to apiBaseURL and rejects redirects. Caller data
+	// changes only URL.Path and RawQuery; it cannot select a different origin.
 	response, err := p.httpClient.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {

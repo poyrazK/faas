@@ -26,8 +26,8 @@ LIMIT sqlc.arg(page_limit)::integer;
 SELECT count(*) FROM event_recovery_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND state IN ('running','paused');
 
 -- name: EventRecoveryCreate :one
-INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at)
-VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(selection)::jsonb,sqlc.arg(rate_per_second)::integer,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(expires_at)::timestamptz) RETURNING id;
+INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at,request_id)
+VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(selection)::jsonb,sqlc.arg(rate_per_second)::integer,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(now_at)::timestamptz,sqlc.arg(expires_at)::timestamptz,sqlc.narg(request_id)::uuid) RETURNING id;
 
 -- name: EventRecoveryInsertItem :exec
 INSERT INTO event_recovery_items(job_id,position,outbox_id,subscription_id,event_source,event_id,event_type,failed_at,failure_code,retryable,expected_progress)
@@ -115,6 +115,9 @@ WHERE job_id=sqlc.arg(job_id)::uuid AND position=sqlc.arg(position)::bigint AND 
 -- name: EventRecoveryExecutionObservations :many
 -- Exact replay identity and generation, never the latest descendant's outcome.
 SELECT item.position,
+ coalesce(result.state,'')::text AS result_state,coalesce(result.attempts,0)::integer AS result_attempts,
+ result.completed_at AS result_completed_at,result.recorded_at AS result_recorded_at,
+ coalesce(result.evidence_source,'')::text AS result_evidence_source,
  coalesce(inv.state,'')::text AS invocation_state,
  coalesce(inv.attempts,0)::integer AS invocation_attempts,
  coalesce(inv.outcome,'')::text AS invocation_outcome,
@@ -124,8 +127,11 @@ SELECT item.position,
  h.finished_at AS attempt_finished_at
 FROM event_recovery_items item
 JOIN event_recovery_jobs job ON job.id=item.job_id
+LEFT JOIN event_recovery_execution_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.replay_invocation_id=item.replay_invocation_id AND result.replay_generation=item.replay_generation
+ AND result.replay_created_at=item.replay_created_at AND result.recorded_at<=sqlc.arg(now_at)::timestamptz
 LEFT JOIN invocations inv ON inv.id=item.replay_invocation_id AND inv.account_id=job.account_id AND inv.app_id=job.app_id
- AND inv.replay_generation=item.replay_generation AND inv.created_at=item.replay_created_at
+ AND inv.replay_generation=item.replay_generation AND inv.created_at=item.replay_created_at AND result.job_id IS NULL
 LEFT JOIN LATERAL (
  SELECT history.outcome,history.attempt,history.finished_at
  FROM invocation_attempt_history history
@@ -133,8 +139,10 @@ LEFT JOIN LATERAL (
   AND history.account_id=job.account_id AND history.app_id=job.app_id
   AND history.started_at>=item.replay_created_at AND history.started_at<=sqlc.arg(now_at)::timestamptz
   AND history.retain_until>sqlc.arg(now_at)::timestamptz
+  AND EXISTS (SELECT 1 FROM invocations owner WHERE owner.id=item.replay_invocation_id AND owner.account_id=job.account_id
+   AND owner.app_id=job.app_id AND owner.created_at=item.replay_created_at)
  ORDER BY history.attempt DESC LIMIT 1
-) h ON inv.id IS NULL
+) h ON inv.id IS NULL AND result.job_id IS NULL
 WHERE job.id=sqlc.arg(job_id)::uuid AND job.account_id=sqlc.arg(account_id)::uuid
  AND job.selection->>'mode'='execution' AND item.state='queued'
  AND item.position>sqlc.arg(after_position)::bigint AND item.position<=sqlc.arg(through_position)::bigint
@@ -215,16 +223,20 @@ SELECT account_id FROM event_recovery_jobs WHERE id=sqlc.arg(job_id)::uuid;
 
 -- name: EventRecoveryEnqueueNotification :exec
 WITH recipients AS (
- SELECT array_agg(h.id ORDER BY h.id) AS ids FROM app_webhooks h
+ SELECT coalesce(array_agg(h.id ORDER BY h.id),'{}'::uuid[]) AS ids FROM app_webhooks h
  JOIN event_recovery_jobs j ON j.id=sqlc.arg(job_id)::uuid AND h.account_id=j.account_id AND h.app_id=j.app_id
  WHERE h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR sqlc.arg(event)::text=ANY(h.event_filter))
+), captured AS (
+ UPDATE event_recovery_jobs j SET notification_receipts=j.notification_receipts||jsonb_build_object(sqlc.arg(event)::text,
+ jsonb_build_object('event_id',sqlc.arg(event_id)::uuid,'captured_at',CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END,'recipient_webhook_ids',to_jsonb(r.ids)))
+ FROM recipients r WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('completed','cancelled')
+ AND NOT j.notification_receipts ? sqlc.arg(event)::text
+ RETURNING j.id,j.account_id,j.app_id,j.completed_at,j.execution_finished_at,r.ids
 )
 INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
-SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,r.ids,j.completed_at
-FROM event_recovery_jobs j CROSS JOIN recipients r
-WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('completed','cancelled') AND cardinality(r.ids)>0
+SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,j.ids,CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END
+FROM captured j WHERE cardinality(j.ids)>0
 ON CONFLICT (event,source_id) DO NOTHING;
-
 
 -- name: EventRecoveryScheduleTerminalState :one
 UPDATE event_recovery_jobs SET updated_at=sqlc.arg(now_at)::timestamptz,next_attempt_at=sqlc.arg(next_at)::timestamptz,
@@ -243,11 +255,14 @@ WITH slots AS MATERIALIZED (
  SELECT app_id,subscription_id,count(*)::bigint AS consumer_count FROM slots GROUP BY app_id,subscription_id
 )
 SELECT item.position,acct.plan,
+ (o.delivered_at + sqlc.arg(retention_seconds)::bigint * interval '1 second')::timestamptz AS receipt_retain_until,
+ coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)<>'',false)::boolean AS receipt_retention_held,
  CASE WHEN app.status='deleted' THEN 'target_unavailable'
  WHEN j.selection->>'mode'='execution' THEN CASE
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer
    OR inv.replay_generation<>(item.expected_progress->>'generation')::bigint OR inv.created_at<>(item.expected_progress->>'created_at')::timestamptz
    OR inv.completed_at IS DISTINCT FROM (item.expected_progress->>'completed_at')::timestamptz
+   OR (coalesce(item.expected_progress->>'parent_job_id','')<>'' AND inv.outcome='uncertain')
    OR EXISTS (SELECT 1 FROM invocation_plain_replays p WHERE p.parent_invocation_id=inv.id)
    OR EXISTS (SELECT 1 FROM invocation_keyed_replays k WHERE k.parent_invocation_id=inv.id) THEN 'changed'
   WHEN inv.work_expires_at<=sqlc.arg(now_at)::timestamptz OR inv.start_deadline_at<=sqlc.arg(now_at)::timestamptz THEN 'expired'
@@ -285,3 +300,188 @@ ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventRecoveryPreflightJob :one
 SELECT * FROM event_recovery_jobs WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryClaimExecutionNotification :one
+SELECT j.id,j.account_id FROM event_recovery_jobs j
+WHERE NOT j.execution_notification_captured AND j.selection->>'mode'='execution'
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=sqlc.arg(now_at)::timestamptz
+ AND j.execution_notification_next_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY j.execution_notification_next_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED;
+
+-- name: EventRecoveryCaptureExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_captured=true,execution_finished_at=sqlc.narg(finished_at)::timestamptz
+WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;
+
+-- name: EventRecoveryDeferExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_next_at=sqlc.arg(next_at)::timestamptz
+WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;
+
+-- name: EventRecoveryRetryExisting :one
+SELECT id FROM event_recovery_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND request_id=sqlc.arg(request_id)::uuid
+FOR KEY SHARE;
+
+-- name: EventRecoveryRetryCandidates :many
+SELECT item.outbox_id,item.event_source,item.event_id,item.event_type,item.subscription_id,
+ coalesce(result.completed_at,result.recorded_at)::timestamptz AS failed_at,
+ (CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END)::text AS failure_code,
+ true::boolean AS retryable,
+ jsonb_build_object('invocation_id',result.replay_invocation_id::text,
+ 'state',CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END,
+ 'attempts',result.attempts,'generation',result.replay_generation,'created_at',result.replay_created_at,
+ 'completed_at',result.completed_at,'dead_letter_id',coalesce(dead.id::text,''),
+ 'parent_job_id',item.job_id::text,'parent_position',item.position)::jsonb AS expected_progress
+FROM event_recovery_items item JOIN event_recovery_jobs parent ON parent.id=item.job_id
+JOIN event_recovery_execution_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.replay_invocation_id=item.replay_invocation_id AND result.replay_generation=item.replay_generation
+ AND result.replay_created_at=item.replay_created_at
+LEFT JOIN LATERAL (
+ SELECT dead.id FROM production_dead_letter_events dead JOIN invocations inv ON inv.id=dead.source_id
+ WHERE dead.account_id=parent.account_id AND dead.app_id=parent.app_id AND dead.source='invocation'
+  AND dead.source_id=result.replay_invocation_id AND dead.replayed_at IS NULL
+  AND inv.account_id=parent.account_id AND inv.app_id=parent.app_id
+  AND inv.replay_generation=result.replay_generation AND inv.created_at=result.replay_created_at
+ ORDER BY dead.id LIMIT 1
+) dead ON true
+WHERE parent.id=sqlc.arg(parent_job_id)::uuid AND parent.account_id=sqlc.arg(account_id)::uuid AND parent.app_id=sqlc.arg(app_id)::uuid
+ AND parent.selection->>'mode'='execution' AND parent.state IN ('completed','cancelled') AND item.state='queued'
+ AND result.state IN ('failed','dead_lettered') AND result.recorded_at<=sqlc.arg(now_at)::timestamptz
+ AND (sqlc.arg(outcome)::text='' OR CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END=sqlc.arg(outcome)::text)
+ AND (sqlc.arg(subscription_id)::text='' OR item.subscription_id=sqlc.arg(subscription_id)::text)
+ AND (sqlc.arg(event_source)::text='' OR item.event_source=sqlc.arg(event_source)::text)
+ AND (sqlc.arg(event_type)::text='' OR item.event_type=sqlc.arg(event_type)::text)
+ AND coalesce(result.completed_at,result.recorded_at)<=sqlc.arg(failed_before)::timestamptz
+ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventRecoveryExecutionHealthJobs :many
+SELECT j.id, j.completed_at, j.selection, j.state, j.execution_notification_captured,
+ (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued') AS queued_count
+FROM event_recovery_jobs j
+WHERE j.account_id=sqlc.arg(account_id) AND j.app_id=sqlc.arg(app_id)
+ AND j.state IN ('completed','cancelled') AND j.selection->>'mode'='execution'
+ AND j.completed_at<=sqlc.arg(now_at) AND j.execution_finished_at IS NULL
+ AND EXISTS (
+ SELECT 1 FROM event_recovery_items i
+ LEFT JOIN event_recovery_execution_results r ON r.job_id=i.job_id AND r.position=i.position
+ AND r.replay_invocation_id=i.replay_invocation_id AND r.replay_generation=i.replay_generation
+ AND r.replay_created_at=i.replay_created_at AND r.recorded_at<=sqlc.arg(now_at)
+ WHERE i.job_id=j.id AND i.state='queued' AND r.job_id IS NULL)
+ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit);
+
+-- name: EventRecoveryNotificationEvidence :one
+SELECT j.notification_receipts,j.execution_notification_captured,a.slug AS app_slug
+FROM event_recovery_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE j.id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationOutbox :many
+SELECT id,event,created_at,recipient_webhook_ids FROM app_webhook_event_outbox
+WHERE source_id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND event IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired','event_recovery.execution_finished');
+
+-- name: EventRecoveryNotificationDeliveries :many
+SELECT d.webhook_id,d.id,d.status,d.attempt,d.replay_generation,coalesce(d.last_response_code,0)::integer AS last_response_code,
+ d.next_attempt_at,d.delivered_at,(h.id IS NOT NULL)::boolean AS receiver_available
+FROM app_webhook_deliveries d
+LEFT JOIN app_webhooks h ON h.id=d.webhook_id AND h.account_id=d.account_id AND h.app_id=d.app_id AND h.scope='app'
+WHERE d.source_event_id=sqlc.arg(event_id)::uuid AND d.event=sqlc.arg(event)::text
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+ORDER BY d.webhook_id,d.id LIMIT sqlc.arg(receiver_limit)::integer;
+
+-- name: EventRecoveryNotificationReceivers :many
+SELECT id FROM app_webhooks WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND scope='app' AND id=ANY(sqlc.arg(webhook_ids)::uuid[]);
+
+-- name: EventRecoveryNotificationHealthJobs :many
+SELECT j.id FROM event_recovery_jobs j
+WHERE j.account_id=sqlc.arg(account_id)::uuid AND j.app_id=sqlc.arg(app_id)::uuid
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=sqlc.arg(now_at)::timestamptz
+ AND (
+  NOT j.notification_receipts ?| ARRAY['event_recovery.completed','event_recovery.cancelled','event_recovery.expired']::text[]
+  OR (SELECT count(*) FROM jsonb_object_keys(j.notification_receipts) key WHERE key IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired'))>1
+  OR (j.execution_finished_at IS NOT NULL AND NOT j.notification_receipts ? 'event_recovery.execution_finished')
+  OR EXISTS (
+   SELECT 1 FROM jsonb_each(j.notification_receipts) receipt
+   WHERE receipt.value->>'captured_at' IS NULL OR receipt.value->>'event_id' IS NULL
+    OR coalesce(jsonb_array_length(receipt.value->'recipient_webhook_ids'),0)=0
+    OR jsonb_array_length(receipt.value->'recipient_webhook_ids')>sqlc.arg(receiver_limit)::integer
+    OR EXISTS (
+     SELECT 1 FROM jsonb_array_elements_text(receipt.value->'recipient_webhook_ids') selected(webhook_id)
+     LEFT JOIN app_webhook_deliveries d ON d.source_event_id=(receipt.value->>'event_id')::uuid
+      AND d.webhook_id=selected.webhook_id::uuid AND d.event=receipt.key AND d.account_id=j.account_id AND d.app_id=j.app_id
+     WHERE d.id IS NULL OR d.status<>'succeeded'
+    )
+  )
+ )
+ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit)::integer;
+
+-- name: EventRecoveryNotificationRetryOwner :one
+SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: EventRecoveryNotificationRetrySave :exec
+UPDATE event_recovery_jobs SET notification_retry_receipts=notification_retry_receipts || jsonb_build_object(sqlc.arg(request_id)::text,sqlc.arg(receipt)::jsonb)
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryPlan :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryPlanLock :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: EventRecoveryNotificationRetryHooks :many
+SELECT id,enabled FROM app_webhooks WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope='app' AND id=ANY(sqlc.arg(webhook_ids)::uuid[]);
+
+-- name: EventRecoveryNotificationRetryHookLock :one
+SELECT enabled FROM app_webhooks WHERE id=sqlc.arg(webhook_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope='app' FOR SHARE;
+
+-- name: EventRecoveryNotificationRetryDeliveryLock :one
+SELECT status,replay_generation FROM app_webhook_deliveries
+WHERE id=sqlc.arg(delivery_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND event=sqlc.arg(event)::text AND source_event_id=sqlc.arg(event_id)::uuid FOR UPDATE;
+
+-- name: EventRecoveryNotificationRetryReset :execrows
+UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,last_error='',last_response_code=0,next_attempt_at=sqlc.arg(now_at)::timestamptz,updated_at=sqlc.arg(now_at)::timestamptz
+WHERE id=sqlc.arg(delivery_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND event=sqlc.arg(event)::text AND source_event_id=sqlc.arg(event_id)::uuid AND status='dead' AND replay_generation=sqlc.arg(expected_generation)::integer;
+
+-- name: EventRecoveryNotificationRetryHistoryOwner :one
+SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryGenerationOutcome :one
+SELECT count(*)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM app_webhook_delivery_attempts a
+JOIN app_webhook_deliveries d ON d.id=a.delivery_id
+WHERE d.id=sqlc.arg(delivery_id)::uuid AND d.webhook_id=sqlc.arg(webhook_id)::uuid
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+ AND d.event=sqlc.arg(event)::text AND d.source_event_id=sqlc.arg(event_id)::uuid
+ AND a.replay_generation=sqlc.arg(generation)::integer;
+
+-- name: EventRecoveryNotificationRetryHistoryOutcomes :many
+WITH targets AS (
+ SELECT (value->>'delivery_id')::uuid AS delivery_id,
+        (value->>'webhook_id')::uuid AS webhook_id,
+        (value->>'event_id')::uuid AS event_id,
+        value->>'event' AS event,
+        (value->>'generation')::integer AS generation
+ FROM jsonb_array_elements(sqlc.arg(targets)::jsonb)
+)
+SELECT t.delivery_id,t.generation,
+       count(a.id)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM targets t
+JOIN app_webhook_deliveries d ON d.id=t.delivery_id AND d.webhook_id=t.webhook_id
+ AND d.source_event_id=t.event_id AND d.event=t.event
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+LEFT JOIN app_webhook_delivery_attempts a ON a.delivery_id=d.id AND a.replay_generation=t.generation
+GROUP BY t.delivery_id,t.generation;
+
+-- name: EventRecoveryNotificationRetryBacklogJobs :many
+SELECT id,created_at FROM event_recovery_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND notification_retry_receipts <> '{}'::jsonb
+ AND (NOT sqlc.arg(has_cursor)::boolean OR (created_at,id)<(sqlc.arg(cursor_created)::timestamptz,sqlc.arg(cursor_id)::uuid))
+ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::integer;

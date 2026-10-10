@@ -41,7 +41,11 @@ const (
 	// public connection-management API. The daemon enforces its own limit too;
 	// keeping the API bound explicit prevents oversized requests from reaching
 	// an owner node.
-	RealtimeMessageMaxBytes                       = 1 << 20
+	RealtimeMessageMaxBytes = 1 << 20
+	// RealtimePrincipalMessageMaxBytes keeps a direct-message JSON frame under
+	// the v2 server-frame limit while supporting binary-safe delivery.
+	RealtimePrincipalMessageMaxBytes              = 4 << 10
+	RealtimePrincipalMaxBytes                     = 256
 	RealtimeSecretMasked                          = "***"
 	RealtimeAuthRotationDefaultGraceSeconds int64 = 300
 	RealtimeAuthRotationMaxGraceSeconds     int64 = 24 * 60 * 60
@@ -124,8 +128,29 @@ type FinalizeManagedRealtimeAuthResponse struct {
 // connection or published to an endpoint channel. DataBase64 is decoded
 // before the request is forwarded to the realtime owner.
 type ManagedRealtimeMessageRequest struct {
-	DataBase64 string `json:"data_base64"`
-	Binary     bool   `json:"binary,omitempty"`
+	ExpectedSequence *int64            `json:"expected_sequence,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	DataBase64       string            `json:"data_base64"`
+	Binary           bool              `json:"binary,omitempty"`
+}
+
+// ManagedRealtimePrincipalMessageRequest sends to one verified OIDC principal.
+// Retained sends may request an acknowledgement deadline and push/webhook fallback.
+type ManagedRealtimePrincipalMessageRequest struct {
+	NotificationNotBefore   string                  `json:"notification_not_before,omitempty"`
+	NotificationCollapseKey string                  `json:"notification_collapse_key,omitempty"`
+	NotificationTTLSeconds  int                     `json:"notification_ttl_seconds,omitempty"`
+	NotificationPriority    string                  `json:"notification_priority,omitempty"`
+	NotificationGroupKey    string                  `json:"notification_group_key,omitempty"`
+	NotificationGroupLabel  string                  `json:"notification_group_label,omitempty"`
+	NotificationCategory    string                  `json:"notification_category,omitempty"`
+	FallbackAfterSeconds    int                     `json:"fallback_after_seconds,omitempty"`
+	Delivery                ManagedRealtimeDelivery `json:"delivery,omitempty"`
+	Principal               string                  `json:"principal"`
+	DataBase64              string                  `json:"data_base64"`
+	Binary                  bool                    `json:"binary,omitempty"`
+	MessageID               string                  `json:"message_id,omitempty"`
+	RequestReceipt          bool                    `json:"request_receipt,omitempty"`
 }
 
 // ManagedRealtimeCloseRequest optionally supplies the WebSocket close reason.
@@ -148,6 +173,84 @@ type ManagedRealtimePublishResponse struct {
 	Durable          bool  `json:"durable,omitempty"`
 }
 
+// ManagedRealtimePrincipalSendResponse reports live per-connection queue
+// outcomes. Unsupported counts older v2 clients that have not negotiated
+// direct-message frames.
+type ManagedRealtimePrincipalSendResponse struct {
+	FallbackDeadline string `json:"fallback_deadline,omitempty"`
+	Sequence         int64  `json:"sequence,omitempty"`
+	Durable          bool   `json:"durable,omitempty"`
+	MessageID        string `json:"message_id,omitempty"`
+	ReceiptRequested bool   `json:"receipt_requested,omitempty"`
+	ReceiptStatus    string `json:"receipt_status,omitempty"`
+	Acknowledged     int    `json:"acknowledged,omitempty"`
+	Pending          int    `json:"pending,omitempty"`
+	TimedOut         int    `json:"timed_out,omitempty"`
+	Recipients       int    `json:"recipients"`
+	Queued           int    `json:"queued"`
+	Unsupported      int    `json:"unsupported"`
+	QueueFull        int    `json:"queue_full"`
+	Failed           int    `json:"failed"`
+	NodesQueried     int    `json:"nodes_queried"`
+	NodesUnavailable int    `json:"nodes_unavailable"`
+	Partial          bool   `json:"partial"`
+}
+
+type ManagedRealtimePrincipalReceiptDelivery struct {
+	ConnectionID   string `json:"connection_id"`
+	Status         string `json:"status"`
+	QueueStatus    string `json:"queue_status"`
+	AckSupported   bool   `json:"ack_supported"`
+	CreatedAt      string `json:"created_at"`
+	QueuedAt       string `json:"queued_at,omitempty"`
+	AcknowledgedAt string `json:"acknowledged_at,omitempty"`
+}
+
+type ManagedRealtimePrincipalReceiptResponse struct {
+	EndpointID       string                                    `json:"endpoint_id"`
+	MessageID        string                                    `json:"message_id"`
+	Status           string                                    `json:"status"`
+	DispatchComplete bool                                      `json:"dispatch_complete"`
+	CreatedAt        string                                    `json:"created_at"`
+	ExpiresAt        string                                    `json:"expires_at"`
+	Recipients       int                                       `json:"recipients"`
+	Queued           int                                       `json:"queued"`
+	Acknowledged     int                                       `json:"acknowledged"`
+	Pending          int                                       `json:"pending"`
+	TimedOut         int                                       `json:"timed_out"`
+	Unsupported      int                                       `json:"unsupported"`
+	QueueFull        int                                       `json:"queue_full"`
+	Failed           int                                       `json:"failed"`
+	NodesQueried     int                                       `json:"nodes_queried"`
+	NodesUnavailable int                                       `json:"nodes_unavailable"`
+	Partial          bool                                      `json:"partial"`
+	Deliveries       []ManagedRealtimePrincipalReceiptDelivery `json:"deliveries"`
+}
+
+// ValidateRealtimePrincipal reports whether a request identifies one bounded
+// principal value without silently normalizing the identity.
+func ValidateRealtimePrincipal(principal string) error {
+	if strings.TrimSpace(principal) == "" || len(principal) > RealtimePrincipalMaxBytes ||
+		strings.ContainsAny(principal, "\x00\r\n") {
+		return fmt.Errorf("principal must be non-empty, at most %d bytes, and contain no NUL or newline", RealtimePrincipalMaxBytes)
+	}
+	return nil
+}
+
+// ValidateRealtimeDirectMessageID validates a stable identifier used to
+// deduplicate receipt-enabled principal sends and their client acknowledgments.
+func ValidateRealtimeDirectMessageID(messageID string) error {
+	if messageID == "" || len(messageID) > 128 || strings.TrimSpace(messageID) != messageID {
+		return fmt.Errorf("message_id must be 1 to 128 bytes and contain no whitespace, slash, query, or fragment characters")
+	}
+	for _, char := range messageID {
+		if char <= 0x20 || char > 0x7e || strings.ContainsRune("/?#", char) {
+			return fmt.Errorf("message_id must be 1 to 128 bytes and contain no whitespace, slash, query, or fragment characters")
+		}
+	}
+	return nil
+}
+
 // ManagedRealtimeDelivery selects whether a publish only fans out to live
 // subscribers or first commits the message to the ordered retained channel log.
 type ManagedRealtimeDelivery string
@@ -160,16 +263,23 @@ const (
 // ManagedRealtimeRetainedMessageRequest writes to the ordered outbound log.
 // Its idempotency key is effective while the matching message is retained.
 type ManagedRealtimeRetainedMessageRequest struct {
-	DataBase64     string `json:"data_base64"`
-	Binary         bool   `json:"binary,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	ExpectedSequence *int64            `json:"expected_sequence,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	DataBase64       string            `json:"data_base64"`
+	Binary           bool              `json:"binary,omitempty"`
+	IdempotencyKey   string            `json:"idempotency_key,omitempty"`
 }
 
 type ManagedRealtimeRetainedMessageResponse struct {
-	Sequence   int64  `json:"sequence"`
-	DataBase64 string `json:"data_base64"`
-	Binary     bool   `json:"binary"`
-	CreatedAt  string `json:"created_at"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	TargetMessageID string            `json:"target_message_id,omitempty"`
+	Version         int64             `json:"version"`
+	Event           string            `json:"event"`
+	Deleted         bool              `json:"deleted"`
+	Sequence        int64             `json:"sequence"`
+	DataBase64      string            `json:"data_base64"`
+	Binary          bool              `json:"binary"`
+	CreatedAt       string            `json:"created_at"`
 }
 
 type ManagedRealtimeRetainedHistoryResponse struct {
@@ -439,4 +549,57 @@ func ValidateRealtimeOrigins(origins []string) error {
 		seen[normalized] = struct{}{}
 	}
 	return nil
+}
+
+// ManagedRealtimeInboxMessageResponse is a retained principal notification.
+type ManagedRealtimeInboxMessageResponse struct {
+	TargetMessageID string `json:"target_message_id,omitempty"`
+	Version         int64  `json:"version"`
+	Event           string `json:"event"`
+	Deleted         bool   `json:"deleted"`
+	MessageID       string `json:"message_id"`
+	Sequence        int64  `json:"sequence"`
+	DataBase64      string `json:"data_base64"`
+	Binary          bool   `json:"binary"`
+	CreatedAt       string `json:"created_at"`
+	ExpiresAt       string `json:"expires_at"`
+}
+
+type ManagedRealtimeInboxResponse struct {
+	Messages             []ManagedRealtimeInboxMessageResponse `json:"messages"`
+	OldestSequence       int64                                 `json:"oldest_sequence"`
+	LatestSequence       int64                                 `json:"latest_sequence"`
+	HistoryUnavailable   bool                                  `json:"history_unavailable"`
+	HasMore              bool                                  `json:"has_more"`
+	Consumer             string                                `json:"consumer,omitempty"`
+	AcknowledgedSequence *int64                                `json:"acknowledged_sequence,omitempty"`
+}
+
+type ManagedRealtimeChannelSnapshotRequest struct {
+	Sequence   int64  `json:"sequence"`
+	DataBase64 string `json:"data_base64"`
+	Binary     bool   `json:"binary,omitempty"`
+}
+type ManagedRealtimeChannelSnapshotResponse struct {
+	EntityExpirations   map[string]time.Time `json:"entity_expirations,omitempty"`
+	EntityVersions      map[string]int64     `json:"entity_versions,omitempty"`
+	Channel             string               `json:"channel"`
+	Sequence            int64                `json:"sequence"`
+	ResumeAfterSequence int64                `json:"resume_after_sequence"`
+	DataBase64          string               `json:"data_base64"`
+	Binary              bool                 `json:"binary"`
+	UpdatedAt           time.Time            `json:"updated_at"`
+	ExpiresAt           time.Time            `json:"expires_at"`
+}
+
+type ManagedRealtimeChannelBatchRequest struct {
+	ExpectedSequence *int64                          `json:"expected_sequence,omitempty"`
+	BatchID          string                          `json:"batch_id"`
+	Messages         []ManagedRealtimeMessageRequest `json:"messages"`
+}
+type ManagedRealtimeChannelBatchResponse struct {
+	BatchID  string                           `json:"batch_id"`
+	Durable  bool                             `json:"durable"`
+	Partial  bool                             `json:"partial"`
+	Messages []ManagedRealtimePublishResponse `json:"messages"`
 }

@@ -34,6 +34,12 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if spec.Method != "POST" && spec.Method != "PUT" && spec.Method != "PATCH" && spec.Method != "DELETE" {
 		return nil, fmt.Errorf("operation method must be POST, PUT, PATCH, or DELETE")
 	}
+	if spec.Workflow != "" && (len(spec.Workflow) > api.OperationNameMaxBytes || !operationName.MatchString(spec.Workflow) || spec.Method != "POST" || spec.Recovery == api.OperationRecoverySafeRetry) {
+		return nil, fmt.Errorf("workflow operations require a bounded workflow name, POST ingress and reconciliation recovery")
+	}
+	if spec.Job != "" && (spec.Workflow != "" || len(spec.Job) > api.OperationNameMaxBytes || !operationName.MatchString(spec.Job) || spec.Method != "POST" || spec.Recovery == api.OperationRecoverySafeRetry) {
+		return nil, fmt.Errorf("job operations require a bounded job name, POST ingress and reconciliation recovery")
+	}
 	u, err := url.ParseRequestURI(spec.Path)
 	if err != nil || !strings.HasPrefix(spec.Path, "/") || strings.HasPrefix(spec.Path, "//") || len(spec.Path) > api.OperationPathMaxBytes || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("operation path must be an absolute application path without a query")
@@ -56,6 +62,9 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	}
 	if spec.Recovery != api.OperationRecoveryReconcile && spec.Recovery != api.OperationRecoverySafeRetry {
 		return nil, fmt.Errorf("unsupported operation recovery policy")
+	}
+	if spec.TransactionReceipt != "" && (spec.TransactionReceipt != api.OperationTransactionPostgres || spec.Workflow != "" || spec.Job != "" || spec.Recovery != api.OperationRecoveryReconcile) {
+		return nil, fmt.Errorf("transaction receipts require postgres_v1, an ordinary HTTP handler and reconciliation recovery")
 	}
 	if len(spec.ProgressStages) == 0 || len(spec.ProgressStages) > limits.ProgressStages {
 		return nil, fmt.Errorf("operation progress stages exceed plan limit or are empty")

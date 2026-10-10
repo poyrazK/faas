@@ -229,7 +229,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
-	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+	cli := c.http
+	if strings.HasPrefix(path, "/v1/runtime/job-operations/") || headers.Get(OperationJobCapabilityHeader) != "" {
+		clone := *cli
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		cli = &clone
+	}
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, "", headers)
 }
 
 // doWithIdempotencyKey is the same request path as do, with an optional
@@ -894,6 +900,41 @@ func (c *Client) UpsertDevSession(ctx context.Context, project string, req Upser
 func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req UpsertDevSessionRequest) (DevSessionResponse, error) {
 	var out DevSessionResponse
 	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
+}
+
+// GetDevSession reads a developer environment without renewing its lease.
+// Pass an empty workspaceID only for a legacy account+project session.
+func (c *Client) GetDevSession(ctx context.Context, project, workspaceID string) (DevSessionResponse, error) {
+	return c.GetDevSessionsProject(ctx, project, workspaceID)
+}
+
+// GetDevPatchStatus reports whether a published developer live patch reached
+// the running environment (GET /v1/dev/sessions/{project}/patches/{generation}).
+func (c *Client) GetDevPatchStatus(ctx context.Context, project, workspaceID string, generation int64) (DevPatchStatusResponse, error) {
+	return c.GetDevSessionsProjectPatchesGeneration(ctx, project, generation, workspaceID)
+}
+
+// GetDevSessionsProjectPatchesGeneration is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}/patches/{generation}.
+func (c *Client) GetDevSessionsProjectPatchesGeneration(ctx context.Context, project string, generation int64, workspaceID ...string) (DevPatchStatusResponse, error) {
+	path := "/v1/dev/sessions/" + project + "/patches/" + strconv.FormatInt(generation, 10)
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		path += "?" + url.Values{"workspace_id": {workspaceID[0]}}.Encode()
+	}
+	var out DevPatchStatusResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetDevSessionsProject is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}.
+func (c *Client) GetDevSessionsProject(ctx context.Context, project string, workspaceID ...string) (DevSessionResponse, error) {
+	path := "/v1/dev/sessions/" + project
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		query := url.Values{"workspace_id": {workspaceID[0]}}
+		path += "?" + query.Encode()
+	}
+	var out DevSessionResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // DestroyDevSession tears down the developer preview for a project. Passing a
@@ -2836,14 +2877,45 @@ func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (Jo
 // is intentionally OMITTED from the wire response (internal
 // dispatch primitive).
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
+	return c.ListJobRunTasksPage(ctx, name, runID, 0, 0)
+}
+
+// ListJobRunTasksPage reads one offset page of task rows.
+func (c *Client) ListJobRunTasksPage(ctx context.Context, name, runID string, limit, offset int) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobTaskAttempts returns the retained terminal outcomes for a task.
 func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	return c.ListJobTaskAttemptsPage(ctx, name, runID, taskIndex, 0, 0)
+}
+
+// ListJobTaskAttemptsPage reads one offset page of retained task attempts.
+func (c *Client) ListJobTaskAttemptsPage(ctx context.Context, name, runID string, taskIndex, limit, offset int) (ListJobTaskAttemptsResponse, error) {
 	var out ListJobTaskAttemptsResponse
 	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6016,6 +6088,24 @@ func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpoi
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/send", req, nil)
 }
 
+// SendManagedRealtimePrincipal sends a live-only message to active connections
+// for one verified OIDC principal on the endpoint.
+func (c *Client) SendManagedRealtimePrincipal(ctx context.Context, slug, endpointID string, req ManagedRealtimePrincipalMessageRequest) (ManagedRealtimePrincipalSendResponse, error) {
+	var out ManagedRealtimePrincipalSendResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals:send"
+	err := c.do(ctx, "POST", path, req, &out)
+	return out, err
+}
+
+// GetManagedRealtimePrincipalReceipt returns the per-connection queue and
+// acknowledgement state for a receipt-enabled principal message.
+func (c *Client) GetManagedRealtimePrincipalReceipt(ctx context.Context, slug, endpointID, messageID string) (ManagedRealtimePrincipalReceiptResponse, error) {
+	var out ManagedRealtimePrincipalReceiptResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/messages/" + url.PathEscape(messageID) + "/receipt"
+	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
 // CloseManagedRealtimeConnection asks the realtime owner to close one live
 // connection. A missing or already-closed connection returns an API 410.
 func (c *Client) CloseManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeCloseRequest) error {
@@ -6414,7 +6504,45 @@ func (c *Client) ClearObsoleteDeployments(ctx context.Context, appSlug string, o
 // on errors.Is(err, api.ErrNotFound).
 func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployment string) (OpenAPIDocResponse, error) {
 	var out OpenAPIDocResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+url.PathEscape(slug)+"/deployments/"+url.PathEscape(deployment)+"/openapi", nil)
+	if err != nil {
+		return out, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	var raw json.RawMessage
+	err = c.doReqWithSuccess(c.http, req, &raw, func(resp *http.Response) bool {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return false
+		}
+		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
+		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
+		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
+		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		return true
+	})
+	if err != nil {
+		return out, err
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		return out, err
+	}
+	if _, rawDocument := document["openapi"]; rawDocument {
+		// GET serves the captured OpenAPI body unchanged. Identity and digest
+		// come from server metadata, never inferred from requested selectors.
+		out.Doc = document
+		return out, nil
+	}
+	// Accept the historical wrapped response used by alternate API versions.
+	// Callers still reject an incomplete identity or capture source.
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
 
 // GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
@@ -7134,6 +7262,13 @@ func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID,
 
 // PublishEvent durably accepts one tenant-scoped internal event envelope.
 // Matching and delivery are asynchronous consumers of the accepted event.
+// PublishEventBatch returns one result per input; callers inspect each status.
+func (c *Client) PublishEventBatch(ctx context.Context, req PublishEventBatchRequest) (PublishEventBatchResponse, error) {
+	var resp PublishEventBatchResponse
+	err := c.do(ctx, "POST", "/v1/events:publish-batch", req, &resp)
+	return resp, err
+}
+
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
 	var resp PublishEventResponse
 	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)
@@ -7354,6 +7489,25 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// ReadManagedRealtimeInbox inspects retained principal messages and, optionally,
+// a device checkpoint. A negative after uses the checkpoint (or zero).
+func (c *Client) ReadManagedRealtimeInbox(ctx context.Context, slug, endpointID, principal, consumer string, after int64, limit int) (ManagedRealtimeInboxResponse, error) {
+	var out ManagedRealtimeInboxResponse
+	query := url.Values{"principal": {principal}}
+	if consumer != "" {
+		query.Set("consumer", consumer)
+	}
+	if after >= 0 {
+		query.Set("after", fmt.Sprint(after))
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/inbox?" + query.Encode()
+	err := c.do(ctx, "GET", path, nil, &out)
 	return out, err
 }
 

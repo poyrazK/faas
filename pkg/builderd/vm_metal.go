@@ -669,6 +669,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.FailurePkg = done.FailurePkg
 		res.BuildkitVer = done.BuildkitVersion
 		res.RailpackVer = done.RailpackVersion
+		res.DevPatch = done.DevPatch
 	}
 	if exitCode == 0 {
 		if h.DependencyCacheKey != "" {

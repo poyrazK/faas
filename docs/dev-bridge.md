@@ -57,8 +57,21 @@ exist, be unprotected, and have deployed revisions for its remote services.
 `production` and `default` are rejected. Private apps are accessible only in the
 verified session scope. Normal application authentication and gateway policy
 still apply. Scoped responses bypass shared caches, edge answers and shadow
-mirroring. This initial implementation forwards HTTP requests and streaming
-bodies; it does not forward database protocols, arbitrary TCP, WebSockets or gRPC.
+mirroring. The bridge forwards HTTP requests, streaming bodies and WebSocket
+connections ([ADR-742](adr/742-dev-bridge-websocket-forwarding.md)); it does not
+forward database protocols, arbitrary TCP, other `Upgrade` protocols or gRPC.
+
+WebSockets work in both directions: a remote frontend can open one to the local
+process, and the local process can open one to an allowed remote dependency
+through its printed dependency URL. They use the same authority checks as HTTP
+requests. Each session may hold up to 8 upgraded connections, shared across
+both directions; a further handshake gets 429 `dev_bridge_upgrade_limit`. A
+connection closes after 5 minutes without traffic, after 64 MiB in either
+direction, or when the session is revoked or expires. A connection from the
+remote side to the local process also closes when the CLI's bridge connection
+drops or is replaced. Applications should reconnect after any of these. With `--inspect`,
+an upgraded connection appears as one entry with its duration and the bytes
+sent in each direction; frames are never recorded.
 
 Service bindings are discovered by default. `--dependencies orders,inventory`
 replaces that default with an explicit set of same-project apps. `--entrypoint`

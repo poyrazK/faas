@@ -56,6 +56,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |
+| 741 | [Remote debugger attach for developer environments](741-developer-debugger-attach.md) | proposed | `gregale dev --debug` over a leased edge WebSocket to vmmd `ForwardTCPStream`; developer sessions only |
+| 740 | [Developer live source patches](740-developer-live-source-patch.md) | proposed | ~1 s interpreted-source edits via a guest long-poll on the runtime-config vsock; the build still converges |
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
 | 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
@@ -69,8 +72,15 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 843 | [App consumer statement revisions and unbilled platform failures](843-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
+| 844 | [Monthly included units on app consumer rate cards](844-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
+| 845 | [Graduated tiers on app consumer rate cards](845-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
+| 846 | [Route weights on app consumer rate cards](846-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
+| 847 | [Named consumer plans](847-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
+| 848 | [Consumer usage completeness check](848-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
+| 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
@@ -608,6 +618,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
 - [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
 - [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
+- [ADR-843: pre-promotion API route checks](843-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
 
 ## Route review and release protection
 
@@ -635,6 +646,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
+- [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
+- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -642,6 +656,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
+- [ADR-845: Opt-in automatic rollback for early production route incidents](845-route-monitor-automatic-rollback.md) — request one checked rollback to the saved healthy baseline when an error budget is violated within 30 minutes of release
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
 - [ADR-593: Static Go net/http route impact](593-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence
@@ -650,8 +665,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+- [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
+- [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+- [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
 ## Events and delivery
 
@@ -697,3 +715,31 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-812: Durable recovery lifecycle notifications](812-recovery-lifecycle-notifications.md)
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
+
+- [ADR-911: Bounded batch event publication](911-batch-event-publication.md)
+
+- [ADR-912: Event retention health and expiry warnings](912-event-retention-health.md)
+- [ADR-838: Approved route removal exceptions in the contract gate](838-approved-route-removal-contract-exceptions.md)
+
+- [ADR-839: Telemetry coverage for route removal approvals](839-route-removal-telemetry-coverage.md)
+
+- [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
+- [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
+- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
+- [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
+- [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
+- [ADR-832: Lifecycle declaration reviews and canary gate](832-route-lifecycle-declaration-gate.md)
+
+- [ADR-833: Durable lifecycle successor compatibility approvals](833-lifecycle-successor-review-receipts.md)
+
+- [ADR-834: Lifecycle review at the production traffic boundary](834-production-lifecycle-transaction-guards.md)
+
+- [ADR-835: Verified lifecycle successors](835-verified-lifecycle-successors.md)
+
+- [ADR-836: Release graph lifecycle successor bindings](836-release-graph-lifecycle-successors.md)
+
+- [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
+
+- [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
+- [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)

@@ -26,6 +26,8 @@ import (
 // no body, add it here AND to nonJSONAllowList — the audit test
 // fails CI otherwise.
 //
+//   - cmdCompletion                    — shell scripts/values are text;
+//     interactive installation rejects JSON
 //   - cmdLogin (commands.go)             — interactive paste-code prompt
 //   - cmdLogout (commands.go)            — emits a small status object
 //   - cmdInit / runCmdInit* (commands_init.go) — successful scaffolding
@@ -65,7 +67,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) error {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
+		arg := args[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(args).
 		if arg == "--" {
 			positionals = append(positionals, args[i+1:]...)
 			break

@@ -17,9 +17,11 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	if preview {
 		name = "recovery-preview"
 	}
-	flags, positional := splitArgsForFlags(args, "yes", "include-non-retryable")
+	flags, positional := splitArgsForFlags(args, "yes", "include-non-retryable", "protect-receipts")
 	fs := newFlagSet("events "+name, flag.ContinueOnError)
 	mode := fs.String("mode", "routing", "routing or execution recovery")
+	parent := fs.String("parent-job", "", "retry saved failures from one terminal execution recovery")
+	requestID := fs.String("request-id", "", "stable request UUID; required when creating a child recovery")
 	outcome := fs.String("outcome", "", "execution outcome: failed or dead_letter")
 	sub := fs.String("subscription-id", "", "filter by captured consumer identifier")
 	source := fs.String("event-source", "", "filter by exact event source")
@@ -27,15 +29,27 @@ func cmdEventsBulkRecovery(args []string, preview bool) int {
 	code := fs.String("failure-code", "", "filter by failure classification")
 	age := fs.Duration("min-age", 0, "minimum failure age in whole seconds, e.g. 10m")
 	include := fs.Bool("include-non-retryable", false, "include failures classified as non-retryable")
+	protect := fs.Bool("protect-receipts", false, "protect pending receipts from pruning until admission or job expiry")
 	rate := fs.Int("rate", api.EventRecoveryRateDefault, "maximum retries per second (1..100)")
 	reason := fs.String("reason", "", "optional operator reason")
 	yes := fs.Bool("yes", false, "confirm creating a recovery job")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	req := api.EventRecoveryRequest{Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || *rate < 1 || req.Validate() != nil || !preview && !*yes {
-		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
+	if *parent != "" {
+		explicitMode := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "mode" {
+				explicitMode = true
+			}
+		})
+		if !explicitMode {
+			*mode = "execution"
+		}
+	}
+	req := api.EventRecoveryRequest{ParentJobID: *parent, RequestID: *requestID, ProtectReceipts: *protect, Reason: *reason, Mode: *mode, Outcome: *outcome, SubscriptionID: *sub, EventSource: *source, EventType: *eventType, FailureCode: *code, MinAgeSeconds: int64(*age / time.Second), IncludeNonRetryable: *include, RatePerSecond: *rate}
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || *rate < 1 || req.Validate() != nil || !preview && (!*yes || req.ParentJobID != "" && req.RequestID == "") {
+		PrintUsage(os.Stderr, "usage: gregale events "+name+" <app> [--mode routing|execution] [--parent-job UUID] [--request-id UUID] [--outcome failed|dead_letter] [--subscription-id ID] [--event-source SOURCE] [--event-type TYPE] [--failure-code CODE] [--min-age 10m] [--include-non-retryable] [--protect-receipts] [--rate N]"+map[bool]string{true: "", false: " --yes"}[preview], "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -141,26 +155,43 @@ func cmdEventsRecoveryItems(args []string) int {
 func writeEventRecoveryJob(out api.EventRecoveryJob) {
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | selected %d | pending %d | queued %d | skipped %d | cancelled %d\n", oneLine(out.ID), oneLine(out.State), out.SelectedCount, out.PendingCount, out.QueuedCount, out.SkippedCount, out.CancelledCount)
 	_, _ = fmt.Fprintf(osStdout, "Admission rate: %d/s\n", out.RatePerSecond)
+	if out.Selection.ParentJobID != "" {
+		_, _ = fmt.Fprintf(osStdout, "Parent recovery: %s | request: %s\n", oneLine(out.Selection.ParentJobID), oneLine(out.Selection.RequestID))
+	}
+	if out.Selection.ProtectReceipts {
+		_, _ = fmt.Fprintf(osStdout, "Receipt protection: pending items only, while active and before %s\n", out.ExpiresAt.Format(time.RFC3339))
+	}
 	if out.PausedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Paused at: %s\n", out.PausedAt.Format(time.RFC3339))
 	}
+	if out.ExecutionFinishedAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "Execution finished at: %s\n", out.ExecutionFinishedAt.Format(time.RFC3339))
+	}
 	if e := out.Execution; e != nil {
-		_, _ = fmt.Fprintf(osStdout, "Execution: tracked %d | queued %d | running %d | retrying %d | succeeded %d | failed %d | dead letters %d | expired %d | cancelled %d | superseded %d | unknown %d\n", e.TrackedCount, e.Queued, e.Running, e.Retrying, e.Succeeded, e.Failed, e.DeadLettered, e.Expired, e.Cancelled, e.Superseded, e.Unknown)
+		_, _ = fmt.Fprintf(osStdout, "Execution: tracked %d | saved results %d | queued %d | running %d | retrying %d | succeeded %d | failed %d | dead letters %d | expired %d | cancelled %d | superseded %d | unknown %d\n", e.TrackedCount, e.SavedResults, e.Queued, e.Running, e.Retrying, e.Succeeded, e.Failed, e.DeadLettered, e.Expired, e.Cancelled, e.Superseded, e.Unknown)
 	}
 
 }
 func writeEventRecoveryItems(items []api.EventRecoveryItem) {
-	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tREASON")
+	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON\tPARENT JOB\tPARENT POSITION")
 	for _, item := range items {
-		generation, execution, attempts := "", "", ""
+		parentPosition := ""
+		if item.ParentPosition != nil {
+			parentPosition = fmt.Sprint(*item.ParentPosition)
+		}
+		generation, execution, attempts, source, recorded := "", "", "", "", ""
 		if item.ReplayGeneration != nil {
 			generation = fmt.Sprint(*item.ReplayGeneration)
 		}
 		if item.Execution != nil {
 			execution = item.Execution.State
 			attempts = fmt.Sprint(item.Execution.Attempts)
+			source = item.Execution.Source
+			if item.Execution.RecordedAt != nil {
+				recorded = item.Execution.RecordedAt.Format(time.RFC3339)
+			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(item.Reason))
+		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason), oneLine(item.ParentJobID), parentPosition)
 	}
 }
 
@@ -332,6 +363,29 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "  Capacity: %s | gate: %s | since: %s | last observed: %s | age: %.0fs\n  %s\n", oneLine(wait.Scope), oneLine(wait.Gate), wait.StartedAt.Format(time.RFC3339), wait.ObservedAt.Format(time.RFC3339), wait.AgeSeconds, oneLine(wait.Explanation))
 		}
 	}
+	if execution := out.Execution; execution != nil {
+		_, _ = fmt.Fprintf(osStdout, "Execution waiting: %d | prolonged waits: %d | unknown evidence: %d | retention risk: %d | observed: %d\n", execution.WaitingJobs, execution.ProlongedWaitJobs, execution.UnknownJobs, execution.RetentionRiskJobs, execution.ObservedJobs)
+		if !execution.CountsComplete {
+			_, _ = fmt.Fprintf(osStdout, "Partial counts: oldest %d unresolved jobs; counts are lower bounds.\n", execution.JobLimit)
+		}
+		for _, job := range execution.Jobs {
+			_, _ = fmt.Fprintf(osStdout, "%s | %s | waiting %.0fs | queued/running/retrying: %d/%d/%d | unknown: %d | missing saved results: %d | retain until: %s | notification pending: %t\n", oneLine(job.JobID), oneLine(job.Status), job.WaitAgeSeconds, job.Execution.Queued, job.Execution.Running, job.Execution.Retrying, job.UnknownCount, job.UnresolvedCount, job.RetainUntil.Format(time.RFC3339), job.NotificationPending)
+		}
+	}
+	if notifications := out.Notifications; notifications != nil {
+		for _, phase := range []struct {
+			name   string
+			counts api.EventRecoveryNotificationHealthCounts
+		}{{"admission", notifications.Admission}, {"execution", notifications.Execution}} {
+			_, _ = fmt.Fprintf(osStdout, "Notification %s: overdue: %d | dead: %d | unknown: %d | no receivers: %d | complete: %t\n", phase.name, phase.counts.OverdueJobs, phase.counts.DeadJobs, phase.counts.UnknownJobs, phase.counts.NoReceiversJobs, phase.counts.CountsComplete)
+		}
+		if !notifications.CountsComplete || !notifications.Admission.CountsComplete || !notifications.Execution.CountsComplete {
+			_, _ = fmt.Fprintf(osStdout, "Partial notification counts: up to %d oldest candidate jobs; counts are lower bounds and cannot clear alerts.\n", notifications.JobLimit)
+		}
+		for _, job := range notifications.Jobs {
+			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale events recovery-notifications %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
+		}
+	}
 	return 0
 }
 
@@ -361,6 +415,13 @@ func cmdEventsRecoveryPreflight(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | active: %t\nPending: %d | eligible: %d | waiting: %d | likely skipped: %d | unknown: %d\n", oneLine(out.JobID), oneLine(out.State), out.Active, out.PendingCount, out.EligibleCount, out.WaitingCount, out.LikelySkippedCount, out.UnknownCount)
 	_, _ = fmt.Fprintf(osStdout, "Optimistic admission minimum: %.0fs at %d/s | remaining lifetime: %.0fs | fits before expiry: %t\n", out.MinimumDrainSeconds, out.RatePerSecond, out.RemainingLifetimeSeconds, out.FitsBeforeExpiry)
+	_, _ = fmt.Fprintf(osStdout, "Receipt retention warnings: %d | current retention holds: %d\n", out.ReceiptRetentionWarningCount, out.ReceiptRetentionHeldCount)
+	if out.ReceiptProtectionUntil != nil {
+		_, _ = fmt.Fprintf(osStdout, "This job protects pending receipts until admission or %s\n", out.ReceiptProtectionUntil.Format(time.RFC3339))
+	}
+	if out.EarliestUnheldRetainUntil != nil {
+		_, _ = fmt.Fprintf(osStdout, "Earliest unheld receipt retention boundary: %s | optimistic drain crosses boundary: %t\n", out.EarliestUnheldRetainUntil.Format(time.RFC3339), out.MinimumDrainCrossesReceiptRetention)
+	}
 	if out.AssumesImmediateResume {
 		_, _ = fmt.Fprintln(osStdout, "Timing assumes immediate resume of this paused job.")
 	}

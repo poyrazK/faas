@@ -159,6 +159,10 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 			tpl, strings.Join(templates.Names, ", "))
 		return 1
 	}
+	if deploy && templates.CategoryFor(tpl) == "operations" {
+		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
+		return 1
+	}
 
 	// Step 2: resolve --path to an absolute path. Customers pass
 	// relative paths in 95% of cases; absolute resolution here makes
@@ -264,10 +268,12 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
-	case "data-api":
+	case "data-api", "data-api-starter":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node":
 		return "https://gregale.dev/docs/mcp"
+	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
+		return "https://gregale.dev/docs/operations"
 	default:
 		return cliDocsURL
 	}
@@ -355,6 +361,38 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "customer-operation-workflow-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
+			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure public selectors and the customer login as described in README.md.",
+			"Read RECOVERY.md before approving a workflow resume; confirmed prefixes and files are retained.",
+			"Workflow admission remains closed pending native qualification; the starter does not enable it.",
+		}
+	case "customer-operation-job-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"Build and register Dockerfile.job as customer-export-job; wait for its image to become ready.",
+			"gregale customer-operations validate --dir . --app <slug> --plan pro",
+			"gregale customer-operations types --dir . --app <slug> --plan pro",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure the public API and app selectors as described in README.md.",
+			"Customer admission remains closed pending native qualification; the starter does not enable it.",
+		}
+	case "customer-operation-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
+			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure a qualified preview deployment and customer credentials as described in README.md.",
+			"Customer admission remains closed by default; the starter does not enable it.",
+		}
 	case "mcp-node":
 		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
 	case "customer-platform":
@@ -401,6 +439,16 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
+	case "data-api-starter":
+		return []string{
+			"With Node.js 22+, npm and local Docker, run the starter scenarios:",
+			"  cd <dest> && gregale data-api dev --port 0 --once --replay data-api.requests.json",
+			"Read README.md to reserve the migration app and attach its managed migration binding.",
+			"Pin the paired CLI and SDK with node tools/artifacts.mjs pin /path/to/bundle/data-api-bundle.json.",
+			"Create the Data API with your application JWT issuer, then automate changes:",
+			"  gregale data-api sync notes-data --config data-api.json",
+			"The scaffold includes versioned migrations, two-user RLS checks and application CI.",
+		}
 	case "rest-api-postgres":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",

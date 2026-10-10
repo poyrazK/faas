@@ -30,7 +30,7 @@ func TestCompareRoutePairAlignsRenamedRouteParameters(t *testing.T) {
 
 func TestCompareRoutePairFindsMethodRequestAndResponseBreaks(t *testing.T) {
 	baseline := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/legacy/{id}":{"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"}},"required":["id"]}}}}}}}}}`)
-	candidate := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/accounts/{accountID}":{"parameters":[{"name":"accountID","in":"path","required":true,"schema":{"type":"string"}}],"post":{"requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"email":{"type":"string"}},"required":["email"],"example":"private-request-value"}}}},"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}}}}}}}`)
+	candidate := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/accounts/{accountID}":{"parameters":[{"name":"accountID","in":"path","required":true,"schema":{"type":"string"}}],"post":{"requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"email":{"type":"string"}},"required":["email"],"example":"private-request-value"}}}},"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"}}}}}}}}}}}`)
 
 	got, err := CompareRoutePair(baseline, "GET", "/legacy/{id}", candidate, "POST", "/accounts/{accountID}")
 	if err != nil {
@@ -39,7 +39,7 @@ func TestCompareRoutePairFindsMethodRequestAndResponseBreaks(t *testing.T) {
 	if got.Status != "breaking" {
 		t.Fatalf("status = %q, want breaking: %+v", got.Status, got)
 	}
-	for _, code := range []string{"method_changed", "response_field_removed", "request_body_required"} {
+	for _, code := range []string{"method_changed", "response_field_removed", "response_required_removed", "request_body_required"} {
 		if !routePairHasCode(got, code) {
 			t.Errorf("findings %+v omit %s", got.Findings, code)
 		}
@@ -50,6 +50,41 @@ func TestCompareRoutePairFindsMethodRequestAndResponseBreaks(t *testing.T) {
 	}
 	if strings.Contains(string(body), "private-request-value") {
 		t.Fatalf("report leaked a schema example: %s", body)
+	}
+}
+
+func TestCompareRoutePairReportsChangedResponseUnionAsUnknown(t *testing.T) {
+	baseline := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/legacy":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}}}}}}}`)
+	candidate := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/next":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string"},{"type":"boolean"}]}}}}}}}}}`)
+
+	got, err := CompareRoutePair(baseline, "GET", "/legacy", candidate, "GET", "/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "unknown" || routePairHasSeverity(got.Findings, "breaking") ||
+		!routePairHasCode(got, "response_unsupported_union_change") {
+		t.Fatalf("changed union comparison = %+v, want unknown without a claimed break", got)
+	}
+}
+
+func TestCompareRoutePairReportsUnsupportedResponseFacetAsUnknown(t *testing.T) {
+	baseline := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/legacy":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","failed"]}}}}}}}}}}}`)
+	candidate := routePairFixture(t, `{"openapi":"3.1.0","paths":{"/next":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","pending"]}}}}}}}}}}}`)
+
+	got, err := CompareRoutePair(baseline, "GET", "/legacy", candidate, "GET", "/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "unknown" || routePairHasSeverity(got.Findings, "breaking") ||
+		!routePairHasCode(got, "response_unsupported_schema_change") {
+		t.Fatalf("changed response enum comparison = %+v, want unknown without a claimed break", got)
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "pending") || strings.Contains(string(body), "failed") {
+		t.Fatalf("route-pair report leaked enum values: %s", body)
 	}
 }
 

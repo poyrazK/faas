@@ -315,6 +315,16 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 				formatSummaryValue(change.Before), formatSummaryValue(change.After))
 		}
 	}
+	// production-us hunt #8: during a canary the previous release still
+	// serves most traffic, and the rollback target skips live deployments,
+	// so the hint named the release before it ("--to v5" while v6 served
+	// 90%) - following it would have discarded both. The safe way back is
+	// to promote the still-serving release.
+	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
+		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
+		_, _ = fmt.Fprintf(w, "  Abort canary: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+		return
+	}
 	if summary.RollbackTargetID == "" {
 		_, _ = fmt.Fprintln(w, "  Rollback: unavailable (no previous release)")
 		return

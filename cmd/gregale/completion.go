@@ -54,10 +54,12 @@ const completionDocsTopic = "completion"
 func cmdCompletion(args []string) int {
 	parent, _ := lookupCliCommand("completion")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale completion <bash|zsh|fish|powershell>", completionDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale completion <bash|zsh|fish|powershell> | gregale completion install --interactive", completionDocsTopic)
 		return 1
 	}
 	switch args[0] {
+	case "install":
+		return cmdCompletionInstall(args[1:])
 	case "profile-names":
 		return cmdCompletionProfileNames()
 	case "bash":
@@ -78,7 +80,7 @@ func cmdCompletion(args []string) int {
 		}
 		return cmdCompletionCacheList(args[1])
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "gregale completion: unknown subcommand %q (want bash|zsh|fish|powershell)\n", args[0])
+	_, _ = fmt.Fprintf(os.Stderr, "gregale completion: unknown subcommand %q (want bash|zsh|fish|powershell|install)\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

@@ -44,12 +44,36 @@ import (
 // customers see the same diagnostic they'd get from cURL.
 func cmdCronsRuns(args []string) int {
 	fs := newFlagSet("crons-runs", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a task and browse its run history")
+	app := fs.String("app", "", "app slug for interactive task selection")
 	before := fs.String("before", "", "pagination cursor (last id of the prior page)")
 	limit := fs.Int("limit", 10, "max rows (1..100; server caps at 100)")
 	runID := fs.String("run", "", "show full details and captured output for one command run")
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "interactive")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := len(pos) != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive history flags", fmt.Errorf("use crons runs --interactive with optional --app; choose the task and run in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use crons runs ID with explicit flags for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdCronsRunsInteractive(slug)
+	}
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
 	}
 	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")

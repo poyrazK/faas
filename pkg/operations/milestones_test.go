@@ -138,3 +138,62 @@ func TestOperationWorkflowStepsAreBoundedPinnedAndCanonical(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowContractVersionAndTransitionEvidence(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro).Operations
+	legacySpec := milestoneSpec()
+	legacySpec.WorkflowSteps = []api.OperationWorkflowSpec{{
+		Workflow: "order-lifecycle", Title: "Order lifecycle", States: []string{"pending", "fulfilled"},
+		Transitions: []api.OperationWorkflowTransition{{From: "pending", To: "fulfilled"}},
+		Step:        "paid", Label: "Payment complete", Milestone: "paid", InstanceIDFrom: "/workflow_run_id", Position: 1,
+	}}
+	legacyContract, err := Compile(legacySpec, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySpecJSON, _ := json.Marshal(legacyContract.Spec.WorkflowSteps[0])
+	if legacyContract.Spec.WorkflowSteps[0].Version != 0 || legacyContract.Spec.WorkflowSteps[0].TransitionsDeclared || strings.Contains(string(legacySpecJSON), `"version"`) {
+		t.Fatalf("legacy definition was rewritten while compiling: %s", legacySpecJSON)
+	}
+	legacyReport := api.OperationWorkflowStateReport{ID: uuid.NewString(), Workflow: "order-lifecycle", InstanceID: "run-1",
+		FromState: "pending", State: "fulfilled", Revision: 1, OccurredAt: time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)}
+	legacyCanonical, _, err := legacyContract.CanonicalWorkflowState(true, legacyReport)
+	if err != nil || legacyCanonical.ContractVersion != 1 {
+		t.Fatalf("legacy workflow did not resolve to effective version 1: %+v %v", legacyCanonical, err)
+	}
+
+	spec := milestoneSpec()
+	spec.WorkflowSteps = []api.OperationWorkflowSpec{{
+		Workflow: "order-lifecycle", Title: "Order lifecycle", Version: 2,
+		States: []string{"pending", "fulfilled"}, TransitionsDeclared: true,
+		Transitions: []api.OperationWorkflowTransition{{From: "pending", To: "fulfilled", RequiredMilestones: []string{"paid"}}},
+		Step:        "paid", Label: "Payment complete", Milestone: "paid", InstanceIDFrom: "/workflow_run_id", Position: 1,
+	}}
+	contract, err := Compile(spec, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := api.OperationWorkflowStateReport{ID: uuid.NewString(), Workflow: "order-lifecycle", InstanceID: "run-1",
+		FromState: "pending", State: "fulfilled", Revision: 1, OccurredAt: time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC),
+		EvidenceMilestones: []api.OperationWorkflowEvidenceMilestone{{ID: uuid.NewString(), Name: "paid"}}}
+	canonical, _, err := contract.CanonicalWorkflowState(true, report)
+	if err != nil || canonical.ContractVersion != 2 || len(canonical.EvidenceMilestones) != 1 {
+		t.Fatalf("transition was not canonicalized with its contract evidence: %+v %v", canonical, err)
+	}
+	missingEvidence := report
+	missingEvidence.EvidenceMilestones = nil
+	if _, _, err := contract.CanonicalWorkflowState(true, missingEvidence); err == nil {
+		t.Fatal("transition without required milestone evidence was accepted")
+	}
+	wrongVersion := report
+	wrongVersion.ContractVersion = 1
+	if _, _, err := contract.CanonicalWorkflowState(true, wrongVersion); err == nil {
+		t.Fatal("mismatched workflow contract version was accepted")
+	}
+	wrongStatePath := report
+	wrongStatePath.FromState = ""
+	wrongStatePath.EvidenceMilestones = nil
+	if _, _, err := contract.CanonicalWorkflowState(true, wrongStatePath); err == nil {
+		t.Fatal("direct state update bypassed a declared transition contract")
+	}
+}

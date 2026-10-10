@@ -16,7 +16,11 @@ import (
 
 func setupConnectionProfiles(t *testing.T) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS resolves os.UserConfigDir from HOME, not XDG_CONFIG_HOME; without
+	// both, this fixture's api_base reached the developer's real config.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")

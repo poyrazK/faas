@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Tenant credential identity used to bind a private local submission receipt.
+ * Tenant credential identity used to bind a private local submission receipt; optional submission fence returns 409 operation_identity_conflict if the principal changes.
  */
 export type OperationTenantIdentity = {
   account_id: string;

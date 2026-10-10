@@ -558,7 +558,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			},
 		}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return imaged.VerifyHostingDeployment(ctx, verifier, app, dep)
+			return imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")

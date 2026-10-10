@@ -107,10 +107,12 @@ def sync_detailed(
         slug (str):
         idempotency_key (str | Unset):
         body (EventRecoveryRequest): Select routing failures (default) or the latest replayable
-            retained execution per application event consumer. Execution mode includes publication and
-            materialized backfill recipients, excludes workflows and object notifications, and
-            requires retained admission and execution records. Creation freezes its own selection;
-            preview is advisory.
+            retained execution per application event consumer. With parent_job_id, saved parent
+            failures remain selectable even when execution or receipt evidence has disappeared;
+            admission skips changes rather than following newer work. Ordinary execution mode includes
+            publication and materialized backfill recipients, excludes workflows and object
+            notifications, and requires retained admission and execution records. Creation freezes its
+            own selection; preview is advisory.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,10 +150,12 @@ def sync(
         slug (str):
         idempotency_key (str | Unset):
         body (EventRecoveryRequest): Select routing failures (default) or the latest replayable
-            retained execution per application event consumer. Execution mode includes publication and
-            materialized backfill recipients, excludes workflows and object notifications, and
-            requires retained admission and execution records. Creation freezes its own selection;
-            preview is advisory.
+            retained execution per application event consumer. With parent_job_id, saved parent
+            failures remain selectable even when execution or receipt evidence has disappeared;
+            admission skips changes rather than following newer work. Ordinary execution mode includes
+            publication and materialized backfill recipients, excludes workflows and object
+            notifications, and requires retained admission and execution records. Creation freezes its
+            own selection; preview is advisory.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,10 +188,12 @@ async def asyncio_detailed(
         slug (str):
         idempotency_key (str | Unset):
         body (EventRecoveryRequest): Select routing failures (default) or the latest replayable
-            retained execution per application event consumer. Execution mode includes publication and
-            materialized backfill recipients, excludes workflows and object notifications, and
-            requires retained admission and execution records. Creation freezes its own selection;
-            preview is advisory.
+            retained execution per application event consumer. With parent_job_id, saved parent
+            failures remain selectable even when execution or receipt evidence has disappeared;
+            admission skips changes rather than following newer work. Ordinary execution mode includes
+            publication and materialized backfill recipients, excludes workflows and object
+            notifications, and requires retained admission and execution records. Creation freezes its
+            own selection; preview is advisory.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -223,10 +229,12 @@ async def asyncio(
         slug (str):
         idempotency_key (str | Unset):
         body (EventRecoveryRequest): Select routing failures (default) or the latest replayable
-            retained execution per application event consumer. Execution mode includes publication and
-            materialized backfill recipients, excludes workflows and object notifications, and
-            requires retained admission and execution records. Creation freezes its own selection;
-            preview is advisory.
+            retained execution per application event consumer. With parent_job_id, saved parent
+            failures remain selectable even when execution or receipt evidence has disappeared;
+            admission skips changes rather than following newer work. Ordinary execution mode includes
+            publication and materialized backfill recipients, excludes workflows and object
+            notifications, and requires retained admission and execution records. Creation freezes its
+            own selection; preview is advisory.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -373,6 +373,7 @@ func envPushFailure(receipt envPushReceipt, message string, err error) int {
 
 func envPush(args []string) int {
 	fs := newFlagSet("env push", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "preview key changes, scan findings, and quota without uploading")
 	app := fs.String("app", "", "app slug")
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
@@ -403,7 +404,7 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -477,6 +478,17 @@ func envPush(args []string) int {
 	if len(pairs) == 0 {
 		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
+	}
+	if *dryRun {
+		previewPairs := make([]secretsPair, len(pairs))
+		for i, p := range pairs {
+			previewPairs[i] = secretsPair{Key: p.k, Value: p.v}
+		}
+		origin := *in
+		if *fromStdin {
+			origin = "<stdin>"
+		}
+		return previewEnvPush(*app, *scope, previewPairs, origin, secretScanMode, *restart)
 	}
 	// Secret-scan pass: scan the parsed pairs (in-memory; no file I/O
 	// because the values are already in hand) for known credential
@@ -699,7 +711,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -709,6 +721,7 @@ func cmdAppScale(slug string, args []string) int {
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose resource settings with a guided preview and confirmation")
 	planOnly := fs.Bool("plan", false, "show the proposed change, plan limits and resident-usage estimate without applying it")
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
@@ -775,6 +788,15 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *interactive {
+		if explicit["plan"] || explicit["out"] || explicit["apply"] || explicit["confirm"] || appScaleHasSettingFlags(explicit) {
+			return printErr("Invalid interactive scale flags", fmt.Errorf("--interactive accepts only --environment; enter settings in the guided flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("--interactive requires terminal input and output; use --plan with setting flags for scripts or JSON"))
+		}
+		return cmdAppScaleInteractive(slug, *environment)
+	}
 	if explicit["apply"] {
 		if *applyPlan == "" || !*confirmPlan || explicit["plan"] || explicit["out"] || explicit["environment"] || appScaleHasSettingFlags(explicit) {
 			return printErr("Invalid scale plan flags", fmt.Errorf("--apply requires a plan file and --confirm; do not combine it with --plan, --out, --environment or setting flags"))
@@ -1694,7 +1716,7 @@ func splitArgsForFlags(args []string, boolFlags ...string) (flags, pos []string)
 	pos = make([]string, 0, len(args))
 	i := 0
 	for i < len(args) {
-		a := args[i]
+		a := args[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(args).
 		if a == "--" {
 			i++
 			for i < len(args) {
@@ -1785,6 +1807,12 @@ func indexByte(s string, c byte) int {
 // is watching invocations, and advisory frames are noisy (one per
 // debounce window per state-shaped path).
 func cmdTail(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return cmdTailContext(ctx, args)
+}
+
+func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
@@ -1806,12 +1834,9 @@ func cmdTail(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	// Event frames carry app_id only. Resolve --app to its id so the filter
 	// matches, and keep an id→slug map so lines name the app.
-	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}}
+	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}, seen: &tailSeen{}}
 	if apps, listErr := client.ListApps(ctx); listErr == nil {
 		for _, a := range apps {
 			filter.slugs[a.ID] = a.Slug
@@ -1869,6 +1894,40 @@ type tailFilter struct {
 	appID            string
 	includeStateless bool
 	slugs            map[string]string
+	// seen dedups invocation_done frames. apid publishes each one twice
+	// (DB trigger + schedd drain) and consumers must dedup on
+	// (invocation_id, state); tail printed every completion twice
+	// (production hunt #8, H8-30). Nil disables dedup.
+	seen *tailSeen
+}
+
+// tailSeen remembers recently printed (invocation_id, state) keys, bounded so
+// a long tail session cannot grow without limit.
+type tailSeen struct {
+	keys  map[string]struct{}
+	order []string
+}
+
+const tailSeenMax = 4096
+
+// first reports whether key is new, and records it.
+func (s *tailSeen) first(key string) bool {
+	if s == nil {
+		return true
+	}
+	if s.keys == nil {
+		s.keys = make(map[string]struct{}, tailSeenMax)
+	}
+	if _, ok := s.keys[key]; ok {
+		return false
+	}
+	if len(s.order) == tailSeenMax {
+		delete(s.keys, s.order[0])
+		s.order = s.order[1:]
+	}
+	s.keys[key] = struct{}{}
+	s.order = append(s.order, key)
+	return true
 }
 
 func (f tailFilter) label(appID string) string {
@@ -1898,25 +1957,40 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
+	return true, consumeTailStream(ctx, dec, filter)
+}
+
+// consumeTailStream prints frames from one decoded stream. It returns an exit
+// code, or -1 to reconnect.
+func consumeTailStream(ctx context.Context, dec *api.Decoder, filter tailFilter) int {
 	for {
 		select {
 		case <-ctx.Done():
-			return true, 130
+			return 130
 		case e, ok := <-dec.Events():
 			if !ok {
-				return true, -1
+				return -1
 			}
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
-				return true, printErr("Could not write event", writeErr)
+				return printErr("Could not write event", writeErr)
 			}
 		case err := <-dec.Errors():
 			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
 			}
 			if ctx.Err() != nil {
-				return true, 130
+				return 130
 			}
-			return true, -1
+			// The decoder buffers frames before it publishes the terminal
+			// error, and select picks a ready case at random, so the last
+			// frames of a stream that ends right after them were dropped.
+			// The decoder closes Events right after Errors.
+			for e := range dec.Events() {
+				if writeErr := writeTailFrame(e, filter); writeErr != nil {
+					return printErr("Could not write event", writeErr)
+				}
+			}
+			return -1
 		}
 	}
 }
@@ -1937,6 +2011,9 @@ func writeTailFrame(e api.Event, filter tailFilter) error {
 			return writeRawTailFrame(e)
 		}
 		if filter.appID != "" && p.AppID != filter.appID {
+			return nil
+		}
+		if !filter.seen.first(p.InvocationID + "\x00" + p.State) {
 			return nil
 		}
 		slug := p.AppSlug

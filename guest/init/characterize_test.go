@@ -345,3 +345,28 @@ func TestTruncateLog_VsockBodyCap(t *testing.T) {
 		t.Errorf("truncateLog len = %d, want %d", len(out), cap)
 	}
 }
+
+// ADR-741: with the debugger on, the app's process tree owns the inspector
+// listener too, and it binds first. Characterization must skip it.
+func TestScanListeningFile_SkipsDebuggerPortWhileDebugging(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "net_tcp")
+	content := strings.Join([]string{
+		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                      ",
+		" 0: 00000000:240D 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 11111 1 0000000000000000 100 0 0 10 0",
+		" 1: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 22222 1 0000000000000000 100 0 0 10 0",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	owned := map[uint64]struct{}{11111: {}, 22222: {}}
+	t.Cleanup(func() { devDebugActive.Store(false) })
+	for _, tc := range []struct {
+		debugging bool
+		want      int
+	}{{false, 9229}, {true, 3000}} {
+		devDebugActive.Store(tc.debugging)
+		if port, _, ok := scanListeningFile(path, owned); !ok || port != tc.want {
+			t.Fatalf("debugging=%t: port = %d (ok=%t), want %d", tc.debugging, port, ok, tc.want)
+		}
+	}
+}

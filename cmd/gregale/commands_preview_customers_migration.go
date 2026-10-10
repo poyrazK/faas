@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ type previewCustomerCutoverReviewReport struct {
 	Version                   int                                        `json:"version"`
 	GeneratedAt               time.Time                                  `json:"generated_at"`
 	Outcome                   string                                     `json:"outcome"`
+	OwnerReviewRequired       bool                                       `json:"owner_review_required"`
 	GroupBy                   string                                     `json:"group_by"`
 	ContractReviewGeneratedAt time.Time                                  `json:"contract_review_generated_at"`
 	ContractReviewOutcome     string                                     `json:"contract_review_outcome"`
@@ -94,17 +96,18 @@ type routeMigrationFindingSummary struct {
 }
 
 type previewCustomerCutoverReviewCustomer struct {
-	ID                      string                                    `json:"id"`
-	IdentityScope           string                                    `json:"identity_scope"`
-	App                     string                                    `json:"app,omitempty"`
-	MigrationEvidence       string                                    `json:"migration_evidence"`
-	NextStep                string                                    `json:"next_step"`
-	OldRouteObservedWindows int                                       `json:"old_route_observed_windows"`
-	SuccessorWindows        int                                       `json:"successor_observed_windows"`
-	ObservedSuccessors      []previewCustomerCutoverObservedSuccessor `json:"observed_successors"`
-	LatestSuccessorEvidence string                                    `json:"latest_successor_evidence"`
-	LatestSuccessors        []previewCustomerCutoverLatestSuccessor   `json:"latest_observed_successors"`
-	ObservedOldRouteReuse   *previewCustomerCutoverOldRouteReuse      `json:"observed_old_route_reuse,omitempty"`
+	ID                      string                                       `json:"id"`
+	IdentityScope           string                                       `json:"identity_scope"`
+	App                     string                                       `json:"app,omitempty"`
+	MigrationEvidence       string                                       `json:"migration_evidence"`
+	NextStep                string                                       `json:"next_step"`
+	OldRouteObservedWindows int                                          `json:"old_route_observed_windows"`
+	SuccessorWindows        int                                          `json:"successor_observed_windows"`
+	ObservedSuccessors      []previewCustomerCutoverObservedSuccessor    `json:"observed_successors"`
+	LatestSuccessorEvidence string                                       `json:"latest_successor_evidence"`
+	LatestSuccessors        []previewCustomerCutoverLatestSuccessor      `json:"latest_observed_successors"`
+	ObservedOldRouteReuse   *previewCustomerCutoverOldRouteReuse         `json:"observed_old_route_reuse,omitempty"`
+	OldRouteObservations    []previewCustomerCutoverSuccessorObservation `json:"old_route_observations,omitempty"`
 }
 
 type previewCustomerCutoverLatestSuccessor struct {
@@ -173,9 +176,29 @@ func cmdPreviewCustomersMigration(args []string) int {
 }
 
 func cmdPreviewCustomersMigrationReview(args []string) int {
+	return cmdRouteMigrationCutoverReview(args, false)
+}
+
+// Both entry points use the same evidence validation and readiness rules. The
+// routes entry point refreshes contracts instead of accepting a saved review.
+func cmdRouteMigrationCutoverReview(args []string, refreshContracts bool) int {
 	flags, positional := splitArgsForFlags(args, "fail-on-breaking", "fail-on-incomplete", "fail-on-not-ready")
-	fs := newFlagSet("preview customers migration review", flag.ContinueOnError)
-	contractPath := fs.String("contract-review", "", "version 1 JSON from gregale routes migration review")
+	command, docsTopic := "preview customers migration review", "preview"
+	contractUsage := "--contract-review <PATH>"
+	if refreshContracts {
+		command, docsTopic = "routes migration readiness", "cli"
+		contractUsage = "--mapping <PATH> --from-deployment APP=ID --to-deployment APP=ID"
+	}
+	fs := newFlagSet(command, flag.ContinueOnError)
+	var contractPath, mappingPath string
+	var fromValues, toValues previewCustomerMigrationDeployments
+	if refreshContracts {
+		fs.StringVar(&mappingPath, "mapping", "", "version 1 explicit mapping reviewed with the route owner")
+		fs.Var(&fromValues, "from-deployment", "baseline deployment as APP=ID; repeat for each app")
+		fs.Var(&toValues, "to-deployment", "successor deployment as APP=ID; repeat for each app")
+	} else {
+		fs.StringVar(&contractPath, "contract-review", "", "version 1 JSON from gregale routes migration review")
+	}
 	var snapshots previewCustomerCutoverReviewSnapshotPaths
 	fs.Var(&snapshots, "snapshot", "saved version 1 customer migration tracker JSON; repeat for each observation window")
 	gracePeriodFlag := fs.String("grace-period", "30d", "minimum continuous zero-traffic period required for owner review")
@@ -191,20 +214,20 @@ func cmdPreviewCustomersMigrationReview(args []string) int {
 	}
 	gracePeriod, graceErr := parsePreviewCustomerMigrationProgressDuration(*gracePeriodFlag)
 	maxStaleness, stalenessErr := parsePreviewCustomerMigrationProgressDuration(*maxStalenessFlag)
-	if len(positional) != 0 || *contractPath == "" || len(snapshots) < 2 || len(snapshots) > previewCustomerMigrationProgressMaxSnapshots ||
+	missingContracts := contractPath == ""
+	if refreshContracts {
+		missingContracts = mappingPath == "" || len(fromValues) == 0
+	}
+	if len(positional) != 0 || missingContracts || len(snapshots) < 2 || len(snapshots) > previewCustomerMigrationProgressMaxSnapshots ||
 		graceErr != nil || stalenessErr != nil || *minWindows < 2 || *minWindows > previewCustomerMigrationProgressMaxSnapshots || *minWindows > len(snapshots) ||
 		!slices.Contains([]string{"text", "markdown", "csv"}, *format) || (jsonOutput && *format != "text") || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale preview customers migration review --contract-review <PATH> --snapshot <TRACKER.json> --snapshot <TRACKER.json> [--grace-period 30d] [--min-windows 2] [--max-staleness 72h] [--format text|markdown|csv] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready] [--json]", "preview")
+		printUsage(osStderr, "usage: gregale "+command+" "+contractUsage+" --snapshot <TRACKER.json> --snapshot <TRACKER.json> [--grace-period 30d] [--min-windows 2] [--max-staleness 72h] [--format text|markdown|csv] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready] [--json]", docsTopic)
 		return 1
 	}
 	if *output != "" {
 		if _, err := os.Lstat(*output); err == nil || !errors.Is(err, os.ErrNotExist) {
 			return printErr("Invalid --out", errors.New("choose a new path; existing files and symlinks are not replaced"))
 		}
-	}
-	contracts, _, err := readPreviewCustomerCutoverContractReview(*contractPath)
-	if err != nil {
-		return printErr("Could not read route contract review", err)
 	}
 	loaded := make([]previewCustomerMigrationProgressSnapshotData, 0, len(snapshots))
 	var totalSnapshotBytes int64
@@ -223,11 +246,22 @@ func cmdPreviewCustomersMigrationReview(args []string) int {
 		}
 		loaded = append(loaded, data)
 	}
-	progress, err := buildPreviewCustomerMigrationProgressReport(loaded, gracePeriod, *gracePeriodFlag, *minWindows, maxStaleness, *maxStalenessFlag, time.Now().UTC())
+	var err error
+	var contracts routeMigrationReviewReport
+	if refreshContracts {
+		contracts, err = readRouteMigrationReadinessContracts(mappingPath, fromValues, toValues)
+	} else {
+		contracts, _, err = readPreviewCustomerCutoverContractReview(contractPath)
+	}
+	if err != nil {
+		return printErr("Could not read route contract review", err)
+	}
+	now := time.Now().UTC()
+	progress, err := buildPreviewCustomerMigrationProgressReport(loaded, gracePeriod, *gracePeriodFlag, *minWindows, maxStaleness, *maxStalenessFlag, now)
 	if err != nil {
 		return printErr("Could not compare migration snapshots", err)
 	}
-	report, err := buildPreviewCustomerCutoverReview(contracts, progress, loaded, time.Now().UTC())
+	report, err := buildPreviewCustomerCutoverReview(contracts, progress, loaded, now)
 	if err != nil {
 		return printErr("Could not join contract and customer evidence", err)
 	}
@@ -263,13 +297,73 @@ func cmdPreviewCustomersMigrationReview(args []string) int {
 	if *failBreaking && report.Summary.BreakingContractRoutes > 0 {
 		return 1
 	}
-	if *failIncomplete && report.Outcome == "incomplete" {
+	if *failIncomplete && previewCustomerCutoverHasIncompleteEvidence(report) {
 		return 1
 	}
 	if *failNotReady && report.Outcome != "owner_review_ready" {
 		return 1
 	}
 	return 0
+}
+
+// Incompleteness is independent of the headline outcome: a breaking contract
+// must not hide missing telemetry or another successor's unknown comparison.
+func previewCustomerCutoverHasIncompleteEvidence(report previewCustomerCutoverReviewReport) bool {
+	if report.Summary.IncompleteCustomerLinks > 0 {
+		return true
+	}
+	for _, route := range report.Routes {
+		if route.ContractStatus == "unknown" || route.TelemetryStatus == "incomplete" {
+			return true
+		}
+		for _, successor := range route.Successors {
+			if successor.Status == "unknown" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func readRouteMigrationReadinessContracts(mappingPath string, fromValues, toValues previewCustomerMigrationDeployments) (routeMigrationReviewReport, error) {
+	mappings, err := readPreviewCustomerMigrationMappings(mappingPath)
+	if err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	fromIDs, err := parsePreviewCustomerMigrationDeployments(fromValues)
+	if err != nil {
+		return routeMigrationReviewReport{}, fmt.Errorf("invalid --from-deployment: %w", err)
+	}
+	toIDs, err := parsePreviewCustomerMigrationDeployments(toValues)
+	if err != nil {
+		return routeMigrationReviewReport{}, fmt.Errorf("invalid --to-deployment: %w", err)
+	}
+	fromApps, toApps, pairs := routeMigrationRequiredApps(mappings)
+	if len(mappings) == 0 || len(mappings) > previewCustomerMigrationMaxLinks || pairs > previewCustomerMigrationMaxLinks ||
+		len(fromApps) > previewCustomerMigrationMaxApps || len(toApps) > previewCustomerMigrationMaxApps {
+		return routeMigrationReviewReport{}, errors.New("mapping must be nonempty and within the route migration app and link limits")
+	}
+	if err := validateRouteMigrationDeploymentSet("from", fromApps, fromIDs); err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	if err := validateRouteMigrationDeploymentSet("to", toApps, toIDs); err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	client, err := authedClient()
+	if err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	from, err := readRouteMigrationDeploymentSet(ctx, client, fromIDs)
+	if err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	to, err := readRouteMigrationDeploymentSet(ctx, client, toIDs)
+	if err != nil {
+		return routeMigrationReviewReport{}, err
+	}
+	return buildRouteMigrationReviewReport(mappings, from, to, time.Now().UTC())
 }
 
 type previewCustomerCutoverAction struct {
@@ -316,6 +410,11 @@ func previewCustomerCutoverActionPriority(customer previewCustomerCutoverReviewC
 
 func previewCustomerCutoverActionLastObservedAt(customer previewCustomerCutoverReviewCustomer) time.Time {
 	var latest time.Time
+	for _, observation := range customer.OldRouteObservations {
+		if observed, err := time.Parse(time.RFC3339Nano, observation.LastObservedAt); err == nil && observed.After(latest) {
+			latest = observed
+		}
+	}
 	for _, successor := range customer.LatestSuccessors {
 		if successor.LastObservedAt.After(latest) {
 			latest = successor.LastObservedAt
@@ -435,15 +534,20 @@ func buildPreviewCustomerCutoverReview(
 	if len(snapshots) < 2 {
 		return previewCustomerCutoverReviewReport{}, errors.New("at least two indexed telemetry snapshots are required")
 	}
-	if err := validatePreviewCustomerCutoverDeploymentBinding(contracts, snapshots[0]); err != nil {
-		return previewCustomerCutoverReviewReport{}, err
+	for _, snapshot := range snapshots {
+		if err := validatePreviewCustomerCutoverDeploymentBinding(contracts, snapshot); err != nil {
+			return previewCustomerCutoverReviewReport{}, err
+		}
+	}
+	if len(progress.Routes) == 0 || len(progress.Routes) != len(contracts.Mappings) {
+		return previewCustomerCutoverReviewReport{}, errors.New("every contract mapping must have a tracked source route; narrow the mapping or supply complete customer snapshots")
 	}
 	contractMappings := make(map[previewCustomerMigrationRouteKey]routeMigrationRouteReview, len(contracts.Mappings))
 	for _, mapping := range contracts.Mappings {
 		contractMappings[previewCustomerMigrationEndpointKey(mapping.From)] = mapping
 	}
 	report := previewCustomerCutoverReviewReport{
-		Version: previewCustomerCutoverReviewVersion, GeneratedAt: now.UTC(), GroupBy: progress.GroupBy,
+		Version: previewCustomerCutoverReviewVersion, GeneratedAt: now.UTC(), GroupBy: progress.GroupBy, OwnerReviewRequired: true,
 		ContractReviewGeneratedAt: contracts.GeneratedAt.UTC(), ContractReviewOutcome: contracts.Outcome,
 		FromDeployments: append([]routeMigrationDeploymentEvidence{}, contracts.FromDeployments...),
 		ToDeployments:   append([]routeMigrationDeploymentEvidence{}, contracts.ToDeployments...),
@@ -454,6 +558,7 @@ func buildPreviewCustomerCutoverReview(
 			"owner_review_ready requires both a no_supported_breaks contract mapping and complete aggregate zero-traffic evidence for the full grace period; it is a human review checkpoint and never authorizes automatic route removal.",
 			"Customer successor observations show traffic was seen, not that a customer's migration is complete. no_current_evidence means telemetry is silent and must not be treated as proof of adoption or non-use.",
 			"Successor request counts are reported per saved snapshot because observation windows may overlap; do not add counts across snapshots.",
+			"Old-route observations also retain their individual snapshot windows. Missing or out-of-window last-observed timestamps are omitted, not inferred from snapshot creation time. Counts across overlapping windows must not be added.",
 			"Historical successor compatibility categories count endpoints observed in any supplied snapshot and may overlap when a customer-route link used multiple successor endpoints.",
 			"Latest successor guidance uses the maximum in-window last_observed_at timestamp across supplied snapshots. If an observation with a potentially later window has a missing or invalid timestamp, latest_successor_evidence is ambiguous and the next step asks for verification. Latest contract-status categories can overlap when successor endpoints tie on last-observed time.",
 			"old_route_reobserved_after_successor is emitted only when the latest snapshot has available old-route evidence with positive requests and in-window last-observed timestamps place that activity after the latest observed successor use. Missing or ambiguous timestamps do not produce this signal; it reports activity, not customer intent.",
@@ -508,9 +613,21 @@ func buildPreviewCustomerCutoverReview(
 				OldRouteObservedWindows: customer.OldRouteObservedWindows, SuccessorWindows: customer.SuccessorWindows,
 				ObservedSuccessors: observedSuccessors, LatestSuccessorEvidence: latestEvidence,
 				LatestSuccessors: latestSuccessors, ObservedOldRouteReuse: oldRouteReuse,
+				OldRouteObservations: buildPreviewCustomerCutoverOldRouteObservations(linkKey, snapshots),
 			})
 		}
 		row.Status, row.Reason = previewCustomerCutoverRouteStatus(contract.Status, route.Status, route.Reason)
+		if contract.Status != "no_supported_breaks" {
+			row.Blockers = appendUniqueCutoverCaveats(row.Blockers, "contract_"+contract.Status)
+		}
+		for _, successor := range row.Successors {
+			if successor.Status != "no_supported_breaks" {
+				row.Blockers = appendUniqueCutoverCaveats(row.Blockers, "successor_contract_"+successor.Status)
+			}
+		}
+		if route.Status != "owner_review_ready" && route.Reason != "" {
+			row.Blockers = appendUniqueCutoverCaveats(row.Blockers, route.Reason)
+		}
 		report.Routes = append(report.Routes, row)
 		report.Summary.Routes++
 		report.Summary.CustomerRouteLinks += len(row.Customers)
@@ -609,6 +726,29 @@ func buildPreviewCustomerCutoverReview(
 		report.Outcome = "review_required"
 	}
 	return report, nil
+}
+
+func buildPreviewCustomerCutoverOldRouteObservations(linkKey previewCustomerMigrationProgressLinkKey, snapshots []previewCustomerMigrationProgressSnapshotData) []previewCustomerCutoverSuccessorObservation {
+	observations := []previewCustomerCutoverSuccessorObservation{}
+	for _, snapshot := range snapshots {
+		link, ok := snapshot.links[linkKey]
+		if !ok || link.OldRouteEvidence != "observed" || link.OldRouteRequests <= 0 {
+			continue
+		}
+		deployment, ok := snapshot.deployments[linkKey.from.app]
+		if !ok {
+			continue
+		}
+		observation := previewCustomerCutoverSuccessorObservation{SnapshotGeneratedAt: snapshot.generated, WindowFrom: deployment.From, WindowUntil: deployment.Until, Requests: link.OldRouteRequests}
+		if observed, _, _, valid := previewCustomerCutoverTimestampInWindow(link.OldRouteLastObservedAt, deployment); valid {
+			observation.LastObservedAt = observed.Format(time.RFC3339Nano)
+		}
+		observations = append(observations, observation)
+	}
+	sort.Slice(observations, func(i, j int) bool {
+		return observations[i].SnapshotGeneratedAt.Before(observations[j].SnapshotGeneratedAt)
+	})
+	return observations
 }
 
 func buildPreviewCustomerCutoverObservedSuccessors(
@@ -1119,6 +1259,9 @@ func renderPreviewCustomerCutoverReviewText(w io.Writer, report previewCustomerC
 			_, _ = fmt.Fprintf(w, " — %s", route.Reason)
 		}
 		_, _ = fmt.Fprintln(w)
+		for _, blocker := range route.Blockers {
+			_, _ = fmt.Fprintf(w, "  blocker: %s\n", previewReportText(blocker))
+		}
 		for _, customer := range route.Customers {
 			label := customer.ID
 			if customer.App != "" {
@@ -1131,6 +1274,9 @@ func renderPreviewCustomerCutoverReviewText(w io.Writer, report previewCustomerC
 					successor.Route.App, successor.Route.Method, successor.Route.Path, successor.ContractStatus,
 					successor.LastObservedAt.Format(time.RFC3339Nano), successor.SnapshotGeneratedAt.Format(time.RFC3339Nano),
 					successor.WindowFrom.Format(time.RFC3339Nano), successor.WindowUntil.Format(time.RFC3339Nano))
+			}
+			for _, observation := range customer.OldRouteObservations {
+				_, _ = fmt.Fprintf(w, "    old route: %d observed requests; last seen %s; snapshot %s; window %s to %s\n", observation.Requests, previewSourceDisplay(observation.LastObservedAt, false), observation.SnapshotGeneratedAt.Format(time.RFC3339Nano), observation.WindowFrom, observation.WindowUntil)
 			}
 			if signal := customer.ObservedOldRouteReuse; signal != nil {
 				_, _ = fmt.Fprintf(w, "    Signal %s: successor %s %s %s (%s) last observed %s, then old route last observed %s; review with the route owner before retiring the old route.\n",
@@ -1207,6 +1353,12 @@ func renderPreviewCustomerCutoverReviewMarkdown(w io.Writer, report previewCusto
 		if route.Reason != "" {
 			_, _ = fmt.Fprintf(w, "%s\n\n", previewSourceDisplay(route.Reason, true))
 		}
+		for _, blocker := range route.Blockers {
+			_, _ = fmt.Fprintf(w, "- Blocker: %s\n", previewSourceDisplay(blocker, true))
+		}
+		if len(route.Blockers) > 0 {
+			_, _ = fmt.Fprintln(w)
+		}
 		_, _ = fmt.Fprintln(w, "| Customer ID | Scope | Migration evidence | Old-route windows | Successor windows | Latest successor evidence | Latest observed successor(s) | Observed old-route reuse | Next step |")
 		_, _ = fmt.Fprintln(w, "|---|---|---|---:|---:|---|---|---|---|")
 		for _, customer := range route.Customers {
@@ -1219,6 +1371,9 @@ func renderPreviewCustomerCutoverReviewMarkdown(w io.Writer, report previewCusto
 				previewCustomerCutoverLatestSuccessorsLabel(customer, true), reuse, customer.NextStep)
 		}
 		for _, customer := range route.Customers {
+			for _, observation := range customer.OldRouteObservations {
+				_, _ = fmt.Fprintf(w, "\nCustomer `%s` old route: **%d** observed requests; last seen %s; snapshot `%s`; window `%s` to `%s`.\n", previewSourceDisplay(customer.ID, true), observation.Requests, previewSourceDisplay(observation.LastObservedAt, true), observation.SnapshotGeneratedAt.Format(time.RFC3339Nano), previewReportText(observation.WindowFrom), previewReportText(observation.WindowUntil))
+			}
 			if signal := customer.ObservedOldRouteReuse; signal != nil {
 				_, _ = fmt.Fprintf(w, "\nCustomer `%s` signal `%s`: successor `%s %s %s` (**%s**) last observed at `%s`, then old route last observed at `%s`. Review route reuse with the customer or owner; this signal reports observed sequence, not intent.\n",
 					previewSourceDisplay(customer.ID, true), signal.Signal, previewSourceDisplay(signal.Successor.App, true),

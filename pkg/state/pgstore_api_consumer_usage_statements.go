@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const apiConsumerUsageStatementSelectCols = `id, account_id, app_id, consumer_id,
-       period_start, period_end, status, currency, billable_units,
+       period_start, period_end, revision, status, currency, billable_units,
        unpriced_units, amount_millicents, priced, buckets, as_of,
        created_at, finalized_at`
 
@@ -23,7 +24,7 @@ func scanAPIConsumerUsageStatementRow(row apiConsumerUsageStatementRowScanner) (
 	var buckets []byte
 	if err := row.Scan(
 		&statement.ID, &statement.AccountID, &statement.AppID, &statement.ConsumerID,
-		&statement.PeriodStart, &statement.PeriodEnd, &status, &statement.Currency,
+		&statement.PeriodStart, &statement.PeriodEnd, &statement.Revision, &status, &statement.Currency,
 		&statement.BillableUnits, &statement.UnpricedUnits, &statement.AmountMillicents,
 		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt,
 	); err != nil {
@@ -70,50 +71,82 @@ func (s *PgStore) CreateAPIConsumerUsageStatement(ctx context.Context, input API
 		return APIConsumerUsageStatement{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row := tx.QueryRow(ctx,
-		`insert into api_consumer_usage_statements
-		       (account_id, app_id, consumer_id, period_start, period_end, status,
-		        currency, billable_units, unpriced_units, amount_millicents,
-		        priced, buckets, as_of)
-		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'draft', $6,
-		         $7, $8, $9, $10, $11::jsonb, $12)
-		 on conflict (app_id, consumer_id, period_start, period_end) do nothing
-		 returning `+apiConsumerUsageStatementSelectCols,
-		input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd,
-		input.Currency, input.BillableUnits, input.UnpricedUnits, input.AmountMillicents,
-		input.Priced, buckets, input.AsOf)
-	statement, err := scanAPIConsumerUsageStatementRow(row)
-	if err == nil {
-		if err := tx.Commit(ctx); err != nil {
-			return APIConsumerUsageStatement{}, false, err
-		}
-		return statement, true, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// Fall through to the natural-key lookup below.
-		} else {
-			return APIConsumerUsageStatement{}, false, err
-		}
-	}
-	row = tx.QueryRow(ctx,
-		`select `+apiConsumerUsageStatementSelectCols+`
-		   from api_consumer_usage_statements
-		  where app_id = $1::uuid and consumer_id = $2::uuid
-		    and period_start = $3 and period_end = $4`,
-		input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd)
-	statement, err = scanAPIConsumerUsageStatementRow(row)
-	if err != nil {
+	// Serialize revisions of this consumer's statements so two planners cannot
+	// both supersede the same draft or claim the same revision number.
+	var locked string
+	if err := tx.QueryRow(ctx, `select id from api_consumers
+		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid for update`,
+		input.ConsumerID, input.AccountID, input.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIConsumerUsageStatement{}, false, ErrNotFound
+		}
+		return APIConsumerUsageStatement{}, false, err
+	}
+	periodKey := []any{input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd}
+	latest, err := scanAPIConsumerUsageStatementRow(tx.QueryRow(ctx, `select `+apiConsumerUsageStatementSelectCols+`
+		from api_consumer_usage_statements
+		where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid
+		  and period_start = $4 and period_end = $5
+		order by revision desc limit 1`, periodKey...))
+	hasLatest := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return APIConsumerUsageStatement{}, false, err
+	}
+	if hasLatest && input.Revision <= latest.Revision {
+		// A retry of an already-persisted plan replays that exact revision.
+		existing, err := scanAPIConsumerUsageStatementRow(tx.QueryRow(ctx, `select `+apiConsumerUsageStatementSelectCols+`
+			from api_consumer_usage_statements
+			where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid
+			  and period_start = $4 and period_end = $5 and revision = $6`, append(periodKey, input.Revision)...))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return APIConsumerUsageStatement{}, false, ErrConflict
+		}
+		return existing, false, err
+	}
+	if !hasLatest && input.Revision != 1 {
+		return APIConsumerUsageStatement{}, false, ErrConflict
+	}
+	if hasLatest && (input.Revision != latest.Revision+1 || latest.Status != input.PriorStatus) {
+		return APIConsumerUsageStatement{}, false, ErrConflict
+	}
+	if hasLatest && latest.Status == APIConsumerUsageStatementDraft {
+		if sameAPIConsumerUsageStatementSnapshot(latest, input) {
+			if err := tx.Commit(ctx); err != nil {
+				return APIConsumerUsageStatement{}, false, err
+			}
+			return latest, false, nil
+		}
+		command, err := tx.Exec(ctx, `update api_consumer_usage_statements set status = 'superseded'
+			where id = $1::uuid and status = 'draft'`, latest.ID)
+		if err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+		if command.RowsAffected() != 1 {
+			return APIConsumerUsageStatement{}, false, ErrConflict
+		}
+	}
+	statement, err := scanAPIConsumerUsageStatementRow(tx.QueryRow(ctx,
+		`insert into api_consumer_usage_statements
+		       (account_id, app_id, consumer_id, period_start, period_end, revision, status,
+		        currency, billable_units, unpriced_units, amount_millicents,
+		        priced, buckets, as_of)
+		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'draft', $7,
+		         $8, $9, $10, $11, $12::jsonb, $13)
+		 returning `+apiConsumerUsageStatementSelectCols,
+		input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd, input.Revision,
+		input.Currency, input.BillableUnits, input.UnpricedUnits, input.AmountMillicents,
+		input.Priced, buckets, input.AsOf))
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return APIConsumerUsageStatement{}, false, ErrConflict
 		}
 		return APIConsumerUsageStatement{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return APIConsumerUsageStatement{}, false, err
 	}
-	return statement, false, nil
+	return statement, true, nil
 }
 
 func (s *PgStore) GetAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatement, error) {
@@ -140,7 +173,7 @@ func (s *PgStore) ListAPIConsumerUsageStatements(ctx context.Context, accountID,
 		`select `+apiConsumerUsageStatementSelectCols+`
 		   from api_consumer_usage_statements
 		  where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid
-		  order by period_start desc, created_at desc, id desc`, accountID, appID, consumerID)
+		  order by period_start desc, revision desc, created_at desc, id desc`, accountID, appID, consumerID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +190,34 @@ func (s *PgStore) ListAPIConsumerUsageStatements(ctx context.Context, accountID,
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *PgStore) ListAPIConsumerUsageStatementRevisions(ctx context.Context, accountID, appID, consumerID string, start, end time.Time) ([]APIConsumerUsageStatement, error) {
+	if accountID == "" || appID == "" || consumerID == "" {
+		return nil, ErrNotFound
+	}
+	if !end.After(start) {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+apiConsumerUsageStatementSelectCols+`
+		   from api_consumer_usage_statements
+		  where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid
+		    and period_start = $4 and period_end = $5
+		  order by revision asc`, accountID, appID, consumerID, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []APIConsumerUsageStatement{}
+	for rows.Next() {
+		statement, err := scanAPIConsumerUsageStatementRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, statement)
+	}
+	return out, rows.Err()
 }
 
 func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatement, bool, error) {

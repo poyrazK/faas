@@ -93,7 +93,7 @@ func (m *MemStore) tenantWorkflowEventRecipientsLocked(accountID, appID, tenantI
 	if deployment.ID == "" {
 		return nil
 	}
-	effective, err := mergeAutomationDefinitions(deployment.Workflows, m.automationRecordsLocked(appID))
+	effective, err := m.mergeRuntimeAutomationDefinitionsLocked(appID, deployment.Workflows)
 	if err != nil {
 		return nil
 	}
@@ -224,6 +224,9 @@ func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient 
 	run, err := eventWorkflowRun(recipient, work.Payload, account.Plan)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
+	}
+	if m.automationFailureGuards[app.ID+"/"+run.WorkflowName].PausedAt != nil {
+		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run.AppID = app.ID
 	active := 0

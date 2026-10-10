@@ -1,0 +1,530 @@
+name: ci-light
+
+# Light tier: runs on every pull request push and every merge to main.
+#
+# CI is split into two tiers so the full suite runs a few times a day instead
+# of on every push (it was ~25 jobs x 150-480 runs/day, saturating the hosted
+# runner pool and pushing PR feedback past 90 minutes):
+#
+#   ci-light.yml (this file)  changed-package lint, vet of changed packages
+#                             and direct importers, -race tests of changed
+#                             packages and the §6.2 invariants, boot-contract,
+#                             generated-code drift, policy gates and migration
+#                             ID/apply/replay checks. Six jobs, no gate job,
+#                             so a run never ends waiting for a runner.
+#   ci.yml (mega)             the complete suite: every unit shard, e2e,
+#                             migration history, container/UDP contracts,
+#                             flags, load, SDK acceptance, ops/infra gates.
+#                             Runs nightly, on workflow_dispatch, and from
+#                             release.yml before any release tag publishes.
+#
+# Package selection lives in scripts/ci/affected_packages.py. A change to
+# go.mod, go.sum, the selector or this workflow selects every package.
+#
+# Required checks on main are the five job names below; a job skipped because
+# nothing relevant changed reports as passing.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-light-${{ github.ref }}
+  # Supersede stale pull-request pushes. Main runs queue instead, so every
+  # merge gets its own light verdict.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  # check_migration_version_hygiene.sh reads open pull requests.
+  pull-requests: read
+
+env:
+  # Keep in lock-step with ci.yml and go.mod's toolchain directive.
+  GO_VERSION: "1.26.9"
+  VACUUM_VERSION: "0.29.10"
+  VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
+  SQLC_VERSION: "1.31.1"
+  SQLC_SHA256_LINUX_AMD64: "497ae4fcdfa64c5b0c311ffe4c2bd991e43991e82e5367792ed78bc2dca27354"
+  PROTOC_VERSION: "33.6"
+  PROTOC_SHA256_LINUX_AMD64: "9c49962391ff8b5754342509efc3885db91dfe11a358e1e98c9a71518f0ad199"
+
+jobs:
+  lint:
+    name: "light: lint, vet, build"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # PR-4a scans every commit subject; the diff base must be present.
+          # A blobless clone keeps full history without downloading old blobs.
+          fetch-depth: 0
+          filter: blob:none
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # The light tier owns the go-lint family (golangci-lint analysis cache
+      # included): main pushes save it, pull requests only restore it.
+      - name: restore Go build + lint cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-lint-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: select changed packages
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull_request checkout is the merge commit: its first parent is
+          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$(git rev-parse HEAD^1)"
+          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base="$(git rev-parse HEAD~1)"
+          fi
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
+          python3 scripts/ci/affected_packages.py summary < "$RUNNER_TEMP/changed-paths.txt"
+          {
+            echo "base=$base"
+            echo "changed=$(python3 scripts/ci/affected_packages.py changed < "$RUNNER_TEMP/changed-paths.txt")"
+            echo "vet=$(python3 scripts/ci/affected_packages.py vet < "$RUNNER_TEMP/changed-paths.txt")"
+            echo "go_files=$(grep -E '\.go$' "$RUNNER_TEMP/changed-paths.txt" | while read -r f; do [[ -f "$f" ]] && printf '%s ' "$f"; done)"
+          } >> "$GITHUB_OUTPUT"
+
+      # S4 PR-4a: a fix claim must carry a changed Go regression test.
+      - name: fix-shaped changes require regression tests
+        run: make fix-has-test-check
+      - name: gofmt (changed files)
+        if: steps.select.outputs.go_files != ''
+        env:
+          GO_FILES: ${{ steps.select.outputs.go_files }}
+        run: |
+          # shellcheck disable=SC2086 # space-separated path list
+          unformatted="$(gofmt -l $GO_FILES)"
+          test -z "$unformatted" || { echo "$unformatted"; exit 1; }
+      # vet type-checks every changed package and direct importer, test files
+      # included, so an API change that breaks a caller fails here. The mega
+      # tier builds every binary and runs the importers' tests.
+      - name: vet (changed packages and direct importers)
+        if: steps.select.outputs.vet != ''
+        env:
+          PKGS: ${{ steps.select.outputs.vet }}
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOMAXPROCS: 4
+        run: |
+          # shellcheck disable=SC2086 # space-separated package list
+          go vet $PKGS
+      # Same linter, rules and per-package invocation as the mega tier's
+      # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
+      # packages this change touches. The complete tree is linted nightly and
+      # before every release; a lint-config change is validated here by
+      # `config verify` and fully exercised by the next mega run.
+      - name: install linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          install-only: true
+          skip-cache: true
+      - name: validate lint configuration
+        run: |
+          golangci-lint config verify
+          python3 scripts/ci/check_gosec_baseline.py
+      - name: lint (changed packages)
+        if: steps.select.outputs.changed != ''
+        env:
+          PKGS: ${{ steps.select.outputs.changed }}
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          failed=()
+          for pkg in $PKGS; do
+            echo "Checking $pkg"
+            golangci-lint run --timeout=20m "$pkg" || failed+=("$pkg")
+          done
+          if (( ${#failed[@]} )); then
+            echo "::error::lint failed for: ${failed[*]}"
+            exit 1
+          fi
+      - name: save Go build + lint cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  checks:
+    name: "light: codegen, policy, migrations"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5432:5432
+        options: >-
+          --shm-size 1g
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Main pushes save this family; pull requests only restore it.
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
+            go-checks-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      # ---- policy gates (static, seconds each) ----
+      - name: light-tier package selector tests
+        run: python3 scripts/ci/affected_packages_test.py
+      - name: MemStore stub guard
+        run: make memstore-stubs-check
+      - name: daemon environment contract
+        run: make env-contract-check
+      - name: restore-drill script contract
+        run: make lint-drill
+      - name: forbid mutating SQL in normal runbooks
+        run: make runbook-sql-check
+      - name: post-mortem artifact check
+        run: make test-postmortems
+      - name: restore-drill evidence freshness (M8 claim)
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'm8-done') }}
+        run: make m8-evidence-check
+
+      # ---- generated-code drift ----
+      - name: generate-check
+        run: make generate-check
+      - name: sdk-check
+        run: make sdk-check
+      - name: install sqlc
+        run: |
+          set -euo pipefail
+          SQLC_TARBALL="sqlc_${SQLC_VERSION}_linux_amd64.tar.gz"
+          TAR="$RUNNER_TEMP/${SQLC_TARBALL}"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 2 \
+            --output "$TAR" "https://github.com/sqlc-dev/sqlc/releases/download/v${SQLC_VERSION}/${SQLC_TARBALL}"
+          echo "${SQLC_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/sqlc/bin"
+          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/sqlc" "$HOME/.local/sqlc/bin/sqlc"
+          echo "$HOME/.local/sqlc/bin" >> "$GITHUB_PATH"
+      - name: sqlc-check
+        run: make sqlc-check
+      - name: install protoc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl --fail --silent --show-error --location --output "$ZIP" \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict
+          (cd "$RUNNER_TEMP" && unzip -q "$ZIP")
+          sudo install -m 0755 "$RUNNER_TEMP/bin/protoc" /usr/local/bin/protoc
+          sudo cp -r "$RUNNER_TEMP/include/google" /usr/local/include/
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: proto-check
+        run: make proto-check
+      - name: install vacuum
+        run: |
+          set -euo pipefail
+          VACUUM_TARBALL="vacuum_${VACUUM_VERSION}_linux_x86_64.tar.gz"
+          TAR="$RUNNER_TEMP/${VACUUM_TARBALL}"
+          curl --fail --silent --show-error --location --output "$TAR" \
+            "https://github.com/daveshanley/vacuum/releases/download/v${VACUUM_VERSION}/${VACUUM_TARBALL}"
+          echo "${VACUUM_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/vacuum/bin"
+          tar --extract --gzip --file "$TAR" --directory "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/vacuum" "$HOME/.local/vacuum/bin/vacuum"
+          echo "$HOME/.local/vacuum/bin" >> "$GITHUB_PATH"
+      - name: spec-check
+        run: make spec-check
+
+      # ---- migrations: ID hygiene always, database checks when they change ----
+      # The hygiene gate compares against main and every open pull request, so
+      # it must run on every change to prevent version collisions at merge.
+      - name: migration version hygiene
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make migration-version-hygiene-check
+      - name: migrations check (static)
+        run: make migrations-check
+      - name: select migration changes
+        id: migrations
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$(git rev-parse HEAD^1)"
+          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base="$(git rev-parse HEAD~1)"
+          fi
+          if git diff --name-only "$base" HEAD | grep -qE '^(migrations/|schema\.sql$|go\.(mod|sum)$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          versions="$(git diff --name-only --diff-filter=A "$base" HEAD -- 'migrations/*.sql' \
+            | sed -nE 's|.*/([0-9]+)_.*\.sql$|\1|p' | sort -u | paste -sd, -)"
+          echo "versions=${versions}" >> "$GITHUB_OUTPUT"
+          echo "added migration versions: ${versions:-<none>}"
+      - name: migrations apply-and-walk
+        if: steps.migrations.outputs.changed == 'true'
+        run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...
+      - name: migrations replay-safety (new migrations only)
+        if: steps.migrations.outputs.changed == 'true'
+        env:
+          FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.migrations.outputs.versions }}
+        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  tests:
+    name: "light: tests (shard ${{ matrix.shard }})"
+    runs-on: ubuntu-latest
+    # Allow cold race builds and separate 25-minute API/state test budgets.
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Handler fixtures clone one fully migrated template database.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Main pushes save one family per shard; pull requests only restore.
+      # The race-built pg shard 1 family is the cold-start fallback.
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-${{ matrix.shard }}-${{ runner.os }}-
+            go-pg-1-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: select changed paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull_request checkout is the merge commit: its first parent is
+          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
+          base="$(git rev-parse HEAD^1)"
+          if [[ "$EVENT_NAME" != "pull_request" && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]]; then
+            if git fetch -q --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              base="$BEFORE"
+            fi
+          fi
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
+      # pkg/managedpostgres durable credential qualification delivers
+      # credentials over native TLS (mega pg shard 2b does the same). Enabling
+      # it only turns ssl on; non-TLS clients are unaffected.
+      - name: enable PostgreSQL TLS for credential qualification
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      # -race on every tested package: races are the failures hardest to
+      # trace back later. Changed packages plus the §6.2 invariant tests
+      # (tests/property) when anything in their import tree changed.
+      #
+      # Two phases. The race build of cmd/apid can exhaust hosted-runner
+      # memory, so test binaries are compiled first under the mega pg shard 1
+      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Those bounds must not reach the
+      # tests themselves: inherited by the test binaries, GOGC=10 on two cores
+      # pushed a third of pkg/state past the shard's 15-minute timeout. The
+      # run phase reuses the compiled binaries from the build cache.
+      - name: race tests (changed packages and invariants)
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
+          SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
+            echo "no affected Go packages assigned to shard $SHARD"
+            exit 0
+          fi
+          echo "::group::compile test binaries (bounded memory)"
+          # shellcheck disable=SC2086 # space-separated package lists
+          GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
+          echo "::endgroup::"
+          status=0
+          if [[ -n "$PKGS" ]]; then
+            echo "testing: $PKGS"
+            # shellcheck disable=SC2086 # space-separated package list
+            go test -race -count=1 -p 4 -timeout=25m $PKGS || status=1
+          fi
+          # Split API/state suites run sequentially after the package set.
+          # This avoids overlapping large race binaries and keeps state clone
+          # fixtures' cluster-wide database catalogue stable between snapshots.
+          for pkg in $SPLIT; do
+            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
+            echo "testing: $pkg (test shard $SHARD/3)"
+            go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
+          done
+          exit "$status"
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Daemons must boot from production-rendered config with production
+  # capabilities (issue #1529 S3). Same job and context name as the mega tier,
+  # so the existing required check keeps gating every pull request.
+  boot-contract:
+    name: boot-contract (production config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_SKIP_PG_TESTS: ""
+    steps:
+      - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-boot-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: boot-contract tests
+        # GitHub-hosted runners retain CAP_SYS_ADMIN in CapBnd even though the
+        # unprivileged runner user has no effective capabilities. Production
+        # faas-imaged.service removes it from CapabilityBoundingSet and refuses
+        # to boot when it is reachable. Reproduce that security boundary before
+        # dropping back to the runner uid for the test process.
+        run: |
+          BOOT_CONTRACT_PATH="$PATH"
+          sudo -E setpriv \
+            --bounding-set=-sys_admin \
+            --reuid "$(id -u)" \
+            --regid "$(id -g)" \
+            --init-groups \
+            --no-new-privs \
+            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}

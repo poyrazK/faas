@@ -20,6 +20,7 @@ import (
 //
 // Keep entries in alphabetical order for review diff readability.
 var nonJSONAllowList = map[string]string{
+	"cmdCompletion": "shell scripts and completion values are text; interactive installation rejects JSON",
 	"cmdAccount":    "delegate leaves; cmdAccountStatus is the only JSON leaf (covered)",
 	"cmdLogin":      "interactive paste-code flow",
 	"cmdMfa":        "enroll is the only JSON leaf (covered); others are write-only",
