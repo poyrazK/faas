@@ -106,7 +106,7 @@ func TestEnvironmentGitOpsBackendWaitsForRuntimeReadinessAfterIntentAndFleetConv
 		t.Fatalf("ready recovery: %v %v", worked, err)
 	}
 	current, err = store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, "production")
-	if err != nil || current.AppliedRevisionID != source.ApprovedRevisionID || len(runtimeNotifier.requests) != 1 {
-		t.Fatalf("ready runtime did not converge: %+v %v", current, err)
+	if err != nil || current.AppliedRevisionID != "" || len(runtimeNotifier.requests) != 1 {
+		t.Fatalf("runtime receipt bypassed workload qualification: %+v %v", current, err)
 	}
 }

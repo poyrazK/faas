@@ -41372,10 +41372,12 @@ components:
       - revision
     EnvironmentGitOpsStatusResponse:
       type: object
-      description: Source authority and the twenty most recent durable reconciliation attempts.
+      description: Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation attempts.
       properties:
         approval:
           $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
+        workload_evidence:
+          $ref: '#/components/schemas/EnvironmentWorkloadActivationEvidence'
         source:
           $ref: '#/components/schemas/EnvironmentGitSource'
         runs:
@@ -41385,6 +41387,88 @@ components:
       required:
       - source
       - runs
+    EnvironmentWorkloadActivationEvidence:
+      type: object
+      description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
+      properties:
+        graph_id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        definition_digest:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        intent_version:
+          type: integer
+          format: int64
+        plan_hash:
+          type: string
+        graph_phase:
+          type: string
+        graph_error_code:
+          type: string
+        artifacts_prepared:
+          type: boolean
+        candidates:
+          type: integer
+        retained_workloads_recorded:
+          type: integer
+          description: Unchanged graph members verified against their exact live active release-set deployments.
+        captures_recorded:
+          type: integer
+        guest_config_acknowledgements_recorded:
+          type: integer
+        restores_recorded:
+          type: integer
+        smokes_recorded:
+          type: integer
+        job_smokes_recorded:
+          type: integer
+        framework_ready_acknowledgements_recorded:
+          type: integer
+        qualified:
+          type: boolean
+        activated:
+          type: boolean
+        serving:
+          type: boolean
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - graph_id
+      - source_id
+      - environment_id
+      - revision_id
+      - definition_digest
+      - generation
+      - intent_version
+      - plan_hash
+      - graph_phase
+      - artifacts_prepared
+      - candidates
+      - retained_workloads_recorded
+      - captures_recorded
+      - guest_config_acknowledgements_recorded
+      - restores_recorded
+      - smokes_recorded
+      - job_smokes_recorded
+      - framework_ready_acknowledgements_recorded
+      - qualified
+      - activated
+      - serving
+      - blocking_reasons
     EnvironmentGitRevisionApproval:
       type: object
       description: Immutable reviewed-merge evidence bound to the approved definition and source generation.
@@ -41874,6 +41958,15 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/EnvironmentQueueBinding'
+        queue_smoke:
+          type: object
+          description: Reviewed synthetic JSON input for each enabled push worker queue binding. Qualification sends it directly to the private candidate VM and never enqueues a customer message.
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentQueueSmoke'
+        job_smoke:
+          $ref: '#/components/schemas/EnvironmentJobSmoke'
+        schedule:
+          $ref: '#/components/schemas/EnvironmentJobSchedule'
         queue_recoveries:
           type: object
           description: Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself preserves the retirement hold.
@@ -41887,7 +41980,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree or an immutable OCI digest.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -41895,6 +41988,11 @@ components:
           - source
           - dockerfile
           - image
+          - function
+        runtime:
+          type: string
+          description: Supported runner; required only when kind is function.
+          enum: [node22, python312, go124, go124-alpine, node24, python313]
         directory:
           type: string
         dockerfile:
@@ -41970,6 +42068,7 @@ components:
           - push
         workload_class:
           type: string
+          description: worker or job, or http for push-only bindings on function workloads
         enabled:
           type: boolean
         max_concurrency:
@@ -41981,6 +42080,61 @@ components:
       required:
       - queue_name
       - workload_class
+      additionalProperties: false
+    EnvironmentQueueSmoke:
+      type: object
+      description: Bounded customer-authored JSON payload used only for isolated push/pull-worker or HTTP-function qualification. Do not include secrets.
+      properties:
+        payload:
+          description: One JSON value, limited to 64 KiB, delivered to the candidate through its frozen queue invocation contract.
+          oneOf:
+          - type: object
+            additionalProperties: true
+          - type: array
+            items: {}
+          - type: string
+          - type: number
+          - type: boolean
+          - type: 'null'
+      required: [payload]
+      additionalProperties: false
+    EnvironmentJobSmoke:
+      type: object
+      description: Reviewed argv-only command and short timeout for a job qualification attempt. The contract is frozen with the candidate; isolated execution and exit evidence are not yet available.
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 4096
+          description: Executable and arguments passed directly without a shell.
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Explicit qualification wall-clock limit.
+      required: [command, timeout_seconds]
+      additionalProperties: false
+    EnvironmentJobSchedule:
+      type: object
+      description: Reviewed recurring schedule for a job workload. Cron and timezone map to Gregale's durable Job schedule; production dispatch remains gated until the managed Job adapter is available.
+      properties:
+        cron:
+          type: string
+          description: Five-field cron expression evaluated in timezone.
+          example: "0 3 * * *"
+        timezone:
+          type: string
+          description: IANA timezone. Empty or omitted uses UTC.
+          default: UTC
+          example: Europe/Istanbul
+        schedule_policy:
+          $ref: '#/components/schemas/SchedulePolicy'
+        failure_rules:
+          $ref: '#/components/schemas/FailureRules'
+      required: [cron]
       additionalProperties: false
     EnvironmentServiceBinding:
       type: object
@@ -51111,6 +51265,9 @@ components:
           description: "Env override via sealed-secret refs. Each value is \"secret:NAME\"; the host resolver looks up NAME against the app_secrets table at wake."
         working_dir: { type: [string, "null"] }
         port: { type: [integer, "null"], minimum: 0, maximum: 65535 }
+        service_binding_transport:
+          $ref: '#/components/schemas/ServiceBindingTransport'
+          description: "Scheme for canonical service binding URLs. Omitted manifests retain the legacy HTTP behavior."
         ports:
           type: array
           maxItems: 16

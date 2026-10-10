@@ -631,6 +631,50 @@ func TestPg_Jobs_CreateAndClaimJobInstanceAllowsControlPlaneOwner(t *testing.T) 
 	}
 }
 
+func TestPgUnmanagedJobTaskDoesNotGainServiceProxyIdentity(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "service-proxy-identity-unmanaged")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, instanceID, uuid.NewString(), time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetInstanceRuntime(ctx, instanceID, "fc-job-unmanaged", "10.100.0.65", 20065); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateInstanceStateIf(ctx, instanceID, "cold_booting", "running"); err != nil {
+		t.Fatal(err)
+	}
+	instances, err := s.LiveInstancesByHostIP(ctx, state.DefaultLocalNodeName, "10.100.0.65")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 1 || instances[0].AppID != "" || instances[0].DeploymentID != "" {
+		t.Fatalf("unmanaged job service-proxy identity = %+v; want one unattributed live task", instances)
+	}
+	_, appID, deploymentID := seedLiveDeploy(t, s, ctx, "service-proxy-identity-collision")
+	appInstance, err := s.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 128, nodeID, "")
+	if err != nil {
+		t.Fatalf("create colliding app instance: %v", err)
+	}
+	if err := s.SetInstanceRuntime(ctx, appInstance.ID, "fc-job-collision-app", "10.100.0.65", 20066); err != nil {
+		t.Fatalf("set colliding app runtime: %v", err)
+	}
+	instances, err = s.LiveInstancesByHostIP(ctx, state.DefaultLocalNodeName, "10.100.0.65")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appIdentity, unattributedJob bool
+	for _, instance := range instances {
+		appIdentity = appIdentity || instance.AppID == appID && instance.DeploymentID == deploymentID
+		unattributedJob = unattributedJob || instance.AppID == "" && instance.DeploymentID == ""
+	}
+	if len(instances) != 2 || !appIdentity || !unattributedJob {
+		t.Fatalf("unmanaged Job/app host-IP collision = %+v; want both attributed app and unattributed Job rows", instances)
+	}
+}
+
 func TestPg_Jobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	job, run, tasks := pgJobsSeed(t, s, ctx, "watchdog")

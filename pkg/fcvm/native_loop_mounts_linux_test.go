@@ -4,11 +4,37 @@
 package fcvm
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestNativeLoopDetachConfirmationIsBoundedAndObservesOnly(t *testing.T) {
+	observations := 0
+	if err := waitNativeLoopDetached(t.Context(), func() (bool, error) {
+		observations++
+		return observations < 3, nil
+	}); err != nil || observations != 3 {
+		t.Fatal("delayed original detach was not confirmed", observations, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	if err := waitNativeLoopDetached(ctx, func() (bool, error) { return true, nil }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("retained original attachment granted retirement", err)
+	}
+	injected := errors.New("original loop identity changed")
+	if err := waitNativeLoopDetached(t.Context(), func() (bool, error) { return false, injected }); !errors.Is(err, injected) {
+		t.Fatal("failed inspection supplied detach proof", err)
+	}
+	canceled, stop := context.WithCancel(t.Context())
+	if err := waitNativeLoopDetached(canceled, func() (bool, error) { stop(); return false, nil }); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancellation during observation supplied success", err)
+	}
+}
 
 func TestNativeLoopMountInfoRequiresExactPrivateExt4Identity(t *testing.T) {
 	point := "/private/point"

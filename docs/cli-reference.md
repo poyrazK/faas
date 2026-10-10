@@ -10439,6 +10439,13 @@ Review Git definitions, adopt owned fields, and inspect reconciliation (JSON out
 
 `gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override>`
 
+Definitions may declare `source.kind: function` with a supported `source.runtime`
+and Git directory. Missing workloads can be reserved privately by the internal
+executor; the public preview still supports report mode only. Scoped service
+bindings pin target identities and reserve their environment keys, but execution
+remains gated pending private transport and qualification. See the
+[preparation contract and evidence gates](environment-gitops.md#workload-preparation-contract).
+
 ##### projects environments gitops status
 
 Inspect the source and recent reconciliation attempts

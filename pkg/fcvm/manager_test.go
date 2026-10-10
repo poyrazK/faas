@@ -118,14 +118,15 @@ type fakeVMM struct {
 	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
 	snapshotHook func(Lease)
 	killed       []string
-	// destroyWithExportHook, when set, runs inside DestroyWithExport before it
-	// returns, so a test can hold a teardown in flight.
+	// destroyWithExportHook runs inside DestroyWithExport before it returns.
 	destroyWithExportHook func()
 	restored              []string
 	restoreSpecs          []RestoreSpec
 	snapshotted           []string
 	bootCount             int
 	coldBootSpecs         []ColdBootSpec
+	jobBootSpecs          []JobColdBootSpec
+	jobStarts             []string
 	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
 	// default (nil) matches production-success semantics. V6 tests that need
 	// the dial-failure path flip this.
@@ -326,7 +327,17 @@ func (v *fakeVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobColdB
 	if err := spec.Validate(); err != nil {
 		return err
 	}
+	v.mu.Lock()
+	v.jobBootSpecs = append(v.jobBootSpecs, spec)
+	v.mu.Unlock()
 	return v.Boot(ctx, l, BuildJobColdBootConfig(spec, l.Slot), "")
+}
+
+func (v *fakeVMM) ReleaseJobStart(_ context.Context, lease Lease) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.jobStarts = append(v.jobStarts, lease.Instance)
+	return nil
 }
 
 // WaitJobExit (issue #1184 Workstream A / ADR-099) returns a
@@ -438,6 +449,46 @@ func TestWakeKeepPausedLeavesWarmRestorePaused(t *testing.T) {
 	}
 	vmm.mu.Unlock()
 	_ = mgr.Destroy(context.Background(), "warm-restore")
+}
+
+func TestBringUpKeepPausedRejectsUnusableSnapshotWithoutColdBoot(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Snapshot)
+	}{
+		{name: "stale", mutate: func(s *Snapshot) { s.Stale = true }},
+		{name: "version mismatch", mutate: func(s *Snapshot) { s.FCVersion = "older-firecracker" }},
+		{name: "missing vmstate", mutate: func(s *Snapshot) { s.VMStatePath = "" }},
+		{name: "companion memory mismatch", mutate: func(s *Snapshot) { s.MemBytes = 1 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vmm := &fakeVMM{}
+			mgr := newTestManager(&fakeRunner{}, vmm)
+			snapshot := usableSnapshot()
+			req := WakeRequest{
+				Instance: "paused-" + strings.ReplaceAll(tt.name, " ", "-"),
+				BaseKey:  "/base.ext4", LayerKey: "/layer.ext4",
+				VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+				Sidecars: []WorkloadSpec{{Name: "worker", RamMB: 32}},
+				Snapshot: snapshot, KeepPaused: true,
+			}
+			snapshot.MemBytes = int64(wakeGuestMemoryMiB(req)) << 20
+			tt.mutate(snapshot)
+			_, err := mgr.bringUp(context.Background(), Lease{Instance: req.Instance, Plan: req.Plan}, netns.Config{}, req, nil)
+			if err == nil {
+				t.Fatal("bringUp succeeded with a paused request and unusable snapshot")
+			}
+			vmm.mu.Lock()
+			defer vmm.mu.Unlock()
+			if len(vmm.coldBootSpecs) != 0 || vmm.bootCount != 0 {
+				t.Fatalf("unusable paused snapshot reached cold boot: cold_boots=%d boots=%d", len(vmm.coldBootSpecs), vmm.bootCount)
+			}
+			if len(vmm.restoreSpecs) != 0 {
+				t.Fatalf("unusable paused snapshot reached restore: %+v", vmm.restoreSpecs)
+			}
+		})
+	}
 }
 
 func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano int64) error {

@@ -1007,20 +1007,27 @@ from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpe
 from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
 from .environment_git_source_update import EnvironmentGitSourceUpdate
 from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
+from .environment_job_schedule import EnvironmentJobSchedule
+from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
+from .environment_queue_smoke import EnvironmentQueueSmoke
+from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
+from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
+from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
@@ -4509,20 +4516,27 @@ __all__ = (
     "EnvironmentGitSourceSpecMode",
     "EnvironmentGitSourceUpdate",
     "EnvironmentGitSourceUpdateMode",
+    "EnvironmentJobSchedule",
+    "EnvironmentJobSmoke",
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
+    "EnvironmentQueueSmoke",
+    "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
+    "EnvironmentWorkloadActivationEvidence",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
+    "EnvironmentWorkloadQueueSmoke",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
     "EnvironmentWorkloadSourceKind",
+    "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",

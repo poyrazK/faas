@@ -288,6 +288,14 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
+// synthetic queue message before it is stored with frozen candidate inputs.
+const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10
+
+// EnvironmentGitOpsMaxQueueSmokeMessages bounds the number of sequential
+// private synthetic queue deliveries in one worker qualification attempt.
+const EnvironmentGitOpsMaxQueueSmokeMessages = 16
+
 // Overrides expire without operator intervention; renewal requires a new reason.
 const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
 const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
@@ -341,6 +349,7 @@ const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
 const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsJobQualificationLeaseDuration = 8 * time.Minute
 const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 
 // Check revocation while a qualification VM effect or evidence check is running.
@@ -356,6 +365,38 @@ const EnvironmentGitOpsQualificationDispatchBatchMax = 100
 
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
+
+// Receipt-bound compressed artifact reads cap the decoder's streaming window;
+// logical size and digest are verified separately through the complete reader.
+const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
+const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
+// NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
+// already-authorized artifact retirement records.
+const NativeSnapshotPublicationRecoveryBatchMax = 64
+
+// A receipt-bound restore sidecar carries only version and two image digests.
+// Refuse oversized metadata before any restore input is materialized.
+const NativeSnapshotBackingRecordMaxBytes = 4096
+
+// Captured kernel/base paths are single Linux jail filenames, never host paths.
+const NativeSnapshotBackingNameMaxBytes = 255
+
+// Restore effect evidence contains five fixed image witnesses and six phases.
+const NativeQualificationRestoreLoadRecordMaxBytes = 8192
+
+// Private restored platform channels never outlive their original target or
+// let a slow guest retain unbounded host handlers.
+const NativeQualificationRestoreMaxStreams = 64
+const NativeQualificationRestoreStreamTimeout = 5 * time.Second
+
+// Native snapshot retirement can scan the unified hierarchy to distinguish a
+// removed original inode from a retained cgroup. Exceeding these parser bounds
+// retains ownership; these are diagnostic limits, not tenant quotas.
+const (
+	NativeSnapshotCgroupInventoryMaxDirectories = 65_536
+	NativeSnapshotCgroupInventoryReadBatch      = 128
+)
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.

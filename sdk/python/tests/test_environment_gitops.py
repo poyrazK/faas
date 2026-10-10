@@ -18,7 +18,15 @@ from faas_sdk.models import (
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
+    AppManifest,
 )
+
+
+def test_app_manifest_service_binding_transport_round_trip() -> None:
+    manifest = AppManifest.from_dict({"entrypoint": ["/app"], "service_binding_transport": "https"})
+
+    assert manifest.service_binding_transport == "https"
+    assert manifest.to_dict()["service_binding_transport"] == "https"
 
 
 def test_reviewed_authority_and_override_identity() -> None:
@@ -33,8 +41,14 @@ def test_reviewed_authority_and_override_identity() -> None:
             "api": {
                 "app": "shop-api",
                 "queue_bindings": {"orders": {"queue_name": "orders", "workload_class": "worker"}},
+                "queue_smoke": {"orders": {"payload": {"type": "qualification-probe", "order_id": 42}}},
                 "queue_recoveries": {"orders": "11111111-2222-4333-8444-555555555555"},
-            }
+            },
+            "daily-report": {
+                "runtime": {"entrypoint": ["node", "scripts/report.js"], "execution_mode": "job"},
+                "job_smoke": {"command": ["node", "scripts/smoke.js"], "timeout_seconds": 30},
+                "schedule": {"cron": "0 3 * * *", "timezone": "Europe/Istanbul"},
+            },
         },
     }
     source = {
@@ -146,6 +160,14 @@ def test_reviewed_authority_and_override_identity() -> None:
         )
         assert isinstance(review, PreviewEnvironmentGitRevisionResponse)
         assert review.definition.to_dict() == definition
+        assert review.definition.workloads["daily-report"].job_smoke.to_dict() == {
+            "command": ["node", "scripts/smoke.js"],
+            "timeout_seconds": 30,
+        }
+        assert review.definition.workloads["daily-report"].schedule.to_dict() == {
+            "cron": "0 3 * * *",
+            "timezone": "Europe/Istanbul",
+        }
         approved = approve_environment_git_revision.sync_detailed(
             "my project",
             "production",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,6 +15,15 @@ var _ RuntimeConfigReceiptStore = (*PgStore)(nil)
 var _ RuntimeConfigReceiptStore = (*MemStore)(nil)
 var _ RuntimeConfigReceiptPublisher = (*PgStore)(nil)
 var _ RuntimeConfigReceiptPublisher = (*MemStore)(nil)
+
+// PostgreSQL encodes timestamptz at microsecond precision. Compare a value
+// read back from PostgreSQL at that same precision when validating a caller's
+// runtime inputs, which may carry finer Go timestamp precision.
+func runtimeConfigInputsPostgresEqual(recorded, expected RuntimeConfigInputs) bool {
+	recorded.Boundary = recorded.Boundary.UTC().Truncate(time.Microsecond)
+	expected.Boundary = expected.Boundary.UTC().Truncate(time.Microsecond)
+	return runtimeConfigInputsEqual(recorded, expected)
+}
 
 func runtimeConfigInputsJSON(inputs RuntimeConfigInputs) ([]byte, []byte, []byte, []byte) {
 	variables, secrets, refs, sidecars := []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`)

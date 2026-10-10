@@ -420,7 +420,9 @@ type Engine struct {
 	fcVer                  string // running Firecracker version — snapshots load only on a match (ADR-005)
 	log                    *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
-	serviceReconcileSubmit func(context.Context, string)
+	serviceReconcileSubmit                         func(context.Context, string)
+	environmentQualificationServiceURL             func(context.Context, string) (string, error)
+	environmentQualificationServiceURLForTransport func(context.Context, string, api.ServiceBindingTransport) (string, error)
 	// ops is the per-daemon Prometheus registry (issue #1059 /
 	// ADR-127). e.ops.WakeFailure is the schedd-side emitter for
 	// the wake-failure observability surface (cluster A commit 3
@@ -3448,6 +3450,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load primary workload dependencies: %w", err)
 	}
+	runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_gitops_service_bindings_invalid")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: load GitOps service bindings: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
@@ -5310,6 +5318,10 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: primary workload dependencies: %w", err)
+	}
+	runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
@@ -7978,6 +7990,14 @@ func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, app
 }
 
 func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRoleWithEmptyAll(ctx, accountID, appID, scope, overrideEnvSecrets, environmentIntent, release, true)
+}
+
+// resolveSealedEnvDeliveryForRoleWithEmptyAll distinguishes legacy "deliver
+// every scoped secret" requests from an explicit empty reference set. Managed
+// scheduled Jobs use the latter: an empty Git definition must never inherit
+// secrets merely because the legacy deployment representation was empty.
+func (e *Engine) resolveSealedEnvDeliveryForRoleWithEmptyAll(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release, emptyMeansAll bool) (sealedEnvDelivery, error) {
 	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
 	// empty (NULL column). The store surface uses scope='default'
 	// everywhere else, so this keeps wake-time behaviour identical
@@ -7997,7 +8017,7 @@ func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID,
 			return sealedEnvDelivery{}, fmt.Errorf("load scoped secret references: %w", err)
 		}
 	}
-	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, intent)
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, intent, emptyMeansAll)
 }
 
 func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
@@ -8005,10 +8025,10 @@ func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope s
 }
 
 func sealedEnvDeliveryFromRowsForTask(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
-	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, state.AppEnvironmentSecretIntent{})
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, state.AppEnvironmentSecretIntent{}, true)
 }
 
-func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool, intent state.AppEnvironmentSecretIntent) (sealedEnvDelivery, error) {
+func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool, intent state.AppEnvironmentSecretIntent, emptyMeansAll bool) (sealedEnvDelivery, error) {
 	seen := map[string]bool{}
 	for _, row := range rows {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != scope || api.ValidateEnvKey(row.Key) != nil || seen[row.Key] {
@@ -8023,7 +8043,7 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", key)
 		}
 	}
-	all := len(overrideEnvSecrets) == 0
+	all := len(overrideEnvSecrets) == 0 && emptyMeansAll
 	if all {
 		for _, row := range rows {
 			refs[row.Key] = api.SecretRefPrefix + row.Key
@@ -8059,11 +8079,13 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 		sort.Strings(absent)
 		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s; set the secret first via gregale secrets set --scope %s", scope, strings.Join(absent, ", "), scope)
 	}
-	selectionRequest := requestedSources
+	var eligible []state.AppSecret
+	var err error
 	if all {
-		selectionRequest = nil
+		eligible, err = state.SelectAppSecretsForDelivery(rows, nil, release)
+	} else if len(requestedSources) > 0 {
+		eligible, err = state.SelectAppSecretsForDelivery(rows, requestedSources, release)
 	}
-	eligible, err := state.SelectAppSecretsForDelivery(rows, selectionRequest, release)
 	if err != nil {
 		return sealedEnvDelivery{}, err
 	}

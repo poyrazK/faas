@@ -7898,7 +7898,9 @@ SELECT jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
-        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,'inputs',environment_workload_deployment_inputs(d)) ORDER BY d.id) FROM deployments d
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
+            'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -7910,8 +7912,9 @@ SELECT jsonb_build_object(
         'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
         'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
         'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
-        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets,'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id)
             FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'binding_count', (SELECT coalesce(sum((SELECT count(*) FROM jsonb_object_keys(w.service_bindings))),0) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.account_id=s.account_id),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -8021,6 +8024,12 @@ ON CONFLICT (environment_id, resource, field_path) DO UPDATE SET authorized_by =
 DELETE FROM environment_management_overrides o USING environment_git_sources s
 WHERE o.environment_id = s.environment_id AND s.id = sqlc.arg(source_id)::uuid
 AND o.resource = sqlc.arg(resource)::text AND o.field_path = sqlc.arg(field_path)::text;
+
+-- name: ListEnvironmentGitOpsOverrideExpirations :many
+SELECT o.resource, o.field_path, o.expires_at
+FROM environment_management_overrides o JOIN environment_managed_fields f
+ON f.environment_id = o.environment_id AND f.resource = o.resource AND f.field_path = o.field_path
+WHERE f.source_id = sqlc.arg(source_id)::uuid;
 
 -- name: RecordEnvironmentGitOpsEvent :exec
 INSERT INTO environment_gitops_events(source_id, actor, kind, details)
@@ -11656,14 +11665,16 @@ SELECT ((SELECT count(*) FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid)
 SELECT a.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  WHERE s.id=sqlc.arg(source_id)::uuid AND a.status<>'deleted' ORDER BY a.id FOR UPDATE OF a;
 
--- References and plaintext variables share the app's environment-key quota.
+-- Bindings, references and plaintext variables share the app's environment-key quota.
 -- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
+ + (SELECT count(*) FROM app_environment_workload_intents w CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
 
 -- name: CountAppEnvironmentIntentInScope :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text))::bigint AS count;
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
+ + (SELECT count(*) FROM app_environment_workload_intents w JOIN project_environments e ON e.id=w.environment_id CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND e.slug=sqlc.arg(scope)::text))::bigint AS count;
 
 -- Clone locking follows source -> app -> catalog, matching reference writes.
 -- name: LockProjectEnvironmentCloneGitSources :many
@@ -11757,22 +11768,23 @@ WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_
  AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';
 
 -- name: EnvironmentWorkloadIntent :one
-SELECT w.* FROM app_environment_workload_intents w
+SELECT w.account_id,w.app_id,w.environment_id,w.job_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables
+FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
 WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND w.environment_id=sqlc.arg(environment_id)::uuid;
 
 -- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
-VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''))
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
-RETURNING *;
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,job_id,source,runtime,source_revision,service_bindings,schedule,variables)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(job_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''),sqlc.arg(service_bindings)::jsonb,sqlc.narg(schedule)::jsonb,sqlc.arg(variables)::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET job_id=excluded.job_id,source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,schedule=excluded.schedule,variables=excluded.variables,updated_at=now()
+RETURNING account_id,app_id,environment_id,job_id,source,runtime,created_at,updated_at,source_revision,service_bindings,schedule,variables;
 
 -- name: EnvironmentWorkloadIntentLockSource :many
 SELECT id FROM active_environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
 
 -- name: EnvironmentWorkloadIntentContext :one
-SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
 JOIN accounts c ON c.id=a.account_id
 WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.id=sqlc.arg(environment_id)::uuid AND a.status<>'deleted'
@@ -11781,7 +11793,7 @@ FOR UPDATE OF a,c;
 -- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
 WHERE r.source_id=sqlc.arg(source_id)::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
- WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')));
+WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/')));
 
 -- name: DeleteAccountEnvironmentGitSources :exec
 DELETE FROM environment_git_sources s USING accounts a
@@ -11816,6 +11828,11 @@ ON CONFLICT(source_id,generation,plan_hash) DO NOTHING;
 SELECT * FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid
  AND generation=sqlc.arg(generation)::bigint AND plan_hash=sqlc.arg(plan_hash)::text FOR UPDATE;
 
+-- Status reads use a read-only transaction and must not lock the candidate graph.
+-- name: EnvironmentWorkloadGraphForStatus :one
+SELECT * FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid
+ AND generation=sqlc.arg(generation)::bigint AND plan_hash=sqlc.arg(plan_hash)::text;
+
 -- name: AdvanceEnvironmentWorkloadGraphPreparation :one
 UPDATE environment_workload_graphs SET phase=sqlc.arg(phase)::text,error_code=sqlc.arg(error_code)::text,
  prepared_at=CASE WHEN sqlc.arg(phase)::text='prepared' THEN coalesce(prepared_at,now()) ELSE NULL END
@@ -11836,7 +11853,7 @@ SELECT * FROM environment_workload_qualification_requests WHERE graph_id=sqlc.ar
 
 -- Called after qualificationCurrentTx locks the source and its mapped apps.
 -- name: EnvironmentWorkloadQualificationAppOwner :one
-SELECT node_id, status FROM apps WHERE id = $1;
+SELECT node_id, status, app_protocol FROM apps WHERE id = $1;
 
 -- Discovery grants no execution authority. Claim rechecks the full observation
 -- and cohort under source/app/request locks before issuing a new attempt.
@@ -11852,10 +11869,56 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND c.status='active' AND c.abuse_hold_at IS NULL AND a.status IN ('active','evicted_cold')
  AND (a.node_id IS NULL OR a.node_id=sqlc.arg(node_id)::uuid)
  AND (sqlc.arg(after_request_id)::text='' OR q.id>nullif(sqlc.arg(after_request_id)::text,'')::uuid)
- AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND q.execution_mode NOT IN ('job','worker') AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- Graph discovery is advisory. Every member is claimed atomically by the
+-- graph claim method, which rechecks source authority, artifacts, smoke policy
+-- and owners. Job contracts use a distinct private one-shot execution path.
+-- name: ListEnvironmentWorkloadQualificationGraphsForDispatch :many
+SELECT g.id FROM environment_workload_graphs g
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL
+ AND (sqlc.arg(after_graph_id)::text='' OR g.id>nullif(sqlc.arg(after_graph_id)::text,'')::uuid)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+     JOIN apps a ON a.id=q.app_id
+     WHERE q.graph_id=g.id AND (a.account_id<>s.account_id OR a.project_id<>s.project_id
+       OR a.status NOT IN ('active','evicted_cold') OR (a.app_protocol IS NOT NULL AND a.app_protocol<>'http1')
+       OR (a.node_id IS NOT NULL AND a.node_id<>sqlc.arg(node_id)::uuid)
+       OR (q.execution_mode='job' AND (coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object'
+         OR coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
+             WHERE member->>'resource'=q.resource AND member->>'execution_mode'='job'
+               AND coalesce((member->>'job_smoke_configured')::boolean,false)
+               AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb)))
+       OR NOT (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+       OR EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+       OR EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND ((q.execution_mode='worker' AND coalesce(jsonb_typeof(q.frozen_inputs->'queue_smoke'),'null')<>'object')
+       OR (q.execution_mode='job' AND coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object')
+       OR (q.execution_mode NOT IN ('worker','job') AND (coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'healthz'),'null')<>'string'
+         OR coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'port'),'null')<>'number'
+         OR coalesce(jsonb_typeof(q.frozen_inputs #> '{runtime,healthcheck,grpc}'),'null')<>'null'))))
+ AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_job_smoke_receipts jr WHERE jr.request_id=q.id AND jr.attempt=q.attempt))
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+     WHERE m ? 'candidate_deployment_id' AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+       WHERE q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+       WHERE m ? 'candidate_deployment_id' AND m->>'resource'=q.resource AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ORDER BY g.id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EnvironmentWorkloadQualificationSourceForUpdate :one
 SELECT s.* FROM environment_workload_qualification_requests q
@@ -11879,6 +11942,12 @@ FROM environment_workload_qualification_requests target JOIN environment_workloa
 -- name: EnvironmentWorkloadQualificationInputsCurrent :one
 SELECT environment_workload_qualification_inputs_current(sqlc.arg(id)::uuid)::boolean;
 
+-- Qualification receipts are written only while candidates are held in
+-- snapshotting. Evidence remains current after activation only while the exact
+-- candidates belong to the active environment release set.
+-- name: EnvironmentWorkloadQualificationEvidenceCurrent :one
+SELECT environment_workload_qualification_evidence_current(sqlc.arg(id)::uuid)::boolean;
+
 -- name: SetEnvironmentWorkloadQualificationContext :one
 SELECT set_config('gregale.gitops_qualification',sqlc.arg(token)::text,true)::text;
 
@@ -11888,7 +11957,7 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  reserved_instance_id=sqlc.narg(instance_id)::uuid
 WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING *;
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING *;
 
 -- name: RenewEnvironmentWorkloadQualification :one
 UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
@@ -11902,6 +11971,9 @@ CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(n
 
 -- name: EnvironmentQualificationInstance :one
 SELECT * FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
+
+-- name: EnvironmentQualificationAppProtocol :one
+SELECT app_protocol FROM apps WHERE id=sqlc.arg(app_id)::uuid;
 
 -- name: LockEnvironmentQualificationRuntimeInstance :one
 SELECT * FROM instances WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
@@ -11940,7 +12012,7 @@ SELECT e.* FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=sqlc.arg(node_id)::text AND e.retired_at IS NULL
  AND (sqlc.arg(after_instance_id)::text='' OR e.instance_id>nullif(sqlc.arg(after_instance_id)::text,'')::uuid)
  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
-  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
   AND q.phase='claimed' AND q.lease_until>clock_timestamp())
 ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
 
@@ -11948,7 +12020,7 @@ ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
 -- Use the database clock so host clock skew cannot expire a current lease.
 -- name: EnvironmentQualificationExecutionRecoverable :one
 SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
- AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
  AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
 FROM environment_qualification_executions e WHERE e.instance_id=sqlc.arg(instance_id)::uuid;
 
@@ -11970,13 +12042,14 @@ WHERE i.id=sqlc.arg(instance_id)::uuid AND e.instance_id=i.id AND e.retired_at I
 
 -- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,environment_workload_held,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
  rollback_on_5xx)
 VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
  nullif(sqlc.arg(source_path)::text,''),sqlc.arg(source_root)::text,nullif(sqlc.arg(source_sha256)::text,''),sqlc.arg(source_bytes)::bigint,nullif(sqlc.arg(source_url)::text,''),sqlc.arg(runtime)::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid),sqlc.arg(runtime)::jsonb,
+ true,
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_env',sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_env_secrets',
@@ -11999,7 +12072,7 @@ WITH queued AS (
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
-WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending';
+WHERE d.id=queued.deployment_id AND d.environment_workload_held AND d.status='pending';
 -- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
  c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
@@ -13497,7 +13570,7 @@ ORDER BY rs.created_at DESC LIMIT 2;
 
 -- name: RetainedReleaseMemberDeploymentForUpdate :one
 SELECT d.id FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
-AND d.scope=sqlc.arg(scope)::text AND d.status='live' AND (
+AND d.scope=sqlc.arg(scope)::text AND d.status='live' AND NOT d.environment_workload_held AND (
     d.traffic_percent>0 OR d.traffic_percent_explicit
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
@@ -13540,7 +13613,7 @@ ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id D
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>sqlc.arg(current_deployment_id)::uuid
-AND d.environment_workload_runtime IS NULL
+AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
     d.serving_ended_at IS NOT NULL
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
@@ -14359,6 +14432,240 @@ UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interva
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
 
+-- name: RecordEnvironmentQualificationSnapshot :exec
+INSERT INTO environment_qualification_snapshot_receipts(instance_id,snapshot,inputs)
+VALUES(sqlc.arg(instance_id)::uuid,sqlc.arg(snapshot)::jsonb,sqlc.arg(inputs)::jsonb)
+ON CONFLICT(instance_id) DO NOTHING;
+
+-- name: EnvironmentQualificationSnapshotReceipt :one
+SELECT e.frame,e.cleanup_token,r.snapshot,r.inputs,r.recorded_at FROM environment_qualification_snapshot_receipts r
+JOIN environment_qualification_executions e ON e.instance_id=r.instance_id WHERE r.instance_id=sqlc.arg(instance_id)::uuid;
+
+-- An observed source address may name exactly one current network incarnation.
+-- Holding a deployment is independent of whether its execution lease expired.
+-- name: EnvironmentQualificationNetworkInstances :many
+SELECT i.id, i.node_id, d.environment_workload_held AS held
+FROM instances i JOIN deployments d ON d.id=i.deployment_id
+WHERE (i.node_id=coalesce(nullif(sqlc.arg(node_id)::text,'')::uuid,
+ (SELECT n.id FROM compute_nodes n WHERE n.name=sqlc.arg(node_name)::text))
+ OR (sqlc.arg(node_id)::text='' AND sqlc.arg(node_name)::text=''))
+ AND i.host_ip=sqlc.arg(host_ip)::text::inet
+ AND i.state IN ('running','draining') ORDER BY i.id;
+
+-- name: EnvironmentQualificationRestoreReservation :one
+SELECT * FROM environment_qualification_restore_reservations WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: RecordEnvironmentQualificationRestoreReceipt :one
+INSERT INTO environment_qualification_restore_receipts(request_id,attempt,capture_instance_id,instance_id,runtime_inputs)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(capture_instance_id)::uuid,
+ sqlc.arg(instance_id)::uuid,sqlc.arg(runtime_inputs)::jsonb)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at;
+
+-- name: EnvironmentQualificationRestoreReceipt :one
+SELECT request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at
+FROM environment_qualification_restore_receipts
+WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: RecordEnvironmentQualificationSmokeReceipt :one
+INSERT INTO environment_qualification_smoke_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(graph_id)::uuid,
+ sqlc.arg(capture_instance_id)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(resource)::text,sqlc.arg(policy_id)::text,
+ sqlc.arg(policy_sha256)::text,sqlc.arg(result_sha256)::text)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at;
+
+-- name: EnvironmentQualificationSmokeReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
+FROM environment_qualification_smoke_receipts
+WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: RecordEnvironmentQualificationJobSmokeReceipt :one
+INSERT INTO environment_qualification_job_smoke_receipts
+ (request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(graph_id)::uuid,sqlc.arg(instance_id)::uuid,
+ sqlc.arg(resource)::text,sqlc.arg(policy_id)::text,sqlc.arg(policy_sha256)::text,sqlc.arg(result_sha256)::text,
+ sqlc.arg(exit_code)::integer,sqlc.arg(error_class)::text,sqlc.arg(signal)::integer)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at;
+
+-- name: EnvironmentQualificationJobSmokeReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at
+FROM environment_qualification_job_smoke_receipts
+WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: InsertEnvironmentQualificationFrameworkReadyReceipt :one
+INSERT INTO environment_qualification_framework_ready_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(graph_id)::uuid,sqlc.arg(capture_instance_id)::uuid,
+ sqlc.arg(instance_id)::uuid,sqlc.arg(runtime)::text,sqlc.arg(warmup_ms)::bigint)
+ON CONFLICT(request_id,attempt) DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at;
+
+-- name: EnvironmentQualificationFrameworkReadyReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at
+FROM environment_qualification_framework_ready_receipts
+WHERE request_id=sqlc.arg(request_id)::uuid AND attempt=sqlc.arg(attempt)::bigint;
+
+-- name: InsertEnvironmentQualificationConfigReceipt :one
+INSERT INTO environment_qualification_config_receipts(request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(graph_id)::uuid,sqlc.arg(instance_id)::uuid,
+ sqlc.narg(capture_instance_id)::uuid,sqlc.arg(api_env_sha256)::text)
+ON CONFLICT(instance_id) DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at;
+
+-- name: EnvironmentQualificationConfigReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at
+FROM environment_qualification_config_receipts
+WHERE instance_id=sqlc.arg(instance_id)::uuid;
+
+-- name: ReserveEnvironmentQualificationRestore :exec
+INSERT INTO environment_qualification_restore_reservations(instance_id,capture_instance_id,request_id,attempt)
+VALUES(sqlc.arg(instance_id)::uuid,sqlc.arg(capture_instance_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint);
+
+-- name: EnvironmentQualificationRestoreCurrent :one
+SELECT environment_qualification_restore_current(sqlc.arg(request_id)::uuid,sqlc.arg(capture_instance_id)::uuid)::boolean;
+
+-- name: EnvironmentWorkloadServingReceipt :one
+SELECT graph_id::text AS graph_id, source_id::text AS source_id, release_set_id::text AS release_set_id,
+       source_generation, intent_version, revision_id::text AS revision_id, plan_hash,
+       expected_gateways, phase, served_at
+FROM environment_workload_serving_receipts
+WHERE graph_id = sqlc.arg(graph_id)::uuid;
+
+-- name: EnvironmentWorkloadServingRoutes :many
+SELECT app_id::text AS app_id, deployment_id::text AS deployment_id, route_generation, cutover_required
+FROM environment_workload_serving_routes
+WHERE graph_id = sqlc.arg(graph_id)::uuid
+ORDER BY app_id;
+
+-- name: EnvironmentWorkloadServingAcks :many
+SELECT route_generation, node_name
+FROM environment_workload_serving_route_acks
+WHERE graph_id = sqlc.arg(graph_id)::uuid
+ORDER BY route_generation, node_name;
+
+-- name: InsertEnvironmentWorkloadServingReceipt :execrows
+INSERT INTO environment_workload_serving_receipts
+    (graph_id, source_id, release_set_id, source_generation, intent_version, revision_id, plan_hash, expected_gateways, phase)
+VALUES
+    (sqlc.arg(graph_id)::uuid, sqlc.arg(source_id)::uuid, sqlc.arg(release_set_id)::uuid,
+     sqlc.arg(source_generation)::bigint, sqlc.arg(intent_version)::bigint, sqlc.arg(revision_id)::uuid,
+     sqlc.arg(plan_hash)::text, sqlc.arg(expected_gateways)::text[], 'pending')
+ON CONFLICT (graph_id) DO NOTHING;
+
+-- name: ResetEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET release_set_id = sqlc.arg(release_set_id)::uuid,
+    expected_gateways = sqlc.arg(expected_gateways)::text[],
+    phase = 'pending', served_at = NULL, updated_at = clock_timestamp()
+WHERE graph_id = sqlc.arg(graph_id)::uuid;
+
+-- name: DeleteEnvironmentWorkloadServingAcks :exec
+DELETE FROM environment_workload_serving_route_acks
+WHERE graph_id = sqlc.arg(graph_id)::uuid;
+
+-- name: UpsertEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_routes (graph_id, app_id, deployment_id, route_generation, cutover_required)
+VALUES (sqlc.arg(graph_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(deployment_id)::uuid,
+        sqlc.arg(route_generation)::bigint, sqlc.arg(cutover_required)::boolean)
+ON CONFLICT (graph_id, app_id) DO UPDATE
+SET deployment_id = EXCLUDED.deployment_id, route_generation = EXCLUDED.route_generation,
+    cutover_required = EXCLUDED.cutover_required;
+
+-- name: NextDeploymentRouteGenerationTx :one
+SELECT nextval('deployment_route_generation_seq')::bigint;
+
+-- name: AcknowledgeEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_route_acks (graph_id, route_generation, node_name)
+VALUES (sqlc.arg(graph_id)::uuid, sqlc.arg(route_generation)::bigint, sqlc.arg(node_name)::text)
+ON CONFLICT (graph_id, route_generation, node_name) DO NOTHING;
+
+-- name: CompleteEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET phase = 'served', served_at = coalesce(served_at, clock_timestamp()), updated_at = clock_timestamp()
+WHERE graph_id = sqlc.arg(graph_id)::uuid AND phase = 'pending';
+
+-- name: SetEnvironmentWorkloadServingTraffic :execrows
+UPDATE deployments
+SET traffic_percent = sqlc.arg(traffic_percent)::integer, traffic_percent_explicit = true
+WHERE id = sqlc.arg(deployment_id)::uuid AND status = 'live';
+
+-- name: LiveEnvironmentWorkloadDeploymentsForServing :many
+SELECT id::text AS id, status, traffic_percent, rollout_state, environment_workload_held
+FROM deployments
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live'
+ORDER BY id
+FOR UPDATE;
+
+-- name: EnvironmentWorkloadServingWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = sqlc.arg(graph_id)::uuid
+      AND (target.status <> 'live' OR target.environment_workload_held OR
+           (route.cutover_required AND target.traffic_percent <> 100) OR
+           (NOT route.cutover_required AND target.traffic_percent <= 0))
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = sqlc.arg(graph_id)::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AND public.environment_workload_serving_ready(sqlc.arg(graph_id)::uuid) AS serving_weights_match;
+
+-- A previous gateway acknowledgement becomes stale if managed candidate
+-- traffic drifts. Retained routes are intentionally excluded because their
+-- traffic policy is not owned by the environment definition.
+-- name: EnvironmentWorkloadServingCutoverWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = sqlc.arg(graph_id)::uuid AND route.cutover_required
+      AND (target.status <> 'live' OR target.environment_workload_held OR target.traffic_percent <> 100)
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = sqlc.arg(graph_id)::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AS cutover_weights_match;
+
+-- name: SetEnvironmentGitOpsServingContext :one
+SELECT set_config('gregale.gitops_serving', sqlc.arg(lease_token)::text, true)::text;
+
+-- name: ListEnvironmentServingGatewayNames :many
+SELECT name
+FROM compute_nodes
+WHERE active AND role IN ('compute-only', 'compute-node')
+  AND nullif(btrim(gateway_target_url), '') IS NOT NULL
+ORDER BY name;
+
+-- name: ActiveEnvironmentWorkloadReleaseSet :one
+SELECT release.id::text
+FROM environment_workload_graphs graph
+JOIN environment_git_sources source ON source.id = graph.source_id
+JOIN project_environments env ON env.id = source.environment_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+WHERE graph.id = sqlc.arg(graph_id)::uuid;
+
+-- name: ActiveEnvironmentWorkloadReleaseMembers :many
+SELECT rm.app_id::text AS app_id, rm.deployment_id::text AS deployment_id
+FROM environment_git_sources source
+JOIN project_environments env ON env.id = source.environment_id
+  AND env.account_id = source.account_id AND env.project_id = source.project_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+JOIN project_release_members rm ON rm.release_id = release.id
+JOIN deployments deployment ON deployment.id = rm.deployment_id AND deployment.app_id = rm.app_id
+  AND deployment.scope = env.slug AND deployment.status = 'live' AND NOT deployment.environment_workload_held
+WHERE source.id = sqlc.arg(source_id)::uuid AND env.id = sqlc.arg(environment_id)::uuid
+ORDER BY rm.app_id;
+
+-- name: LockEnvironmentGitOpsServingProject :one
+SELECT id FROM projects
+WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE;
 -- name: LockCustomerOperationDeliveryOwner :one
 SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
 

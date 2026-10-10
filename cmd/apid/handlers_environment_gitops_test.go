@@ -136,7 +136,8 @@ func TestEnvironmentGitOpsHandlersApproveReviewedGitBytesAndAdopt(t *testing.T) 
 		t.Fatalf("intent: %+v %v", variables, err)
 	}
 	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "status", nil, srv.getEnvironmentGitOps)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"converged"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"partial"`) ||
+		!strings.Contains(rec.Body.String(), "environment_runtime_unacknowledged") {
 		t.Fatalf("status: %d %s", rec.Code, rec.Body.String())
 	}
 	other, err := store.CreateAccount(t.Context(), "other-gitops@example.test", api.PlanPro)
@@ -216,12 +217,26 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 		t.Fatalf("real apid backend did not prepare a held scoped candidate: %+v %v", deployments, err)
 	}
 	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "status", nil, srv.getEnvironmentGitOps)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"partial"`) || !strings.Contains(rec.Body.String(), "environment_runtime_unacknowledged") {
+	var status api.EnvironmentGitOpsStatusResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &status) != nil || !strings.Contains(rec.Body.String(), `"status":"partial"`) || !strings.Contains(rec.Body.String(), "environment_runtime_unacknowledged") {
 		t.Fatalf("API claimed an unprepared serving graph: %d %s", rec.Code, rec.Body.String())
+	}
+	if evidence := status.WorkloadEvidence; evidence == nil || evidence.SourceID != status.Source.ID || evidence.RevisionID != status.Source.ApprovedRevisionID ||
+		evidence.Generation != status.Source.Generation || evidence.IntentVersion != status.Source.IntentVersion || evidence.GraphPhase == "" ||
+		evidence.Activated || evidence.Serving || evidence.Qualified {
+		t.Fatalf("status omitted current held-graph blockers or overstated readiness: %+v", evidence)
 	}
 	source, err = store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
 	if err != nil || source.AppliedRevisionID != "" {
 		t.Fatalf("API published an unqualified revision: %+v %v", source, err)
+	}
+	if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "production", "STATUS_FRESHNESS_TEST", "changed"); err != nil {
+		t.Fatal(err)
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "status", nil, srv.getEnvironmentGitOps)
+	var staleStatus api.EnvironmentGitOpsStatusResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &staleStatus) != nil || staleStatus.WorkloadEvidence != nil {
+		t.Fatalf("status exposed a graph after environment intent changed: %d %+v %s", rec.Code, staleStatus.WorkloadEvidence, rec.Body.String())
 	}
 }
 
@@ -308,8 +323,9 @@ func TestEnvironmentGitOpsHTTPScopedConfigWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := client.GetEnvironmentGitOps(t.Context(), "shop", "production")
-	if err != nil || len(status.Runs) != 1 || status.Runs[0].Status != "converged" || status.Source.AppliedRevisionID == "" {
-		t.Fatalf("convergence: %+v %v", status, err)
+	if err != nil || len(status.Runs) != 1 || status.Runs[0].Status != "partial" ||
+		status.Runs[0].ErrorCode != "environment_runtime_unacknowledged" || status.Source.AppliedRevisionID != "" {
+		t.Fatalf("intent-only reconciliation published an unqualified revision: %+v %v", status, err)
 	}
 	// Existing console/API mutations use the same ownership contract.
 	invocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,

@@ -273,6 +273,10 @@ esac
 	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "disk"), []byte(diskProbe), 0o755); err != nil {
 		return err
 	}
+	metadataProbe := "#!/bin/sh\nprintf 'Content-Type: application/json\\r\\n\\r\\n'\nexec /bin/busybox wget -q -O - http://169.254.169.254/v1/metadata/env\n"
+	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "metadata"), []byte(metadataProbe), 0o755); err != nil {
+		return err
+	}
 	appJSON := fmt.Sprintf(`{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":%d}`, port) + "\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/faas/app.json"), []byte(appJSON), 0o644); err != nil {
 		return err
@@ -313,6 +317,19 @@ func buildV6LayerExt4Size(dst string, sizeMB int) error {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
+	}
+	// The fixture entrypoint runs as app UID 1000. Give it an existing owned
+	// marker instead of allowing it to create files in root-owned /etc/faas.
+	// Guest-init can still overwrite this same marker after restore as root.
+	marker := filepath.Join(work, "upper/etc/faas/uuid.txt")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		return err
+	}
+	if err := os.Chown(marker, 1000, 1000); err != nil {
+		return err
 	}
 	if f, err := os.Create(dst); err != nil {
 		return fmt.Errorf("create ext4 file: %w", err)

@@ -519,11 +519,15 @@ export type { EnvironmentGitRevisionApproval } from './EnvironmentGitRevisionApp
 export type { EnvironmentGitSource } from './EnvironmentGitSource.js';
 export type { EnvironmentGitSourceSpec } from './EnvironmentGitSourceSpec.js';
 export type { EnvironmentGitSourceUpdate } from './EnvironmentGitSourceUpdate.js';
+export type { EnvironmentJobSchedule } from './EnvironmentJobSchedule.js';
+export type { EnvironmentJobSmoke } from './EnvironmentJobSmoke.js';
 export type { EnvironmentPolicy } from './EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './EnvironmentQueueBinding.js';
+export type { EnvironmentQueueSmoke } from './EnvironmentQueueSmoke.js';
 export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './EnvironmentServiceBinding.js';
 export type { EnvironmentWorkload } from './EnvironmentWorkload.js';
+export type { EnvironmentWorkloadActivationEvidence } from './EnvironmentWorkloadActivationEvidence.js';
 export type { EnvironmentWorkloadSource } from './EnvironmentWorkloadSource.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
 export type { EventBacklogConsumer } from './EventBacklogConsumer.js';
