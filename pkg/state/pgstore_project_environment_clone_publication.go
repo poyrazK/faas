@@ -18,11 +18,15 @@ func (s *PgStore) ProjectEnvironmentCloneTargetOperation(ctx context.Context, ac
 }
 
 func cloneWorkloadProofsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) ([]projectCloneWorkloadProof, error) {
-	q := new(sqlc.Queries)
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return nil, err
 	}
+	return cloneWorkloadProofsForRecordsTx(ctx, tx, op, records)
+}
+
+func cloneWorkloadProofsForRecordsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord) ([]projectCloneWorkloadProof, error) {
+	q := new(sqlc.Queries)
 	if len(records) == 0 {
 		return nil, nil
 	}

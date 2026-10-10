@@ -3054,6 +3054,36 @@ func (q *Queries) ClaimCloneCheckpointSourceCompensation(ctx context.Context, db
 	return i, err
 }
 
+const claimCloneCheckpointWorkloadRetirement = `-- name: ClaimCloneCheckpointWorkloadRetirement :one
+UPDATE project_environment_clone_checkpoint_workload_retirements r SET state='requested',requested_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.state='planned' AND o.id=r.operation_id
+ AND o.status='compensating' AND o.revision=$2::bigint
+ AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()
+RETURNING r.operation_id, r.plan, r.state, r.requested_at, r.observation, r.observation_sha256, r.retired_at
+`
+
+type ClaimCloneCheckpointWorkloadRetirementParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointWorkloadRetirement, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const claimClonePostgresMaintenanceDispatch = `-- name: ClaimClonePostgresMaintenanceDispatch :one
 UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
  role_requested_at=CASE WHEN $1::text='role_requested' THEN clock_timestamp() ELSE m.role_requested_at END,
@@ -5226,6 +5256,18 @@ func (q *Queries) CloneCheckpointSourceCompensationHasHolds(ctx context.Context,
 	var held pgtype.Bool
 	err := row.Scan(&held)
 	return held, err
+}
+
+const cloneCheckpointWorkloadRetirementHasOrphanDeployments = `-- name: CloneCheckpointWorkloadRetirementHasOrphanDeployments :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.reason='environment-clone:'||$1::uuid::text
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$1::uuid AND w.target_deployment_id=d.id))::boolean
+`
+
+func (q *Queries) CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointWorkloadRetirementHasOrphanDeployments, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
@@ -14375,6 +14417,39 @@ func (q *Queries) FinishCloneCheckpointSourceCompensation(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointWorkloadRetirement = `-- name: FinishCloneCheckpointWorkloadRetirement :execrows
+UPDATE project_environment_clone_checkpoint_workload_retirements r SET state='retired',observation=$1::jsonb,
+ observation_sha256=$2::text,retired_at=$3::timestamptz
+FROM project_environment_clone_operations o
+WHERE r.operation_id=$4::uuid AND r.state='requested' AND o.id=r.operation_id
+ AND o.status='compensating' AND o.revision=$5::bigint
+ AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+`
+
+type FinishCloneCheckpointWorkloadRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointWorkloadRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointWorkloadRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.RetiredAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -18665,6 +18740,41 @@ func (q *Queries) InsertCloneCheckpointSourceCompensation(ctx context.Context, d
 		&i.Observation,
 		&i.ObservationSha256,
 		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointWorkloadRetirement = `-- name: InsertCloneCheckpointWorkloadRetirement :one
+INSERT INTO project_environment_clone_checkpoint_workload_retirements(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointWorkloadRetirementParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointWorkloadRetirement,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
 	)
 	return i, err
 }
@@ -49154,6 +49264,41 @@ func (q *Queries) ReadCloneCheckpointUnusedObjectReservation(ctx context.Context
 		&i.TargetBucketID,
 		&i.Reservation,
 		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointWorkloadRetirement = `-- name: ReadCloneCheckpointWorkloadRetirement :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_workload_retirements WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointWorkloadRetirement, operationID)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointWorkloadRetirementMaterialization = `-- name: ReadCloneCheckpointWorkloadRetirementMaterialization :one
+SELECT operation_id, environment_id, workload_settings, created_at FROM project_environment_clone_materializations WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointWorkloadRetirementMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointWorkloadRetirementMaterialization, operationID)
+	var i ProjectEnvironmentCloneMaterialization
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadSettings,
+		&i.CreatedAt,
 	)
 	return i, err
 }

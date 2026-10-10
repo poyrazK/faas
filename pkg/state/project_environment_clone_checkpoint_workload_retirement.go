@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 )
 
 // Shape validation supplies no native dispatch or configuration deletion
-// authority. A future store must authenticate these ORIGINAL frozen records,
+// authority. Durable journals must authenticate these ORIGINAL frozen records,
 // materialization receipt and deployments under the compensation lease.
 type ProjectEnvironmentCloneCheckpointWorkloadRetirementPlan struct {
 	OperationID, AccountID, ProjectID                  string
@@ -150,4 +151,13 @@ func validateCheckpointWorkloadRetirementObservation(in ProjectEnvironmentCloneC
 		return ErrConflict
 	}
 	return nil
+}
+
+// This private store saves native closure evidence only. It does not delete
+// configuration or provide whole-stage terminal compensation authority.
+type ProjectEnvironmentCloneCheckpointWorkloadRetirementStore interface {
+	ReserveProjectEnvironmentCloneCheckpointWorkloadRetirement(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
+	ProjectEnvironmentCloneCheckpointWorkloadRetirementForLease(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
+	ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, bool, error)
+	FinishProjectEnvironmentCloneCheckpointWorkloadRetirement(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointWorkloadRetirementObservation) error
 }

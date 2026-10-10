@@ -5283,6 +5283,16 @@ type ProjectEnvironmentCloneCheckpointUnusedObjectReservation struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointWorkloadRetirement struct {
+	OperationID       pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	RetiredAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneConfigurationCapture struct {
 	OperationID       pgtype.UUID
 	Version           int32

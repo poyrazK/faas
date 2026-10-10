@@ -9276,10 +9276,28 @@ insufficient. Source resources must remain unchanged. Proof time follows the
 committed claim and original source compensation, and terminal replay requires
 the exact saved observation digest.
 
-This is a proof contract, not a durable journal, native dispatch coordinator or
-configuration deletion authority. A future store must authenticate the original
-frozen records, materialization receipt and deployment ownership under the
-compensation lease before claiming cleanup. Catalogue retirement must separately
-verify removal of owned settings, values and policies; native observations cannot
-assert that SQL state was deleted. Whole-stage terminal compensation and public
-full-stage admission remain gated. Native qualification remains deferred.
+### Durable original workload retirement journal
+
+An append-only SQLC journal now authenticates these original records under the
+current compensation lease and configuration clock/operation/app locks. It pins
+the completed source-compensation proof, exact materialization receipt and desired
+heads, and lossless deployment artifacts and settings pins. Foreign deployment
+ownership and orphan deployments in the original operation namespace block a
+claim. Pending deployments remain eligible because cleanup must cover unknown
+native outcomes. Published clones are rejected until a separate authenticated
+release withdrawal is available.
+
+The first claim durably moves planned to requested exactly once. A replacement
+worker observes the same request without dispatch authority. Finish stores the
+validated native observation, digest and timestamp atomically; failed writes
+retain requested state, and terminal replay requires the exact saved proof and
+unchanged original ownership. Migration rollback refuses every journal row,
+including planned and retired ownership evidence.
+
+The journal does not dispatch native work or delete configuration. Native closure
+leaves the environment and desired settings available for later authenticated
+catalogue cleanup. Catalogue retirement must separately verify removal of owned
+settings, values and policies; native observations cannot assert that SQL state
+was deleted. A native coordinator, atomic catalogue cleanup and whole-stage
+terminal compensation remain outstanding. Public full-stage admission stays
+gated, and native qualification remains deferred.

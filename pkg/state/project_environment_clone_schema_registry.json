@@ -6059,6 +6059,19 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_workload_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_configuration_captures",
     "columns": [
       "configuration",
