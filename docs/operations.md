@@ -2615,8 +2615,53 @@ choices, not cumulative actions. SDK guards require complete matching group
 findings and at least one usable proof, including that alternative's pinned
 freshness policy. Missing or contradictory group findings fail the guard.
 
-Groups express alternatives between individual retained facts, without nested
-Boolean expressions or inferred business choices. Gregale evaluates every option
+Flat groups express alternatives between individual retained facts; named
+compound paths are described below. No business choices are inferred. Gregale evaluates every option
 and does not execute a path. Applications still authorize actions and check locked
 business rows; readiness remains a point-in-time observation. No database or
 application-schema migration is required.
+
+### Compound retained prerequisite paths
+
+Use named `paths` instead of a flat `any_of` list when an alternative business
+path needs multiple facts together:
+
+```yaml
+retained_milestone_groups:
+  - id: settlement
+    paths:
+      - id: card
+        all_of:
+          - {operation: receive-payment, milestone: payment-received}
+          - {operation: check-fraud, milestone: fraud-check-passed}
+      - id: business-credit
+        all_of:
+          - {operation: approve-credit, milestone: credit-approved}
+          - {operation: accept-purchase-order, milestone: purchase-order-accepted}
+```
+
+Every fact within a path must be verified at the same readiness evaluation time.
+The group passes when at least one complete path passes. Payment received plus
+purchase order accepted cannot combine across paths to satisfy settlement.
+Existing mandatory prerequisites and every other group still apply. Flat `any_of`
+groups retain their existing behavior; a group cannot combine both forms.
+
+Each group accepts 2–8 uniquely named paths with nonempty `all_of` lists. Selectors
+must be unique within each path and bound to transaction-backed workflow steps.
+The sum of fact occurrences across all paths is bounded to 16 per group, including
+shared selectors counted once in each path. This preserves the existing expanded
+evidence budget. The workflow-wide lookup remains bounded to 32 distinct sources.
+Path IDs and selectors are canonicalized; changes require a new workflow version.
+
+Freshness and invalidation policies apply to each selector, including shared facts.
+`retained_milestone_groups[].paths` returns every path's `id`, `satisfied`, and
+`requirements` findings, including fact identities and recovery plans. Compound
+groups omit flat `alternatives`; flat groups omit `paths`. A failed path does not
+block a different complete path. Guidance identifies a satisfied path or lists
+what each blocked path needs. SDK guards verify complete matching facts for one
+whole path and reject missing or contradictory path findings.
+
+Recovery choices belong to the application: authorize and check business rows
+before performing any actions, publish actual facts, then recheck readiness.
+Gregale does not choose or execute a path. Arbitrary recursive Boolean expressions
+are unsupported, and no database or application-schema migration is required.

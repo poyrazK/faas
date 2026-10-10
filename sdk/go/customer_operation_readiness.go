@@ -197,23 +197,7 @@ func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time) 
 				continue
 			}
 			matches++
-			if !group.Satisfied || len(group.Alternatives) != len(expected.AnyOf) || len(expected.AnyOf) < 2 {
-				return false
-			}
-			satisfied := false
-			for _, selector := range expected.AnyOf {
-				found := false
-				for _, evidence := range group.Alternatives {
-					if evidence.Requirement == selector {
-						found = true
-						satisfied = satisfied || retainedEvidenceUsable(evidence, r.Transition, at)
-					}
-				}
-				if !found {
-					return false
-				}
-			}
-			if !satisfied {
+			if !group.Satisfied || !retainedGroupUsable(expected, group, r.Transition, at) {
 				return false
 			}
 		}
@@ -222,4 +206,62 @@ func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time) 
 		}
 	}
 	return true
+}
+
+func retainedFactsUsable(expected []OperationWorkflowRetainedMilestoneRequirement, facts []OperationWorkflowRetainedMilestone, edge OperationWorkflowInstanceTransition, at time.Time, all bool) (complete, usable bool) {
+	if len(expected) == 0 || len(facts) != len(expected) {
+		return false, false
+	}
+	usable = all
+	for _, selector := range expected {
+		matches := 0
+		for _, fact := range facts {
+			if fact.Requirement != selector {
+				continue
+			}
+			matches++
+			valid := retainedEvidenceUsable(fact, edge, at)
+			if all {
+				usable = usable && valid
+			} else {
+				usable = usable || valid
+			}
+		}
+		if matches != 1 {
+			return false, false
+		}
+	}
+	return true, usable
+}
+
+func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group OperationWorkflowRetainedMilestoneGroupResult, edge OperationWorkflowInstanceTransition, at time.Time) bool {
+	if len(expected.Paths) == 0 {
+		if len(expected.AnyOf) < 2 || len(group.Paths) != 0 {
+			return false
+		}
+		complete, usable := retainedFactsUsable(expected.AnyOf, group.Alternatives, edge, at, false)
+		return complete && usable
+	}
+	if len(expected.AnyOf) != 0 || len(expected.Paths) < 2 || len(group.Alternatives) != 0 || len(group.Paths) != len(expected.Paths) {
+		return false
+	}
+	satisfied := false
+	for _, expectedPath := range expected.Paths {
+		matches := 0
+		for _, path := range group.Paths {
+			if path.ID != expectedPath.ID {
+				continue
+			}
+			matches++
+			complete, usable := retainedFactsUsable(expectedPath.AllOf, path.Requirements, edge, at, true)
+			if !complete || path.Satisfied != usable {
+				return false
+			}
+			satisfied = satisfied || usable
+		}
+		if matches != 1 {
+			return false
+		}
+	}
+	return satisfied
 }

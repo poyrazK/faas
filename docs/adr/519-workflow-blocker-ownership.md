@@ -351,3 +351,24 @@ This extension supports alternatives between individual retained facts, without
 nested Boolean expressions, new queries, or migrations. Gregale evaluates options
 and does not choose or execute a business path. Applications keep authorization
 and business-row checks; readiness remains a point-in-time observation.
+
+### Compound retained prerequisite paths
+
+An alternative group may declare uniquely named `paths` with nonempty `all_of`
+facts instead of a flat `any_of` list. Every fact in one path must be verified;
+passing facts from different paths cannot combine. Every group and mandatory
+prerequisite still applies. Existing flat contracts retain their serialized shape.
+
+Canonical path IDs and selectors participate in immutable contract identity and
+require a new workflow version when changed. A group accepts 2–8 paths, with at
+most 16 total fact occurrences including shared selectors repeated across paths.
+Limits live in `pkg/api/limits.go`. This preserves expanded-evidence bounds, while
+the existing 32-distinct-source lookup covers every path and invalidation source.
+Cloning copies both paths and their fact slices to preserve pinned definitions.
+
+The same evaluator and clock apply freshness, invalidation, and recovery rules to
+every fact. Group results contain all path findings, with satisfaction derived
+from complete paths. Shared guidance names valid paths or describes recovery per
+blocked path. SDK guards verify complete matching path evidence and consistent
+satisfaction flags. No query or schema migration is introduced. Applications
+choose, authorize, and execute business paths; readiness grants no execution lease.

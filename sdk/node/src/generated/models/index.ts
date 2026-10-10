@@ -1125,6 +1125,8 @@ export type { OperationWorkflowRetainedMilestoneGroup } from './OperationWorkflo
 export type { OperationWorkflowRetainedMilestoneGroupResult } from './OperationWorkflowRetainedMilestoneGroupResult.js';
 export type { OperationWorkflowRetainedMilestoneInvalidation } from './OperationWorkflowRetainedMilestoneInvalidation.js';
 export type { OperationWorkflowRetainedMilestoneInvalidationRule } from './OperationWorkflowRetainedMilestoneInvalidationRule.js';
+export type { OperationWorkflowRetainedMilestonePath } from './OperationWorkflowRetainedMilestonePath.js';
+export type { OperationWorkflowRetainedMilestonePathResult } from './OperationWorkflowRetainedMilestonePathResult.js';
 export type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';

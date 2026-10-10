@@ -60,15 +60,30 @@ type OperationWorkflowPrerequisiteRecovery struct {
 	Steps           []string   `json:"steps"`
 }
 
-// OperationWorkflowRetainedMilestoneGroup requires any one retained fact in a named group.
+// OperationWorkflowRetainedMilestoneGroup accepts any one fact or any one complete named path.
 type OperationWorkflowRetainedMilestoneGroup struct {
+	Paths []OperationWorkflowRetainedMilestonePath        `json:"paths,omitempty" yaml:"paths,omitempty" toml:"paths"`
 	ID    string                                          `json:"id" yaml:"id" toml:"id"`
-	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of" yaml:"any_of" toml:"any_of"`
+	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of,omitempty" yaml:"any_of,omitempty" toml:"any_of"`
 }
 
 // OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
 type OperationWorkflowRetainedMilestoneGroupResult struct {
+	Paths        []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
+	ID           string                                         `json:"id"`
+	Satisfied    bool                                           `json:"satisfied"`
+	Alternatives []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
+}
+
+// OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
+type OperationWorkflowRetainedMilestonePath struct {
+	ID    string                                          `json:"id" yaml:"id" toml:"id"`
+	AllOf []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
+}
+
+// OperationWorkflowRetainedMilestonePathResult includes every fact needed by a named path.
+type OperationWorkflowRetainedMilestonePathResult struct {
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
-	Alternatives []OperationWorkflowRetainedMilestone `json:"alternatives"`
+	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
 }

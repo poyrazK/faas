@@ -464,6 +464,12 @@ class CustomerOperationTransaction:
             required_retained = [] if r.transition.required_retained_milestones is UNSET else r.transition.required_retained_milestones
             retained_missing = any(not any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
                 and usable(e) for e in retained) for p in required_retained)
+            def evaluate_facts(expected, facts, all_required):
+                complete = bool(expected) and len(facts) == len(expected) and all(
+                    sum(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
+                        for e in facts) == 1 for p in expected)
+                valid = all(usable(e) for e in facts) if all_required else any(usable(e) for e in facts)
+                return complete, valid
             expected_groups = [] if r.transition.retained_milestone_groups is UNSET else r.transition.retained_milestone_groups
             groups = [] if r.retained_milestone_groups is UNSET else r.retained_milestone_groups
             groups_missing = len(groups) != len(expected_groups)
@@ -473,10 +479,31 @@ class CustomerOperationTransaction:
                     groups_missing = True
                     continue
                 group = matches[0]
-                if (not group.satisfied or len(expected.any_of) < 2 or len(group.alternatives) != len(expected.any_of)
-                    or not all(any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
-                        for e in group.alternatives) for p in expected.any_of)
-                    or not any(usable(e) for e in group.alternatives)):
+                if not group.satisfied:
+                    groups_missing = True
+                choices = [] if expected.any_of is UNSET else expected.any_of
+                paths = [] if expected.paths is UNSET else expected.paths
+                alternatives = [] if group.alternatives is UNSET else group.alternatives
+                results = [] if group.paths is UNSET else group.paths
+                if not paths:
+                    complete, valid = evaluate_facts(choices, alternatives, False)
+                    if len(choices) < 2 or results or not complete or not valid:
+                        groups_missing = True
+                    continue
+                if choices or len(paths) < 2 or alternatives or len(results) != len(paths):
+                    groups_missing = True
+                satisfied = False
+                for expected_path in paths:
+                    matches = [path for path in results if path.id == expected_path.id]
+                    if len(matches) != 1:
+                        groups_missing = True
+                        continue
+                    path = matches[0]
+                    complete, valid = evaluate_facts(expected_path.all_of, path.requirements, True)
+                    if not complete or path.satisfied != valid:
+                        groups_missing = True
+                    satisfied = satisfied or valid
+                if not satisfied:
                     groups_missing = True
             if (groups_missing or retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
                 or r.contract_version != request.contract_version or r.reasons or r.blockers

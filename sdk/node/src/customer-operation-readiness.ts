@@ -3,7 +3,7 @@ import { businessInvariantPayload, type OperationBusinessInvariant } from './cus
 import { businessDecisionPayload, type OperationBusinessDecision } from './customer-operation-decisions.js';
 import type { CustomerOperationTransaction } from './customer-operation-milestones.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
-import type { OperationWorkflowRetainedMilestone, OperationMilestoneReport, OperationWorkflowReadinessRequest, OperationWorkflowReadinessResponse } from './customer-operations.js';
+import type { OperationWorkflowRetainedMilestoneRequirement, OperationWorkflowRetainedMilestone, OperationMilestoneReport, OperationWorkflowReadinessRequest, OperationWorkflowReadinessResponse } from './customer-operations.js';
 import type { OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
 
 function usableRetainedMilestone(e: OperationWorkflowRetainedMilestone): boolean {
@@ -73,13 +73,33 @@ export async function guardedWorkflowTransition(
     }
     if (response.subject.type !== request.subject.type || response.subject.id !== request.subject.id || response.workflow !== request.workflow || response.instance_id !== request.instance_id || r.transition.operation !== request.operation || r.transition.from !== request.from_state || r.transition.to !== request.to_state) throw new TypeError('Readiness response does not match proposed transition');
     const usable = (e: OperationWorkflowRetainedMilestone) => usableRetainedMilestone(e) && (r.transition.retained_milestone_freshness ?? []).every(rule => rule.prerequisite.operation !== e.requirement.operation || rule.prerequisite.milestone !== e.requirement.milestone || (e.freshness?.max_age_seconds === rule.max_age_seconds && e.freshness.evaluated_at === response.evaluated_at));
+    const evaluateFacts = (expected: OperationWorkflowRetainedMilestoneRequirement[], facts: OperationWorkflowRetainedMilestone[], all: boolean) => ({
+      complete: expected.length > 0 && facts.length === expected.length && expected.every(p => facts.filter(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone).length === 1),
+      usable: all ? facts.every(usable) : facts.some(usable),
+    });
     const groups = r.retained_milestone_groups ?? [], expectedGroups = r.transition.retained_milestone_groups ?? [];
     if (groups.length !== expectedGroups.length || expectedGroups.some(expected => {
       const matches = groups.filter(group => group.id === expected.id);
       if (matches.length !== 1) return true;
       const group = matches[0];
       if (!group) return true;
-      return !group.satisfied || expected.any_of.length < 2 || group.alternatives.length !== expected.any_of.length || !expected.any_of.every(p => group.alternatives.some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone)) || !group.alternatives.some(usable);
+      if (!group.satisfied) return true;
+      const choices = expected.any_of ?? [], paths = expected.paths ?? [], results = group.paths ?? [], alternatives = group.alternatives ?? [];
+      if (!paths.length) {
+        const result = evaluateFacts(choices, alternatives, false);
+        return choices.length < 2 || results.length !== 0 || !result.complete || !result.usable;
+      }
+      if (choices.length || paths.length < 2 || alternatives.length || results.length !== paths.length) return true;
+      let satisfied = false;
+      for (const expectedPath of paths) {
+        const matches = results.filter(path => path.id === expectedPath.id);
+        const path = matches[0];
+        if (matches.length !== 1 || !path) return true;
+        const result = evaluateFacts(expectedPath.all_of, path.requirements, true);
+        if (!result.complete || path.satisfied !== result.usable) return true;
+        satisfied ||= result.usable;
+      }
+      return !satisfied;
     })) throw new CustomerOperationReadinessError(response);
     if ((r.transition.required_retained_milestones ?? []).some(p => !(r.retained_milestones ?? []).some(e => e.requirement.operation === p.operation && e.requirement.milestone === p.milestone && usable(e))) || (r.retained_milestones ?? []).some(e => !usable(e)) || !r.ready || !r.declared || r.state_revision !== request.state_revision || r.contract_version !== request.contract_version || r.reasons.length + r.blockers.length + r.unmet_dependencies.length + r.missing_milestones.length + (r.missing_policies?.length ?? 0) + (r.missing_dependency_workflows?.length ?? 0) + (r.unmet_invariants?.length ?? 0) + (r.unmet_effects?.length ?? 0) !== 0) throw new CustomerOperationReadinessError(response);
     reports.splice(0, reports.length, ...stagedReports); states.splice(0, states.length, ...stagedStates);

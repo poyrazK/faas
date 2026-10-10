@@ -73,6 +73,24 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 		}
 	}
 	for _, group := range r.RetainedMilestoneGroups {
+		if len(group.Paths) > 0 {
+			if group.Satisfied {
+				for _, path := range group.Paths {
+					if path.Satisfied {
+						out = append(out, fmt.Sprintf("Alternative group %s is satisfied by complete path %s.", group.ID, path.ID))
+						break
+					}
+				}
+			} else {
+				out = append(out, fmt.Sprintf("Satisfy one complete path in retained prerequisite group %s; every requirement within a chosen path must pass.", group.ID))
+				for _, path := range group.Paths {
+					out = append(out, fmt.Sprintf("Path %s in group %s:", path.ID, group.ID))
+					nested := OperationWorkflowTransitionReadiness{RetainedMilestones: path.Requirements}
+					out = append(out, nested.Guidance()...)
+				}
+			}
+			continue
+		}
 		if group.Satisfied {
 			for _, alternative := range group.Alternatives {
 				if alternative.Status == "verified" {

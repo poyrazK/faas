@@ -3,12 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowRetainedMilestone } from './OperationWorkflowRetainedMilestone.js';
+import type { OperationWorkflowRetainedMilestonePathResult } from './OperationWorkflowRetainedMilestonePathResult.js';
 /**
- * Evaluation of one retained alternative group. Every alternative includes existing freshness and invalidation and recovery diagnostics; unusable alternatives do not deny a group with a verified alternative.
+ * Evaluation of one retained alternative group. Flat groups return alternatives; compound groups return paths. Every fact includes freshness and invalidation and recovery diagnostics. A satisfied group requires at least one verified alternative or fully satisfied path.
  */
 export type OperationWorkflowRetainedMilestoneGroupResult = {
   id: string;
   satisfied: boolean;
-  alternatives: Array<OperationWorkflowRetainedMilestone>;
+  alternatives?: Array<OperationWorkflowRetainedMilestone>;
+  paths?: Array<OperationWorkflowRetainedMilestonePathResult>;
 };
 

@@ -62,17 +62,32 @@ type OperationWorkflowPrerequisiteRecovery struct {
 	Steps           []string   `json:"steps"`
 }
 
-// OperationWorkflowRetainedMilestoneGroup requires any one retained fact in a named group.
+// OperationWorkflowRetainedMilestoneGroup accepts any one fact or any one complete named path.
 type OperationWorkflowRetainedMilestoneGroup struct {
+	Paths []OperationWorkflowRetainedMilestonePath        `json:"paths,omitempty" yaml:"paths,omitempty" toml:"paths"`
 	ID    string                                          `json:"id" yaml:"id" toml:"id"`
-	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of" yaml:"any_of" toml:"any_of"`
+	AnyOf []OperationWorkflowRetainedMilestoneRequirement `json:"any_of,omitempty" yaml:"any_of,omitempty" toml:"any_of"`
 }
 
 // OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
 type OperationWorkflowRetainedMilestoneGroupResult struct {
+	Paths        []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
+	ID           string                                         `json:"id"`
+	Satisfied    bool                                           `json:"satisfied"`
+	Alternatives []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
+}
+
+// OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
+type OperationWorkflowRetainedMilestonePath struct {
+	ID    string                                          `json:"id" yaml:"id" toml:"id"`
+	AllOf []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
+}
+
+// OperationWorkflowRetainedMilestonePathResult includes every fact needed by a named path.
+type OperationWorkflowRetainedMilestonePathResult struct {
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
-	Alternatives []OperationWorkflowRetainedMilestone `json:"alternatives"`
+	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
 }
 
 func CanonicalOperationWorkflowRetainedMilestones(input []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneRequirement, error) {
@@ -149,14 +164,52 @@ func CanonicalOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflow
 	out := append([]OperationWorkflowRetainedMilestoneGroup(nil), input...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	for i := range out {
-		if ValidateOperationWorkflowStateName(out[i].ID) != nil || i > 0 && out[i-1].ID == out[i].ID || len(out[i].AnyOf) < 2 {
-			return nil, fmt.Errorf("retained milestone groups require unique valid IDs and at least two alternatives")
+		if ValidateOperationWorkflowStateName(out[i].ID) != nil || i > 0 && out[i-1].ID == out[i].ID {
+			return nil, fmt.Errorf("retained milestone groups require unique valid IDs")
 		}
-		choices, err := CanonicalOperationWorkflowRetainedMilestones(out[i].AnyOf)
+		if len(out[i].Paths) > 0 {
+			if len(out[i].AnyOf) > 0 {
+				return nil, fmt.Errorf("retained milestone groups must choose any_of or paths")
+			}
+			paths, err := canonicalRetainedMilestonePaths(out[i].Paths)
+			if err != nil {
+				return nil, err
+			}
+			out[i].Paths, out[i].AnyOf = paths, nil
+		} else {
+			if len(out[i].AnyOf) < 2 {
+				return nil, fmt.Errorf("retained milestone groups require at least two alternatives")
+			}
+			choices, err := CanonicalOperationWorkflowRetainedMilestones(out[i].AnyOf)
+			if err != nil {
+				return nil, err
+			}
+			out[i].AnyOf, out[i].Paths = choices, nil
+		}
+	}
+	return out, nil
+}
+
+func canonicalRetainedMilestonePaths(input []OperationWorkflowRetainedMilestonePath) ([]OperationWorkflowRetainedMilestonePath, error) {
+	if len(input) < 2 || len(input) > OperationWorkflowRetainedPathsMax {
+		return nil, fmt.Errorf("retained prerequisite paths require between two and eight paths")
+	}
+	out := append([]OperationWorkflowRetainedMilestonePath(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	total := 0
+	for i := range out {
+		if ValidateOperationWorkflowStateName(out[i].ID) != nil || i > 0 && out[i-1].ID == out[i].ID || len(out[i].AllOf) == 0 {
+			return nil, fmt.Errorf("retained prerequisite paths require unique valid IDs and nonempty all_of requirements")
+		}
+		facts, err := CanonicalOperationWorkflowRetainedMilestones(out[i].AllOf)
 		if err != nil {
 			return nil, err
 		}
-		out[i].AnyOf = choices
+		total += len(facts)
+		if total > OperationWorkflowTransitionEvidenceMax {
+			return nil, fmt.Errorf("retained prerequisite paths exceed the per-group fact budget")
+		}
+		out[i].AllOf = facts
 	}
 	return out, nil
 }
@@ -166,6 +219,9 @@ func OperationWorkflowRetainedSelectors(required []OperationWorkflowRetainedMile
 	out := append([]OperationWorkflowRetainedMilestoneRequirement(nil), required...)
 	for _, group := range groups {
 		out = append(out, group.AnyOf...)
+		for _, path := range group.Paths {
+			out = append(out, path.AllOf...)
+		}
 	}
 	return out
 }
@@ -174,6 +230,10 @@ func CloneOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflowReta
 	out := append([]OperationWorkflowRetainedMilestoneGroup(nil), input...)
 	for i := range out {
 		out[i].AnyOf = append([]OperationWorkflowRetainedMilestoneRequirement(nil), out[i].AnyOf...)
+		out[i].Paths = append([]OperationWorkflowRetainedMilestonePath(nil), out[i].Paths...)
+		for j := range out[i].Paths {
+			out[i].Paths[j].AllOf = append([]OperationWorkflowRetainedMilestoneRequirement(nil), out[i].Paths[j].AllOf...)
+		}
 	}
 	return out
 }

@@ -2112,6 +2112,8 @@ from .operation_workflow_retained_milestone_group import OperationWorkflowRetain
 from .operation_workflow_retained_milestone_group_result import OperationWorkflowRetainedMilestoneGroupResult
 from .operation_workflow_retained_milestone_invalidation import OperationWorkflowRetainedMilestoneInvalidation
 from .operation_workflow_retained_milestone_invalidation_rule import OperationWorkflowRetainedMilestoneInvalidationRule
+from .operation_workflow_retained_milestone_path import OperationWorkflowRetainedMilestonePath
+from .operation_workflow_retained_milestone_path_result import OperationWorkflowRetainedMilestonePathResult
 from .operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
 from .operation_workflow_retained_milestone_status import OperationWorkflowRetainedMilestoneStatus
 from .operation_workflow_state import OperationWorkflowState
@@ -5536,6 +5538,8 @@ __all__ = (
     "OperationWorkflowRetainedMilestoneGroupResult",
     "OperationWorkflowRetainedMilestoneInvalidation",
     "OperationWorkflowRetainedMilestoneInvalidationRule",
+    "OperationWorkflowRetainedMilestonePath",
+    "OperationWorkflowRetainedMilestonePathResult",
     "OperationWorkflowRetainedMilestoneRequirement",
     "OperationWorkflowRetainedMilestoneStatus",
     "OperationWorkflowState",

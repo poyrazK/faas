@@ -244,3 +244,23 @@ func retainedPrerequisiteRecovery(result api.OperationWorkflowRetainedMilestone)
 	}
 	return recovery
 }
+
+func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, group api.OperationWorkflowRetainedMilestoneGroup) api.OperationWorkflowRetainedMilestoneGroupResult {
+	finding := api.OperationWorkflowRetainedMilestoneGroupResult{ID: group.ID}
+	for _, requirement := range group.AnyOf {
+		result := evaluateRetainedMilestone(instance, edge, requirement)
+		finding.Alternatives = append(finding.Alternatives, result)
+		finding.Satisfied = finding.Satisfied || result.Status == "verified"
+	}
+	for _, path := range group.Paths {
+		result := api.OperationWorkflowRetainedMilestonePathResult{ID: path.ID, Satisfied: len(path.AllOf) > 0, Requirements: make([]api.OperationWorkflowRetainedMilestone, 0, len(path.AllOf))}
+		for _, requirement := range path.AllOf {
+			fact := evaluateRetainedMilestone(instance, edge, requirement)
+			result.Requirements = append(result.Requirements, fact)
+			result.Satisfied = result.Satisfied && fact.Status == "verified"
+		}
+		finding.Paths = append(finding.Paths, result)
+		finding.Satisfied = finding.Satisfied || result.Satisfied
+	}
+	return finding
+}

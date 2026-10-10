@@ -38681,22 +38681,41 @@ components:
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           description: Milestone names that must be committed in the same application transaction as this transition.
     OperationWorkflowRetainedMilestoneGroup:
-      description: Named alternatives in a pinned workflow edge. Any one verified retained fact satisfies this group; all groups and mandatory prerequisites must pass. Group IDs and selectors are canonicalized and require a new contract version when changed.
+      description: Named alternatives in a pinned workflow edge. Declare either a nonempty any_of list or nonempty named paths. Any verified fact satisfies a flat group; every fact in one complete path satisfies a path group. All groups and mandatory prerequisites must pass. Across named paths a group permits at most 16 fact occurrences including repeated selectors. Changes require a new contract version.
       type: object
       additionalProperties: false
-      required: [id, any_of]
+      required: [id]
       properties:
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         any_of: {type: array, minItems: 2, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}}
-    OperationWorkflowRetainedMilestoneGroupResult:
-      description: Evaluation of one retained alternative group. Every alternative includes existing freshness and invalidation and recovery diagnostics; unusable alternatives do not deny a group with a verified alternative.
+        paths: {type: array, minItems: 2, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestonePath'}}
+    OperationWorkflowRetainedMilestonePath:
+      description: One uniquely named business path within an alternative group. Every declared retained fact must be verified together at the evaluation time; selectors are canonicalized and unique within the path.
       type: object
       additionalProperties: false
-      required: [id, satisfied, alternatives]
+      required: [id, all_of]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        all_of: {type: array, minItems: 1, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}}
+    OperationWorkflowRetainedMilestoneGroupResult:
+      description: Evaluation of one retained alternative group. Flat groups return alternatives; compound groups return paths. Every fact includes freshness and invalidation and recovery diagnostics. A satisfied group requires at least one verified alternative or fully satisfied path.
+      type: object
+      additionalProperties: false
+      required: [id, satisfied]
       properties:
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         satisfied: {type: boolean}
         alternatives: {type: array, minItems: 2, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}}
+        paths: {type: array, minItems: 2, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestonePathResult'}}
+    OperationWorkflowRetainedMilestonePathResult:
+      description: Complete evidence findings for one named alternative path. Satisfied means every requirement is verified at the shared evaluation time; passing facts from separate paths cannot combine to satisfy a group.
+      type: object
+      additionalProperties: false
+      required: [id, satisfied, requirements]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        satisfied: {type: boolean}
+        requirements: {type: array, minItems: 1, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}}
     OperationWorkflowRetainedMilestoneRequirement:
       description: Source operation and milestone bound to a declared transaction-backed step of the selected workflow contract.
       type: object

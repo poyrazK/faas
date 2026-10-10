@@ -175,3 +175,6 @@ type OperationWorkflowPrerequisiteRecovery = api.OperationWorkflowPrerequisiteRe
 
 type OperationWorkflowRetainedMilestoneGroup = api.OperationWorkflowRetainedMilestoneGroup
 type OperationWorkflowRetainedMilestoneGroupResult = api.OperationWorkflowRetainedMilestoneGroupResult
+
+type OperationWorkflowRetainedMilestonePath = api.OperationWorkflowRetainedMilestonePath
+type OperationWorkflowRetainedMilestonePathResult = api.OperationWorkflowRetainedMilestonePathResult
