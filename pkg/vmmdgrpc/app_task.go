@@ -60,6 +60,12 @@ func (s *Server) ExecuteAppTask(ctx context.Context, req *vmmdpb.ExecuteAppTaskR
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if req.GetInteractive() {
+		problem := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid app task request", "interactive app tasks require ExecuteAppTaskStream")
+		s.ops.Observe(op, time.Since(start), problem)
+		return nil, grpcerr.ToStatus(problem)
+	}
 	wireReq, err := appTaskRequestFromProto(req)
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
@@ -86,6 +92,10 @@ func (s *Server) ExecuteAppTaskStream(req *vmmdpb.ExecuteAppTaskRequest, stream 
 	start := time.Now()
 	var observedErr error
 	defer func() { s.ops.Observe(op, time.Since(start), observedErr) }()
+	if req.GetInteractive() {
+		observedErr = s.executeInteractiveAppTaskStream(req, stream)
+		return observedErr
+	}
 	taskVMM, ok := s.vmm.(AppTaskOutputVMMAPI)
 	if !ok {
 		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,

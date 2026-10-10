@@ -5,6 +5,9 @@ package main
 // atomically copies its runtime artifact identity into the durable task row.
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
@@ -103,15 +106,62 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	row, problem := s.admitAppTask(r, acct, app, resolved)
+	var attachToken string
+	if resolved.Interactive {
+		if !s.interactiveAppTasksEnabled {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented,
+				"Interactive sessions unavailable", "interactive app tasks are not enabled on this control-plane host"))
+			return
+		}
+		token, err := newAppTaskAttachToken()
+		if err != nil {
+			api.WriteProblem(w, api.ErrInternal("could not mint an attach token"))
+			return
+		}
+		attachToken = token
+	}
+
+	row, problem := s.admitAppTaskWithAttach(r, acct, app, resolved, attachToken)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, appTaskResponse(row))
+	resp := appTaskResponse(row)
+	if attachToken != "" {
+		// The token is a credential: shown once, never cached.
+		w.Header().Set("Cache-Control", "no-store")
+		resp.Interactive = true
+		resp.Attach = &api.AppTaskAttachInfo{
+			Token: attachToken, Path: api.AppTaskAttachPath(app.Slug, row.ID), Subprotocol: api.AppTaskAttachSubprotocol,
+		}
+	}
+	writeJSON(w, http.StatusAccepted, resp)
+}
+
+// newAppTaskAttachToken mints the one-time ADR-958 attach credential.
+func newAppTaskAttachToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.AppTask, *api.Problem) {
+	return s.admitAppTaskWithAttach(r, acct, app, resolved, "")
+}
+
+// admitAppTaskWithAttach admits an interactive session when attachToken is
+// set; only the token's SHA-256 digest is persisted.
+func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest, attachToken string) (state.AppTask, *api.Problem) {
+	if resolved.Interactive != (attachToken != "") {
+		return state.AppTask{}, api.ErrInternal("interactive admission requires an attach token")
+	}
+	var interactive *state.AppTaskInteractive
+	if attachToken != "" {
+		digest := sha256.Sum256([]byte(attachToken))
+		interactive = &state.AppTaskInteractive{TTY: resolved.TTY, TokenSHA256: digest[:]}
+	}
 	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
 		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this app.")
 	}
@@ -141,6 +191,7 @@ func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App
 		CommandShell:          resolved.CommandShell,
 		TimeoutSeconds:        resolved.TimeoutSeconds,
 		MaxOutputBytes:        resolved.MaxOutputBytes,
+		Interactive:           interactive,
 		CreatedAt:             time.Now().UTC(),
 	})
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {

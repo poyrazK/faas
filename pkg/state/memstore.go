@@ -721,6 +721,8 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskAttach holds ADR-958 interactive-session records by task id.
+	appTaskAttach map[string]AppTaskAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord

@@ -233,6 +233,12 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
+// interactiveAppTasksEnabledFromEnv gates ADR-958 interactive sessions on top
+// of the app-task API gate.
+func interactiveAppTasksEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_INTERACTIVE_APP_TASKS")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
 	// production-us hunt #8: push-to-deploy needs githubd to reach this
 	// apid's build-enqueue bridge. With no bridge socket configured githubd
@@ -1445,6 +1451,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithInteractiveAppTasksEnabled(interactiveAppTasksEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"

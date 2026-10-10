@@ -14693,6 +14693,22 @@ CREATE TABLE public.app_service_address_cursors (
 
 
 --
+-- Name: app_task_attach_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_task_attach_sessions (
+    task_id uuid NOT NULL,
+    tty boolean DEFAULT false NOT NULL,
+    attach_token_sha256 bytea NOT NULL,
+    node_id text,
+    node_recorded_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_task_attach_sessions_node_chk CHECK ((((node_id IS NULL) AND (node_recorded_at IS NULL)) OR (((octet_length(node_id) >= 1) AND (octet_length(node_id) <= 255)) AND (node_recorded_at IS NOT NULL)))),
+    CONSTRAINT app_task_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+);
+
+
+--
 -- Name: app_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28552,6 +28568,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: app_task_attach_sessions app_task_attach_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_attach_sessions
+    ADD CONSTRAINT app_task_attach_sessions_pkey PRIMARY KEY (task_id);
 
 
 --
@@ -45312,6 +45336,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_task_attach_sessions app_task_attach_sessions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_task_attach_sessions
+    ADD CONSTRAINT app_task_attach_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

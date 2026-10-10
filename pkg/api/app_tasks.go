@@ -87,6 +87,10 @@ type CreateAppTaskRequest struct {
 	CommandShell             bool     `json:"command_shell,omitempty"`
 	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
 	MaxOutputBytes           int      `json:"max_output_bytes,omitempty"`
+	// Interactive admits an ADR-958 session: one client attaches to the
+	// process's stdin and output. TTY allocates a pseudo-terminal.
+	Interactive bool `json:"interactive,omitempty"`
+	TTY         bool `json:"tty,omitempty"`
 }
 
 // ResolvedCreateAppTaskRequest contains validated limits and defensive copies
@@ -98,10 +102,29 @@ type ResolvedCreateAppTaskRequest struct {
 	CommandShell             bool
 	TimeoutSeconds           int
 	MaxOutputBytes           int
+	Interactive              bool
+	TTY                      bool
 }
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	if r.TTY && !r.Interactive {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("tty requires interactive")
+	}
+	if r.Interactive {
+		if r.VerificationDeploymentID != "" || r.SmokeDeploymentID != "" {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("interactive sessions cannot select a verification or smoke deployment")
+		}
+		if r.MaxOutputBytes != 0 {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("interactive sessions do not retain output; omit max_output_bytes")
+		}
+		if len(r.Command) == 0 {
+			r.Command = []string{AppTaskInteractiveDefaultCommand}
+		}
+		if r.TimeoutSeconds == 0 {
+			r.TimeoutSeconds = AppTaskInteractiveDefaultTimeoutSeconds
+		}
+	}
 	if r.VerificationDeploymentID != "" && r.SmokeDeploymentID != "" {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("verification_deployment_id and smoke_deployment_id are mutually exclusive")
 	}
@@ -115,6 +138,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	}
 	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingSmokeCommand && !IsServiceBindingSmokeCommand(r.Command, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid service binding smoke command")
+	}
+	if r.Interactive && (IsServiceBindingSmokeCommand(r.Command, r.CommandShell) || IsBindingVerificationCommand(r.Command, r.CommandShell)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("platform probe commands cannot run interactively")
 	}
 	deploymentID := r.VerificationDeploymentID
 	if deploymentID != "" {
@@ -175,6 +201,8 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 		CommandShell:             r.CommandShell,
 		TimeoutSeconds:           timeoutSeconds,
 		MaxOutputBytes:           maxOutputBytes,
+		Interactive:              r.Interactive,
+		TTY:                      r.TTY,
 	}, nil
 }
 
@@ -254,6 +282,17 @@ type AppTaskResponse struct {
 	FinishedAt          *string              `json:"finished_at,omitempty"`
 	CreatedAt           string               `json:"created_at"`
 	UpdatedAt           string               `json:"updated_at"`
+	// Interactive and Attach describe an ADR-958 session. Attach is present
+	// only in the create response: its token is shown once.
+	Interactive bool               `json:"interactive,omitempty"`
+	Attach      *AppTaskAttachInfo `json:"attach,omitempty"`
+}
+
+// AppTaskAttachInfo is returned once, when an interactive task is created.
+type AppTaskAttachInfo struct {
+	Token       string `json:"token"`
+	Path        string `json:"path"`
+	Subprotocol string `json:"subprotocol"`
 }
 
 type AppTaskListResponse struct {

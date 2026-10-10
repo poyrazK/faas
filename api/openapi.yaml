@@ -4687,6 +4687,54 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/apps/{slug}/tasks/{id}/attach:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: attachAppTask
+      summary: Attach to an interactive app task (WebSocket).
+      description: |
+        ADR-958. Served by the compute gateway, not apid. Requires the account
+        credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+        task's create response, and the `gregale-app-task-attach-v1`
+        WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+        size. The token is consumed by the first successful attach. Binary
+        messages start with a type byte: client 0x01 stdin, 0x02 resize
+        (rows, cols as big-endian uint16), 0x03 stdin close; server 0x10
+        attached, 0x11 stdout, 0x12 stderr, 0x13 terminal JSON
+        (`status`, `exit_code`, `failure`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: rows
+          in: query
+          required: false
+          description: Initial terminal height for TTY sessions; defaults to 24.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+        - name: cols
+          in: query
+          required: false
+          description: Initial terminal width for TTY sessions; defaults to 80.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '101':
+          description: Switching to the attach WebSocket.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The task VM is still starting; retry after the Retry-After interval.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The session ended, already has a client, or its attach window closed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account:
     get:
       tags: [account]
@@ -67805,8 +67853,13 @@ components:
         Gregale HTTPS service-binding canary and is handled by guest-init.
         `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
         configured outbound probe; the server supplies immutable gateway routing metadata.
+        `interactive=true` admits an ADR-958 session (operator-gated): the
+        command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
+        and bounds the session, no output is retained, and the create
+        response carries a one-time `attach` credential for
+        GET /v1/apps/{slug}/tasks/{id}/attach. `tty` allocates a terminal.
       type: object
-      required: [command]
+      required: []
       additionalProperties: false
       properties:
         verification_deployment_id: { type: string, format: uuid, description: "Exact source deployment for a reserved binding verification probe; omit for the current manual-task selection." }
@@ -67818,7 +67871,18 @@ components:
           items: { type: string, maxLength: 4096 }
         command_shell: { type: boolean, default: false }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
-        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive sessions." }
+        interactive: { type: boolean, default: false, description: "Admit an interactive session (ADR-958). The command is required unless interactive." }
+        tty: { type: boolean, default: false, description: "Allocate a pseudo-terminal; requires interactive." }
+
+    AppTaskAttachInfo:
+      description: One-time attach credential for an interactive app task (ADR-958). Returned only in the create response.
+      type: object
+      required: [token, path, subprotocol]
+      properties:
+        token: { type: string, description: "Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach." }
+        path: { type: string, description: "Gateway WebSocket path for this task." }
+        subprotocol: { type: string, enum: [gregale-app-task-attach-v1] }
 
     AppTaskFailure:
       description: Bounded customer-visible failure details for an app task.
@@ -67865,6 +67929,8 @@ components:
         finished_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        interactive: { type: boolean, description: "Present on the create response of an interactive session." }
+        attach: { $ref: '#/components/schemas/AppTaskAttachInfo' }
 
     AppTaskListResponse:
       description: |

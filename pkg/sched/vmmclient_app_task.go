@@ -122,6 +122,52 @@ func (c *VMMClient) ExecuteAppTaskWithOutput(ctx context.Context, instance strin
 	}
 }
 
+// AppTaskAttachSpec is the attach rendezvous of an interactive app task
+// (ADR-958): the digest of the client's one-time token and how long vmmd
+// waits for the client.
+type AppTaskAttachSpec struct {
+	TTY                  bool
+	TokenSHA256          []byte
+	AttachTimeoutSeconds int
+}
+
+// ExecuteInteractiveAppTask starts an interactive session and waits for its
+// terminal result. Session output goes to the attached client only.
+func (c *VMMClient) ExecuteInteractiveAppTask(ctx context.Context, instance string, req apptaskproto.Request, attach AppTaskAttachSpec) (apptaskproto.Result, error) {
+	var zero apptaskproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd app task client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	protoReq := appTaskRequestToProto(instance, req)
+	protoReq.Interactive = true
+	protoReq.Tty = attach.TTY
+	protoReq.AttachTokenSha256 = append([]byte(nil), attach.TokenSHA256...)
+	protoReq.AttachTimeoutSeconds = int32(attach.AttachTimeoutSeconds)
+	stream, err := c.cli.ExecuteAppTaskStream(ctx, protoReq)
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	event, recvErr := stream.Recv()
+	if errors.Is(recvErr, io.EOF) {
+		return zero, errors.New("sched: interactive app task stream ended before terminal result")
+	}
+	if recvErr != nil {
+		return zero, liftErr(recvErr)
+	}
+	terminal := event.GetTerminal()
+	if terminal == nil {
+		return zero, errors.New("sched: interactive app task stream returned a non-terminal event")
+	}
+	result := mergeAppTaskResponse(apptaskproto.Result{}, terminal)
+	result.Stdout, result.Stderr = nil, nil
+	if err := result.Validate(req.MaxOutputBytes); err != nil {
+		return zero, err
+	}
+	return result, nil
+}
+
 func appTaskRequestToProto(instance string, req apptaskproto.Request) *vmmdpb.ExecuteAppTaskRequest {
 	return &vmmdpb.ExecuteAppTaskRequest{
 		Instance: instance, Version: uint32(req.Version), TaskId: req.TaskID,

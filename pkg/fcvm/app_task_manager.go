@@ -25,14 +25,38 @@ func (m *Manager) ExecuteAppTask(ctx context.Context, instance string, req appta
 // returning. Ordinary app and disposable source-execution instances fail the
 // AppTaskOnly fence before any payload is sent.
 func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string, req apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
-	var zero apptaskproto.Result
 	if err := req.Validate(); err != nil {
-		return zero, err
+		return apptaskproto.Result{}, err
 	}
+	if req.Interactive {
+		return apptaskproto.Result{}, fmt.Errorf("%w: interactive request requires an attached client", apptaskproto.ErrInvalidRequest)
+	}
+	return m.runAppTask(ctx, instance, req.TimeoutSeconds, func(requestCtx context.Context, session *AppTaskSession) (apptaskproto.Result, error) {
+		return session.ExecuteWithOutput(requestCtx, req, receive)
+	})
+}
+
+// ExecuteInteractiveAppTask runs one interactive session (ADR-958) against an
+// already-booted task guest with the same AppTaskOnly fence and unconditional
+// teardown as ExecuteAppTaskWithOutput.
+func (m *Manager) ExecuteInteractiveAppTask(ctx context.Context, instance string, req apptaskproto.Request, input <-chan apptaskproto.InputEvent, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	if err := req.Validate(); err != nil {
+		return apptaskproto.Result{}, err
+	}
+	if !req.Interactive {
+		return apptaskproto.Result{}, fmt.Errorf("%w: interactive request required", apptaskproto.ErrInvalidRequest)
+	}
+	return m.runAppTask(ctx, instance, req.TimeoutSeconds, func(requestCtx context.Context, session *AppTaskSession) (apptaskproto.Result, error) {
+		return session.Interact(requestCtx, req, input, receive)
+	})
+}
+
+func (m *Manager) runAppTask(ctx context.Context, instance string, timeoutSeconds int, run func(context.Context, *AppTaskSession) (apptaskproto.Result, error)) (apptaskproto.Result, error) {
+	var zero apptaskproto.Result
 	if m == nil || m.vmm == nil {
 		return zero, ErrAppTaskNotConfigured
 	}
-	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancelRequest()
 
 	m.mu.Lock()
@@ -72,7 +96,7 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 		return zero, nilSessionErr
 	}
 
-	result, executeErr := session.ExecuteWithOutput(requestCtx, req, receive)
+	result, executeErr := run(requestCtx, session)
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appTaskDestroyTimeout)
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	managerDestroyErr := m.Destroy(destroyCtx, instance)

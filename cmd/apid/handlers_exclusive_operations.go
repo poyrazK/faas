@@ -370,6 +370,11 @@ func (s *server) createExclusiveAppTaskOperation(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, problem)
 		return
 	}
+	if resolved.Interactive {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid task selector",
+			"interactive sessions are admitted only by POST /v1/apps/{slug}/tasks"))
+		return
+	}
 	deployment, err := s.store.LiveDeployment(r.Context(), app.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		writeAppTaskDeploymentUnavailable(w)

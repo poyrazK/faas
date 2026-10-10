@@ -225,3 +225,28 @@ Concurrent target settings edits stop publication or rollback.
 The full clone workflow is still being implemented: these settings operations
 do not yet copy and publish active deployments with a coordinated database and
 object-storage capture, or isolate every related resource and runtime control.
+
+## Open a shell in a fresh app VM
+
+`gregale app exec` runs a one-off command in a fresh VM built from the app's
+live deployment, with the deployment's files, environment, secrets and
+bindings. Add `-it` to attach your terminal to it, like `docker exec -it`:
+
+```sh
+gregale app my-api exec -it              # /bin/sh
+gregale app my-api exec -it -- bash -l
+echo 'select 1;' | gregale app my-api exec -i -- psql "$DATABASE_URL"
+```
+
+The VM is never routed, parked or snapshotted and is destroyed when the
+process exits, so the shell cannot affect serving traffic. `-i` streams
+stdin; `-t` allocates a terminal with your window size and follows resizes.
+The session ends when the process exits, after `--timeout-seconds` (default
+3600), or when the CLI disconnects; the CLI exits with the remote exit code.
+Gregale stores who started the session, the command and the exit code, never
+the terminal output.
+
+Interactive sessions are an operator-gated preview (ADR-958). A deployment
+whose guest predates interactive sessions reports `interactive_unsupported`;
+redeploy it and retry. Attaching to an already-running serving instance is not
+supported yet.

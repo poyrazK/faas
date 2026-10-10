@@ -42,6 +42,7 @@ type AppTaskCoordinatorConfig struct {
 	RestoreTimeout     time.Duration
 	DestroyTimeout     time.Duration
 	FinalizeTimeout    time.Duration
+	AttachTimeout      time.Duration
 }
 
 // AppTaskRestoreRequest deliberately excludes the command. A backend may
@@ -65,7 +66,23 @@ type AppTaskExecuteRequest struct {
 	CommandShell   bool
 	Timeout        time.Duration
 	MaxOutputBytes int
+	// Interactive is set for ADR-958 sessions; output then goes to the
+	// attached client and the outcome carries no output tails.
+	Interactive *AppTaskAttachSpec
 }
+
+// appTaskNodeSession is implemented by sessions that know which node owns
+// the task VM. Interactive tasks need it so gateways can reach that vmmd.
+type appTaskNodeSession interface {
+	NodeID() string
+}
+
+const (
+	// DefaultAppTaskAttachTimeout is how long an interactive task VM waits
+	// for its client after it starts running.
+	DefaultAppTaskAttachTimeout = 60 * time.Second
+	appTaskInteractiveSlack     = 10 * time.Second
+)
 
 // AppTaskOutcome is the bounded terminal projection returned by the runtime.
 // The coordinator validates it before any value reaches durable state.
@@ -96,7 +113,10 @@ type AppTaskBackend interface {
 // AppTaskCoordinator owns claim, restore, dispatch fencing, cancellation,
 // teardown, and terminal acknowledgement for deployment-attached commands.
 type AppTaskCoordinator struct {
-	store   state.AppTaskStore
+	store state.AppTaskStore
+	// attach reads ADR-958 interactive records; nil when the store cannot
+	// hold them, in which case no task is interactive.
+	attach  state.AppTaskAttachStore
 	backend AppTaskBackend
 	config  AppTaskCoordinatorConfig
 	log     *slog.Logger
@@ -107,8 +127,9 @@ func NewAppTaskCoordinator(store state.AppTaskStore, backend AppTaskBackend, con
 	if log == nil {
 		log = slog.Default()
 	}
+	attach, _ := store.(state.AppTaskAttachStore)
 	return &AppTaskCoordinator{
-		store: store, backend: backend, config: normalizeAppTaskCoordinatorConfig(config), log: log, now: time.Now,
+		store: store, attach: attach, backend: backend, config: normalizeAppTaskCoordinatorConfig(config), log: log, now: time.Now,
 	}
 }
 
@@ -146,6 +167,9 @@ func normalizeAppTaskCoordinatorConfig(config AppTaskCoordinatorConfig) AppTaskC
 	}
 	if config.FinalizeTimeout <= 0 {
 		config.FinalizeTimeout = defaultAppTaskFinalizeTimeout
+	}
+	if config.AttachTimeout <= 0 {
+		config.AttachTimeout = DefaultAppTaskAttachTimeout
 	}
 	return config
 }
@@ -218,6 +242,13 @@ const (
 )
 
 func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.AppTask) error {
+	// An interactive task must never run as a batch command, so a failed
+	// lookup leaves the claim to expire and be replayed (restoring is safe
+	// to replay).
+	interactive, err := c.interactiveAttach(parent, task)
+	if err != nil {
+		return fmt.Errorf("sched: load app task %s attach record: %w", task.ID, err)
+	}
 	workCtx, cancelWork := context.WithCancel(parent)
 	defer cancelWork()
 	monitorCtx, stopMonitor := context.WithCancel(parent)
@@ -288,10 +319,29 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		return fmt.Errorf("sched: mark app task %s running: %w", task.ID, err)
 	}
 
-	executeCtx, cancelExecute := context.WithTimeout(workCtx, time.Duration(task.TimeoutSeconds)*time.Second)
+	executeTimeout := time.Duration(task.TimeoutSeconds) * time.Second
+	if interactive != nil {
+		if err := c.recordAttachNode(parent, task, session); err != nil {
+			destroyErr := c.destroy(parent, task.ID, session)
+			signal := stopLeaseMonitor()
+			if destroyErr != nil {
+				return destroyErr
+			}
+			if handled, interruptedErr := c.finishInterrupted(parent, task, signal); handled {
+				return interruptedErr
+			}
+			c.log.Warn("schedd: interactive app task could not be routed", "task_id", task.ID, "error_class", appTaskErrorClass(err))
+			return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, "attach_unroutable", "interactive session could not be routed to its VM"), c.now().UTC())
+		}
+		// vmmd first waits for the client, then runs the session for what
+		// remains of the task timeout.
+		executeTimeout += time.Duration(interactive.AttachTimeoutSeconds)*time.Second + appTaskInteractiveSlack
+	}
+	executeCtx, cancelExecute := context.WithTimeout(workCtx, executeTimeout)
 	outcome, executeErr := session.Execute(executeCtx, AppTaskExecuteRequest{
 		Command: append([]string(nil), task.Command...), CommandShell: task.CommandShell,
 		Timeout: time.Duration(task.TimeoutSeconds) * time.Second, MaxOutputBytes: task.MaxOutputBytes,
+		Interactive: interactive,
 	})
 	executeTimedOut := errors.Is(executeCtx.Err(), context.DeadlineExceeded)
 	cancelExecute()
@@ -311,6 +361,34 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 	}
 	outcome = normalizeAppTaskOutcome(outcome, task.MaxOutputBytes)
 	return c.complete(parent, task, outcome, c.now().UTC())
+}
+
+// interactiveAttach returns the attach rendezvous of an interactive task, or
+// nil for a batch task.
+func (c *AppTaskCoordinator) interactiveAttach(ctx context.Context, task state.AppTask) (*AppTaskAttachSpec, error) {
+	if c.attach == nil {
+		return nil, nil
+	}
+	record, err := c.attach.AppTaskAttachByTask(ctx, task.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &AppTaskAttachSpec{
+		TTY: record.TTY, TokenSHA256: append([]byte(nil), record.TokenSHA256...),
+		AttachTimeoutSeconds: int(c.config.AttachTimeout / time.Second),
+	}, nil
+}
+
+// recordAttachNode publishes which node's vmmd owns the running task VM.
+func (c *AppTaskCoordinator) recordAttachNode(ctx context.Context, task state.AppTask, session AppTaskSession) error {
+	nodeSession, ok := session.(appTaskNodeSession)
+	if !ok || nodeSession.NodeID() == "" {
+		return errors.New("app task session does not report its node")
+	}
+	return c.attach.RecordAppTaskAttachNode(ctx, task.ID, *task.LeaseToken, nodeSession.NodeID(), c.now().UTC())
 }
 
 func (c *AppTaskCoordinator) monitorLease(ctx context.Context, task state.AppTask, cancelWork context.CancelFunc, signals chan<- appTaskLeaseSignal) {

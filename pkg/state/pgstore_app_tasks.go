@@ -136,7 +136,16 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.RequireLiveDeployment {
 		return s.createServiceBindingSmokeTask(ctx, resolved)
 	}
+	// ADR-958: an interactive task's attach record is inserted by the same
+	// statement, so no claim can observe the task without it.
+	var interactiveTTY bool
+	var attachDigest []byte
+	if resolved.Interactive != nil {
+		interactiveTTY = resolved.Interactive.TTY
+		attachDigest = resolved.Interactive.TokenSHA256
+	}
 	row := s.pool.QueryRow(ctx, `
+		with created as (
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
@@ -165,12 +174,18 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		          and operation.lease_expires_at > clock_timestamp()
 		          and operation.attempt_deadline > clock_timestamp()
 		   ))
-		returning `+appTaskSelectColumns,
+		returning *
+		), attach as (
+		insert into app_task_attach_sessions (task_id, tty, attach_token_sha256, created_at)
+		select id, $17::boolean, $18::bytea, $9 from created where $18::bytea is not null
+		)
+		select `+appTaskSelectColumns+` from created`,
 		resolved.AccountID, resolved.AppID, resolved.DeploymentID, string(resolved.Kind),
 		resolved.Command, resolved.CommandShell, resolved.TimeoutSeconds,
 		resolved.MaxOutputBytes, resolved.CreatedAt, nullableCronID(resolved.CronID), resolved.ScheduledFor,
 		policyJSON(resolved.FailureRules), nullableCronID(resolved.OccurrenceID), resolved.StartDeadlineAt,
-		nullableCronID(resolved.ExclusiveOperationID), nullableGeneration(resolved.ExclusiveGeneration))
+		nullableCronID(resolved.ExclusiveOperationID), nullableGeneration(resolved.ExclusiveGeneration),
+		interactiveTTY, attachDigest)
 	task, err := scanAppTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if resolved.ExclusiveOperationID != "" {

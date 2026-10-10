@@ -107,7 +107,7 @@ func TestServeAppTaskOnceHandlesOneCommand(t *testing.T) {
 			_, _ = stdout.Write([]byte("ok"))
 			exit := 0
 			return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit}, nil
-		})
+		}, nil)
 	}()
 	protoClient, _ := apptaskproto.NewClient(client)
 	result, err := protoClient.Execute(ctx, apptaskproto.Request{

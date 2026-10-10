@@ -2737,10 +2737,12 @@ Follow an accepted fresh restart without submitting another request
 
 Run a one-off command against the live deployment
 
-`gregale app <slug> exec [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale app <slug> exec [--interactive] [--tty] [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | attach stdin and stream output live (-i; default command /bin/sh) |  |
+| `--tty` | allocate a remote terminal (-t; use -it) |  |
 | `--shell` | interpret one command string through the app shell |  |
 | `--detach` | return after the task is queued |  |
 | `--timeout-seconds <N>` | server-side command timeout |  |

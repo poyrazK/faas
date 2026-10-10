@@ -988,6 +988,15 @@ type AppTask struct {
 	BindingVerification  []byte
 }
 
+type AppTaskAttachSession struct {
+	TaskID            pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	NodeID            pgtype.Text
+	NodeRecordedAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
 type AppTcpListener struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

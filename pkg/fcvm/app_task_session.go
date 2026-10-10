@@ -56,6 +56,21 @@ func (s *AppTaskSession) ExecuteWithOutput(ctx context.Context, req apptaskproto
 	return s.client.ExecuteWithOutput(ctx, req, receive)
 }
 
+// Interact runs one interactive session over the connected guest.
+func (s *AppTaskSession) Interact(ctx context.Context, req apptaskproto.Request, input <-chan apptaskproto.InputEvent, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	var zero apptaskproto.Result
+	if s == nil || s.client == nil {
+		return zero, fmt.Errorf("fcvm: nil app task session")
+	}
+	s.destroyMu.Lock()
+	destroyed := s.destroyed
+	s.destroyMu.Unlock()
+	if destroyed {
+		return zero, fmt.Errorf("fcvm: app task session destroyed")
+	}
+	return s.client.Interact(ctx, req, input, receive)
+}
+
 func (s *AppTaskSession) Destroy(ctx context.Context) error {
 	if s == nil {
 		return nil

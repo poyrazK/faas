@@ -94,7 +94,57 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 		UpdatedAt:            now,
 	}
 	m.appTasks[task.ID] = task
+	if resolved.Interactive != nil {
+		if m.appTaskAttach == nil {
+			m.appTaskAttach = make(map[string]AppTaskAttach)
+		}
+		m.appTaskAttach[task.ID] = AppTaskAttach{
+			TaskID: task.ID, TTY: resolved.Interactive.TTY,
+			TokenSHA256: append([]byte(nil), resolved.Interactive.TokenSHA256...), CreatedAt: now,
+		}
+	}
 	return cloneAppTask(task), nil
+}
+
+var _ AppTaskAttachStore = (*MemStore)(nil)
+
+func (m *MemStore) AppTaskAttachByTask(_ context.Context, taskID string) (AppTaskAttach, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	if !ok {
+		return AppTaskAttach{}, ErrNotFound
+	}
+	return cloneAppTaskAttach(record), nil
+}
+
+func (m *MemStore) RecordAppTaskAttachNode(_ context.Context, taskID, leaseToken, nodeID string, recordedAt time.Time) error {
+	if taskID == "" || leaseToken == "" || !validAppTaskAttachNodeID(nodeID) || recordedAt.IsZero() {
+		return ErrAppTaskInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	task, taskOK := m.appTasks[taskID]
+	if !ok || !taskOK || task.Status != AppTaskRunning || task.LeaseToken == nil || *task.LeaseToken != leaseToken {
+		return ErrAppTaskLeaseLost
+	}
+	recordedAt = recordedAt.UTC()
+	record.NodeID = nodeID
+	record.NodeRecordedAt = &recordedAt
+	m.appTaskAttach[taskID] = record
+	return nil
+}
+
+func (m *MemStore) AppTaskAttachTarget(_ context.Context, accountID, appID, taskID string) (AppTaskAttachTarget, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	task, taskOK := m.appTasks[taskID]
+	if !ok || !taskOK || task.AccountID != accountID || task.AppID != appID {
+		return AppTaskAttachTarget{}, ErrNotFound
+	}
+	return AppTaskAttachTarget{TaskID: task.ID, TaskStatus: task.Status, TTY: record.TTY, NodeID: record.NodeID}, nil
 }
 
 func (m *MemStore) ListAppTasksByExclusiveOperation(_ context.Context, accountID, operationID string) ([]AppTask, error) {

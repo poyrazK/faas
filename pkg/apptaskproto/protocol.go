@@ -72,6 +72,9 @@ func (s Status) Terminal() bool {
 // Request contains only dispatch-time command data. Deployment artifacts,
 // environment, secrets, and network policy are staged during VM preparation
 // and intentionally cannot be changed through this channel.
+//
+// Interactive requests (ADR-958) use InteractiveVersion so a guest that only
+// speaks version 1 rejects them instead of running a shell without stdin.
 type Request struct {
 	Version        uint16   `json:"version"`
 	TaskID         string   `json:"task_id"`
@@ -79,10 +82,23 @@ type Request struct {
 	CommandShell   bool     `json:"command_shell"`
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	MaxOutputBytes int      `json:"max_output_bytes"`
+	Interactive    bool     `json:"interactive,omitempty"`
+	TTY            bool     `json:"tty,omitempty"`
+	Rows           uint16   `json:"rows,omitempty"`
+	Cols           uint16   `json:"cols,omitempty"`
 }
 
 func (r Request) Validate() error {
-	if r.Version != Version {
+	switch r.Version {
+	case Version:
+		if r.Interactive || r.TTY || r.Rows != 0 || r.Cols != 0 {
+			return fmt.Errorf("%w: interactive fields require version %d", ErrInvalidRequest, InteractiveVersion)
+		}
+	case InteractiveVersion:
+		if err := r.validateInteractive(); err != nil {
+			return err
+		}
+	default:
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
 	}
 	if strings.TrimSpace(r.TaskID) == "" || len(r.TaskID) > MaxTaskIDBytes || strings.ContainsRune(r.TaskID, '\x00') {
@@ -106,6 +122,9 @@ func (r Request) Validate() error {
 	}
 	if r.TimeoutSeconds < MinTimeoutSeconds || r.TimeoutSeconds > MaxTimeoutSeconds {
 		return fmt.Errorf("%w: timeout_seconds is outside the hard range", ErrInvalidRequest)
+	}
+	if r.Interactive {
+		return nil
 	}
 	if r.MaxOutputBytes < MinOutputBytes || r.MaxOutputBytes > MaxOutputBytes {
 		return fmt.Errorf("%w: max_output_bytes is outside the hard range", ErrInvalidRequest)
@@ -294,6 +313,13 @@ func (w *OutputWriter) Write(p []byte) (int, error) {
 type Handler func(context.Context, Request, *OutputWriter, *OutputWriter) (Result, error)
 
 func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
+	return ServeSession(ctx, conn, handler, nil)
+}
+
+// ServeSession serves one request. Version 1 requests run through handler;
+// interactive version 2 requests run through interactive, or are rejected
+// when the guest has no interactive support.
+func ServeSession(ctx context.Context, conn net.Conn, handler Handler, interactive InteractiveHandler) error {
 	if conn == nil || handler == nil {
 		return fmt.Errorf("%w: nil connection or handler", ErrInvalidRequest)
 	}
@@ -312,6 +338,12 @@ func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
 	var req Request
 	if err := json.Unmarshal(body, &req); err != nil || req.Validate() != nil {
 		return writeError(ctx, conn, "invalid_request", "request failed validation")
+	}
+	if req.Interactive {
+		if interactive == nil {
+			return writeError(ctx, conn, "interactive_unsupported", "guest does not support interactive sessions")
+		}
+		return serveInteractive(ctx, conn, req, interactive)
 	}
 
 	var streamMu, budgetMu sync.Mutex

@@ -3443,6 +3443,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
 	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log))
+	// ADR-958: interactive app-task attach is compute-owned too. The
+	// handler dials the task node's vmmd, which apid must never do.
+	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
+		attachMux := http.NewServeMux()
+		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
+			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
+	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-

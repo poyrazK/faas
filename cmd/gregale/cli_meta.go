@@ -1118,6 +1118,8 @@ var cliCommands = []cliCommand{
 				{Name: "json", Short: "print the last observed restart receipt"},
 			}}}},
 			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
+				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
+				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},

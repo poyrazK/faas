@@ -456,6 +456,10 @@ type appTaskOutputVMMClient interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
+type appTaskInteractiveVMMClient interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, AppTaskAttachSpec) (apptaskproto.Result, error)
+}
+
 type appTaskRestoreVMMClient interface {
 	RestoreAppTask(context.Context, AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error)
 }
@@ -567,6 +571,21 @@ func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instan
 			"App task streaming unavailable", "vmmd client does not support app task output streaming")
 	}
 	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
+}
+
+// ExecuteInteractiveAppTask routes an interactive app task (ADR-958) to the
+// node owning its VM; vmmd waits there for the attached client.
+func (r *VMMRouter) ExecuteInteractiveAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request, attach AppTaskAttachSpec) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskInteractiveVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Interactive app tasks unavailable", "vmmd client does not support interactive app tasks")
+	}
+	return taskClient.ExecuteInteractiveAppTask(ctx, instance, req, attach)
 }
 
 type jobVMMClient interface {

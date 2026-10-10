@@ -81,7 +81,7 @@ func listenAppTaskHook() (net.Listener, error) {
 	return ln, nil
 }
 
-func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler) error {
+func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler, interactive apptaskproto.InteractiveHandler) error {
 	if ln == nil || handler == nil {
 		return errors.New("app task listener is not configured")
 	}
@@ -90,7 +90,7 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 		return fmt.Errorf("app task vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	return apptaskproto.Serve(ctx, conn, handler)
+	return apptaskproto.ServeSession(ctx, conn, handler, interactive)
 }
 
 var poweroffAppTask = func() error {
@@ -116,7 +116,7 @@ func runAppTaskGuest(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	serveErr := serveAppTaskOnce(context.Background(), ln, appTaskHandler(log))
+	serveErr := serveAppTaskOnce(context.Background(), ln, appTaskHandler(log), appTaskInteractiveHandler(log))
 	if serveErr != nil {
 		log.Warn("app task guest exchange failed", "err", serveErr)
 	}
@@ -131,26 +131,46 @@ func runAppTaskGuest(log *slog.Logger) error {
 
 func appTaskHandler(log *slog.Logger) apptaskproto.Handler {
 	return func(ctx context.Context, req apptaskproto.Request, stdout, stderr *apptaskproto.OutputWriter) (apptaskproto.Result, error) {
-		//nolint:forbidigo // platform-owned app manifest, staged in the immutable deployment image
-		f, err := os.Open(api.AppManifestPath)
-		if err != nil {
-			return appTaskInfraFailure("manifest_unavailable", "app manifest could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
+		runtime, failure := loadAppTaskRuntime(log)
+		if failure != nil {
+			return *failure, nil
 		}
-		manifest, manifestErr := api.ReadManifest(f)
-		_ = f.Close()
-		if manifestErr != nil {
-			return appTaskInfraFailure("manifest_invalid", "app manifest is invalid", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
-		}
-		secrets, err := loadSecrets(log)
-		if err != nil {
-			return appTaskInfraFailure("secrets_unavailable", "scoped secrets could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
-		}
-		apiEnv, err := loadAPIEnv(log)
-		if err != nil {
-			return appTaskInfraFailure("environment_unavailable", "scoped environment could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
-		}
-		return executeAppTaskCommand(ctx, req, manifest, secrets, apiEnv, stdout, stderr)
+		return executeAppTaskCommand(ctx, req, runtime.manifest, runtime.secrets, runtime.apiEnv, stdout, stderr)
 	}
+}
+
+type appTaskRuntime struct {
+	manifest api.AppManifest
+	secrets  map[string]string
+	apiEnv   map[string]string
+}
+
+// loadAppTaskRuntime reads the staged deployment manifest and the scoped
+// secrets and environment. Failures are terminal protocol results.
+func loadAppTaskRuntime(log *slog.Logger) (appTaskRuntime, *apptaskproto.Result) {
+	fail := func(code, message string) (appTaskRuntime, *apptaskproto.Result) {
+		result := appTaskInfraFailure(code, message, 126)
+		return appTaskRuntime{}, &result
+	}
+	//nolint:forbidigo // platform-owned app manifest, staged in the immutable deployment image
+	f, err := os.Open(api.AppManifestPath)
+	if err != nil {
+		return fail("manifest_unavailable", "app manifest could not be loaded")
+	}
+	manifest, manifestErr := api.ReadManifest(f)
+	_ = f.Close()
+	if manifestErr != nil {
+		return fail("manifest_invalid", "app manifest is invalid")
+	}
+	secrets, err := loadSecrets(log)
+	if err != nil {
+		return fail("secrets_unavailable", "scoped secrets could not be loaded")
+	}
+	apiEnv, err := loadAPIEnv(log)
+	if err != nil {
+		return fail("environment_unavailable", "scoped environment could not be loaded")
+	}
+	return appTaskRuntime{manifest: manifest, secrets: secrets, apiEnv: apiEnv}, nil
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
@@ -169,38 +189,15 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	if isServiceBindingSmokeCommand(req) {
 		return executeServiceBindingSmokeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
-	argv := append([]string(nil), req.Command...)
-	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
-	env = StampWorkloadIdentityEnv(env)
-	env = StampEventPublishEnv(env)
-	env = StampRuntimeConfigEnv(env)
-	env = stampAppTaskOutputManifestPath(env)
-	if req.CommandShell {
-		argv = []string{"/bin/sh", "-lc", argv[0]}
-	} else {
-		argv[0] = resolveWorkloadCommandPath("/", argv[0], env)
+	cmd, credential, failure := prepareAppTaskCommand(req, manifest, secrets, apiEnv)
+	if failure != nil {
+		return *failure, nil
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = manifest.EffectiveWorkingDir()
-	cmd.Env = env
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	credential, err := processCredential("", manifest.EffectiveUser())
-	if err != nil {
-		return appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126), nil //nolint:nilerr // identity errors are terminal protocol results
-	}
-	cmd.SysProcAttr.Credential = execProcessCredential(credential)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: credential}
 	if err := cmd.Start(); err != nil {
-		exitCode := 126
-		failureCode := "command_start_failed"
-		failureMessage := "command could not be started"
-		if errors.Is(err, os.ErrNotExist) {
-			exitCode = 127
-			failureCode = "command_not_found"
-			failureMessage = "command was not found"
-		}
-		return appTaskInfraFailure(failureCode, failureMessage, exitCode), nil
+		return appTaskStartFailure(err), nil
 	}
 
 	waitCh := make(chan error, 1)
@@ -222,6 +219,39 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 		}
 		return apptaskproto.Result{}, ctx.Err()
 	}
+}
+
+// prepareAppTaskCommand builds the unstarted process for a batch or
+// interactive task: the deployment's environment, secrets, loopback bindings,
+// working directory, and configured user.
+func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string) (*exec.Cmd, *syscall.Credential, *apptaskproto.Result) {
+	argv := append([]string(nil), req.Command...)
+	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
+	env = StampWorkloadIdentityEnv(env)
+	env = StampEventPublishEnv(env)
+	env = StampRuntimeConfigEnv(env)
+	env = stampAppTaskOutputManifestPath(env)
+	if req.CommandShell {
+		argv = []string{"/bin/sh", "-lc", argv[0]}
+	} else {
+		argv[0] = resolveWorkloadCommandPath("/", argv[0], env)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = manifest.EffectiveWorkingDir()
+	cmd.Env = env
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		failure := appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126)
+		return nil, nil, &failure
+	}
+	return cmd, execProcessCredential(credential), nil
+}
+
+func appTaskStartFailure(err error) apptaskproto.Result {
+	if errors.Is(err, os.ErrNotExist) {
+		return appTaskInfraFailure("command_not_found", "command was not found", 127)
+	}
+	return appTaskInfraFailure("command_start_failed", "command could not be started", 126)
 }
 
 func stampAppTaskOutputManifestPath(env []string) []string {

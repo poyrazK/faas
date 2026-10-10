@@ -20,7 +20,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const appTaskWaitTimeoutDefault = 65 * time.Minute
+const (
+	appTaskWaitTimeoutDefault = 65 * time.Minute
+	// appExecInteractiveStartupWait bounds how long `exec -it` waits for the
+	// task VM to start before attaching.
+	appExecInteractiveStartupWait = 3 * time.Minute
+)
 
 func cmdAppExec(slug string, args []string) int {
 	fs := newFlagSet("app-exec", flag.ContinueOnError)
@@ -34,9 +39,36 @@ func cmdAppExec(slug string, args []string) int {
 	idempotencyKey := fs.String("idempotency-key", "", "stable retry identity for this submission")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while attached")
 	waitTimeout := fs.Duration("wait-timeout", appTaskWaitTimeoutDefault, "maximum time for the CLI to remain attached")
-	flags, positionals := splitArgsForFlags(args, "shell", "detach")
+	interactive := fs.Bool("interactive", false, "attach stdin and stream output live, -i (ADR-958)")
+	tty := fs.Bool("tty", false, "allocate a remote terminal, -t (requires --interactive)")
+	flags, positionals := splitArgsForFlags(expandShortExecFlags(args), "shell", "detach", "interactive", "tty")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if *interactive || *tty {
+		if !*interactive || *detach || *operationPolicy != "" || *maxOutputBytes != 0 || slug == "" {
+			printAppExecUsage()
+			return 1
+		}
+		request := api.CreateAppTaskRequest{
+			Command: positionals, CommandShell: *shell, TimeoutSeconds: *timeoutSeconds, Interactive: true, TTY: *tty,
+		}
+		if _, problem := request.Resolve(); problem != nil {
+			return printErr("Invalid app command", problem)
+		}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		startupWait := *waitTimeout
+		if startupWait == appTaskWaitTimeoutDefault {
+			startupWait = appExecInteractiveStartupWait
+		}
+		interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		return runInteractiveAppExec(interruptContext, interactiveAppExec{
+			client: client, slug: slug, request: request, waitTimeout: startupWait,
+		})
 	}
 	if *shell && len(positionals) != 1 {
 		printAppExecUsage()
@@ -192,7 +224,7 @@ func validJSONScalar(value string) bool {
 func printAppExecUsage() {
 	PrintUsage(
 		osStderr,
-		"usage: gregale app <slug> exec [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]",
+		"usage: gregale app <slug> exec [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]\n       gregale app <slug> exec -i [-t] [--shell] [--timeout-seconds N] [--wait-timeout D] [-- <command> [args...]]   (interactive; default command /bin/sh)",
 		"apps",
 	)
 }

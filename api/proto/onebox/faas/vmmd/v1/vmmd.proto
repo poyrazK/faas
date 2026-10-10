@@ -88,6 +88,13 @@ service Vmmd {
   // metadata-only because stdout/stderr have already arrived as chunks.
   rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
 
+  // AttachAppTask connects one client to an interactive app task (ADR-958).
+  // The first frame names the instance and presents the single-use attach
+  // token; vmmd matches it against the digest schedd registered through
+  // ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+  // output plus one terminal result back.
+  rpc AttachAppTask(stream AttachAppTaskRequest) returns (stream AttachAppTaskEvent);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -2466,6 +2473,12 @@ message ExecuteAppTaskRequest {
   bool command_shell = 5;
   int32 timeout_seconds = 6;
   int32 max_output_bytes = 7;
+  // interactive sessions (ADR-958) wait for an AttachAppTask client whose
+  // token hashes to attach_token_sha256; output streams to that client only.
+  bool interactive = 8;
+  bool tty = 9;
+  bytes attach_token_sha256 = 10;
+  int32 attach_timeout_seconds = 11;
 }
 
 message ExecuteAppTaskResponse {
@@ -2492,6 +2505,41 @@ message ExecuteAppTaskOutputChunk {
   string stream = 1;
   bytes chunk = 2;
 }
+
+message AttachAppTaskRequest {
+  oneof frame {
+    AttachAppTaskStart start = 1;
+    bytes stdin = 2;
+    AttachAppTaskResize resize = 3;
+    AttachAppTaskStdinClose stdin_close = 4;
+  }
+}
+
+message AttachAppTaskStart {
+  string instance = 1;
+  string attach_token = 2;
+  // rows/cols are the client's terminal size; zero for pipe sessions.
+  uint32 rows = 3;
+  uint32 cols = 4;
+}
+
+message AttachAppTaskResize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message AttachAppTaskStdinClose {}
+
+message AttachAppTaskEvent {
+  oneof frame {
+    // attached confirms the token and that the guest session has started.
+    AttachAppTaskAttached attached = 1;
+    ExecuteAppTaskOutputChunk output = 2;
+    ExecuteAppTaskResponse terminal = 3;
+  }
+}
+
+message AttachAppTaskAttached {}
 
 message AllowResolvedEgressRequest {
   string source_ip = 1;
