@@ -47,8 +47,6 @@ func TestGetCapabilitiesPreservesAvailabilityReasonsAndOlderResponses(t *testing
 }
 
 func TestGetCapabilitiesConditionalParking(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	for _, tc := range []struct {
 		field string
 		want  bool
@@ -60,7 +58,7 @@ func TestGetCapabilitiesConditionalParking(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := client.GetCapabilities(ctx)
+		response, err := client.GetCapabilities(SDKTestContext(t))
 		server.Close()
 		if err != nil || response.ConditionalParking != tc.want {
 			t.Fatalf("response=%+v err=%v", response, err)

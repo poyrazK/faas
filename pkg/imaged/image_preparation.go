@@ -203,7 +203,7 @@ func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep
 		if app.Type == state.AppTypeFunction || app.Runtime != "" {
 			return h.buildFunctionLayer(ctx, app, dep, acct)
 		}
-		return h.buildLocalOCIAppLayer(ctx, app, dep, acct)
+		return h.buildLocalOCIAppLayer(ctx, app, &dep, acct)
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}

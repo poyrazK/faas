@@ -219,7 +219,7 @@ class AppManifest:
 
         service_binding_transport: str | Unset = UNSET
         if not isinstance(self.service_binding_transport, Unset):
-            service_binding_transport = self.service_binding_transport
+            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):

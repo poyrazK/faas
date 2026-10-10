@@ -1,4 +1,4 @@
-// adr: 686 — exercise scenario-scoped TCP chaos on private service streams.
+// adr: 949 — exercise scenario-scoped TCP chaos on private service streams.
 package gateway
 
 import (

@@ -85,8 +85,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
       go build -trimpath -tags linux \
         -o /out/faas-guest-init ./guest/init
 
-# ---- railpack (same frontend contract, patched CLI dependencies) --------
-FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build
+# The release binaries embed Go 1.26.7 and x/net 0.58.0, which admission
+# scanning rejects for fixed HIGH/CRITICAL advisories. Preserve the source
+# release and CLI version while compiling both targets with patched modules.
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build
 WORKDIR /src/railpack
 ARG RAILPACK_VERSION
 ARG RAILPACK_SOURCE_SHA256
@@ -102,9 +104,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       rm /tmp/railpack-source.tgz && \
       go mod edit -go=1.26.9 && \
       go mod edit -require=golang.org/x/net@v0.60.0 && \
+      go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       GOTOOLCHAIN=local go mod tidy && \
-      CGO_ENABLED=0 GOTOOLCHAIN=local GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-        go build -mod=mod -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
+      GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+        GOMAXPROCS=2 GOMEMLIMIT=2GiB GOGC=10 \
+        go build -p 1 -mod=mod -buildvcs=false -trimpath \
+          -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
           -o /out/railpack ./cmd/cli && \
       go version -m /out/railpack | tee /tmp/railpack-build-info && \
       grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
@@ -248,9 +253,9 @@ COPY --from=buildkit-client-build /out/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit-client-build /out/buildctl /usr/local/bin/buildctl
 RUN chmod 0755 /usr/local/bin/buildkitd /usr/local/bin/buildctl
 
-# The source-built CLI retains the version used by guest-init's frontend.
 COPY --from=railpack-build /out/railpack /usr/local/bin/railpack
-RUN /usr/local/bin/railpack --version
+RUN chmod 0755 /usr/local/bin/railpack && \
+      /usr/local/bin/railpack --version | grep -Fx "railpack version ${RAILPACK_VERSION}"
 
 # Railpack currently downloads a glibc mise asset at build time. Keep a
 # musl-compatible copy in the builder image; guest-init stages it into the

@@ -40,8 +40,6 @@ func TestDurableEntitySDKPreservesReplayIdentity(t *testing.T) {
 }
 
 func TestDurableEntitySDKInspectionSelectorsAndVersion(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -55,18 +53,16 @@ func TestDurableEntitySDKInspectionSelectorsAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.InspectDurableEntity(ctx, "counter", faas.DurableEntityInspectRequest{Namespace: "documents", Key: "document:/?+&雪", Environment: "staging"})
+	out, err := client.InspectDurableEntity(faas.SDKTestContext(t), "counter", faas.DurableEntityInspectRequest{Namespace: "documents", Key: "document:/?+&雪", Environment: "staging"})
 	if err != nil || out.Version != ^uint64(0) || out.Outbox.HeadDelivery == nil || out.Outbox.HeadDelivery.Status != "unknown" {
 		t.Fatal(out, err)
 	}
-	if _, err := client.InspectDurableEntity(ctx, "counter", faas.DurableEntityInspectRequest{}); err == nil || calls != 1 {
+	if _, err := client.InspectDurableEntity(faas.SDKTestContext(t), "counter", faas.DurableEntityInspectRequest{}); err == nil || calls != 1 {
 		t.Fatal("missing selectors reached server")
 	}
 }
 
 func TestDurableEntitySDKRecoveryPreservesInspectionFence(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	calls := 0
 	revision := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,12 +79,12 @@ func TestDurableEntitySDKRecoveryPreservesInspectionFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := faas.DurableEntityRetryRequest{Namespace: "documents", Key: "document:123", Target: "outbox", ExpectedVersion: ^uint64(0), ExpectedRecoveryRevision: revision, HeadID: "head"}
-	out, err := client.RetryDurableEntity(ctx, "counter", request)
+	out, err := client.RetryDurableEntity(faas.SDKTestContext(t), "counter", request)
 	if err != nil || out.Version != request.ExpectedVersion || !out.Rearmed {
 		t.Fatal(out, err)
 	}
 	request.ExpectedRecoveryRevision = ""
-	if _, err := client.RetryDurableEntity(ctx, "counter", request); err == nil || calls != 1 {
+	if _, err := client.RetryDurableEntity(faas.SDKTestContext(t), "counter", request); err == nil || calls != 1 {
 		t.Fatal("unfenced recovery reached API")
 	}
 }

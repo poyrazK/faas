@@ -780,3 +780,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-947: Shared durable entity validator artifacts](947-shared-durable-entity-validator-artifacts.md)
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
+
+- [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)

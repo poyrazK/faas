@@ -5964,6 +5964,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if dep.EnvironmentWorkloadHeld() {
 		return nil
 	}
+	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		return err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)

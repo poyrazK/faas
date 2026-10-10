@@ -73,7 +73,7 @@ func TestAddOTLPTraceExportCrossAccountRejected(t *testing.T) {
 	}
 }
 
-// adr: 934 — customer spans cannot claim platform dependency identity.
+// adr: 957 — customer spans cannot claim platform dependency identity.
 func TestAddOTLPTraceExportStripsPlatformAttributes(t *testing.T) {
 	acc := NewSpansAccumulator()
 	acct := uuid.New()

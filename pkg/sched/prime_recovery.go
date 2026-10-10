@@ -67,6 +67,9 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting || dep.RootfsKey == "" || len(dep.StageState) == 0 {
 		return nil
 	}
+	if allowed, err := l.engine.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		return err
+	}
 	var stage state.StageState
 	if err := json.Unmarshal(dep.StageState, &stage); err != nil {
 		return err

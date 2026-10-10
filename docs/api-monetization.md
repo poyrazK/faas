@@ -231,3 +231,8 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-952](adr/952-api-consumer-route-weights.md),
 [ADR-953](adr/953-api-consumer-plans.md), and
 [ADR-954](adr/954-api-consumer-usage-completeness.md) for the billing rules.
+
+These decisions were originally numbered ADR-843 through ADR-848. They were
+renumbered to ADR-949 through ADR-954 to resolve collisions with route-health
+decisions. Already merged migrations retain their original comment citations
+so their recorded checksums remain valid.

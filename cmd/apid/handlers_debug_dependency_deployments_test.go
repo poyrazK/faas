@@ -1,6 +1,6 @@
 package main
 
-// adr: 934 — dependency latency compared by deployment, not by time window.
+// adr: 957 — dependency latency compared by deployment, not by time window.
 
 import (
 	"encoding/json"
@@ -77,7 +77,7 @@ func TestBuildDebugDependencyDeploymentComparison(t *testing.T) {
 	}
 }
 
-// adr: 934 — the regression detector names the regressed dependency.
+// adr: 957 — the regression detector names the regressed dependency.
 func TestSuspectedDependencyBetweenDetectorDeployments(t *testing.T) {
 	v80 := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
 	v81 := v80.Add(time.Hour)

@@ -55,7 +55,7 @@ type secretEntryTerminal struct {
 func (t *secretEntryTerminal) ReadPassword(label string) (string, error) {
 	_, _ = fmt.Fprint(t.Terminal, label)
 	defer func() { _, _ = fmt.Fprintln(t.Terminal) }()
-	value := make([]byte, 0, min(t.maxBytes, 4096))
+	valueBytes := make([]byte, 0, min(t.maxBytes, 4096))
 	overLimit := false
 	for {
 		var b [1]byte
@@ -67,22 +67,22 @@ func (t *secretEntryTerminal) ReadPassword(label string) (string, error) {
 			if overLimit {
 				return "", fmt.Errorf("value exceeds the plan's %d-byte limit; no secrets were saved", t.maxBytes)
 			}
-			return string(value), nil
+			return string(valueBytes), nil
 		case 21: // Ctrl-U clears the hidden line.
-			value = nil
+			valueBytes = valueBytes[:0]
 			overLimit = false
 		case 127, 8:
-			if len(value) > 0 {
-				_, size := utf8.DecodeLastRune(value)
-				value = value[:len(value)-size]
+			if len(valueBytes) > 0 {
+				_, size := utf8.DecodeLastRune(valueBytes)
+				valueBytes = valueBytes[:len(valueBytes)-size]
 			}
 		default:
-			if overLimit || len(value) >= t.maxBytes {
+			if overLimit || len(valueBytes) >= t.maxBytes {
 				// Consume the rest of the hidden line before restoring echo.
 				overLimit = true
 				continue
 			}
-			value = append(value, b[0])
+			valueBytes = append(valueBytes, b[0])
 		}
 	}
 }

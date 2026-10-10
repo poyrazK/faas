@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -33,7 +33,7 @@ env.update(
 
 
 def observation():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return dict(
         operation_id=ids[0],
         job_run_id=ids[1],
@@ -72,9 +72,9 @@ def test_job_owner_and_result_receipt():
                     latest_sequence=1,
                     cancellation_requested=False,
                     completion_delivery={"state": "awaiting_outcome", "attempts": 0},
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                    updated_at=datetime.now(timezone.utc).isoformat(),
-                    expires_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
+                    updated_at=datetime.now(UTC).isoformat(),
+                    expires_at=datetime.now(UTC).isoformat(),
                 ),
             )
 

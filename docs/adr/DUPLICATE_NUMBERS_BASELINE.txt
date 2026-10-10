@@ -102,5 +102,5 @@
 168
 171
 190
-686
-911
+
+# Integration removed the stale 686 and 911 entries; no new exceptions.

@@ -14,10 +14,12 @@ import (
 )
 
 func TestWorkflowBacklogAlertMigrationPreservesRulesAndRejectsActions(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
 	defer pool.Close()
 	ctx := t.Context()
-	migrateUpOnce(ctx, t, pool)
+	// Exercise rollback at this migration's historical boundary. Later alert
+	// presets must be rolled back first before narrowing this vocabulary.
+	migrateUpTo(t, ctx, pool, 20261007151150594)
 	account := seedAccount(t, ctx, pool)
 	app := seedApp(t, ctx, pool, account)
 	raw, err := migrations.FS.ReadFile("20261007151150594_workflow_backlog_alert.sql")

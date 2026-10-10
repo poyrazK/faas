@@ -250,6 +250,7 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
+
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
       # changes). Keeps the existing local Makefile contract honest.
@@ -665,6 +666,11 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
       - name: build CLI for local object storage wire journeys
         run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      # The SQL probe connects with TLS-required managed credentials.
+      - name: Enable TLS for SQL probe credential acceptance
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
@@ -805,7 +811,7 @@ jobs:
             # Packages with pgtest-backed tests must run in a Postgres shard:
             # in the pure shards pgtest skips them, and cmd/githubd shipped a
             # query that failed on every call while its test was never run.
-            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
+            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/e2etest/postgresprobe|pkg/e2etest/postgresfixture|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
@@ -885,6 +891,9 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      - name: PostgreSQL native verdict contracts
+        if: matrix.id == 'b'
+        run: python3 scripts/ci/managed-postgres-native-verdict_test.py
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10
@@ -1069,6 +1078,17 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
+      - name: repeat wake admission, first-byte and Redis deadline regressions
+        # These assertions previously depended on 10ms/100ms scheduling
+        # assumptions. Exercise the synchronised admission barrier and the
+        # real proxy timestamp repeatedly, including on cached PR runs.
+        # Exercise Redis contents, invalidation and socket deadline bounds
+        # without assuming the race-test host always responds within 100ms.
+        run: >-
+          go test -race -cover -covermode=atomic -count=30 -shuffle=on
+          -timeout=5m
+          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12|TestMetricsSpec12_FirstByteNotFullBody|TestRedisResponseCache.*)$'
+          ./pkg/sched ./pkg/gateway
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
@@ -1244,9 +1264,10 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
-    # retain time for the remaining SQLC, vulnerability and Ansible gates.
-    timeout-minutes: 30
+    # The complete cold-run gate sequence can exhaust 30 minutes at the
+    # final watchdog rule check. Retain time for every contract and safety
+    # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -1322,10 +1343,13 @@ jobs:
       - name: generate Gregale workflow lint fixtures
         run: bash scripts/ci/generate-github-workflow-lint-fixtures.sh
       - name: actionlint
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
-        with:
-          version: v1.7.12
-          args: -shellcheck ''
+        # The Docker action builds from Docker Hub's golang:latest before
+        # checkout and can exhaust anonymous pulls. Run the same pinned CLI
+        # with its Python checker directly; keep the existing lint arguments.
+        run: |
+          python3 -m pip install --quiet 'pyflakes==4.0.3'
+          GOBIN="$RUNNER_TEMP/actionlint-bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$RUNNER_TEMP/actionlint-bin/actionlint" -shellcheck=''
       - name: remove Gregale workflow lint fixtures
         if: always()
         run: rm -f .github/workflows/gregale-generated-check-"$GITHUB_RUN_ID"-*.yml
@@ -2028,10 +2052,10 @@ jobs:
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
     runs-on: ubuntu-latest
-    # Warm PR runs took 2.9-4.8 min; the release gate starts from a cold
-    # go-load cache (load no longer runs on main since #4391) and rc.250's
-    # gate was cancelled at the 5 min limit with every test passing.
-    timeout-minutes: 15
+    # Cold module-download retries and race compilation exhausted the former
+    # five-minute job budget. Leave room before the unchanged 10m Go test
+    # timeout; the 1k rps latency assertions and runner remain unchanged.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

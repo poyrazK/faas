@@ -1108,7 +1108,7 @@ func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
 				v4SmtpDrop = i
 			case v4DaddrDrop < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "drop"):
 				v4DaddrDrop = i
-			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept") && !strings.Contains(line, "dport "+strconv.Itoa(ServiceProxyPort)) && !strings.Contains(line, "dport "+strconv.Itoa(LegacyServiceProxyPort)) && !strings.Contains(line, "dport "+strconv.Itoa(ServiceDiscoveryDNSPort)):
+			case v4Allowlist < 0 && strings.Contains(line, "iifname "+c.Tap+" ip daddr {") && strings.Contains(line, "accept"):
 				v4Allowlist = i
 			}
 		// v6 chain (no SMTP drop; ADR-023).
@@ -1118,7 +1118,7 @@ func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
 				v6Established = i
 			case v6DaddrDrop < 0 && strings.Contains(line, "ip6 daddr") && strings.Contains(line, "drop"):
 				v6DaddrDrop = i
-			case v6Allowlist < 0 && strings.Contains(line, "ip6 daddr") && strings.Contains(line, "accept"):
+			case v6Allowlist < 0 && strings.Contains(line, "iifname "+c.Tap+" ip6 daddr {") && strings.Contains(line, "accept"):
 				v6Allowlist = i
 			}
 		}
