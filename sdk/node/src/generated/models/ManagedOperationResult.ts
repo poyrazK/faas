@@ -9,7 +9,7 @@ import type { ManagedOperationEffect } from './ManagedOperationEffect.js';
 export type ManagedOperationResult = {
   gregale_operation_result: 1;
   /**
-   * Business result persisted atomically with effect enqueue; any JSON value
+   * Business result persisted atomically with effect enqueue; any JSON value, including null.
    */
   result: any;
   effects: Array<ManagedOperationEffect>;

@@ -2007,7 +2007,10 @@ jobs:
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Warm PR runs took 2.9-4.8 min; the release gate starts from a cold
+    # go-load cache (load no longer runs on main since #4391) and rc.250's
+    # gate was cancelled at the 5 min limit with every test passing.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

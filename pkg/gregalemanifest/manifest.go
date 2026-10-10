@@ -1478,6 +1478,32 @@ type DevConfig struct {
 	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
 	Postgres            *bool  `yaml:"postgres,omitempty"`
 	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+	// TTL is the environment lease as a Go duration (for example "72h").
+	// The plan ceiling is enforced by the API, not here.
+	TTL string `yaml:"ttl,omitempty"`
+	// PostgresSeed is a shell command run once inside the developer app,
+	// through the app task path, after its developer database is ready.
+	PostgresSeed string `yaml:"postgres_seed,omitempty"`
+	// Debug starts the Node.js inspector in the developer environment and
+	// exposes it on a local port (`gregale dev --debug`, ADR-741).
+	Debug *bool `yaml:"debug,omitempty"`
+}
+
+// ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It
+// enforces only the plan-independent shape: whole seconds and at least
+// api.DeveloperLeaseMin. The API rejects a lease over the plan ceiling.
+func ParseDevTTL(raw string) (time.Duration, error) {
+	ttl, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("ttl %q is not a duration such as 72h", raw)
+	}
+	if ttl < api.DeveloperLeaseMin {
+		return 0, fmt.Errorf("ttl must be at least %s", api.DeveloperLeaseMin)
+	}
+	if ttl%time.Second != 0 {
+		return 0, fmt.Errorf("ttl must be a whole number of seconds")
+	}
+	return ttl, nil
 }
 
 func (c *DevConfig) Validate() error {
@@ -1495,6 +1521,22 @@ func (c *DevConfig) Validate() error {
 	}
 	if c.PostgresRegion != "" && (c.Postgres == nil || !*c.Postgres) {
 		return fmt.Errorf("dev: postgres_region requires postgres: true")
+	}
+	if c.TTL != "" {
+		if _, err := ParseDevTTL(c.TTL); err != nil {
+			return fmt.Errorf("dev.%w", err)
+		}
+	}
+	if c.PostgresSeed != "" {
+		if c.Postgres == nil || !*c.Postgres {
+			return fmt.Errorf("dev: postgres_seed requires postgres: true")
+		}
+		if _, problem := (api.CreateAppTaskRequest{
+			Command:      []string{c.PostgresSeed},
+			CommandShell: true,
+		}).Resolve(); problem != nil {
+			return fmt.Errorf("dev: postgres_seed: %s", problem.Detail)
+		}
 	}
 	return nil
 }

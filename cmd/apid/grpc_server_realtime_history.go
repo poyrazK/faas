@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type realtimeHistoryNodeStore interface {
 type realtimeHistoryReceiver struct {
 	apidpb.UnimplementedRealtimeHistoryServer
 	store   realtimeHistoryReaderStore
+	cursors state.ManagedRealtimeDurableCursorStore
 	nodes   realtimeHistoryNodeStore
 	routes  state.ManagedRealtimeChannelRouteStore
 	remover state.ManagedRealtimeChannelRouteRemover
@@ -70,14 +72,89 @@ func (r *realtimeHistoryReceiver) ReadChannelHistory(ctx context.Context, req *a
 		return response, nil
 	}
 	for _, message := range history.Messages {
+		metadata, _ := json.Marshal(message.Metadata)
 		response.Messages = append(response.Messages, &apidpb.RetainedChannelMessage{
-			Sequence:          message.Sequence,
+			MetadataJson: metadata, Sequence: message.Sequence,
 			Data:              append([]byte(nil), message.Data...),
 			Binary:            message.Binary,
 			CreatedAtUnixNano: message.CreatedAt.UnixNano(),
 		})
 	}
 	return response, nil
+}
+
+func (r *realtimeHistoryReceiver) GetDurableCursor(ctx context.Context, req *apidpb.DurableCursorRequest) (*apidpb.DurableCursorResponse, error) {
+	if req == nil || r.cursors == nil || r.store == nil {
+		return nil, status.Error(codes.Unavailable, "realtime durable cursor store unavailable")
+	}
+	if err := r.requireDurableCursorEndpoint(ctx, req.GetEndpointId()); err != nil {
+		return nil, err
+	}
+	sequence, err := r.cursors.LoadManagedRealtimeDurableCursor(ctx, req.GetEndpointId(), req.GetPrincipal(), req.GetSubscription(), req.GetChannel(), req.GetInitialSequence())
+	if err != nil {
+		return nil, durableCursorStatus(err)
+	}
+	return &apidpb.DurableCursorResponse{Sequence: sequence}, nil
+}
+
+func (r *realtimeHistoryReceiver) AdvanceDurableCursor(ctx context.Context, req *apidpb.AdvanceDurableCursorRequest) (*apidpb.DurableCursorResponse, error) {
+	if req == nil || r.cursors == nil || r.store == nil {
+		return nil, status.Error(codes.Unavailable, "realtime durable cursor store unavailable")
+	}
+	if err := r.requireDurableCursorEndpoint(ctx, req.GetEndpointId()); err != nil {
+		return nil, err
+	}
+	sequence, err := r.cursors.AdvanceManagedRealtimeDurableCursor(ctx, req.GetEndpointId(), req.GetPrincipal(), req.GetSubscription(), req.GetChannel(), req.GetSequence())
+	if err != nil {
+		return nil, durableCursorStatus(err)
+	}
+	return &apidpb.DurableCursorResponse{Sequence: sequence}, nil
+}
+
+func (r *realtimeHistoryReceiver) ResetDurableCursor(ctx context.Context, req *apidpb.AdvanceDurableCursorRequest) (*apidpb.DurableCursorResponse, error) {
+	if req == nil || r.cursors == nil || r.store == nil {
+		return nil, status.Error(codes.Unavailable, "realtime durable cursor store unavailable")
+	}
+	if err := r.requireDurableCursorEndpoint(ctx, req.GetEndpointId()); err != nil {
+		return nil, err
+	}
+	sequence, err := r.cursors.ResetManagedRealtimeDurableCursor(ctx, req.GetEndpointId(), req.GetPrincipal(), req.GetSubscription(), req.GetChannel(), req.GetSequence())
+	if err != nil {
+		return nil, durableCursorStatus(err)
+	}
+	return &apidpb.DurableCursorResponse{Sequence: sequence}, nil
+}
+
+func (r *realtimeHistoryReceiver) requireDurableCursorEndpoint(ctx context.Context, endpointID string) error {
+	if endpointID == "" {
+		return status.Error(codes.InvalidArgument, "invalid realtime durable cursor request")
+	}
+	endpoint, err := r.store.ManagedRealtimeEndpointByID(ctx, endpointID)
+	if errors.Is(err, state.ErrNotFound) {
+		return status.Error(codes.NotFound, "realtime endpoint not found")
+	}
+	if err != nil {
+		return status.Error(codes.Unavailable, "realtime endpoint lookup unavailable")
+	}
+	if !endpoint.Enabled {
+		return status.Error(codes.FailedPrecondition, "realtime endpoint disabled")
+	}
+	return nil
+}
+
+func durableCursorStatus(err error) error {
+	switch {
+	case errors.Is(err, state.ErrManagedRealtimeDurableCursorInvalid), errors.Is(err, state.ErrManagedRealtimeHistoryInvalid):
+		return status.Error(codes.InvalidArgument, "invalid realtime durable cursor request")
+	case errors.Is(err, state.ErrManagedRealtimeDurableCursorLimit):
+		return status.Error(codes.ResourceExhausted, "realtime durable subscription limit reached")
+	case errors.Is(err, state.ErrManagedRealtimeDurableCursorExpired):
+		return status.Error(codes.FailedPrecondition, "realtime durable cursor is outside retained history")
+	case errors.Is(err, state.ErrNotFound):
+		return status.Error(codes.NotFound, "realtime endpoint or durable subscription not found")
+	default:
+		return status.Error(codes.Unavailable, "realtime durable cursor unavailable")
+	}
 }
 
 func (r *realtimeHistoryReceiver) ReportChannelRoute(ctx context.Context, req *apidpb.ReportChannelRouteRequest) (*apidpb.ReportChannelRouteResponse, error) {
@@ -137,8 +214,9 @@ func (r *realtimeHistoryReceiver) ReportChannelRoute(ctx context.Context, req *a
 
 func registerRealtimeHistoryReceiver(server *grpc.Server, store state.Store) {
 	reader, _ := store.(realtimeHistoryReaderStore)
+	cursors, _ := store.(state.ManagedRealtimeDurableCursorStore)
 	nodes, _ := store.(realtimeHistoryNodeStore)
 	routes, _ := store.(state.ManagedRealtimeChannelRouteStore)
 	remover, _ := store.(state.ManagedRealtimeChannelRouteRemover)
-	apidpb.RegisterRealtimeHistoryServer(server, &realtimeHistoryReceiver{store: reader, nodes: nodes, routes: routes, remover: remover})
+	apidpb.RegisterRealtimeHistoryServer(server, &realtimeHistoryReceiver{store: reader, cursors: cursors, nodes: nodes, routes: routes, remover: remover})
 }

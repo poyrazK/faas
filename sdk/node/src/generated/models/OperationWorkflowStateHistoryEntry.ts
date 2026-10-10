@@ -54,7 +54,7 @@ export type OperationWorkflowStateHistoryEntry = {
   workflow: string;
   instance_id: string;
   /**
-   * App state immediately before this retained revision
+   * App state immediately before this retained revision, when the transition was declared.
    */
   from_state?: string;
   state: string;

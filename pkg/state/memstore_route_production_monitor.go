@@ -84,7 +84,7 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 	if req.Enabled && (!m.accounts[accountID].Plan.DebugTelemetryEnabled() || !m.accounts[accountID].MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.OnViolation(c.OnViolation) == routemonitor.OnViolation(req.OnViolation) && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, nil
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -98,6 +98,11 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 		}
 	}
 	c.Enabled, c.Routes, c.CustomerGroupBy, c.Revision, c.UpdatedAt = req.Enabled, routemonitor.CloneRoutes(req.Routes), req.CustomerGroupBy, c.Revision+1, &now
+	// Match Postgres, which omits the default report action.
+	c.OnViolation = ""
+	if routemonitor.OnViolation(req.OnViolation) == "rollback" {
+		c.OnViolation = "rollback"
+	}
 	if m.routeMonitorConfigs == nil {
 		m.routeMonitorConfigs = map[string]api.RouteMonitorConfig{}
 	}

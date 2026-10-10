@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -267,6 +268,8 @@ func configureInspectSummaryTest(t *testing.T, apiURL string) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	resetJSONOutput()
 }
 

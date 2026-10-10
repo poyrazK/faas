@@ -1389,6 +1389,19 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	if iface := os.Getenv("FAAS_PUBLIC_IFACE"); iface != "" {
 		env = append(env, "FAAS_PUBLIC_IFACE="+iface)
 	}
+	// vmmd tuning knobs a benchmark or acceptance run may set explicitly
+	// (prepared networks, restore concurrency/prefetch, a private resource
+	// journal on a shared host). Unset keeps vmmd's own defaults.
+	for _, name := range []string{
+		"FAAS_PREPARED_NETWORKS",
+		"FAAS_RESTORE_CONCURRENCY",
+		"FAAS_RESTORE_PREFETCH",
+		"FAAS_VMMD_RESOURCE_JOURNAL_DIR",
+	} {
+		if v := os.Getenv(name); v != "" {
+			env = append(env, name+"="+v)
+		}
+	}
 	return env
 }
 

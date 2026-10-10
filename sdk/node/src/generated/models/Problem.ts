@@ -28,6 +28,22 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  /**
+   * Observed channel head on realtime_sequence_conflict.
+   */
+  current_sequence?: number;
+  condition_field?: string;
+  condition_index?: number;
+  field_exists?: boolean;
+  entity_key?: string;
+  expected_version?: number;
+  current_version?: number;
+  entity_exists?: boolean;
+  message_index?: number;
+  /**
+   * Requested channel head precondition.
+   */
+  expected_sequence?: number;
   bindings_check?: BindingCheckReport;
   type?: string;
   title: string;

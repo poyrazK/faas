@@ -3,21 +3,29 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
+import type { APIConsumerPlanAssignmentListResponse } from '../models/APIConsumerPlanAssignmentListResponse.js';
+import type { APIConsumerPlanAssignmentResponse } from '../models/APIConsumerPlanAssignmentResponse.js';
+import type { APIConsumerPlanListResponse } from '../models/APIConsumerPlanListResponse.js';
+import type { APIConsumerPlanResponse } from '../models/APIConsumerPlanResponse.js';
 import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
 import type { APIConsumerUsageStatementHandoffResponse } from '../models/APIConsumerUsageStatementHandoffResponse.js';
 import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
+import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
+import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
+import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -241,6 +249,60 @@ export class ConsumersService {
     });
   }
   /**
+   * Check one API consumer's billed usage against request telemetry.
+   * Compares successful requests in the billing ledger with successful
+   * requests in request telemetry, hour by hour, so usage the ledger
+   * never received is visible before a statement is invoiced. Only whole
+   * UTC hours that have settled (10 minutes) and that telemetry still
+   * retains (14 days) are checked. Telemetry is sampled, so it proves a
+   * lower bound of missing usage but cannot prove completeness of every
+   * request. Read-only; nothing is stored.
+   *
+   * @returns APIConsumerUsageCompletenessResponse Completeness of billed usage over the checked hours.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageCompleteness({
+    slug,
+    consumerId,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose billed usage is checked.
+     */
+    consumerId: string,
+    /**
+     * RFC3339 start of the period to check, usually a statement's period_start.
+     */
+    since: string,
+    /**
+     * RFC3339 exclusive end of the period to check; at most 90 days after since.
+     */
+    until: string,
+  }): CancelablePromise<APIConsumerUsageCompletenessResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-completeness',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * List durable API consumer usage statements.
    * Returns immutable quote snapshots newest period first.
    * @returns APIConsumerUsageStatementListResponse Durable usage statements for the consumer.
@@ -273,9 +335,9 @@ export class ConsumersService {
     });
   }
   /**
-   * Snapshot an API consumer usage quote.
-   * Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
-   * @returns APIConsumerUsageStatementResponse The existing statement for this consumer and period.
+   * Snapshot an API consumer usage quote or create a late-usage adjustment.
+   * Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+   * @returns APIConsumerUsageStatementResponse The latest existing revision; the period has no new usage or the draft is unchanged.
    * @throws ApiError
    */
   public static createApiConsumerUsageStatement({
@@ -317,6 +379,7 @@ export class ConsumersService {
         401: `code: unauthorized`,
         402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
@@ -564,6 +627,193 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List an app's consumer plans.
+   * @returns APIConsumerPlanListResponse Consumer plans by name.
+   * @throws ApiError
+   */
+  public static listApiConsumerPlans({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerPlanListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-plans',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create a named consumer plan.
+   * A plan bundles enforcement limits with its own rate-card history
+   * (rate cards created with plan_id). App-wide rate cards are the default
+   * plan for consumers without an assignment. At most 20 plans per app.
+   *
+   * @returns APIConsumerPlanResponse The new plan.
+   * @throws ApiError
+   */
+  public static createApiConsumerPlan({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateAPIConsumerPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumer-plans',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Replace a consumer plan's limits.
+   * Limits are enforcement, not prices, so they change in place; the gateway applies them within 15 seconds. Prices change through new rate-card versions.
+   * @returns APIConsumerPlanResponse The updated plan.
+   * @throws ApiError
+   */
+  public static updateApiConsumerPlanLimits({
+    slug,
+    planId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer plan UUID.
+     */
+    planId: string,
+    requestBody: UpdateAPIConsumerPlanLimitsRequest,
+  }): CancelablePromise<APIConsumerPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumer-plans/{plan_id}',
+      path: {
+        'slug': slug,
+        'plan_id': planId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List a consumer's plan assignments, oldest first.
+   * @returns APIConsumerPlanAssignmentListResponse Append-only plan history.
+   * @throws ApiError
+   */
+  public static listApiConsumerPlanAssignments({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose plan assignments are listed or appended.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerPlanAssignmentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/plan-assignments',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Move a consumer onto a plan from a UTC minute.
+   * The assignment takes effect from effective_from (default the next minute; never in the past) and requires the target plan to have a rate card in force then. Statements price each minute with the plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns the consumer to the default plan.
+   * @returns APIConsumerPlanAssignmentResponse The new assignment.
+   * @throws ApiError
+   */
+  public static assignApiConsumerPlan({
+    slug,
+    consumerId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose plan assignments are listed or appended.
+     */
+    consumerId: string,
+    requestBody: AssignAPIConsumerPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerPlanAssignmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/plan-assignments',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
       },

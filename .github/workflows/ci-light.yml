@@ -341,9 +341,8 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # A cold race build takes up to 15 minutes before the independently
-    # bounded 16-minute test runs start. Leave time for both and job setup.
-    timeout-minutes: 35
+    # Allow cold race builds and separate 25-minute API/state test budgets.
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -438,24 +437,19 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
-          pids=()
+          status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS &
-            pids+=("$!")
+            go test -race -count=1 -p 4 -timeout=25m $PKGS || status=1
           fi
-          # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above.
+          # Split API/state suites run sequentially after the package set.
+          # This avoids overlapping large race binaries and keeps state clone
+          # fixtures' cluster-wide database catalogue stable between snapshots.
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
-            pids+=("$!")
-          done
-          status=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
+            go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

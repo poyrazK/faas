@@ -769,11 +769,15 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
-	DiscoveredAt    time.Time
-	WindowStart     time.Time
-	RequestCount    int64
-	ErrorCount      int64
-	BillableUnits   int64
+	// BillingRoute is the bounded "METHOD /template" label of
+	// consumer-attributed traffic; its billable units are also kept per route
+	// so rate cards can weight routes (ADR-846).
+	BillingRoute  string
+	DiscoveredAt  time.Time
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -824,6 +828,29 @@ type APIConsumerUsageBucket struct {
 	BillableUnits          int64
 }
 
+// APIConsumerRouteUsageBucket is one consumer's billable units on one
+// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// APIConsumerUsageBucket stay authoritative; a minute's route units never
+// exceed them, and routes missing here count at weight 1.
+type APIConsumerRouteUsageBucket struct {
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
+// MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
+const MaxBillingRouteBytes = 256
+
+// ValidBillingRoute reports whether label is a storable billing route: an
+// HTTP method, one space, and a path, without control characters.
+func ValidBillingRoute(label string) bool {
+	method, path, ok := strings.Cut(label, " ")
+	if !ok || method == "" || len(method) > 16 || !strings.HasPrefix(path, "/") || len(label) > MaxBillingRouteBytes {
+		return false
+	}
+	return !strings.ContainsAny(label, "\x00\r\n\t?#")
+}
+
 // APIConsumerRateCard is an immutable, versioned price for one request unit
 // emitted by an app. A later EffectiveFrom supersedes an earlier card for
 // future usage; historical cards remain readable so quotes are auditable.
@@ -835,8 +862,86 @@ type APIConsumerRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
+	Tiers []APIConsumerRateCardTier
+	// RouteWeights counts each request on a listed route label as that many
+	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// allowance and tiers.
+	RouteWeights map[string]int64
+	// PlanID names the consumer plan whose price history this card belongs
+	// to (ADR-847); empty is the app default plan.
+	PlanID        string
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// Route weight bounds: a card weights at most this many route labels, each
+// counting 1..MaxAPIConsumerRouteWeight units per request.
+const (
+	MaxAPIConsumerRouteWeights = 50
+	MaxAPIConsumerRouteWeight  = 1000
+)
+
+// ValidateAPIConsumerRouteWeights checks a card's route weights.
+func ValidateAPIConsumerRouteWeights(weights map[string]int64) error {
+	if len(weights) > MaxAPIConsumerRouteWeights {
+		return fmt.Errorf("rate card route weights: at most %d routes", MaxAPIConsumerRouteWeights)
+	}
+	for route, weight := range weights {
+		if !ValidBillingRoute(route) {
+			return fmt.Errorf("rate card route weights: %q is not a \"METHOD /template\" route", route)
+		}
+		if weight < 1 || weight > MaxAPIConsumerRouteWeight {
+			return fmt.Errorf("rate card route weights: weight for %q must be 1..%d", route, MaxAPIConsumerRouteWeight)
+		}
+	}
+	return nil
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder: units whose
+// position in the consumer's UTC month falls below UpTo (and at or above the
+// previous step's UpTo) cost PriceMillicentsPerUnit. A nil UpTo is unbounded
+// and only valid on the last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+}
+
+// MaxAPIConsumerRateCardTiers bounds a ladder; the column CHECK mirrors it.
+const MaxAPIConsumerRateCardTiers = 10
+
+// ValidateAPIConsumerRateCardTiers checks a graduated ladder: 2..10 steps,
+// strictly increasing positive bounds, an unbounded last step, non-negative
+// prices, and only the first step free so charged units never shrink as a
+// month's usage grows.
+func ValidateAPIConsumerRateCardTiers(tiers []APIConsumerRateCardTier) error {
+	if len(tiers) == 0 {
+		return nil
+	}
+	if len(tiers) < 2 || len(tiers) > MaxAPIConsumerRateCardTiers {
+		return fmt.Errorf("rate card tiers: need 2 to %d steps", MaxAPIConsumerRateCardTiers)
+	}
+	var previous int64
+	for i, tier := range tiers {
+		last := i == len(tiers)-1
+		if last != (tier.UpTo == nil) {
+			return fmt.Errorf("rate card tiers: only the last step is unbounded")
+		}
+		if !last && *tier.UpTo <= previous {
+			return fmt.Errorf("rate card tiers: up_to must increase strictly from a positive value")
+		}
+		if tier.PriceMillicentsPerUnit < 0 || (i > 0 && tier.PriceMillicentsPerUnit == 0) {
+			return fmt.Errorf("rate card tiers: prices must be non-negative and only the first step may be free")
+		}
+		if !last {
+			previous = *tier.UpTo
+		}
+	}
+	return nil
 }
 
 // PlatformTenantRateCard is an immutable, versioned customer-facing request
@@ -854,12 +959,15 @@ type PlatformTenantRateCard struct {
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
-// snapshot. Draft statements can be finalized once all usage is priced.
+// snapshot. Draft statements can be finalized once all usage is priced. A
+// draft whose quote changed before finalization is superseded by the next
+// revision and can never be finalized or handed off.
 type APIConsumerUsageStatementStatus string
 
 const (
-	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
-	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementDraft      APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized  APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 )
 
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
@@ -870,12 +978,36 @@ type APIConsumerUsageStatementBucket struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units this bucket bills at its price
+	// (ADR-844). Nil on buckets written before allowances existed, where
+	// every priced unit was charged; read it through Charged. An adjustment
+	// may charge more units than it adds when late usage used allowance
+	// that later minutes had consumed.
+	ChargedUnits *int64 `json:"charged_units,omitempty"`
+	// TierUnits splits BillableUnits across a tiered card's ladder steps
+	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// price. In an adjustment, entries can be negative when late usage moved
+	// already-billed units into another step.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
+}
+
+// Charged returns the units this bucket bills at its price.
+func (b APIConsumerUsageStatementBucket) Charged() int64 {
+	if b.RateCardID == "" {
+		return 0
+	}
+	if b.ChargedUnits == nil {
+		return b.BillableUnits
+	}
+	return *b.ChargedUnits
 }
 
 // APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
 // usage quote for one period. Once created, its buckets and totals never
-// change; finalization only records the payable lifecycle transition.
+// change; finalization only records the payable lifecycle transition. One
+// period can hold several revisions: every revision after a finalized one
+// carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
 	ID               string
 	AccountID        string
@@ -883,6 +1015,7 @@ type APIConsumerUsageStatement struct {
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
 	Status           APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
@@ -922,13 +1055,17 @@ type APIConsumerUsageStatementHandoffInput struct {
 }
 
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
-// builds it from the usage ledger and immutable rate-card versions.
+// builds it from the usage ledger and immutable rate-card versions. Revision
+// and PriorStatus name the latest revision the quote was planned against, so
+// a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
 	AccountID        string
 	AppID            string
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
+	PriorStatus      APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
 	UnpricedUnits    int64
@@ -2897,6 +3034,9 @@ type BuildProvenance struct {
 	// DEPLOY-PROV-5 / ADR-087). Empty when no version file is found
 	// or any parser fails — best-effort, never an error.
 	FrameworkVer string
+	// DevPatch is the builder's ADR-740 source map. Nil for builds whose
+	// guest did not report one.
+	DevPatch *api.DevPatchSourceMap
 }
 
 // CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom
@@ -3167,43 +3307,57 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricEventExecutionDeadLetters             AlertMetric = "event_execution_dead_letters"
-	AlertMetricEventExecutionDeadLetterRatePerSecond AlertMetric = "event_execution_dead_letter_rate_per_second"
-	AlertMetricEventHandlerFailurePct                AlertMetric = "event_handler_failure_pct"
-	AlertMetricEventCompletionLatencyP95Seconds      AlertMetric = "event_completion_latency_p95_seconds"
-	AlertMetricEventRecoveryCapacityWaitJobs         AlertMetric = "event_recovery_capacity_wait_jobs"
-	AlertMetricEventRecoveryStalledJobs              AlertMetric = "event_recovery_stalled_jobs"
-	AlertMetricEventRecoveryExpiringJobs             AlertMetric = "event_recovery_expiring_jobs"
-	AlertMetricEventPendingRecipients                AlertMetric = "event_pending_recipients"
-	AlertMetricEventOldestPendingSeconds             AlertMetric = "event_oldest_pending_seconds"
-	AlertMetricEventRetryRatePerSecond               AlertMetric = "event_retry_rate_per_second"
-	AlertMetricEventTerminalFailurePct               AlertMetric = "event_terminal_failure_pct"
-	AlertMetricEventRoutingLatencyP95Seconds         AlertMetric = "event_routing_latency_p95_seconds"
-	AlertMetricEventPausedSeconds                    AlertMetric = "event_paused_seconds"
-	AlertMetricEventDrainRatePerSecond               AlertMetric = "event_drain_rate_per_second"
-	AlertMetricErrorRate                             AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50                            AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95                            AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99                            AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct                          AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount                          AlertMetric = "request_count"
-	AlertMetricFailedInvocs                          AlertMetric = "failed_invocations"
-	AlertMetricAPIUp                                 AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR                       AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments                     AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds                     AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed                    AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth                            AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct             AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint                   AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct                       AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents                        AlertMetric = "daily_cost_cents"
-	AlertMetricWorkflowFailures                      AlertMetric = "workflow_failures"
-	AlertMetricWorkflowQuotaSkips                    AlertMetric = "workflow_schedule_quota_skips"
-	AlertMetricWorkflowPendingAge                    AlertMetric = "workflow_pending_age_seconds"
-	AlertMetricWorkflowWaitingAge                    AlertMetric = "workflow_waiting_age_seconds"
-	AlertMetricWorkflowDueAge                        AlertMetric = "workflow_due_age_seconds"
+	AlertMetricEventExecutionDeadLetters                    AlertMetric = "event_execution_dead_letters"
+	AlertMetricEventExecutionDeadLetterRatePerSecond        AlertMetric = "event_execution_dead_letter_rate_per_second"
+	AlertMetricEventHandlerFailurePct                       AlertMetric = "event_handler_failure_pct"
+	AlertMetricEventCompletionLatencyP95Seconds             AlertMetric = "event_completion_latency_p95_seconds"
+	AlertMetricEventRetentionExpiringReceipts               AlertMetric = "event_retention_expiring_receipts"
+	AlertMetricEventStorageUtilizationPct                   AlertMetric = "event_storage_utilization_pct"
+	AlertMetricRecoveryNotificationAdmissionOverdueJobs     AlertMetric = "event_recovery_notification_admission_overdue_jobs"
+	AlertMetricRecoveryNotificationAdmissionDeadJobs        AlertMetric = "event_recovery_notification_admission_dead_jobs"
+	AlertMetricRecoveryNotificationAdmissionUnknownJobs     AlertMetric = "event_recovery_notification_admission_unknown_jobs"
+	AlertMetricRecoveryNotificationAdmissionNoReceiversJobs AlertMetric = "event_recovery_notification_admission_no_receivers_jobs"
+	AlertMetricRecoveryNotificationExecutionOverdueJobs     AlertMetric = "event_recovery_notification_execution_overdue_jobs"
+	AlertMetricRecoveryNotificationExecutionDeadJobs        AlertMetric = "event_recovery_notification_execution_dead_jobs"
+	AlertMetricRecoveryNotificationExecutionUnknownJobs     AlertMetric = "event_recovery_notification_execution_unknown_jobs"
+	AlertMetricRecoveryNotificationExecutionNoReceiversJobs AlertMetric = "event_recovery_notification_execution_no_receivers_jobs"
+	AlertMetricEventRecoveryExecutionWaitingJobs            AlertMetric = "event_recovery_execution_waiting_jobs"
+	AlertMetricEventRecoveryExecutionProlongedWaitJobs      AlertMetric = "event_recovery_execution_prolonged_wait_jobs"
+	AlertMetricEventRecoveryExecutionUnknownJobs            AlertMetric = "event_recovery_execution_unknown_jobs"
+	AlertMetricEventRecoveryExecutionRetentionRiskJobs      AlertMetric = "event_recovery_execution_retention_risk_jobs"
+	AlertMetricEventRecoveryCapacityWaitJobs                AlertMetric = "event_recovery_capacity_wait_jobs"
+	AlertMetricEventRecoveryStalledJobs                     AlertMetric = "event_recovery_stalled_jobs"
+	AlertMetricEventRecoveryExpiringJobs                    AlertMetric = "event_recovery_expiring_jobs"
+	AlertMetricEventPendingRecipients                       AlertMetric = "event_pending_recipients"
+	AlertMetricEventOldestPendingSeconds                    AlertMetric = "event_oldest_pending_seconds"
+	AlertMetricEventRetryRatePerSecond                      AlertMetric = "event_retry_rate_per_second"
+	AlertMetricEventTerminalFailurePct                      AlertMetric = "event_terminal_failure_pct"
+	AlertMetricEventRoutingLatencyP95Seconds                AlertMetric = "event_routing_latency_p95_seconds"
+	AlertMetricEventPausedSeconds                           AlertMetric = "event_paused_seconds"
+	AlertMetricEventDrainRatePerSecond                      AlertMetric = "event_drain_rate_per_second"
+	AlertMetricErrorRate                                    AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                                   AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                                   AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                                   AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct                                 AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount                                 AlertMetric = "request_count"
+	AlertMetricFailedInvocs                                 AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                                        AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR                              AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments                            AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint                          AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct                              AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents                               AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures                             AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips                           AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge                           AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge                           AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge                               AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3496,6 +3650,18 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
+	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
+	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
+	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
+	AppWebhookEventRealtimeNotificationSent         AppWebhookEvent = "realtime.notification.sent"
+	AppWebhookEventRealtimeNotificationFailed       AppWebhookEvent = "realtime.notification.failed"
+	AppWebhookEventRealtimeNotificationExpired      AppWebhookEvent = "realtime.notification.expired"
+	AppWebhookEventRealtimeNotificationCancelled    AppWebhookEvent = "realtime.notification.cancelled"
+	AppWebhookEventRealtimeNotificationSuperseded   AppWebhookEvent = "realtime.notification.superseded"
+	AppWebhookEventRealtimeMessageRead              AppWebhookEvent = "realtime.message.read"
+	AppWebhookEventRealtimeInboxFallbackRequired    AppWebhookEvent = "realtime.inbox.fallback_required"
+	AppWebhookEventRealtimeInboxAcknowledged        AppWebhookEvent = "realtime.inbox.acknowledged"
+	AppWebhookEventRealtimeInboxGap                 AppWebhookEvent = "realtime.inbox.gap"
 	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
 	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
 	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
@@ -3541,6 +3707,8 @@ const (
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
+	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
@@ -3548,6 +3716,17 @@ const (
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
+	AppWebhookEventRealtimeNotificationSent,
+	AppWebhookEventRealtimeNotificationFailed,
+	AppWebhookEventRealtimeNotificationExpired,
+	AppWebhookEventRealtimeNotificationCancelled,
+	AppWebhookEventRealtimeNotificationSuperseded,
+
+	AppWebhookEventRealtimeMessageRead,
+	AppWebhookEventRealtimeInboxFallbackRequired,
+	AppWebhookEventRealtimeInboxAcknowledged,
+	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
@@ -3586,8 +3765,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired,
-	AppWebhookEventWorkflowFinished,
+	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

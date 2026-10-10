@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,7 +51,7 @@ func SimulateAutomation(ctx context.Context, request api.SimulateAutomationReque
 		return response, nil
 	}
 	response.DefinitionValid, response.StepOrder = true, order
-	s := automationSimulator{request: request, snapshot: snapshot, response: response, specs: map[string]api.WorkflowStepSpec{}, steps: map[string]WorkflowStep{}, rows: map[string][]api.AutomationSimulationStep{}, done: map[string]bool{}, usedMocks: map[string]bool{}, usedItemMocks: map[string]bool{}, usedAttemptMocks: map[string]bool{}}
+	s := automationSimulator{request: request, snapshot: snapshot, response: response, specs: map[string]api.WorkflowStepSpec{}, steps: map[string]WorkflowStep{}, rows: map[string][]api.AutomationSimulationStep{}, done: map[string]bool{}, usedMocks: map[string]bool{}, usedItemMocks: map[string]bool{}, usedAttemptMocks: map[string]bool{}, usedItemAttemptMocks: map[string]map[string]bool{}}
 	if len(s.request.Input) == 0 {
 		s.request.Input = json.RawMessage("null")
 	}
@@ -96,41 +97,27 @@ func validateSimulationRequest(request api.SimulateAutomationRequest) ([]byte, e
 		}
 	}
 	for name, attempts := range request.MockAttempts {
-		if err := simulationLimit("attempt mocks", api.WorkflowRetryMaxAttempts, int64(len(attempts))); err != nil {
+		if err := validateSimulationAttempts(name, attempts); err != nil {
 			return nil, err
 		}
-		if len(attempts) == 0 {
-			return nil, fmt.Errorf("%w: attempt mocks must contain at least one outcome", ErrAutomationSimulationInvalid)
+	}
+	for name, items := range request.MockItemAttempts {
+		if len(items) == 0 {
+			return nil, fmt.Errorf("%w: item attempt maps must not be empty", ErrAutomationSimulationInvalid)
 		}
-		for index, attempt := range attempts {
-			resource := fmt.Sprintf("attempt mock for %s, attempt %d", name, index+1)
-			switch attempt.Outcome {
-			case "success":
-				if len(attempt.Output) == 0 || attempt.Error != "" || attempt.HTTPStatus != nil {
-					return nil, fmt.Errorf("%w: %s success requires only an output", ErrAutomationSimulationInvalid, resource)
-				}
-				if err := simulationJSON(attempt.Output, resource+" output"); err != nil {
-					return nil, err
-				}
-			case "failure":
-				if len(attempt.Output) != 0 || (attempt.Error == "") == (attempt.HTTPStatus == nil) {
-					return nil, fmt.Errorf("%w: %s failure requires exactly one of error or http_status", ErrAutomationSimulationInvalid, resource)
-				}
-				if int64(len(attempt.Error)) > api.WorkflowRunInputMaxBytes {
-					return nil, simulationLimit(resource+" error bytes", api.WorkflowRunInputMaxBytes, int64(len(attempt.Error)))
-				}
-				if attempt.HTTPStatus != nil && (*attempt.HTTPStatus < 100 || *attempt.HTTPStatus > 599 || (*attempt.HTTPStatus >= 200 && *attempt.HTTPStatus < 300)) {
-					return nil, fmt.Errorf("%w: %s http_status must be a non-2xx status from 100 to 599", ErrAutomationSimulationInvalid, resource)
-				}
-			case "timeout":
-				if len(attempt.Output) != 0 || attempt.Error != "" || attempt.HTTPStatus != nil {
-					return nil, fmt.Errorf("%w: %s timeout cannot include other outcome fields", ErrAutomationSimulationInvalid, resource)
-				}
-			default:
-				return nil, fmt.Errorf("%w: %s outcome must be success, failure, or timeout", ErrAutomationSimulationInvalid, resource)
+		if err := simulationLimit("item attempt mocks", api.WorkflowForEachMaxItems, int64(len(items))); err != nil {
+			return nil, err
+		}
+		for index, attempts := range items {
+			if _, err := simulationItemIndex(index); err != nil {
+				return nil, err
+			}
+			if err := validateSimulationAttempts(name+"/"+index, attempts); err != nil {
+				return nil, err
 			}
 		}
 	}
+
 	snapshot, err := json.Marshal(request.Definition)
 	if err != nil {
 		return nil, fmt.Errorf("%w: definition must contain valid JSON", ErrAutomationSimulationInvalid)
@@ -166,6 +153,7 @@ type automationSimulator struct {
 	steps                                            map[string]WorkflowStep
 	rows                                             map[string][]api.AutomationSimulationStep
 	done, usedMocks, usedItemMocks, usedAttemptMocks map[string]bool
+	usedItemAttemptMocks                             map[string]map[string]bool
 	traceCount                                       int
 	traceBytes                                       int64
 }
@@ -189,8 +177,23 @@ func (s *automationSimulator) validateMocks() error {
 			return fmt.Errorf("%w: a step cannot use both mock_outputs and mock_attempts", ErrAutomationSimulationInvalid)
 		}
 		if simulationWait(step) {
-			if len(attempts) != 1 || attempts[0].Outcome != "timeout" || step.Timeout <= 0 || step.OnTimeout == "" {
-				return fmt.Errorf("%w: waits support one timeout outcome in mock_attempts", ErrAutomationSimulationInvalid)
+			if len(attempts) != 1 {
+				return fmt.Errorf("%w: waits require exactly one outcome in mock_attempts", ErrAutomationSimulationInvalid)
+			}
+			switch attempts[0].Outcome {
+			case "success":
+				if step.WaitForEvent == "" && !step.WaitForCallback {
+					return fmt.Errorf("%w: successful wait mocks require an event or callback wait", ErrAutomationSimulationInvalid)
+				}
+				if simulationTimeoutMock(attempts[0].Output) {
+					return fmt.Errorf("%w: successful wait payload cannot be the reserved timeout sentinel", ErrAutomationSimulationInvalid)
+				}
+			case "timeout":
+				if step.Timeout <= 0 || step.OnTimeout == "" {
+					return fmt.Errorf("%w: wait timeout mocks require a timeout and on_timeout route", ErrAutomationSimulationInvalid)
+				}
+			default:
+				return fmt.Errorf("%w: waits support only success or timeout outcomes", ErrAutomationSimulationInvalid)
 			}
 		} else {
 			for _, attempt := range attempts {
@@ -205,6 +208,23 @@ func (s *automationSimulator) validateMocks() error {
 			return fmt.Errorf("%w: mock_item_outputs must name for_each steps", ErrAutomationSimulationInvalid)
 		}
 	}
+	for name, items := range s.request.MockItemAttempts {
+		step, exists := s.specs[name]
+		if !exists || step.ForEach == nil {
+			return fmt.Errorf("%w: mock_item_attempts must name for_each steps", ErrAutomationSimulationInvalid)
+		}
+		if _, duplicate := s.request.MockItemOutputs[name]; duplicate {
+			return fmt.Errorf("%w: a loop cannot use both mock_item_outputs and mock_item_attempts", ErrAutomationSimulationInvalid)
+		}
+		for _, attempts := range items {
+			for _, attempt := range attempts {
+				if attempt.Outcome == "timeout" && step.ForEach.Action.Timeout <= 0 {
+					return fmt.Errorf("%w: item timeout mocks require an action timeout", ErrAutomationSimulationInvalid)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -346,6 +366,9 @@ func (s *automationSimulator) resolve(spec api.WorkflowStepSpec, row *api.Automa
 		return true, nil //nolint:nilerr // Evaluation failures are reported in the hypothetical trace.
 	}
 	row.Input = input
+	if !s.resolveOutbound(spec.Outbound, s.request.Input, s.outputs(spec), failureContext, row) {
+		return true, nil
+	}
 	if attempts, ok := s.request.MockAttempts[spec.Name]; ok {
 		s.usedAttemptMocks[spec.Name] = true
 		return true, s.resolveMockAttempts(spec, row, attempts)
@@ -365,9 +388,18 @@ func (s *automationSimulator) resolve(spec api.WorkflowStepSpec, row *api.Automa
 
 func (s *automationSimulator) resolveMockAttempts(spec api.WorkflowStepSpec, row *api.AutomationSimulationStep, attempts []api.AutomationSimulationMockAttempt) error {
 	if simulationWait(spec) {
-		row.State, row.Reason = "timed_out", "timeout_mocked"
-		row.Output = json.RawMessage(`{"timeout":true}`)
-		row.Attempts = []api.AutomationSimulationAttempt{{Attempt: 1, Outcome: "timeout"}}
+		mock := attempts[0]
+		if mock.Outcome == "success" {
+			row.State, row.Reason = "mocked", "event_received_mocked"
+			if spec.WaitForCallback {
+				row.Reason = "callback_received_mocked"
+			}
+			row.Output = cloneWorkflowJSON(mock.Output)
+		} else {
+			row.State, row.Reason = "timed_out", "timeout_mocked"
+			row.Output = json.RawMessage(`{"timeout":true}`)
+		}
+		row.Attempts = []api.AutomationSimulationAttempt{{Attempt: 1, Outcome: mock.Outcome}}
 		s.setAttempt(row.StepName, 1, WorkflowStepStatusSucceeded, row.Output, nil)
 		return nil
 	}
@@ -375,6 +407,9 @@ func (s *automationSimulator) resolveMockAttempts(spec api.WorkflowStepSpec, row
 		attemptNumber := index + 1
 		summary := api.AutomationSimulationAttempt{Attempt: attemptNumber, Outcome: mock.Outcome, HTTPStatus: mock.HTTPStatus}
 		row.Attempts = append(row.Attempts, summary)
+		if mock.Outcome == "timeout" && row.ParentStep != "" {
+			mock.Outcome, mock.Error = "failure", "item action timed out"
+		}
 		switch mock.Outcome {
 		case "success":
 			if index != len(attempts)-1 {
@@ -552,6 +587,23 @@ func (s *automationSimulator) evaluationError(row *api.AutomationSimulationStep,
 	s.response.Issues = append(s.response.Issues, fmt.Sprintf("step %q: %s", row.StepName, reason))
 }
 
+// Resolve URL values before accepting mocks using the executor's resolver.
+func (s *automationSimulator) resolveOutbound(target *api.WorkflowOutboundSpec, input json.RawMessage, outputs map[string]json.RawMessage, failure json.RawMessage, row *api.AutomationSimulationStep) bool {
+	if target == nil {
+		return true
+	}
+	resolved, err := api.ResolveWorkflowOutboundTarget(*target, input, outputs, failure)
+	if err != nil {
+		s.evaluationError(row, "outbound_target_resolution_failed")
+		return false
+	}
+	row.Path, row.RawQuery = resolved.Path, resolved.RawQuery
+	if target.Method == "GET" || target.Method == "HEAD" {
+		row.Input = nil
+	}
+	return true
+}
+
 func (s *automationSimulator) expand(spec api.WorkflowStepSpec, row *api.AutomationSimulationStep) error {
 	items, inputs, matches, err := api.ResolveWorkflowForEachInputsWithGuardsBounded(spec, s.request.Input, s.outputs(spec))
 	if errors.Is(err, api.ErrWorkflowForEachItemLimit) {
@@ -574,10 +626,25 @@ func (s *automationSimulator) expand(spec api.WorkflowStepSpec, row *api.Automat
 	if _, ok := s.request.MockItemOutputs[spec.Name]; ok {
 		s.usedItemMocks[spec.Name] = true
 	}
+	itemAttempts := s.request.MockItemAttempts[spec.Name]
+	for value := range itemAttempts {
+		index, _ := simulationItemIndex(value)
+		if index >= len(inputs) {
+			return fmt.Errorf("%w: item attempt index exceeds the materialized loop length", ErrAutomationSimulationInvalid)
+		}
+	}
 	count := len(inputs)
 	row.State, row.Input, row.ItemCount = "expanded", items, &count
+	var sourceItems []json.RawMessage
+	if spec.ForEach.Action.Outbound != nil {
+		if err := json.Unmarshal(items, &sourceItems); err != nil {
+			return err
+		}
+	}
 	blockedBy := ""
 	allResolved := true
+	failureStatus := ""
+	stopAfterFailure := ""
 	for index, input := range inputs {
 		name := api.WorkflowForEachItemName(spec.Name, index)
 		item := simulationRow(spec.ForEach.Action.Step(name))
@@ -593,15 +660,52 @@ func (s *automationSimulator) expand(spec api.WorkflowStepSpec, row *api.Automat
 			step := s.steps[name]
 			step.WhenMatched = matches[index]
 			s.steps[name] = step
+		} else if stopAfterFailure != "" {
+			s.skip(&item, "previous_item_failed")
 		} else if blockedBy != "" {
 			item.State, item.Reason, item.BlockedBy = "blocked", "previous_item_output_missing", []string{blockedBy}
 			allResolved = false
-		} else if index < len(mocks) {
-			item.State, item.Output = "mocked", cloneWorkflowJSON(mocks[index])
-			s.succeed(&item)
 		} else {
-			item.State, item.Reason = "would_execute", "mock_output_missing"
-			blockedBy, allResolved = name, false
+			var contextInput json.RawMessage
+			if spec.ForEach.Action.Outbound != nil {
+				contextInput, err = json.Marshal(struct {
+					Item  json.RawMessage `json:"item"`
+					Index int             `json:"index"`
+					Input json.RawMessage `json:"input"`
+				}{sourceItems[index], index, s.request.Input})
+				if err != nil {
+					return err
+				}
+			}
+			if !s.resolveOutbound(spec.ForEach.Action.Outbound, contextInput, s.outputs(spec), nil, &item) {
+				blockedBy, allResolved = name, false
+			} else if attempts, supplied := itemAttempts[strconv.Itoa(index)]; supplied {
+				if s.usedItemAttemptMocks[spec.Name] == nil {
+					s.usedItemAttemptMocks[spec.Name] = map[string]bool{}
+				}
+				s.usedItemAttemptMocks[spec.Name][strconv.Itoa(index)] = true
+				if err := s.resolveMockAttempts(spec.ForEach.Action.Step(name), &item, attempts); err != nil {
+					return err
+				}
+				status := s.steps[name].Status
+				if status == WorkflowStepStatusPending {
+					blockedBy, allResolved = name, false
+				}
+				if status == WorkflowStepStatusFailed || status == WorkflowStepStatusDead {
+					if failureStatus == "" || status == WorkflowStepStatusDead {
+						failureStatus = status
+					}
+					if spec.ForEach.OnItemFailure != "continue" {
+						stopAfterFailure = name
+					}
+				}
+			} else if index < len(mocks) {
+				item.State, item.Output = "mocked", cloneWorkflowJSON(mocks[index])
+				s.succeed(&item)
+			} else {
+				item.State, item.Reason = "would_execute", "mock_output_missing"
+				blockedBy, allResolved = name, false
+			}
 		}
 		if err := s.record(spec.Name, item); err != nil {
 			return err
@@ -613,7 +717,14 @@ func (s *automationSimulator) expand(spec api.WorkflowStepSpec, row *api.Automat
 			return simulationLimit("loop output bytes", api.WorkflowForEachMaxOutputBytes, api.WorkflowForEachMaxOutputBytes+1)
 		}
 		row.State, row.Output = "resolved", output
-		s.succeed(row)
+		if failureStatus != "" {
+			row.State, row.Reason = failureStatus, "item_failure_mocked"
+			parent := s.steps[spec.Name]
+			parent.Status, parent.Output = failureStatus, output
+			s.steps[spec.Name] = parent
+		} else {
+			s.succeed(row)
+		}
 	} else {
 		row.Reason = "item_outputs_missing"
 	}
@@ -668,6 +779,13 @@ func (s *automationSimulator) finish() (api.SimulateAutomationResponse, error) {
 			s.response.Warnings = append(s.response.Warnings, fmt.Sprintf("attempt mocks for %q were not used", name))
 		}
 	}
+	for name, items := range s.request.MockItemAttempts {
+		for index := range items {
+			if !s.usedItemAttemptMocks[name][index] {
+				s.response.Warnings = append(s.response.Warnings, fmt.Sprintf("item attempt mocks for %q index %s were not used", name, index))
+			}
+		}
+	}
 	sort.Strings(s.response.Warnings)
 	raw, err := json.Marshal(s.response)
 	if err != nil {
@@ -707,4 +825,50 @@ func simulationRow(spec api.WorkflowStepSpec) api.AutomationSimulationStep {
 		}
 	}
 	return row
+}
+
+func validateSimulationAttempts(name string, attempts []api.AutomationSimulationMockAttempt) error {
+	if err := simulationLimit("attempt mocks", api.WorkflowRetryMaxAttempts, int64(len(attempts))); err != nil {
+		return err
+	}
+	if len(attempts) == 0 {
+		return fmt.Errorf("%w: attempt mocks must contain at least one outcome", ErrAutomationSimulationInvalid)
+	}
+	for index, attempt := range attempts {
+		resource := fmt.Sprintf("attempt mock for %s, attempt %d", name, index+1)
+		switch attempt.Outcome {
+		case "success":
+			if len(attempt.Output) == 0 || attempt.Error != "" || attempt.HTTPStatus != nil {
+				return fmt.Errorf("%w: %s success requires only an output", ErrAutomationSimulationInvalid, resource)
+			}
+			if err := simulationJSON(attempt.Output, resource+" output"); err != nil {
+				return err
+			}
+		case "failure":
+			if len(attempt.Output) != 0 || (attempt.Error == "") == (attempt.HTTPStatus == nil) {
+				return fmt.Errorf("%w: %s failure requires exactly one of error or http_status", ErrAutomationSimulationInvalid, resource)
+			}
+			if int64(len(attempt.Error)) > api.WorkflowRunInputMaxBytes {
+				return simulationLimit(resource+" error bytes", api.WorkflowRunInputMaxBytes, int64(len(attempt.Error)))
+			}
+			if attempt.HTTPStatus != nil && (*attempt.HTTPStatus < 100 || *attempt.HTTPStatus > 599 || (*attempt.HTTPStatus >= 200 && *attempt.HTTPStatus < 300)) {
+				return fmt.Errorf("%w: %s http_status must be a non-2xx status from 100 to 599", ErrAutomationSimulationInvalid, resource)
+			}
+		case "timeout":
+			if len(attempt.Output) != 0 || attempt.Error != "" || attempt.HTTPStatus != nil {
+				return fmt.Errorf("%w: %s timeout cannot include other outcome fields", ErrAutomationSimulationInvalid, resource)
+			}
+		default:
+			return fmt.Errorf("%w: %s outcome must be success, failure, or timeout", ErrAutomationSimulationInvalid, resource)
+		}
+	}
+	return nil
+}
+
+func simulationItemIndex(value string) (int, error) {
+	index, err := strconv.Atoi(value)
+	if err != nil || index < 0 || index >= api.WorkflowForEachMaxItems || strconv.Itoa(index) != value {
+		return 0, fmt.Errorf("%w: item attempt indexes must be canonical zero-based indexes below %d", ErrAutomationSimulationInvalid, api.WorkflowForEachMaxItems)
+	}
+	return index, nil
 }

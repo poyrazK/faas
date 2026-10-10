@@ -41,10 +41,13 @@ func (s *pgSnapshotRestorePressureSession) ActiveSnapshotRestoreCounts(ctx conte
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := s.conn.Exec(ctx, `delete from snapshot_restore_pressure_leases where expires_at <= now()`); err != nil {
-		return nil, fmt.Errorf("state: clean expired snapshot restore pressure leases: %w", err)
-	}
+	// One round trip on the wake path: the cleanup CTE always runs to
+	// completion, and the count filters on expiry itself, so reading the
+	// pre-delete snapshot returns the same live counts.
 	rows, err := s.conn.Query(ctx, `
+		with expired as (
+			delete from snapshot_restore_pressure_leases where expires_at <= now()
+		)
 		select node_id::text, count(*)
 		  from snapshot_restore_pressure_leases
 		 where expires_at > now()
@@ -95,8 +98,11 @@ func (s *pgSnapshotRestorePressureSession) ReserveSnapshotRestore(ctx context.Co
 	}, nil
 }
 
+// Close releases the lock off the caller's path. The unlock runs on the
+// session connection after any reserve insert has committed there, so the
+// next holder still counts it; contenders retry until it lands.
 func (s *pgSnapshotRestorePressureSession) Close() {
-	s.once.Do(func() { s.releaseLock(context.Background()) })
+	s.once.Do(func() { go s.releaseLock(context.Background()) })
 }
 
 var _ SnapshotRestorePressureCoordinator = (*PgStore)(nil)

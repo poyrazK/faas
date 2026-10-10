@@ -22,6 +22,27 @@ type ConsumerUsageStore interface {
 	ListAPIConsumerUsage(context.Context, string, string, string, time.Time, time.Time) ([]APIConsumerUsageBucket, error)
 }
 
+// ConsumerRouteUsageStore reads route-level billable minutes for rate-card
+// route weights (ADR-846). Optional, like ConsumerUsageStore.
+type ConsumerRouteUsageStore interface {
+	ListAPIConsumerRouteUsage(ctx context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerRouteUsageBucket, error)
+}
+
+// billingRouteFor returns the route label to keep for an event: consumer
+// traffic with a well-formed label and billable units. A malformed label is
+// dropped rather than rejected so a replayed financial fact never wedges the
+// gateway outbox; its units then count at weight 1.
+func billingRouteFor(event APIConsumerUsageEvent) string {
+	if event.ConsumerKey == AnonymousConsumerKey || event.BillableUnits <= 0 || !ValidBillingRoute(event.BillingRoute) {
+		return ""
+	}
+	return event.BillingRoute
+}
+
+func consumerRouteUsageKey(accountID, appID, consumerKey, route string, minute time.Time) string {
+	return accountID + "\x00" + appID + "\x00" + consumerKey + "\x00" + route + "\x00" + minute.UTC().Format(time.RFC3339)
+}
+
 // ValidateAPIConsumerUsageEvent checks the wire-independent financial fact.
 // The apid receiver uses it to reject malformed replay records permanently,
 // while storage failures remain retryable.
@@ -176,6 +197,13 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.ErrorCount += event.ErrorCount
 	bucket.BillableUnits += event.BillableUnits
 	m.apiConsumerUsage[key] = bucket
+	if route := billingRouteFor(event); route != "" {
+		routeKey := consumerRouteUsageKey(event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart)
+		routeBucket := m.apiConsumerRouteUsage[routeKey]
+		routeBucket.WindowStart, routeBucket.Route = event.WindowStart.UTC(), route
+		routeBucket.BillableUnits += event.BillableUnits
+		m.apiConsumerRouteUsage[routeKey] = routeBucket
+	}
 	if event.PlatformTenantID != "" {
 		subject := event.ConsumerKey
 		if event.PlatformTenantSurfaceID != "" {
@@ -211,6 +239,28 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		}
 	}
 	return true, nil
+}
+
+func (m *MemStore) ListAPIConsumerRouteUsage(_ context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerRouteUsageBucket, error) {
+	if accountID == "" || appID == "" || consumerKey == "" || !until.After(since) {
+		return nil, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := accountID + "\x00" + appID + "\x00" + consumerKey + "\x00"
+	var out []APIConsumerRouteUsageBucket
+	for key, bucket := range m.apiConsumerRouteUsage {
+		if strings.HasPrefix(key, prefix) && !bucket.WindowStart.Before(since) && bucket.WindowStart.Before(until) {
+			out = append(out, bucket)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].WindowStart.Equal(out[j].WindowStart) {
+			return out[i].Route < out[j].Route
+		}
+		return out[i].WindowStart.Before(out[j].WindowStart)
+	})
+	return out, nil
 }
 
 func (m *MemStore) ListAPIConsumerUsage(_ context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerUsageBucket, error) {

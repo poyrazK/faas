@@ -142,7 +142,7 @@ func (m *MemStore) GetEventConsumerHealth(ctx context.Context, account, app, sub
 }
 
 func validEventConsumerAlertRule(r AlertRule) bool {
-	if api.IsEventRecoveryAlertMetric(string(r.Metric)) {
+	if api.IsEventRecoveryAlertMetric(string(r.Metric)) || api.IsEventRetentionAlertMetric(string(r.Metric)) {
 		_, err := api.EventConsumerHealthWindow(string(r.WindowSpec))
 		return r.AppID != "" && r.EventSubscriptionID == "" && (r.Action == "" || r.Action == AlertActionWebhook) && err == nil && r.WindowSpec != ""
 	}

@@ -1123,6 +1123,12 @@ func TestCmdOpen_DashboardSkipsProbe(t *testing.T) {
 }
 
 func TestCmdOpen_NoArgsPrintsUsage(t *testing.T) {
+	// No target is a usage error outside an interactive terminal.
+	previousTTY := testOnlyTTY
+	falseTTY := false
+	testOnlyTTY = &falseTTY
+	t.Cleanup(func() { testOnlyTTY = previousTTY })
+
 	_ = withRecorder(t)
 	t.Setenv("FAAS_TOKEN", "tok")
 	if code := cmdOpen(nil); code != 1 {
@@ -1775,6 +1781,12 @@ func TestCmdLogs_GrepSinceLevel(t *testing.T) {
 	})
 
 	t.Run("tail_alias_no_args_exits_1", func(t *testing.T) {
+		// No target is a usage error outside an interactive terminal.
+		previousTTY := testOnlyTTY
+		falseTTY := false
+		testOnlyTTY = &falseTTY
+		t.Cleanup(func() { testOnlyTTY = previousTTY })
+
 		stdout.Reset()
 		code := cmdLogs([]string{"tail"})
 		if code != 1 {

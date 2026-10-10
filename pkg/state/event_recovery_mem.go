@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -20,6 +21,12 @@ type memEventRecoveryItem struct {
 	SnapshotPosition int
 }
 type memEventRecoveryJob struct {
+	NotificationRetryReceipts     map[string][]byte
+	NotificationReceipts          map[string]recoveryNotificationReceipt
+	NotificationDeliveryIDs       map[string]map[string]string
+	ExecutionNotificationCaptured bool
+	NextExecutionNotificationAt   time.Time
+
 	CapacityScope          string
 	CapacityWaitStartedAt  *time.Time
 	CapacityWaitObservedAt *time.Time
@@ -40,6 +47,9 @@ func (m *MemStore) eventRecoveryAppLocked(accountID, appID string) bool {
 	return ok && sameMemUUID(app.AccountID, accountID) && app.Status != AppDeleted
 }
 func (m *MemStore) eventRecoveryCandidatesLocked(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest, now time.Time) ([]memEventRecoveryItem, error) {
+	if req.ParentJobID != "" {
+		return m.eventRecoveryRetryCandidatesLocked(ctx, accountID, appID, req, now)
+	}
 	if req.Mode == "execution" {
 		return m.eventExecutionRecoveryCandidatesLocked(ctx, accountID, appID, req, now)
 	}
@@ -131,6 +141,9 @@ func (m *MemStore) PreviewEventRecovery(ctx context.Context, accountID, appID st
 	return out, nil
 }
 func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
+	if req.ParentJobID != "" && req.RequestID == "" {
+		return api.EventRecoveryJob{}, fmt.Errorf("%w: request_id is required for a child recovery", ErrEventRecoveryQuery)
+	}
 	if err := normalizeEventRecovery(accountID, appID, &req); err != nil {
 		return api.EventRecoveryJob{}, err
 	}
@@ -142,6 +155,27 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return api.EventRecoveryJob{}, err
+	}
+	if !m.eventRecoveryAppLocked(accountID, appID) {
+		return api.EventRecoveryJob{}, ErrNotFound
+	}
+	if req.RequestID != "" {
+		for _, existing := range m.eventRecoveryJobs {
+			if sameMemUUID(existing.AccountID, accountID) && existing.Job.Selection.RequestID == req.RequestID {
+				if !sameMemUUID(existing.Job.AppID, appID) || existing.Job.Selection != req {
+					return api.EventRecoveryJob{}, ErrEventRecoveryRequestConflict
+				}
+				return m.eventRecoveryObservedResponseLocked(existing, now), nil
+			}
+		}
+	}
+	if req.ParentJobID != "" {
+		if _, err := m.eventRecoveryRetryParentLocked(accountID, appID, req.ParentJobID); err != nil {
+			return api.EventRecoveryJob{}, err
+		}
+	}
 	active := 0
 	for _, job := range m.eventRecoveryJobs {
 		if sameMemUUID(job.AccountID, accountID) && eventRecoveryActive(job.Job.State) {
@@ -197,6 +231,7 @@ func memEventRecoveryResponse(job *memEventRecoveryJob) api.EventRecoveryJob {
 		t := *out.PausedAt
 		out.PausedAt = &t
 	}
+	out.ExecutionFinishedAt = cloneEventReceiptTime(out.ExecutionFinishedAt)
 	if out.CompletedAt != nil {
 		t := *out.CompletedAt
 		out.CompletedAt = &t
@@ -405,6 +440,9 @@ func (m *MemStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) 
 				item.State = "queued"
 			}
 		}
+		if item.State == "queued" && item.ReplayInvocationID != "" {
+			m.captureRecoveryInvocationResultLocked(m.invocations[item.ReplayInvocationID], now)
+		}
 		job.Job.UpdatedAt = now
 		if !job.WindowStartedAt.Add(time.Second).After(now) {
 			job.WindowStartedAt = now
@@ -454,6 +492,11 @@ func (m *MemStore) PruneEventRecoveries(ctx context.Context, now time.Time, limi
 			break
 		}
 		if job.Job.CompletedAt != nil && job.Job.CompletedAt.Before(now.Add(-api.EventRecoveryJobRetention)) {
+			for key := range m.eventRecoveryExecutionResults {
+				if key.JobID == id {
+					delete(m.eventRecoveryExecutionResults, key)
+				}
+			}
 			delete(m.eventRecoveryJobs, id)
 			removed++
 		}
@@ -463,4 +506,22 @@ func (m *MemStore) PruneEventRecoveries(ctx context.Context, now time.Time, limi
 
 func memEventRecoveryIdentity(progress PublishedEventRecipientProgress) ([]byte, error) {
 	return json.Marshal(PublishedEventRecipientProgress{State: progress.State, Attempts: progress.Attempts, UpdatedAt: progress.UpdatedAt, FailureCode: progress.FailureCode, Retryable: progress.Retryable})
+}
+
+// eventRecoveryReceiptHoldsLocked observes immutable opt-ins and pending items.
+// The expiry check releases holds even if a worker has not finalized the job.
+// An empty account selects all accounts for the global receipt pruner.
+func (m *MemStore) eventRecoveryReceiptHoldsLocked(account string, now time.Time) map[int64]struct{} {
+	holds := map[int64]struct{}{}
+	for _, job := range m.eventRecoveryJobs {
+		if account != "" && !sameMemUUID(job.AccountID, account) || !job.Job.Selection.ProtectReceipts || !eventRecoveryActive(job.Job.State) || !job.Job.ExpiresAt.After(now) {
+			continue
+		}
+		for _, item := range job.Items {
+			if item.State == "pending" {
+				holds[item.OutboxID] = struct{}{}
+			}
+		}
+	}
+	return holds
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,8 @@ func TestRunAppExecPreservesArgumentsAfterTerminator(t *testing.T) {
 				resetJSONOut(t)
 				t.Setenv("FAAS_JSON", "0")
 				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+				t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 				var requests atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)

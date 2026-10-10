@@ -55,6 +55,15 @@ func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name s
 		records = append(records, automationFromSQL(row))
 	}
 	spec, reason, err := webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
+	if err == nil {
+		paused, pauseErr := q.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(appID), Name: name})
+		if pauseErr != nil {
+			return nil, "", "", pauseErr
+		}
+		if paused {
+			reason = "automation_failure_paused"
+		}
+	}
 	return spec, reason, pgUUIDString(live.DeploymentID), err
 }
 func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts WebhookAutomationBindingOptions) (WebhookAutomationBinding, error) {

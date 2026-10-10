@@ -65,7 +65,7 @@ class OperationWorkflowStateHistoryEntry:
     """At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and
     no milestone evidence; not a business transition."""
     from_state: str | Unset = UNSET
-    """App state immediately before this retained revision"""
+    """App state immediately before this retained revision, when the transition was declared."""
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
     """Account-owner tenant identifier attached to this report in operator feeds."""
