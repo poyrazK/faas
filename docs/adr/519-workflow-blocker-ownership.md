@@ -217,3 +217,20 @@ Account/customer attention queues and their summaries project the same visit sem
 Pin `state_sla_warning_percent` alongside state budgets in workflow contracts. Values are whole percentages 1–99 and require a budgeted nonterminal state; declarations agree across steps. Known current visits become `at_risk` at the exact warning time and `breached` at the due time. Warning time uses the same observed visit entry as the budget, preserving metadata updates and unknown-history coverage. Policy drift during a visit makes current SLA history unknown. Thresholds are optional and version changes preserve old pinned observations.
 
 Risk participates in the default attention queue and the `sla_at_risk` filter, with a separate matching-workflow count. Existing filters and frozen cursor evaluation time apply. Selected views and contributors expose warning policy/time, while historical breach metrics retain their meaning. This remains observational and adds no actions, notifications or readiness enforcement.
+
+### Transition readiness guidance
+
+The dashboard and CLI explain the existing versioned transition rules using a
+shared Go projection, `OperationWorkflowTransitionReadiness.Guidance`. The
+projection identifies reported blockers and their owners/next actions, missing
+prerequisite links, unmet prerequisite instances and required outcomes, and the
+milestones, policy decisions, passing invariants, and confirmed effects that must
+accompany a proposed transition. Unknown future reason codes remain visible.
+The Go SDK exposes the same helper; the wire readiness contract is unchanged.
+
+An overview supplies no planned evidence. Its missing milestone or evidence
+finding therefore means that evidence must accompany the proposed transition,
+not that the business event never occurred. Readiness remains observational:
+even a ready result requires the application to check its business row and
+authorization before committing. Contract/revision mismatches require a refreshed
+snapshot rather than automatic retries or state changes.

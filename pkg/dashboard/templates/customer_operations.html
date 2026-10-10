@@ -165,15 +165,8 @@
       <p class="muted">Requirements are checked against retained reports. Planned milestones are empty in this overview; the application checks its business row and authorization before committing a transition.</p>
       {{range .ReadinessItems}}<p><strong>Operation <code>{{.Transition.Operation}}</code>: <code>{{.Transition.From}}</code> → <code>{{.Transition.To}}</code></strong> · {{if .Ready}}declared requirements met{{else}}requirements unmet{{end}}.</p>
       {{if .ReasonLabels}}<ul>{{range .ReasonLabels}}<li>{{.}}</li>{{end}}</ul>{{end}}
-      {{if .MissingMilestones}}<p>Commit these milestones with the transition: {{range .MissingMilestones}}<code>{{.}}</code> {{end}}</p>{{end}}
       {{if .Transition.RequiredDependencyWorkflows}}<p>Transition prerequisite workflows: {{range .Transition.RequiredDependencyWorkflows}}<code>{{.}}</code> {{else}}none{{end}}</p>{{end}}
-      {{if .MissingDependencyWorkflows}}<p>Missing prerequisite links: {{range .MissingDependencyWorkflows}}<code>{{.}}</code> {{end}}</p>{{end}}
-      {{if .UnmetEffects}}<ul>{{range .UnmetEffects}}<li>Effect <code>{{.Requirement.Code}}</code> version <code>{{.Requirement.Version}}</code> requires confirmed milestone <code>{{.Requirement.Milestone}}</code>: <code>{{.Reason}}</code>.</li>{{end}}</ul>{{end}}
-      {{if .UnmetInvariants}}<ul>{{range .UnmetInvariants}}<li>Invariant <code>{{.Requirement.Code}}</code> version <code>{{.Requirement.Version}}</code> requires milestone <code>{{.Requirement.Milestone}}</code>: <code>{{.Reason}}</code>.</li>{{end}}</ul>{{end}}
-      {{if .MissingPolicies}}<ul>{{range .MissingPolicies}}<li>Milestone <code>{{.Milestone}}</code> requires rule <code>{{.RuleID}}</code> version <code>{{.RuleVersion}}</code> with decision <code>{{.Code}}</code>.</li>{{end}}</ul>{{end}}
-      {{if .InvariantBlockers}}<p>{{len .InvariantBlockers}} application invariant checks block this action; details follow.</p>{{end}}
       {{if .Blockers}}<ul>{{range .Blockers}}<li><code>{{.Code}}</code>: {{.Description}} · owner {{if .Owner}}{{.Owner}}{{else}}unassigned{{end}}{{if .NextAction}} · next: {{.NextAction}}{{end}} · priority {{if .Priority}}{{.Priority}}{{else}}normal{{end}}{{if .BusinessImpact}} · impact: {{.BusinessImpact}}{{end}}{{if .AcknowledgedAt}} · acknowledged by {{.AcknowledgedBy}} at <time>{{.AcknowledgedAt}}</time>{{else}} · unacknowledged{{end}}{{if .FollowUpAt}} · follow up by <time>{{.FollowUpAt}}</time>{{end}}</li>{{end}}</ul>{{end}}
-      {{if .UnmetDependencies}}<p>{{len .UnmetDependencies}} unmet prerequisites; inspect the linked workflows below.</p>{{end}}
       {{if .Advisories}}<p class="muted">{{range .Advisories}}{{if eq . "state_stale"}}The reported state is stale. {{else if eq . "deadline_overdue"}}The business deadline has passed. {{end}}{{end}}</p>{{end}}
       {{else}}<p>No transitions from the current reported state are available.</p>{{end}}
       {{if .Readiness.HasMore}}<p class="muted">Showing the first 100 of {{.Readiness.TransitionCount}} declared transitions. Check a specific proposed edge through the readiness API.</p>{{end}}{{end}}

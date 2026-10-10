@@ -151,6 +151,11 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 				if _, err := fmt.Fprintf(out, "workflow-readiness\toperation=%s\tfrom=%s\tto=%s\tdeclared=%t\tready=%t\trevision=%d\treasons=%s\tmissing-milestones=%s\tadvisories=%s\n", item.Transition.Operation, item.Transition.From, item.Transition.To, item.Declared, item.Ready, item.StateRevision, strings.Join(item.Reasons, ","), strings.Join(item.MissingMilestones, ","), strings.Join(item.Advisories, ",")); err != nil {
 					return err
 				}
+				for _, guidance := range item.Guidance() {
+					if _, err := fmt.Fprintf(out, "workflow-guidance\toperation=%s\t%s\n", item.Transition.Operation, guidance); err != nil {
+						return err
+					}
+				}
 				for _, unmet := range item.UnmetEffects {
 					if _, err := fmt.Fprintf(out, "workflow-effect-required\toperation=%s\tmilestone=%s\tcode=%s\tversion=%s\treason=%s\n", item.Transition.Operation, unmet.Requirement.Milestone, unmet.Requirement.Code, unmet.Requirement.Version, unmet.Reason); err != nil {
 						return err

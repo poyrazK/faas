@@ -163,12 +163,9 @@ func populateDashboardOperationMilestones(r *http.Request, log *slog.Logger, acc
 			workflow.ResolutionVerificationCount = instance.ResolutionVerificationCount
 			workflow.Readiness = instance.Readiness
 			if instance.Readiness != nil {
-				labels := map[string]string{"state_unknown": "No retained reported state", "terminal": "Workflow is terminal", "transition_undeclared": "Transition is not declared", "from_state_mismatch": "Reported state differs from the proposed source", "revision_mismatch": "Reported revision has changed", "contract_version_mismatch": "Contract version differs", "application_blocked": "Application reports blockers for this Operation", "dependency_unmet": "Prerequisites remain unmet", "milestone_required": "Milestones must accompany this transition", "policy_evidence_required": "Matching business policy evidence must accompany this transition", "dependency_required": "Required prerequisite workflow links have not been reported", "invariant_evidence_required": "Passing invariant evidence must accompany this transition", "effect_evidence_required": "Confirmed business effect evidence must accompany this transition"}
 				for _, readiness := range instance.Readiness.Items {
 					item := dashboard.CustomerOperationTransitionReadiness{OperationWorkflowTransitionReadiness: readiness}
-					for _, reason := range readiness.Reasons {
-						item.ReasonLabels = append(item.ReasonLabels, labels[reason])
-					}
+					item.ReasonLabels = readiness.Guidance()
 					workflow.ReadinessItems = append(workflow.ReadinessItems, item)
 				}
 			}
