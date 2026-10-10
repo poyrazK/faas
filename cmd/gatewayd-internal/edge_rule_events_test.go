@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-908: each rule keeps at most edgeRuleEventsPerRule events per flush
+// ADR-964: each rule keeps at most edgeRuleEventsPerRule events per flush
 // interval, the budget resets after a flush, and flushed events land in the
 // store with the request snapshot.
 func TestEdgeRuleHitCounterSamplesEvents(t *testing.T) {

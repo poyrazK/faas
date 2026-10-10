@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A reusable account-level list (ADR-907).
+ * A reusable account-level list (ADR-963).
  */
 export type EdgeRuleListResponse = {
   id: string;

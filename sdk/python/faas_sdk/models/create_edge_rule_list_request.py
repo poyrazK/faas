@@ -17,7 +17,7 @@ T = TypeVar("T", bound="CreateEdgeRuleListRequest")
 
 @_attrs_define
 class CreateEdgeRuleListRequest:
-    """Create an edge-rule list (ADR-907)."""
+    """Create an edge-rule list (ADR-963)."""
 
     name: str
     kind: CreateEdgeRuleListRequestKind

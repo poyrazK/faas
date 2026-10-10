@@ -1770,7 +1770,7 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 // is a free function — it doesn't need any adapter state.
 // Out-of-bound values are clamped silently; the caller logs a
 // slog.Warn with the rule ID.
-// throttleCountStatuses turns ADR-909 count_statuses into a set; nil keeps
+// throttleCountStatuses turns ADR-965 count_statuses into a set; nil keeps
 // the rule charging every request.
 func throttleCountStatuses(codes []int) map[int]bool {
 	if len(codes) == 0 {

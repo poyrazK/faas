@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ADR-904 per-rule hit counts.
+// ADR-960 per-rule hit counts.
 
 // Edge-rule hit outcomes.
 const (
@@ -33,7 +33,7 @@ type EdgeRuleHitStats struct {
 	Logged  int64
 }
 
-// EdgeRuleHitStore is the ADR-904 capability; apid and gatewayd type-assert it.
+// EdgeRuleHitStore is the ADR-960 capability; apid and gatewayd type-assert it.
 type EdgeRuleHitStore interface {
 	// RecordEdgeRuleHits adds counts to their hourly buckets in one write.
 	RecordEdgeRuleHits(ctx context.Context, hits []EdgeRuleHit) error

@@ -1,6 +1,6 @@
--- filename: 20261009192710144_edge_rule_lists_asn_kind.sql
+-- filename: 20261010085843066_edge_rule_lists_asn_kind.sql
 --
--- ADR-910: edge-rule lists gain the 'asn' kind (autonomous system numbers,
+-- ADR-966: edge-rule lists gain the 'asn' kind (autonomous system numbers,
 -- stored as canonical decimal strings) for the asn match field.
 
 -- +goose Up

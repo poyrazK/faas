@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// ADR-908 sampled edge-rule security events.
+// ADR-964 sampled edge-rule security events.
 
 // EdgeRuleEventRetention is how long sampled events are kept.
 const EdgeRuleEventRetention = 7 * 24 * time.Hour
@@ -42,7 +42,7 @@ type EdgeRuleEventQuery struct {
 	Limit    int
 }
 
-// EdgeRuleEventStore is the ADR-908 capability; apid and gatewayd
+// EdgeRuleEventStore is the ADR-964 capability; apid and gatewayd
 // type-assert it.
 type EdgeRuleEventStore interface {
 	RecordEdgeRuleEvents(ctx context.Context, events []EdgeRuleEvent) error

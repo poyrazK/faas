@@ -75,7 +75,7 @@ class EdgeRuleThrottleAction:
     gateway's trusted client IP. When `"ip"`, one bucket per
     trusted client IP (IPv6 clients keyed by their /64).
     When `"composite"`, one bucket per combination of
-    `key_fields` (ADR-909).
+    `key_fields` (ADR-965).
     Each non-empty
     value activates the bounded design: when the
     per-rule consumer set exceeds
@@ -107,7 +107,7 @@ class EdgeRuleThrottleAction:
     non-per-consumer rules.
     """
     key_fields: list[str] | Unset = UNSET
-    """ADR-909. Required iff `key_by="composite"`: the request
+    """ADR-965. Required iff `key_by="composite"`: the request
     fields combined into one bucket identity. Each is one of
     ip, country, api_key, consumer_id, jwt_subject, jwt_claim
     (with `jwt_claim_name`), method, path or `header:<name>`.
@@ -115,7 +115,7 @@ class EdgeRuleThrottleAction:
     `missing_key_policy` applies.
     """
     count_statuses: list[int] | Unset = UNSET
-    """ADR-909. When set, requests are admitted while the bucket
+    """ADR-965. When set, requests are admitted while the bucket
     has a token but only responses with one of these statuses
     charge it, e.g. [401, 403] to limit failed logins without
     limiting successful ones. Across gateways the admission

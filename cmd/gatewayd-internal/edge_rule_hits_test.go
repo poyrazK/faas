@@ -21,7 +21,7 @@ func (f *failingHitStore) RecordEdgeRuleHits(ctx context.Context, hits []state.E
 	return f.MemStore.RecordEdgeRuleHits(ctx, hits)
 }
 
-// ADR-904: hits accumulate in memory and reach the store on flush; a failed
+// ADR-960: hits accumulate in memory and reach the store on flush; a failed
 // flush keeps the counts for the next attempt instead of losing them.
 func TestEdgeRuleHitCounterFlushesAndRetains(t *testing.T) {
 	store := &failingHitStore{MemStore: state.NewMemStore(), fail: true}

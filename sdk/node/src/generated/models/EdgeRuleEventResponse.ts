@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One sampled request an edge rule matched (ADR-908).
+ * One sampled request an edge rule matched (ADR-964).
  */
 export type EdgeRuleEventResponse = {
   id: string;

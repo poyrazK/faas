@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 910 — the asn field matches the client's autonomous system, accepts
+// adr: 966 — the asn field matches the client's autonomous system, accepts
 // "AS" prefixes, is absent when unknown, and works with asn lists.
 func TestEdgeRuleMatchASN(t *testing.T) {
 	cloud := mustEdgeRuleList(t, EdgeRuleListKindASN, "AS16509", "15169")

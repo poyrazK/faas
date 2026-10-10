@@ -883,7 +883,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/edge-rules/{id}":         "GetEdgeRule",
 	"PATCH /v1/edge-rules/{id}":       "UpdateEdgeRule",
 	"DELETE /v1/edge-rules/{id}":      "DeleteEdgeRule",
-	// ADR-905 §2 — rule-set versions and rollback.
+	// ADR-961 §2 — rule-set versions and rollback.
 	"GET /v1/apps/{slug}/edge-rules/versions":           "ListEdgeRuleSetVersions",
 	"GET /v1/apps/{slug}/edge-rules/versions/{version}": "GetEdgeRuleSetVersion",
 	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",

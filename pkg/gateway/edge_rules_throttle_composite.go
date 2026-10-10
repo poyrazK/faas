@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-909 composite throttle keys: one bucket per combination of several
+// ADR-965 composite throttle keys: one bucket per combination of several
 // request fields, e.g. client IP and path.
 
 import (
@@ -18,7 +18,7 @@ import (
 // limiter's keys.
 const throttleCompositeMaxKeyBytes = 128
 
-// throttleCompositeKeyHMACKey keys the long-identity digest (ADR-909).
+// throttleCompositeKeyHMACKey keys the long-identity digest (ADR-965).
 // Changing it re-buckets every hashed composite identity once.
 const throttleCompositeKeyHMACKey = "gregale/edge-rule-throttle-composite/v1"
 

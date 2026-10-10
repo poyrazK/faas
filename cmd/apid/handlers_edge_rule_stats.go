@@ -1,6 +1,6 @@
 package main
 
-// ADR-904: per-rule hit counts. Gateways flush counts into hourly buckets;
+// ADR-960: per-rule hit counts. Gateways flush counts into hourly buckets;
 // this handler totals them over a window for one app.
 
 import (

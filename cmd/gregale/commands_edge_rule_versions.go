@@ -9,7 +9,7 @@ import (
 )
 
 // cmdEdgeRulesHistory lists an app's recorded edge-rule set versions
-// (ADR-905), newest first. With --version it shows that version's rules.
+// (ADR-961), newest first. With --version it shows that version's rules.
 func cmdEdgeRulesHistory(args []string) int {
 	fs := newFlagSet("edge-rules history", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")

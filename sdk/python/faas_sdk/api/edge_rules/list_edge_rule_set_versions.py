@@ -78,7 +78,7 @@ def sync_detailed(
     """List recorded versions of an app's edge-rule set, newest first.
 
      Every committed change to an app's edge rules records the whole rule
-    set as a new version (ADR-905). Up to the 50 newest versions are
+    set as a new version (ADR-961). Up to the 50 newest versions are
     returned, without rule bodies; the newest 100 are retained.
 
     Args:
@@ -111,7 +111,7 @@ def sync(
     """List recorded versions of an app's edge-rule set, newest first.
 
      Every committed change to an app's edge rules records the whole rule
-    set as a new version (ADR-905). Up to the 50 newest versions are
+    set as a new version (ADR-961). Up to the 50 newest versions are
     returned, without rule bodies; the newest 100 are retained.
 
     Args:
@@ -139,7 +139,7 @@ async def asyncio_detailed(
     """List recorded versions of an app's edge-rule set, newest first.
 
      Every committed change to an app's edge rules records the whole rule
-    set as a new version (ADR-905). Up to the 50 newest versions are
+    set as a new version (ADR-961). Up to the 50 newest versions are
     returned, without rule bodies; the newest 100 are retained.
 
     Args:
@@ -170,7 +170,7 @@ async def asyncio(
     """List recorded versions of an app's edge-rule set, newest first.
 
      Every committed change to an app's edge rules records the whole rule
-    set as a new version (ADR-905). Up to the 50 newest versions are
+    set as a new version (ADR-961). Up to the 50 newest versions are
     returned, without rule bodies; the newest 100 are retained.
 
     Args:

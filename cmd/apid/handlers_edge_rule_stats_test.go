@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-904 over HTTP: mode defaults to enforce, can be set to log and back,
+// ADR-960 over HTTP: mode defaults to enforce, can be set to log and back,
 // rejects unknown values, and per-rule counts are read back by window.
 func TestEdgeRuleModeAndStats(t *testing.T) {
 	e := setup(t, api.PlanHobby)

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// edgeRuleListResolver is the ADR-907 read the host loader needs.
+// edgeRuleListResolver is the ADR-963 read the host loader needs.
 type edgeRuleListResolver interface {
 	EdgeRuleListsByName(ctx context.Context, accountID string, names []string) ([]state.EdgeRuleList, error)
 }

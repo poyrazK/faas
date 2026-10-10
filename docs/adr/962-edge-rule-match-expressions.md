@@ -1,8 +1,8 @@
-# ADR-906: Edge-rule match expressions
+# ADR-962: Edge-rule match expressions
 
 - **Status:** accepted
 - **Date:** 2026-10-09
-- **Related:** ADR-091 (edge rules), ADR-905 (rule-set versions), ADR-104
+- **Related:** ADR-091 (edge rules), ADR-961 (rule-set versions), ADR-104
   (throttle dimensions)
 
 ## Context
@@ -55,7 +55,7 @@ header for EU visitors" without a new kind.
    `pkg/api`. Evaluation is a pure function over a request snapshot
    (method, path, host, headers, cookies, query, client IP, country). The
    gateway and the trace simulator both call it, so they cannot disagree,
-   which is the same reason ADR-905's trace work moved host and path
+   which is the same reason ADR-961's trace work moved host and path
    matching to `pkg/api`.
 
 5. **Unavailable values.** `client_ip` is the single trusted forwarded hop;
@@ -69,7 +69,7 @@ header for EU visitors" without a new kind.
 6. The path the condition sees is the same path the rule's `match_path`
    sees (after any rewrite that runs before the rule's phase).
 
-7. Versioning: `match_expr` is part of the ADR-905 rule-set snapshot and is
+7. Versioning: `match_expr` is part of the ADR-961 rule-set snapshot and is
    restored by rollback.
 
 ## Consequences

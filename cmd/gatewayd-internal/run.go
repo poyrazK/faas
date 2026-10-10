@@ -173,7 +173,7 @@ var geoipDBPath = envOrGateway("FAAS_GEOIP_DB_PATH", "/var/lib/faas/geoip/dbip-c
 var geoipAutoRefresh = envOrGateway("FAAS_GEOIP_AUTO_REFRESH", "0")
 
 // geoipASNDBPath is the DB-IP ASN Lite .mmdb file behind the asn match
-// field (ADR-910). A missing file leaves the field absent: conditions on
+// field (ADR-966). A missing file leaves the field absent: conditions on
 // asn then never match, the same posture as an unknown country.
 var geoipASNDBPath = envOrGateway("FAAS_GEOIP_ASN_DB_PATH", "/var/lib/faas/geoip/dbip-asn-lite.mmdb")
 
@@ -1177,7 +1177,7 @@ type runDeps struct {
 	// not auto-downloaded). Production wires a Watcher with a
 	// 168h (weekly) cadence if FAAS_GEOIP_AUTO_REFRESH=1.
 	geoWatcher *geoip.Watcher
-	// asnReader / asnWatcher back the asn match field (ADR-910).
+	// asnReader / asnWatcher back the asn match field (ADR-966).
 	asnReader  *geoip.Reader
 	asnWatcher *geoip.Watcher
 	// publicAuthCache (issue #477 / ADR-079) is the unsealed
@@ -2802,7 +2802,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.asnReader != nil {
 		handler.WithASNReader(deps.asnReader)
 	}
-	// ADR-904 — per-rule hit counts, flushed to Postgres once a minute. Only
+	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {

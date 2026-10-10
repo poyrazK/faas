@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// cmdEdgeRuleLists dispatches `gregale edge-rule-lists <sub>` (ADR-907):
+// cmdEdgeRuleLists dispatches `gregale edge-rule-lists <sub>` (ADR-963):
 // account-level named lists referenced from match conditions with
 // {"op":"in_list","list":"<name>"}.
 func cmdEdgeRuleLists(args []string) int {

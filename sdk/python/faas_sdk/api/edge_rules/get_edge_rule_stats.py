@@ -92,7 +92,7 @@ def sync_detailed(
 ) -> Response[EdgeRuleStatsResponse | Problem]:
     """Per-rule match counts for an app over a window.
 
-     ADR-904. Gateways count each rule's matches (matched for enforced
+     ADR-960. Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -129,7 +129,7 @@ def sync(
 ) -> EdgeRuleStatsResponse | Problem | None:
     """Per-rule match counts for an app over a window.
 
-     ADR-904. Gateways count each rule's matches (matched for enforced
+     ADR-960. Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -161,7 +161,7 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleStatsResponse | Problem]:
     """Per-rule match counts for an app over a window.
 
-     ADR-904. Gateways count each rule's matches (matched for enforced
+     ADR-960. Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -196,7 +196,7 @@ async def asyncio(
 ) -> EdgeRuleStatsResponse | Problem | None:
     """Per-rule match counts for an app over a window.
 
-     ADR-904. Gateways count each rule's matches (matched for enforced
+     ADR-960. Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.

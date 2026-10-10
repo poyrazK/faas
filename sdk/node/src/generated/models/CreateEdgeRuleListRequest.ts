@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Create an edge-rule list (ADR-907).
+ * Create an edge-rule list (ADR-963).
  */
 export type CreateEdgeRuleListRequest = {
   name: string;

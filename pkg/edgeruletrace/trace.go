@@ -50,7 +50,7 @@ type Input struct {
 	ClientIP    string
 	Country     string
 	// ASN is the simulated client autonomous system for asn conditions
-	// (ADR-910); 0 means unknown.
+	// (ADR-966); 0 means unknown.
 	ASN     uint32
 	Headers http.Header
 	Body    []byte
@@ -59,7 +59,7 @@ type Input struct {
 	// being guessed.
 	CorsPresets []api.CorsPresetResponse
 	// EdgeRuleLists supplies the account lists (with items) that rule
-	// conditions reference through in_list (ADR-907). A referenced list
+	// conditions reference through in_list (ADR-963). A referenced list
 	// missing here never matches, as on the gateway.
 	EdgeRuleLists []api.EdgeRuleListResponse
 	// AppCORSDefaultsLoaded distinguishes a known-disabled app setting from
@@ -617,7 +617,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			case !matched:
 				row.Status, row.Reason = "skipped", fmt.Sprintf("path %q does not match %q", input.Path, rule.MatchPath)
 			case rule.Mode == api.EdgeRuleModeLog:
-				// ADR-904: matched and counted, but never enforced and never
+				// ADR-960: matched and counted, but never enforced and never
 				// a candidate that shadows enforced rules of its kind.
 				row.Status, row.Reason = "logged", matchedSelectors(rule)+"; log mode: counted, not enforced"
 			default:
@@ -2480,7 +2480,7 @@ func RedactHeaderInputForDisplay(raw string) string {
 	return strings.Join(lines, "")
 }
 
-// traceConditionMatches evaluates a rule's ADR-906 match condition with the
+// traceConditionMatches evaluates a rule's ADR-962 match condition with the
 // gateway's evaluator. The simulated client IP and country stand in for the
 // trusted values the gateway would see; the trace takes no query string, so
 // query fields are absent. A condition that does not compile never matches,
@@ -2500,7 +2500,7 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 }
 
 // ReferencedEdgeRuleLists returns the distinct list names the rules'
-// conditions reference, so callers load only those (ADR-907).
+// conditions reference, so callers load only those (ADR-963).
 func ReferencedEdgeRuleLists(rules []api.EdgeRuleResponse) []string {
 	seen := map[string]struct{}{}
 	var out []string

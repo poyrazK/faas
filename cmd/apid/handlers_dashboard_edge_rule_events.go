@@ -1,6 +1,6 @@
 package main
 
-// ADR-904/908 on the dashboard edge-rules page: per-rule mode and 24 h hit
+// ADR-960/964 on the dashboard edge-rules page: per-rule mode and 24 h hit
 // counts, a mode switch for log-mode rollouts, and the security-events table.
 
 import (
@@ -92,7 +92,7 @@ func (s *server) loadDashboardEdgeRuleEvents(r *http.Request, log *slog.Logger, 
 }
 
 // dashboardSetEdgeRuleMode switches a rule between log and enforce mode
-// (ADR-904): the "start enforcing" step of a log-mode rollout.
+// (ADR-960): the "start enforcing" step of a log-mode rollout.
 func (s *server) dashboardSetEdgeRuleMode(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
@@ -125,7 +125,7 @@ func (s *server) dashboardSetEdgeRuleMode(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/edge-rules?action=mode_"+mode, http.StatusSeeOther)
 }
 
-// edgeRuleModeOrDefault renders a stored mode; empty predates ADR-904.
+// edgeRuleModeOrDefault renders a stored mode; empty predates ADR-960.
 func edgeRuleModeOrDefault(mode string) string {
 	if mode == "" {
 		return state.EdgeRuleModeEnforce

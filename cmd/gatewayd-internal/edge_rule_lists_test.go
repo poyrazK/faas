@@ -41,7 +41,7 @@ func listRule(id, account, list string) state.EdgeRule {
 		Match: &api.EdgeRuleMatchExpr{Field: "client_ip", Op: "in_list", List: list}}
 }
 
-// ADR-907: lists are resolved per account at host load, and a reference
+// ADR-963: lists are resolved per account at host load, and a reference
 // that cannot be resolved disables only the rule that makes it.
 func TestResolveEdgeRuleLists(t *testing.T) {
 	store := &fakeEdgeRuleListStore{lists: []state.EdgeRuleList{

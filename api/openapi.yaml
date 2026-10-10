@@ -25608,7 +25608,7 @@ paths:
       operationId: listEdgeRuleLists
       summary: List the account's reusable edge-rule lists.
       description: |
-        ADR-907. Items are omitted here; fetch one list for its items.
+        ADR-963. Items are omitted here; fetch one list for its items.
         referenced_by names the rules whose match conditions use the list.
       responses:
         '200':
@@ -25623,7 +25623,7 @@ paths:
       operationId: createEdgeRuleList
       summary: Create a reusable edge-rule list.
       description: |
-        ADR-907. Items are validated for the list kind and stored
+        ADR-963. Items are validated for the list kind and stored
         canonicalized, deduplicated and sorted. Lists per account and items
         per list are plan limits.
       requestBody:
@@ -25676,7 +25676,7 @@ paths:
       operationId: updateEdgeRuleList
       summary: Edit an edge-rule list.
       description: |
-        ADR-907. items replaces the list; add and remove edit it in place
+        ADR-963. items replaces the list; add and remove edit it in place
         (remove applies after add) and cannot be combined with items.
         Gateways pick up the change for every referencing rule within a few
         seconds; no rule-set version is recorded.
@@ -25849,7 +25849,7 @@ paths:
       summary: List recorded versions of an app's edge-rule set, newest first.
       description: |
         Every committed change to an app's edge rules records the whole rule
-        set as a new version (ADR-905). Up to the 50 newest versions are
+        set as a new version (ADR-961). Up to the 50 newest versions are
         returned, without rule bodies; the newest 100 are retained.
       responses:
         '200':
@@ -25896,7 +25896,7 @@ paths:
       operationId: listEdgeRuleEvents
       summary: Sampled requests each edge rule matched, newest first.
       description: |
-        ADR-908. Gateways keep the first 10 matches of each rule per minute
+        ADR-964. Gateways keep the first 10 matches of each rule per minute
         as full events (request ID, method, host, path without query string,
         trusted client IP, country, user agent); hit counts (stats) cover
         every match. Events are kept 7 days; how far back a plan can read is
@@ -25947,7 +25947,7 @@ paths:
       operationId: getEdgeRuleStats
       summary: Per-rule match counts for an app over a window.
       description: |
-        ADR-904. Gateways count each rule's matches (matched for enforced
+        ADR-960. Gateways count each rule's matches (matched for enforced
         rules, logged for log-mode rules), at most once per rule per request,
         and flush them into hourly buckets once a minute; buckets are kept
         for 14 days. Rules with no matches in the window are omitted.
@@ -36662,7 +36662,7 @@ components:
 
   headers:
     EdgeRuleSetETag:
-      description: The app's current edge-rule set version, for If-Match on later mutations (ADR-905).
+      description: The app's current edge-rule set version, for If-Match on later mutations (ADR-961).
       schema: { type: string }
     WWWAuthenticate:
       description: |
@@ -60523,12 +60523,12 @@ components:
 
     EdgeRuleMatchExpr:
       description: |
-        ADR-906 match condition, ANDed with the rule's fixed selectors. A node
+        ADR-962 match condition, ANDed with the rule's fixed selectors. A node
         is exactly one of all, any, not, or a field/op leaf. Fields: method,
-        path, host, client_ip, country, asn (ADR-910: the client IP's
+        path, host, client_ip, country, asn (ADR-966: the client IP's
         autonomous system, e.g. 13335 or AS13335), header:<name>,
         cookie:<name>, query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-        exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-907:
+        exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
         list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256
         bytes. An untrusted client IP, or its unknown country or ASN, is absent.
@@ -60553,7 +60553,7 @@ components:
         list: { type: string, description: Account list name for op in_list. }
 
     EdgeRuleListResponse:
-      description: A reusable account-level list (ADR-907).
+      description: A reusable account-level list (ADR-963).
       type: object
       required: [id, name, kind, item_count, referenced_by, created_at, updated_at]
       properties:
@@ -60574,7 +60574,7 @@ components:
         updated_at: { type: string, format: date-time }
 
     ListEdgeRuleListsResponse:
-      description: The account's edge-rule lists, without items (ADR-907).
+      description: The account's edge-rule lists, without items (ADR-963).
       type: object
       required: [lists]
       properties:
@@ -60583,7 +60583,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleListResponse' }
 
     CreateEdgeRuleListRequest:
-      description: Create an edge-rule list (ADR-907).
+      description: Create an edge-rule list (ADR-963).
       type: object
       required: [name, kind]
       properties:
@@ -60598,7 +60598,7 @@ components:
           items: { type: string, maxLength: 256 }
 
     UpdateEdgeRuleListRequest:
-      description: 'Edit an edge-rule list: replace items, or add and remove some (ADR-907).'
+      description: 'Edit an edge-rule list: replace items, or add and remove some (ADR-963).'
       type: object
       properties:
         description: { type: string, maxLength: 500 }
@@ -60614,7 +60614,7 @@ components:
           items: { type: string, maxLength: 256 }
 
     EdgeRuleEventsResponse:
-      description: A page of sampled edge-rule matches (ADR-908).
+      description: A page of sampled edge-rule matches (ADR-964).
       type: object
       required: [since, events]
       properties:
@@ -60625,7 +60625,7 @@ components:
         next_cursor: { type: string }
 
     EdgeRuleEventResponse:
-      description: One sampled request an edge rule matched (ADR-908).
+      description: One sampled request an edge rule matched (ADR-964).
       type: object
       required: [id, rule_id, outcome, occurred_at]
       properties:
@@ -60644,7 +60644,7 @@ components:
         user_agent: { type: string }
 
     EdgeRuleStatsResponse:
-      description: Per-rule match counts over a window (ADR-904).
+      description: Per-rule match counts over a window (ADR-960).
       type: object
       required: [window, since, rules]
       properties:
@@ -60655,7 +60655,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleHitStatsResponse' }
 
     EdgeRuleHitStatsResponse:
-      description: One rule's match counts over the window (ADR-904).
+      description: One rule's match counts over the window (ADR-960).
       type: object
       required: [rule_id, matched, logged]
       properties:
@@ -60664,7 +60664,7 @@ components:
         logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
 
     EdgeRuleSetVersionResponse:
-      description: One recorded state of an app's whole edge-rule set (ADR-905).
+      description: One recorded state of an app's whole edge-rule set (ADR-961).
       type: object
       required: [version, rule_count, rules_sha256, created_at, current]
       properties:
@@ -60679,7 +60679,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleResponse' }
 
     RollbackEdgeRulesRequest:
-      description: Restore an app's edge rules to a recorded rule-set version (ADR-905).
+      description: Restore an app's edge rules to a recorded rule-set version (ADR-961).
       type: object
       required: [version]
       properties:
@@ -61674,7 +61674,7 @@ components:
             gateway's trusted client IP. When `"ip"`, one bucket per
             trusted client IP (IPv6 clients keyed by their /64).
             When `"composite"`, one bucket per combination of
-            `key_fields` (ADR-909).
+            `key_fields` (ADR-965).
             Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
@@ -61716,7 +61716,7 @@ components:
           type: array
           maxItems: 4
           description: |
-            ADR-909. Required iff `key_by="composite"`: the request
+            ADR-965. Required iff `key_by="composite"`: the request
             fields combined into one bucket identity. Each is one of
             ip, country, api_key, consumer_id, jwt_subject, jwt_claim
             (with `jwt_claim_name`), method, path or `header:<name>`.
@@ -61728,7 +61728,7 @@ components:
           type: array
           maxItems: 16
           description: |
-            ADR-909. When set, requests are admitted while the bucket
+            ADR-965. When set, requests are admitted while the bucket
             has a token but only responses with one of these statuses
             charge it, e.g. [401, 403] to limit failed logins without
             limiting successful ones. Across gateways the admission

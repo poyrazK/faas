@@ -15,7 +15,7 @@ T = TypeVar("T", bound="EdgeRuleListResponse")
 
 @_attrs_define
 class EdgeRuleListResponse:
-    """A reusable account-level list (ADR-907)."""
+    """A reusable account-level list (ADR-963)."""
 
     id: str
     name: str

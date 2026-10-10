@@ -1,6 +1,6 @@
 package api
 
-// ADR-907: reusable edge-rule lists. Account-scoped named sets of IPs,
+// ADR-963: reusable edge-rule lists. Account-scoped named sets of IPs,
 // countries, hosts or strings that match conditions reference with the
 // in_list op. Items are validated and canonicalized here so apid, the
 // gateway and the trace simulator agree on what a list contains.
@@ -20,7 +20,7 @@ const (
 	EdgeRuleListKindCountry = "country"
 	EdgeRuleListKindHost    = "host"
 	EdgeRuleListKindString  = "string"
-	// EdgeRuleListKindASN holds autonomous system numbers (ADR-910).
+	// EdgeRuleListKindASN holds autonomous system numbers (ADR-966).
 	EdgeRuleListKindASN = "asn"
 )
 

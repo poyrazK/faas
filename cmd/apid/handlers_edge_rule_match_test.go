@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-906 over HTTP: a valid condition round-trips, an invalid one is
+// ADR-962 over HTTP: a valid condition round-trips, an invalid one is
 // rejected before anything is stored, and PATCH can replace or clear it.
 func TestEdgeRuleMatchConditionCreateUpdateClear(t *testing.T) {
 	e := setup(t, api.PlanHobby)

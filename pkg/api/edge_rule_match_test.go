@@ -68,7 +68,7 @@ func TestEdgeRuleMatchEvaluation(t *testing.T) {
 	}
 }
 
-// ADR-906 §5: a client IP or country the gateway does not trust is absent,
+// ADR-962 §5: a client IP or country the gateway does not trust is absent,
 // so it can satisfy only "missing" — never a cidr, eq or negated check.
 func TestEdgeRuleMatchUntrustedValuesAreAbsent(t *testing.T) {
 	in := sampleMatchInput()

@@ -9,7 +9,7 @@ import (
 )
 
 // openASNReader opens the DB-IP ASN database behind the asn match field
-// (ADR-910) and, with FAAS_GEOIP_AUTO_REFRESH=1, refreshes it on the same
+// (ADR-966) and, with FAAS_GEOIP_AUTO_REFRESH=1, refreshes it on the same
 // weekly cadence as the country database. Failure is logged and leaves
 // the field absent; it never blocks boot.
 func openASNReader(ctx context.Context, deps *runDeps, log *slog.Logger) {

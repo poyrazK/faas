@@ -1,6 +1,6 @@
 package geoip
 
-// ADR-910: autonomous-system lookups for edge-rule match conditions. The
+// ADR-966: autonomous-system lookups for edge-rule match conditions. The
 // DB-IP ASN Lite database is a separate MMDB file with the same licence,
 // cadence and swap/reload mechanics as the country database, so it is
 // opened as a second Reader and refreshed by a second Watcher.

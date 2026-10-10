@@ -1,20 +1,20 @@
-# ADR-908: Edge-rule security events
+# ADR-964: Edge-rule security events
 
 - **Status:** accepted
 - **Date:** 2026-10-09
-- **Related:** ADR-904 (log mode and hit counts), ADR-906 (match
-  expressions), ADR-907 (lists)
+- **Related:** ADR-960 (log mode and hit counts), ADR-962 (match
+  expressions), ADR-963 (lists)
 
 ## Context
 
-ADR-904 counts how many requests each rule matched. Tuning a rule, above
+ADR-960 counts how many requests each rule matched. Tuning a rule, above
 all a log-mode rule before enforcing it, needs to know *which* requests it
 matched: client, country, path, user agent. Cloudflare's security events
 view is the reference.
 
 ## Decision
 
-1. **Sampled events.** When the gateway counts a rule match (ADR-904, at
+1. **Sampled events.** When the gateway counts a rule match (ADR-960, at
    most once per rule per request) it also records a full event for the
    first 10 matches of that rule in each one-minute flush interval, with at
    most 2,000 events pending per gateway. Events are telemetry: a failed

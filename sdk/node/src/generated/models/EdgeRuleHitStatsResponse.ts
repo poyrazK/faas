@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One rule's match counts over the window (ADR-904).
+ * One rule's match counts over the window (ADR-960).
  */
 export type EdgeRuleHitStatsResponse = {
   rule_id: string;

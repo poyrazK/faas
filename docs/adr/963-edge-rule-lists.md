@@ -1,13 +1,13 @@
-# ADR-907: Reusable edge-rule lists
+# ADR-963: Reusable edge-rule lists
 
 - **Status:** accepted
 - **Date:** 2026-10-09
-- **Related:** ADR-906 (match expressions), ADR-905 (versions), ADR-904
+- **Related:** ADR-962 (match expressions), ADR-961 (versions), ADR-960
   (log mode), ADR-091 (edge rules)
 
 ## Context
 
-ADR-906 conditions put values inline: an office allowlist, a set of
+ADR-962 conditions put values inline: an office allowlist, a set of
 blocked countries or a partner host list is copied into every rule that
 needs it, and an edit means updating each copy. Cloudflare solves this with
 account-level lists referenced from rule expressions.
@@ -26,7 +26,7 @@ account-level lists referenced from rule expressions.
    on a field the list type fits: `client_ip` for `ip`, `country` for
    `country`, `host` for `host`, and `header:`/`cookie:`/`query:`/`path`/
    `method` for `string`. `not` composes as usual. A missing value never
-   matches (ADR-906 §5).
+   matches (ADR-962 §5).
 
 3. **Validation:** apid rejects a rule that references an unknown list or a
    list whose type does not fit the field. A list referenced by any rule
@@ -40,7 +40,7 @@ account-level lists referenced from rule expressions.
 5. **Propagation:** a list write touches `updated_at` on every rule that
    references it, in the same transaction. The existing `edge_rules` change
    log then drives scoped cache invalidation on every gateway through the
-   repair poller (2 s), while the ADR-905 snapshot, which excludes
+   repair poller (2 s), while the ADR-961 snapshot, which excludes
    `updated_at`, records no new rule-set version. List edits are not fenced
    (ADR-091 convergence): a list may touch many apps at once, and an
    allowlist/blocklist edit converging within seconds is the accepted

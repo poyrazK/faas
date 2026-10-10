@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// ADR-910: ASN lookups are fail-open like country lookups, and the ASN
+// ADR-966: ASN lookups are fail-open like country lookups, and the ASN
 // watcher downloads the ASN file, not the country one.
 func TestLookupASN_EmptyAndNil(t *testing.T) {
 	var nilReader *Reader

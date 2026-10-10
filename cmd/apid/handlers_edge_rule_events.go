@@ -1,6 +1,6 @@
 package main
 
-// ADR-908: sampled edge-rule security events, newest first, for one app.
+// ADR-964: sampled edge-rule security events, newest first, for one app.
 
 import (
 	"errors"

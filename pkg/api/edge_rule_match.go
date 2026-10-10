@@ -1,6 +1,6 @@
 package api
 
-// ADR-906: edge-rule match expressions. One structured condition language
+// ADR-962: edge-rule match expressions. One structured condition language
 // for every rule kind, validated, compiled and evaluated here so the gateway
 // and the trace simulator share a single implementation.
 
@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-// Match-expression bounds (ADR-906 §3).
+// Match-expression bounds (ADR-962 §3).
 const (
 	EdgeRuleMatchMaxDepth       = 4
 	EdgeRuleMatchMaxNodes       = 32
@@ -34,13 +34,13 @@ type EdgeRuleMatchExpr struct {
 	Op     string              `json:"op,omitempty"`
 	Value  string              `json:"value,omitempty"`
 	Values []string            `json:"values,omitempty"`
-	// List names an account list for the in_list op (ADR-907).
+	// List names an account list for the in_list op (ADR-963).
 	List string `json:"list,omitempty"`
 }
 
 // EdgeRuleMatchInput is the request snapshot a condition is evaluated
 // against. ClientIP / Country are empty when the gateway has no trusted
-// value; such a field is absent (ADR-906 §5).
+// value; such a field is absent (ADR-962 §5).
 type EdgeRuleMatchInput struct {
 	Method   string
 	Path     string
@@ -49,7 +49,7 @@ type EdgeRuleMatchInput struct {
 	Query    url.Values
 	ClientIP net.IP
 	Country  string
-	// ASN is the client IP's autonomous system (ADR-910); 0 is absent.
+	// ASN is the client IP's autonomous system (ADR-966); 0 is absent.
 	ASN uint32
 }
 
@@ -104,7 +104,7 @@ func CompileEdgeRuleMatch(expr *EdgeRuleMatchExpr) (*EdgeRuleMatchProgram, error
 }
 
 // CompileEdgeRuleMatchWithLists compiles expr, resolving in_list references
-// against lists (ADR-907). An unknown list, or one whose kind does not fit
+// against lists (ADR-963). An unknown list, or one whose kind does not fit
 // the field, is a compile error.
 func CompileEdgeRuleMatchWithLists(expr *EdgeRuleMatchExpr, lists EdgeRuleLists) (*EdgeRuleMatchProgram, error) {
 	if expr == nil {
@@ -304,7 +304,7 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 	return n, nil
 }
 
-// listLeaf compiles an ADR-907 in_list leaf.
+// listLeaf compiles an ADR-963 in_list leaf.
 func (c *matchCompiler) listLeaf(n matchNode, e EdgeRuleMatchExpr, at string) (matchNode, error) {
 	if e.Op != "in_list" {
 		return matchNode{}, fmt.Errorf("%s: list applies only to op in_list", at)

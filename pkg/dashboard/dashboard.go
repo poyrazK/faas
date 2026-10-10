@@ -973,11 +973,11 @@ type AppEdgeRulesData struct {
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
-	// Events is the ADR-908 security-events section.
+	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 }
 
-// EdgeRuleEventsPageData is the filterable security-events table (ADR-908).
+// EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
 // Filter values echo the request; NextURL continues the listing.
 type EdgeRuleEventsPageData struct {
 	Rule         string
@@ -1035,7 +1035,7 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
-	// ADR-904/908: name, mode and 24 h hit counts.
+	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
 	Matched24h int64

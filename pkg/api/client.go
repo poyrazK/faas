@@ -3299,7 +3299,7 @@ func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 }
 
 // GetEdgeRuleStats returns per-rule match counts over window (1h, 24h or 7d;
-// empty means 24h) (ADR-904).
+// empty means 24h) (ADR-960).
 func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
 	path := "/v1/apps/" + slug + "/edge-rules/stats"
 	if window != "" {
@@ -3310,7 +3310,7 @@ func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (Edg
 }
 
 // ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
-// first (ADR-908). Pass the response's NextCursor to continue.
+// first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
 	v := url.Values{}
 	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
@@ -3330,37 +3330,37 @@ func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRule
 }
 
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
-// items (ADR-907).
+// items (ADR-963).
 func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
 	var out ListEdgeRuleListsResponse
 	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
 }
 
-// GetEdgeRuleList returns one list with its items (ADR-907).
+// GetEdgeRuleList returns one list with its items (ADR-963).
 func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
 	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
 }
 
-// CreateEdgeRuleList creates a list (ADR-907).
+// CreateEdgeRuleList creates a list (ADR-963).
 func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
 	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
 }
 
-// UpdateEdgeRuleList edits a list (ADR-907).
+// UpdateEdgeRuleList edits a list (ADR-963).
 func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
 	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
 }
 
-// DeleteEdgeRuleList deletes an unreferenced list (ADR-907).
+// DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
 func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
 }
 
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
-// newest first, without rule bodies (ADR-905).
+// newest first, without rule bodies (ADR-961).
 func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
 	var out []EdgeRuleSetVersionResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)

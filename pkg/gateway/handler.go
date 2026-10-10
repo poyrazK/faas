@@ -1264,9 +1264,9 @@ type Handler struct {
 	// A matched policy fails closed when the reader is unavailable;
 	// the daemon itself can still boot without a DB-IP file.
 	geoReader CountryReader
-	// asnReader resolves the asn match field (ADR-910); nil = absent.
+	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
-	// edgeRuleHits counts per-rule matches (ADR-904); nil disables counting.
+	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
 	// swap the gateway.App when a `kind=route` rule fires.
@@ -1917,7 +1917,7 @@ func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 	return h
 }
 
-// WithEdgeRuleHitRecorder arms per-rule hit counting (ADR-904). nil disables it.
+// WithEdgeRuleHitRecorder arms per-rule hit counting (ADR-960). nil disables it.
 func (h *Handler) WithEdgeRuleHitRecorder(r EdgeRuleHitRecorder) *Handler {
 	h.edgeRuleHits = r
 	return h
@@ -4521,7 +4521,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	}
 	var allowed bool
 	if len(rule.CountStatuses) > 0 && hasResponseStatusHooks(r.Context()) {
-		// ADR-909: admit while the bucket has a token; charge it only when
+		// ADR-965: admit while the bucket has a token; charge it only when
 		// the response status is one the rule counts.
 		allowed = h.throttleHasToken(rule, dimensional, bucketKey, consumerID, cap)
 		if allowed {
@@ -5766,13 +5766,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
-	// ADR-906: the snapshot rule conditions read. The client IP is only the
+	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
-	// ADR-909: response-counted throttles charge once the status is known.
+	// ADR-965: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() {

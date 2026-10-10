@@ -1,8 +1,8 @@
--- filename: 20261009105907357_edge_rules_match_expr.sql
+-- filename: 20261010085840138_edge_rules_match_expr.sql
 --
--- ADR-906: an optional structured match condition on every edge rule. The
+-- ADR-962: an optional structured match condition on every edge rule. The
 -- application validates and bounds the expression; the database only pins
--- its outer shape. The ADR-905 rule-set snapshot gains the column so
+-- its outer shape. The ADR-961 rule-set snapshot gains the column so
 -- versions and rollback carry it.
 
 -- +goose Up

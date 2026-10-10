@@ -15,7 +15,7 @@ import (
 )
 
 // EdgeRuleSetVersionRetention is how many versions per app the store keeps
-// (ADR-905 §2). The Postgres trigger prunes to the same bound.
+// (ADR-961 §2). The Postgres trigger prunes to the same bound.
 const EdgeRuleSetVersionRetention = 100
 
 // EdgeRuleSetVersion is one recorded state of an app's whole edge-rule set.
@@ -41,7 +41,7 @@ type EdgeRuleSetRestore struct {
 // restored because it references a CORS preset that no longer exists.
 var ErrEdgeRuleSetVersionReference = errors.New("state: edge-rule set version references a deleted cors preset")
 
-// EdgeRuleSetVersionStore is the ADR-905 versioning capability. It is kept
+// EdgeRuleSetVersionStore is the ADR-961 versioning capability. It is kept
 // out of Store so small test stores need not grow; apid type-asserts it.
 type EdgeRuleSetVersionStore interface {
 	// LatestEdgeRuleSetVersion returns the app's newest version, 0 if none.
@@ -97,7 +97,7 @@ func (r edgeRuleSnapshotRow) rule() EdgeRule {
 		Match: r.MatchExpr, Mode: r.Mode,
 	}
 	if out.Mode == "" {
-		out.Mode = EdgeRuleModeEnforce // versions recorded before ADR-904
+		out.Mode = EdgeRuleModeEnforce // versions recorded before ADR-960
 	}
 	if r.ManifestKey != nil {
 		out.ManifestKey = *r.ManifestKey

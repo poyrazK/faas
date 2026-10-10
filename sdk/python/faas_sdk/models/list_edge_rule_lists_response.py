@@ -15,7 +15,7 @@ T = TypeVar("T", bound="ListEdgeRuleListsResponse")
 
 @_attrs_define
 class ListEdgeRuleListsResponse:
-    """The account's edge-rule lists, without items (ADR-907)."""
+    """The account's edge-rule lists, without items (ADR-963)."""
 
     lists: list[EdgeRuleListResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

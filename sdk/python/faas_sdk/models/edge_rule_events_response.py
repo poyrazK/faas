@@ -18,7 +18,7 @@ T = TypeVar("T", bound="EdgeRuleEventsResponse")
 
 @_attrs_define
 class EdgeRuleEventsResponse:
-    """A page of sampled edge-rule matches (ADR-908)."""
+    """A page of sampled edge-rule matches (ADR-964)."""
 
     since: datetime.datetime
     """Effective window start after the plan clamp."""

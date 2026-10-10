@@ -1729,14 +1729,14 @@ type Limits struct {
 	// request cost is O(rules_per_app) — bounded by this cap).
 	EdgeRulesPerApp int
 	// EdgeRuleListsPerAccount caps how many reusable edge-rule lists
-	// (ADR-907) an account may hold. Zero disables lists on the plan.
+	// (ADR-963) an account may hold. Zero disables lists on the plan.
 	EdgeRuleListsPerAccount int
 	// EdgeRuleListMaxItems caps the items in one edge-rule list. The
 	// gateway scans IP lists linearly per matched rule, so this bounds
 	// the per-request cost of an in_list condition.
 	EdgeRuleListMaxItems int
 	// EdgeRuleEventsWindowHours is how far back the plan can read sampled
-	// edge-rule security events (ADR-908). Events are stored 7 days.
+	// edge-rule security events (ADR-964). Events are stored 7 days.
 	EdgeRuleEventsWindowHours int
 	// EdgeRulesJWTAllowed gates kind='jwt' rules on the plan.
 	// Hobby/Pro/Scale opt in; Free stays off (the apid handler

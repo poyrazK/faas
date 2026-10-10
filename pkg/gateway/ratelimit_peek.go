@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-909: response-counted throttles check a bucket before forwarding and
+// ADR-965: response-counted throttles check a bucket before forwarding and
 // charge it only after the response status is known. These peeks never
 // create, refill or consume a bucket; the charge goes through the ordinary
 // Allow* paths so the local and central accounting stay one code path.

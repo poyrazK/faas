@@ -7941,7 +7941,7 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
-	// ADR-909: composite keys and response-status counting.
+	// ADR-965: composite keys and response-status counting.
 	KeyFields     []string `json:"key_fields,omitempty"`
 	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
@@ -8119,20 +8119,20 @@ type EdgeRule struct {
 	// ExpiresAt, when set, is the instant after which the gateway stops
 	// applying the rule. Expired rows are kept for the listing.
 	ExpiresAt *time.Time
-	// Match (ADR-906) is the optional structured condition ANDed with the
+	// Match (ADR-962) is the optional structured condition ANDed with the
 	// fixed selectors; nil applies the rule to every selected request.
 	Match *api.EdgeRuleMatchExpr
-	// MatchLists holds the account lists Match references (ADR-907),
+	// MatchLists holds the account lists Match references (ADR-963),
 	// resolved by gatewayd when it loads a host. Never persisted.
 	MatchLists api.EdgeRuleLists
-	// Mode (ADR-904) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// Mode (ADR-960) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
 	// rule is matched and counted but never acts.
 	Mode      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// Edge-rule modes (ADR-904).
+// Edge-rule modes (ADR-960).
 const (
 	EdgeRuleModeEnforce = "enforce"
 	EdgeRuleModeLog     = "log"

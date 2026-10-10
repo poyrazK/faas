@@ -1,8 +1,8 @@
-# ADR-910: ASN matching for edge rules
+# ADR-966: ASN matching for edge rules
 
 - **Status:** accepted
 - **Date:** 2026-10-09
-- **Related:** ADR-906 (match expressions), ADR-907 (lists), ADR-143
+- **Related:** ADR-962 (match expressions), ADR-963 (lists), ADR-143
   (GeoIP database), ADR-091 D21 (geo rules)
 
 ## Context
@@ -30,12 +30,12 @@ client's autonomous system number as a rule field.
    `missing`, `in_list`.
 
 3. **Absent, not guessed.** With no trusted client IP, no database, a lookup
-   error or an address outside the dataset, `asn` is absent (ADR-906 §5):
+   error or an address outside the dataset, `asn` is absent (ADR-962 §5):
    only `missing` matches. An allow-by-ASN rule therefore fails closed for
    an unknown network and a block-by-ASN rule fails open, the same posture
    as `country`.
 
-4. **Lists.** ADR-907 lists gain the `asn` kind, usable only with the `asn`
+4. **Lists.** ADR-963 lists gain the `asn` kind, usable only with the `asn`
    field (migration widens the `kind` CHECK).
 
 5. **Trace.** `gregale edge-rules trace --asn AS13335` simulates the field.
@@ -45,4 +45,4 @@ client's autonomous system number as a rule field.
 - "Block hosting networks on /login" is one rule plus one `asn` list.
 - The gateway holds a second ~10 MB memory-mapped file.
 - DB-IP's ASN Lite is coarser than commercial data; misattributed ranges
-  are possible, which is why log mode (ADR-904) should precede enforcement.
+  are possible, which is why log mode (ADR-960) should precede enforcement.

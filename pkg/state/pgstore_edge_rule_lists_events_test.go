@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-907 against Postgres: quota and unique name, references found from
+// ADR-963 against Postgres: quota and unique name, references found from
 // match_expr, an update touching referencing rules (change log, no new
 // rule-set version), and the delete guard.
 func TestPgStore_EdgeRuleLists(t *testing.T) {
@@ -85,7 +85,7 @@ func TestPgStore_EdgeRuleLists(t *testing.T) {
 	}
 }
 
-// ADR-908 against Postgres: batch insert (inet and empty client IPs),
+// ADR-964 against Postgres: batch insert (inet and empty client IPs),
 // newest-first paging by (occurred_at, id), filters, and pruning.
 func TestPgStore_EdgeRuleEvents(t *testing.T) {
 	s, ctx := pgStore(t)
@@ -130,7 +130,7 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 	}
 }
 
-// ADR-904 against Postgres: hits aggregate into hourly buckets and read
+// ADR-960 against Postgres: hits aggregate into hourly buckets and read
 // back per rule.
 func TestPgStore_EdgeRuleHits(t *testing.T) {
 	s, ctx := pgStore(t)

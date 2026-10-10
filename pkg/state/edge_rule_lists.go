@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-907 reusable edge-rule lists.
+// ADR-963 reusable edge-rule lists.
 
 // EdgeRuleList is one account-scoped list. Items are stored canonicalized
 // (api.NormalizeEdgeRuleListItems) by apid.
@@ -64,7 +64,7 @@ func (e *EdgeRuleListInUseError) Error() string {
 	return fmt.Sprintf("state: edge rule list %q is referenced by %d rule(s)", e.Name, len(e.Refs))
 }
 
-// EdgeRuleListStore is the ADR-907 capability; apid and gatewayd
+// EdgeRuleListStore is the ADR-963 capability; apid and gatewayd
 // type-assert it.
 type EdgeRuleListStore interface {
 	// ListEdgeRuleLists returns the account's lists, by name.
@@ -143,7 +143,7 @@ type pgQuerier interface {
 }
 
 // edgeRuleListRefsPG walks every conditioned rule in the account. Conditions
-// are bounded (ADR-906) and per-account rule counts are plan-capped, so the
+// are bounded (ADR-962) and per-account rule counts are plan-capped, so the
 // walk is cheaper than a jsonpath scan and shares the reference rule with
 // MemStore.
 func edgeRuleListRefsPG(ctx context.Context, q pgQuerier, accountID string) (map[string][]EdgeRuleListRef, error) {
@@ -244,7 +244,7 @@ func (s *PgStore) UpdateEdgeRuleList(ctx context.Context, accountID, name string
 		}
 		// The change-log trigger turns this touch into a scoped gateway
 		// invalidation; the rule-set snapshot excludes updated_at, so no
-		// rule-set version is recorded (ADR-907 §5).
+		// rule-set version is recorded (ADR-963 §5).
 		_, err = tx.Exec(ctx, `update edge_rules set updated_at = now() where id = any($1::uuid[])`, ids)
 		return err
 	})
@@ -282,13 +282,6 @@ func (s *PgStore) DeleteEdgeRuleList(ctx context.Context, accountID, name string
 		return err
 	}
 	return fmt.Errorf("state: delete edge rule list: %w", err)
-}
-
-func nonNilStrings(v []string) []string {
-	if v == nil {
-		return []string{}
-	}
-	return v
 }
 
 // --- MemStore ---

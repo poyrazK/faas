@@ -18,7 +18,7 @@ T = TypeVar("T", bound="EdgeRuleStatsResponse")
 
 @_attrs_define
 class EdgeRuleStatsResponse:
-    """Per-rule match counts over a window (ADR-904)."""
+    """Per-rule match counts over a window (ADR-960)."""
 
     window: EdgeRuleStatsResponseWindow
     since: datetime.datetime

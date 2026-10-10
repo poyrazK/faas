@@ -1,6 +1,6 @@
--- filename: 20261009130114693_edge_rule_lists.sql
+-- filename: 20261010085841529_edge_rule_lists.sql
 --
--- ADR-907: reusable edge-rule lists. Account-scoped, named, typed sets of
+-- ADR-963: reusable edge-rule lists. Account-scoped, named, typed sets of
 -- IPs/CIDRs, countries, hosts or strings that match conditions reference
 -- with {"op": "in_list", "list": "<name>"}. apid writes items already
 -- validated and canonicalized; a list write touches the referencing rules'

@@ -1,7 +1,7 @@
--- filename: 20261009142149196_edge_rule_events.sql
+-- filename: 20261010085842200_edge_rule_events.sql
 --
--- ADR-908: sampled edge-rule security events. Gateways keep up to 10 full
--- events per rule per minute and write them in one batch with the ADR-904
+-- ADR-964: sampled edge-rule security events. Gateways keep up to 10 full
+-- events per rule per minute and write them in one batch with the ADR-960
 -- hit counts; rows are pruned after 7 days. No query strings, bodies or
 -- headers other than the user agent are stored.
 

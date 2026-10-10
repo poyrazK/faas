@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ADR-908: events read newest first, filter by rule and outcome, page by
+// ADR-964: events read newest first, filter by rule and outcome, page by
 // (occurred_at, id), and prune by age.
 func TestMemStoreEdgeRuleEvents(t *testing.T) {
 	ctx := context.Background()

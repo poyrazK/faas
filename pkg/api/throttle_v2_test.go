@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 909 — composite keys and count_statuses validation.
+// adr: 965 — composite keys and count_statuses validation.
 func TestThrottleActionCompositeAndCountStatuses(t *testing.T) {
 	ctx := ThrottleValidationContext{PlanMaxRPS: 100, PlanMaxBurst: 200, PlanMaxKeysPerRule: 1000}
 	base := func() EdgeRuleThrottleAction {

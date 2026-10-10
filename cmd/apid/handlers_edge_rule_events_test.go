@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-908 over HTTP: events read newest first with the rule's name, filter by
+// ADR-964 over HTTP: events read newest first with the rule's name, filter by
 // rule and outcome, page by cursor, and never reach past the plan window.
 func TestEdgeRuleEventsAPI(t *testing.T) {
 	e := setup(t, api.PlanFree)

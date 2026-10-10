@@ -18,7 +18,7 @@ T = TypeVar("T", bound="EdgeRuleEventResponse")
 
 @_attrs_define
 class EdgeRuleEventResponse:
-    """One sampled request an edge rule matched (ADR-908)."""
+    """One sampled request an edge rule matched (ADR-964)."""
 
     id: str
     rule_id: str

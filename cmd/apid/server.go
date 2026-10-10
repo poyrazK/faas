@@ -2621,12 +2621,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRule))))
 	mux.HandleFunc("PATCH /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateEdgeRule))))
 	mux.HandleFunc("DELETE /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteEdgeRule))))
-	// ADR-905 §2: rule-set versions and rollback.
+	// ADR-961 §2: rule-set versions and rollback.
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleStats))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleEvents))))
-	// ADR-907 reusable edge-rule lists (account scope).
+	// ADR-963 reusable edge-rule lists (account scope).
 	mux.HandleFunc("GET /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleLists))))
 	mux.HandleFunc("POST /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createEdgeRuleList)))))
 	mux.HandleFunc("GET /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleList))))
@@ -3808,7 +3808,7 @@ func (s *server) handler() http.Handler {
 	// named CSRF envelope as the other edge-rule forms.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/trace", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTraceEdgeRules))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleEdgeRule))))
-	// ADR-904: switch a rule between log and enforce mode.
+	// ADR-960: switch a rule between log and enforce mode.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeRuleMode))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))

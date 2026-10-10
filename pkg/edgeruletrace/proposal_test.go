@@ -97,7 +97,7 @@ func TestApplyProposalRejectsInvalidDrafts(t *testing.T) {
 	}
 }
 
-// adr: 906 — the simulator evaluates match conditions with the gateway's
+// adr: 962 — the simulator evaluates match conditions with the gateway's
 // evaluator: a cookie-gated maintenance rule applies only to beta testers,
 // and a proposal can add such a rule and show who it affects.
 func TestSimulateEvaluatesMatchConditions(t *testing.T) {
@@ -127,7 +127,7 @@ func TestSimulateEvaluatesMatchConditions(t *testing.T) {
 	}
 }
 
-// adr: 907 — in_list conditions evaluate against the lists the caller
+// adr: 963 — in_list conditions evaluate against the lists the caller
 // supplies; a list that was not supplied never matches, as on the gateway.
 func TestSimulateEvaluatesListConditions(t *testing.T) {
 	rules := append(proposalTestRules(), api.EdgeRuleResponse{
@@ -161,7 +161,7 @@ func TestSimulateEvaluatesListConditions(t *testing.T) {
 	}
 }
 
-// adr: 904 — a log-mode rule is reported as logged and leaves the outcome to
+// adr: 960 — a log-mode rule is reported as logged and leaves the outcome to
 // the enforced rules, exactly as the gateway counts it without acting.
 func TestSimulateLogModeRuleDoesNotChangeOutcome(t *testing.T) {
 	rules := append(proposalTestRules(), api.EdgeRuleResponse{

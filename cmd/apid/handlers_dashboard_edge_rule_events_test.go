@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-904/908 on the dashboard: rules show their name, mode and 24 h hit
+// ADR-960/964 on the dashboard: rules show their name, mode and 24 h hit
 // counts; the security-events table renders sampled events and honors its
 // filters; "Start enforcing" switches a log-mode rule to enforce.
 func TestDashboardEdgeRuleEventsAndModeSwitch(t *testing.T) {

@@ -87,12 +87,12 @@ def sync_detailed(
 ) -> Response[EdgeRuleListResponse | Problem]:
     """Create a reusable edge-rule list.
 
-     ADR-907. Items are validated for the list kind and stored
+     ADR-963. Items are validated for the list kind and stored
     canonicalized, deduplicated and sorted. Lists per account and items
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-963).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,12 +120,12 @@ def sync(
 ) -> EdgeRuleListResponse | Problem | None:
     """Create a reusable edge-rule list.
 
-     ADR-907. Items are validated for the list kind and stored
+     ADR-963. Items are validated for the list kind and stored
     canonicalized, deduplicated and sorted. Lists per account and items
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-963).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,12 +148,12 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleListResponse | Problem]:
     """Create a reusable edge-rule list.
 
-     ADR-907. Items are validated for the list kind and stored
+     ADR-963. Items are validated for the list kind and stored
     canonicalized, deduplicated and sorted. Lists per account and items
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-963).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,12 +179,12 @@ async def asyncio(
 ) -> EdgeRuleListResponse | Problem | None:
     """Create a reusable edge-rule list.
 
-     ADR-907. Items are validated for the list kind and stored
+     ADR-963. Items are validated for the list kind and stored
     canonicalized, deduplicated and sorted. Lists per account and items
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-963).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

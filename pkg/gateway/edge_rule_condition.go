@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-906: per-rule match conditions. Every compiled rule kind embeds an
+// ADR-962: per-rule match conditions. Every compiled rule kind embeds an
 // EdgeRuleCondition; ApplicableEdgeRules drops rules whose condition does not
 // hold for the request before the kind's first-match pick runs, so a
 // condition behaves exactly like one more selector on every kind.
@@ -20,7 +20,7 @@ import (
 // applies the rule to every request its selectors pick.
 type EdgeRuleCondition struct {
 	Match *api.EdgeRuleMatchProgram
-	// RuleID / AppID identify the rule for ADR-904 hit counts; LogOnly marks
+	// RuleID / AppID identify the rule for ADR-960 hit counts; LogOnly marks
 	// a log-mode rule, which is matched and counted but never acts.
 	RuleID  string
 	AppID   string
@@ -37,19 +37,19 @@ type edgeRuleConditional interface {
 	edgeRuleIdentity() (string, string)
 }
 
-// EdgeRuleHitRecorder counts rule matches (ADR-904). Implementations must be
+// EdgeRuleHitRecorder counts rule matches (ADR-960). Implementations must be
 // cheap and non-blocking: they run on the request path.
 type EdgeRuleHitRecorder interface {
 	RecordEdgeRuleHit(ruleID, appID string, logged bool)
 }
 
-// Bounds on a sampled event's free-text fields (ADR-908).
+// Bounds on a sampled event's free-text fields (ADR-964).
 const (
 	EdgeRuleEventMaxPathBytes      = 1024
 	EdgeRuleEventMaxUserAgentBytes = 256
 )
 
-// EdgeRuleEvent is one sampled rule match (ADR-908). Path carries no query
+// EdgeRuleEvent is one sampled rule match (ADR-964). Path carries no query
 // string; ClientIP and Country are empty when untrusted or unknown.
 type EdgeRuleEvent struct {
 	RuleID    string
@@ -66,7 +66,7 @@ type EdgeRuleEvent struct {
 }
 
 // EdgeRuleEventSampler is optionally implemented by an EdgeRuleHitRecorder
-// to keep sampled events (ADR-908). SampleEdgeRuleEvent is asked after each
+// to keep sampled events (ADR-964). SampleEdgeRuleEvent is asked after each
 // counted hit and must be cheap; the event is built only when it says yes.
 type EdgeRuleEventSampler interface {
 	SampleEdgeRuleEvent(ruleID string) bool
@@ -90,12 +90,12 @@ type EdgeRuleMatchContext struct {
 	lookup      func(net.IP) string
 	country     string
 
-	// ADR-910: autonomous system, resolved at most once on demand.
+	// ADR-966: autonomous system, resolved at most once on demand.
 	asnOnce   sync.Once
 	asnLookup func(net.IP) uint32
 	asn       uint32
 
-	// ADR-904: hit recording, deduplicated per request (a kind can be looked
+	// ADR-960: hit recording, deduplicated per request (a kind can be looked
 	// up more than once while serving one request).
 	hits     EdgeRuleHitRecorder
 	seenMu   sync.Mutex
@@ -162,7 +162,7 @@ func truncateBytes(s string, n int) string {
 
 // ObserveEdgeRuleMatch counts the enforced rule a kind lookup selected and
 // the first log-mode rule of that kind that matched, then returns the
-// enforced one. Log-mode rules never act (ADR-904).
+// enforced one. Log-mode rules never act (ADR-960).
 func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 	m := edgeRuleMatchContextFrom(ctx)
 	if m == nil || m.hits == nil {
@@ -180,7 +180,7 @@ func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 }
 
 // SetASNLookup installs the ASN resolver for the trusted client IP
-// (ADR-910). Call before the context is attached to a request; nil leaves
+// (ADR-966). Call before the context is attached to a request; nil leaves
 // the asn field absent.
 func (m *EdgeRuleMatchContext) SetASNLookup(lookup func(net.IP) uint32) {
 	m.asnLookup = lookup
@@ -219,7 +219,7 @@ func (h *Handler) edgeRuleCountryLookup() func(net.IP) string {
 	}
 }
 
-// ASNReader resolves an IP's autonomous system (ADR-910). pkg/geoip.Reader
+// ASNReader resolves an IP's autonomous system (ADR-966). pkg/geoip.Reader
 // opened on the DB-IP ASN database implements it.
 type ASNReader interface {
 	LookupASN(ip net.IP) (asn uint32, org string, ok bool, err error)
@@ -256,7 +256,7 @@ func edgeRuleMatchContextFrom(ctx context.Context) *EdgeRuleMatchContext {
 	return m
 }
 
-// ApplicableEdgeRules is OwnedEdgeRules plus ADR-906 conditions: it keeps the
+// ApplicableEdgeRules is OwnedEdgeRules plus ADR-962 conditions: it keeps the
 // owner's rules whose condition holds for this request. requestPath and
 // method are the values the kind's selectors see. When no rule carries a
 // condition the owned slice is returned without building a snapshot. With no
@@ -266,7 +266,7 @@ func ApplicableEdgeRules[T any](ctx context.Context, rules []T, account func(*T)
 	return filterEdgeRules(ctx, rules, account, requestPath, method, false)
 }
 
-// LoggedEdgeRules is ApplicableEdgeRules for log-mode rules only (ADR-904):
+// LoggedEdgeRules is ApplicableEdgeRules for log-mode rules only (ADR-960):
 // the owner's log-mode rules whose condition holds. It returns nil at once
 // when the slice has no log-mode rule.
 func LoggedEdgeRules[T any](ctx context.Context, rules []T, account func(*T) string, requestPath, method string) []T {

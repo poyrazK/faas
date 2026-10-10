@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeRuleHitStatsResponse } from './EdgeRuleHitStatsResponse.js';
 /**
- * Per-rule match counts over a window (ADR-904).
+ * Per-rule match counts over a window (ADR-960).
  */
 export type EdgeRuleStatsResponse = {
   window: '1h' | '24h' | '7d';

@@ -1,4 +1,4 @@
-// adr: 904
+// adr: 960
 package gateway
 
 import (
@@ -25,7 +25,7 @@ func (f *fakeHitRecorder) RecordEdgeRuleHit(ruleID, appID string, logged bool) {
 	f.hits = append(f.hits, recordedHit{ruleID, appID, logged})
 }
 
-// adr: 904 — a log-mode rule never acts or shadows: the kind's effective
+// adr: 960 — a log-mode rule never acts or shadows: the kind's effective
 // rule is chosen from enforced rules only, while the first matching log-mode
 // rule is counted. Each rule is counted at most once per request even when
 // the kind is looked up again.

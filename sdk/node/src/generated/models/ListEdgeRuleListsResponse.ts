@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeRuleListResponse } from './EdgeRuleListResponse.js';
 /**
- * The account's edge-rule lists, without items (ADR-907).
+ * The account's edge-rule lists, without items (ADR-963).
  */
 export type ListEdgeRuleListsResponse = {
   lists: Array<EdgeRuleListResponse>;

@@ -61,7 +61,7 @@ def sync_detailed(
 ) -> Response[ListEdgeRuleListsResponse | Problem]:
     """List the account's reusable edge-rule lists.
 
-     ADR-907. Items are omitted here; fetch one list for its items.
+     ADR-963. Items are omitted here; fetch one list for its items.
     referenced_by names the rules whose match conditions use the list.
 
     Raises:
@@ -87,7 +87,7 @@ def sync(
 ) -> ListEdgeRuleListsResponse | Problem | None:
     """List the account's reusable edge-rule lists.
 
-     ADR-907. Items are omitted here; fetch one list for its items.
+     ADR-963. Items are omitted here; fetch one list for its items.
     referenced_by names the rules whose match conditions use the list.
 
     Raises:
@@ -109,7 +109,7 @@ async def asyncio_detailed(
 ) -> Response[ListEdgeRuleListsResponse | Problem]:
     """List the account's reusable edge-rule lists.
 
-     ADR-907. Items are omitted here; fetch one list for its items.
+     ADR-963. Items are omitted here; fetch one list for its items.
     referenced_by names the rules whose match conditions use the list.
 
     Raises:
@@ -133,7 +133,7 @@ async def asyncio(
 ) -> ListEdgeRuleListsResponse | Problem | None:
     """List the account's reusable edge-rule lists.
 
-     ADR-907. Items are omitted here; fetch one list for its items.
+     ADR-963. Items are omitted here; fetch one list for its items.
     referenced_by names the rules whose match conditions use the list.
 
     Raises:

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// cmdEdgeRulesEvents prints sampled requests edge rules matched (ADR-908),
+// cmdEdgeRulesEvents prints sampled requests edge rules matched (ADR-964),
 // newest first. --rule / --outcome filter; --cursor continues a listing.
 func cmdEdgeRulesEvents(args []string) int {
 	fs := newFlagSet("edge-rules events", flag.ContinueOnError)

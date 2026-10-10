@@ -654,10 +654,10 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
-	// ADR-905: an edge-rule mutation's If-Match named a rule-set version
+	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
-	// ADR-907 reusable edge-rule lists.
+	// ADR-963 reusable edge-rule lists.
 	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
 	CodeEdgeRuleListExists              = "edge_rule_list_exists"
 	CodeEdgeRuleListInUse               = "edge_rule_list_in_use"
@@ -5792,7 +5792,7 @@ func ErrValidation(detail string) *Problem {
 		"Validation failed", detail)
 }
 
-// ErrEdgeRulesVersionMismatch (ADR-905) is the 412 for an edge-rule mutation
+// ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
 // whose If-Match no longer names the app's latest rule-set version.
 func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
 	return NewProblem(http.StatusPreconditionFailed, CodeEdgeRulesVersionMismatch,
@@ -5801,7 +5801,7 @@ func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
 }
 
 // ErrEdgeRuleListNotFound is the 404 for an unknown list name in the
-// caller's account (ADR-907).
+// caller's account (ADR-963).
 func ErrEdgeRuleListNotFound(name string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeEdgeRuleListNotFound,
 		"Edge rule list not found", fmt.Sprintf("no edge rule list named %q in this account", name))

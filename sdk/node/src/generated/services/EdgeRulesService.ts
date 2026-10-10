@@ -81,7 +81,7 @@ export class EdgeRulesService {
   }
   /**
    * List the account's reusable edge-rule lists.
-   * ADR-907. Items are omitted here; fetch one list for its items.
+   * ADR-963. Items are omitted here; fetch one list for its items.
    * referenced_by names the rules whose match conditions use the list.
    *
    * @returns ListEdgeRuleListsResponse The account's lists, by name.
@@ -103,7 +103,7 @@ export class EdgeRulesService {
   }
   /**
    * Create a reusable edge-rule list.
-   * ADR-907. Items are validated for the list kind and stored
+   * ADR-963. Items are validated for the list kind and stored
    * canonicalized, deduplicated and sorted. Lists per account and items
    * per list are plan limits.
    *
@@ -165,7 +165,7 @@ export class EdgeRulesService {
   }
   /**
    * Edit an edge-rule list.
-   * ADR-907. items replaces the list; add and remove edit it in place
+   * ADR-963. items replaces the list; add and remove edit it in place
    * (remove applies after add) and cannot be combined with items.
    * Gateways pick up the change for every referencing rule within a few
    * seconds; no rule-set version is recorded.
@@ -442,7 +442,7 @@ export class EdgeRulesService {
   /**
    * List recorded versions of an app's edge-rule set, newest first.
    * Every committed change to an app's edge rules records the whole rule
-   * set as a new version (ADR-905). Up to the 50 newest versions are
+   * set as a new version (ADR-961). Up to the 50 newest versions are
    * returned, without rule bodies; the newest 100 are retained.
    *
    * @returns EdgeRuleSetVersionResponse Versions, newest first.
@@ -512,7 +512,7 @@ export class EdgeRulesService {
   }
   /**
    * Sampled requests each edge rule matched, newest first.
-   * ADR-908. Gateways keep the first 10 matches of each rule per minute
+   * ADR-964. Gateways keep the first 10 matches of each rule per minute
    * as full events (request ID, method, host, path without query string,
    * trusted client IP, country, user agent); hit counts (stats) cover
    * every match. Events are kept 7 days; how far back a plan can read is
@@ -582,7 +582,7 @@ export class EdgeRulesService {
   }
   /**
    * Per-rule match counts for an app over a window.
-   * ADR-904. Gateways count each rule's matches (matched for enforced
+   * ADR-960. Gateways count each rule's matches (matched for enforced
    * rules, logged for log-mode rules), at most once per rule per request,
    * and flush them into hourly buckets once a minute; buckets are kept
    * for 14 days. Rules with no matches in the window are omitted.

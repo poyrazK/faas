@@ -23,7 +23,7 @@ func (s *stubASNReader) LookupASN(net.IP) (uint32, string, bool, error) {
 	return s.asn, "Example", s.asn != 0, nil
 }
 
-// adr: 910 — an asn condition matches the trusted client IP's autonomous
+// adr: 966 — an asn condition matches the trusted client IP's autonomous
 // system, resolved at most once per request; a reader error or untrusted
 // IP leaves the field absent so the condition does not match.
 func TestApplicableEdgeRulesASNCondition(t *testing.T) {

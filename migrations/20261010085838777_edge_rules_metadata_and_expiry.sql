@@ -1,4 +1,4 @@
--- filename: 20261009100517431_edge_rules_metadata_and_expiry.sql
+-- filename: 20261010085838777_edge_rules_metadata_and_expiry.sql
 --
 -- Edge rules gain an operator-facing name and description, and an optional
 -- expiry after which the gateway stops applying the rule (time-boxed

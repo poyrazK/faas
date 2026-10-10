@@ -1,6 +1,6 @@
 package main
 
-// ADR-907: reusable edge-rule lists. Account-scoped named sets referenced
+// ADR-963: reusable edge-rule lists. Account-scoped named sets referenced
 // from match conditions with the in_list op.
 
 import (

@@ -1,8 +1,8 @@
--- filename: 20261009120229777_edge_rule_mode_and_hit_counts.sql
+-- filename: 20261010085840889_edge_rule_mode_and_hit_counts.sql
 --
--- ADR-904: edge rules gain mode ('enforce' | 'log'); log-mode rules are
+-- ADR-960: edge rules gain mode ('enforce' | 'log'); log-mode rules are
 -- matched and counted but never act. Per-rule hit counts are flushed by each
--- gateway once a minute into hourly buckets, kept for 14 days. The ADR-905
+-- gateway once a minute into hourly buckets, kept for 14 days. The ADR-961
 -- rule-set snapshot gains the mode column.
 
 -- +goose Up

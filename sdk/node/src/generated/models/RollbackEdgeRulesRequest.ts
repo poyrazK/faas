@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Restore an app's edge rules to a recorded rule-set version (ADR-905).
+ * Restore an app's edge rules to a recorded rule-set version (ADR-961).
  */
 export type RollbackEdgeRulesRequest = {
   /**

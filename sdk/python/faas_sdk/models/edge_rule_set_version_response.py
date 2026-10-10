@@ -18,7 +18,7 @@ T = TypeVar("T", bound="EdgeRuleSetVersionResponse")
 
 @_attrs_define
 class EdgeRuleSetVersionResponse:
-    """One recorded state of an app's whole edge-rule set (ADR-905)."""
+    """One recorded state of an app's whole edge-rule set (ADR-961)."""
 
     version: int
     rule_count: int

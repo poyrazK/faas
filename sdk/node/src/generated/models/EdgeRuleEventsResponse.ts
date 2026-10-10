@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeRuleEventResponse } from './EdgeRuleEventResponse.js';
 /**
- * A page of sampled edge-rule matches (ADR-908).
+ * A page of sampled edge-rule matches (ADR-964).
  */
 export type EdgeRuleEventsResponse = {
   /**

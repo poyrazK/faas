@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-907 over HTTP: create, reference from a rule, edit, and the delete
+// ADR-963 over HTTP: create, reference from a rule, edit, and the delete
 // guard.
 func TestEdgeRuleListLifecycle(t *testing.T) {
 	e := setup(t, api.PlanHobby)

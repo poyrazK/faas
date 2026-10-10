@@ -279,7 +279,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAY_SYNTH_TARGET", Owners: []string{"schedd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GCS_BUCKET", Owners: []string{"builderd", "imaged", "vmmd", "shared"}, Source: EnvSourceEnvFile, Note: "private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC"},
 	{Name: "FAAS_GC_INTERVAL", Owners: []string{"imaged"}, Source: EnvSourceDefault},
-	{Name: "FAAS_GEOIP_ASN_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP ASN database at the code default (ADR-910); asn match conditions never match without it"},
+	{Name: "FAAS_GEOIP_ASN_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it"},
 	{Name: "FAAS_GEOIP_AUTO_REFRESH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "0; the geoip role owns refresh through re-bootstrap"},
 	{Name: "FAAS_GEOIP_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it"},
 	{Name: "FAAS_GITHUBD_LISTEN_ADDR", Owners: []string{"githubd"}, Source: EnvSourceDropin, Note: "private mTLS gRPC listener for source-ref verification on compute-only hosts"},

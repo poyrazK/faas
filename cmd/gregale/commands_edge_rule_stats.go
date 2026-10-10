@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-// cmdEdgeRulesStats prints per-rule match counts for an app (ADR-904):
+// cmdEdgeRulesStats prints per-rule match counts for an app (ADR-960):
 // matched for enforced rules, logged for log-mode rules. Rules with no
 // matches in the window are listed with zeros so dead rules stand out.
 func cmdEdgeRulesStats(args []string) int {

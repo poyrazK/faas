@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-909: --throttle-key-field and --throttle-count-status reach the action.
+// ADR-965: --throttle-key-field and --throttle-count-status reach the action.
 func TestBuildEdgeRuleAction_ThrottleCompositeAndCountStatuses(t *testing.T) {
 	raw, err := buildEdgeRuleAction("throttle", edgeRuleActionInputs{
 		ThrottleRPS: 0.1, ThrottleBurst: 5, ThrottleKeyBy: api.ThrottleKeyByComposite,

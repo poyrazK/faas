@@ -1,4 +1,4 @@
-# ADR-909: Throttle composite keys and response-status counting
+# ADR-965: Throttle composite keys and response-status counting
 
 - **Status:** accepted
 - **Date:** 2026-10-09

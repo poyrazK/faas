@@ -1,16 +1,16 @@
-# ADR-904: Edge-rule log mode and per-rule hit stats
+# ADR-960: Edge-rule log mode and per-rule hit stats
 
 - **Status:** accepted
 - **Date:** 2026-10-09
 - **Related:** ADR-091 (edge rules), ADR-128 (validate observe/warn modes),
-  ADR-905 (versions), ADR-906 (match expressions)
+  ADR-961 (versions), ADR-962 (match expressions)
 
 ## Context
 
 The only way to try a rule on live traffic is `kind=validate`'s observe
 mode. Every other rule takes effect the moment it is saved, so an operator
 adding a geo block, a JWT gate or a maintenance window cannot see what it
-would catch before it catches it. The trace dry run (ADR-905 work) answers
+would catch before it catches it. The trace dry run (ADR-961 work) answers
 "what happens to this one request", not "how much real traffic would this
 rule hit". Operators also cannot tell which rules ever match: metrics are
 per kind, so dead or overly broad rules are invisible.
@@ -19,7 +19,7 @@ per kind, so dead or overly broad rules are invisible.
 
 1. Every rule gains **`mode`**: `enforce` (default, today's behaviour) or
    `log`. A `log` rule is matched exactly like an enforced rule (selectors,
-   ADR-906 condition, owner scoping) but never acts and never shadows other
+   ADR-962 condition, owner scoping) but never acts and never shadows other
    rules: the gateway picks the effective rule of each kind from enforced
    rules only, and separately records a match for the first log-mode rule
    of that kind that matches. `validate_mode` keeps its own meaning for
@@ -42,7 +42,7 @@ per kind, so dead or overly broad rules are invisible.
 
 4. Counts are read with `GET /v1/apps/{slug}/edge-rules/stats?window=1h|24h|7d`
    and `gregale edge-rules stats`; the trace simulator reports log-mode rules
-   as logged, not enforced. `mode` is part of the ADR-905 rule-set snapshot.
+   as logged, not enforced. `mode` is part of the ADR-961 rule-set snapshot.
 
 ## Consequences
 

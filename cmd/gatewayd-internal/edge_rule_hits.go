@@ -16,9 +16,9 @@ const (
 	edgeRuleHitPruneInterval = 6 * time.Hour
 	// edgeRuleHitMaxRules bounds the pending map. Rule IDs come from loaded
 	// rules, so this is only reached under extreme churn; past it new rules
-	// are not counted until the next flush (counts are telemetry, ADR-904).
+	// are not counted until the next flush (counts are telemetry, ADR-960).
 	edgeRuleHitMaxRules = 50_000
-	// ADR-908 sampling: the first matches of each rule per flush interval
+	// ADR-964 sampling: the first matches of each rule per flush interval
 	// are kept as full events, bounded per gateway.
 	edgeRuleEventsPerRule  = 10
 	edgeRuleEventMaxQueued = 2_000
@@ -28,7 +28,7 @@ type edgeRuleHitCount struct {
 	appID   string
 	matched atomic.Int64
 	logged  atomic.Int64
-	sampled atomic.Int64 // events kept this interval (ADR-908)
+	sampled atomic.Int64 // events kept this interval (ADR-964)
 }
 
 // edgeRuleHitCounter implements gateway.EdgeRuleHitRecorder: per-rule
@@ -114,7 +114,7 @@ func (c *edgeRuleHitCounter) drainEvents() ([]state.EdgeRuleEvent, int64) {
 	return out, dropped
 }
 
-// flushEvents writes sampled events. Events are telemetry (ADR-908): a
+// flushEvents writes sampled events. Events are telemetry (ADR-964): a
 // failed write drops them rather than growing the queue.
 func (c *edgeRuleHitCounter) flushEvents(ctx context.Context, store state.EdgeRuleEventStore, log *slog.Logger) {
 	events, dropped := c.drainEvents()

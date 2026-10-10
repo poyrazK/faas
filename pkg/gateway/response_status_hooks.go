@@ -7,7 +7,7 @@ import (
 )
 
 // responseStatusHooks run once the request's final status is known
-// (ADR-909 response-counted throttles). ServeHTTP attaches one set per
+// (ADR-965 response-counted throttles). ServeHTTP attaches one set per
 // request and runs it on return.
 type responseStatusHooks struct {
 	mu  sync.Mutex
@@ -64,7 +64,7 @@ func (h *Handler) throttleHasToken(rule *EdgeRuleThrottleResolved, dimensional b
 }
 
 // chargeThrottleOnResponse charges a response-counted rule's bucket when the
-// final status is one it counts (ADR-909). A local-only limiter charges
+// final status is one it counts (ADR-965). A local-only limiter charges
 // inline; a central charge runs off the request path so a Postgres round
 // trip never delays the response.
 func (h *Handler) chargeThrottleOnResponse(ctx context.Context, rule *EdgeRuleThrottleResolved, dimensional bool, charge func(context.Context) bool) {

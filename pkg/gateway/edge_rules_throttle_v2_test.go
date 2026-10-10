@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 909 — a composite key combines fields into one identity; a field the
+// adr: 965 — a composite key combines fields into one identity; a field the
 // request lacks makes it missing, an untrusted IP fails closed, and long
 // combinations are hashed to a bounded key.
 func TestResolveCompositeThrottleKey(t *testing.T) {
@@ -44,7 +44,7 @@ func TestResolveCompositeThrottleKey(t *testing.T) {
 	}
 }
 
-// adr: 909 — with count_statuses the rule admits while its bucket has a
+// adr: 965 — with count_statuses the rule admits while its bucket has a
 // token and charges only responses it counts: successes never drain the
 // bucket, failures do, and once empty the next request is rejected.
 func TestEdgeRuleThrottle_CountStatuses(t *testing.T) {

@@ -9225,10 +9225,10 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
-	// KeyFields (ADR-909) are the request fields a key_by="composite" rule
+	// KeyFields (ADR-965) are the request fields a key_by="composite" rule
 	// combines into one bucket identity, e.g. ["ip", "path"].
 	KeyFields []string `json:"key_fields,omitempty"`
-	// CountStatuses (ADR-909), when set, makes the rule charge its bucket
+	// CountStatuses (ADR-965), when set, makes the rule charge its bucket
 	// only for responses with one of these statuses; requests are still
 	// rejected while the bucket is empty.
 	CountStatuses []int `json:"count_statuses,omitempty"`
@@ -9252,7 +9252,7 @@ const (
 	// one host cannot dodge the limit by rotating addresses in its prefix.
 	ThrottleKeyByIP = "ip"
 	// ThrottleKeyByComposite keys one bucket per combination of KeyFields
-	// values (ADR-909).
+	// values (ADR-965).
 	ThrottleKeyByComposite = "composite"
 
 	// ThrottleMissingKeyShared preserves the permissive historical posture for
@@ -9296,7 +9296,7 @@ func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	}
 }
 
-// ADR-909 bounds.
+// ADR-965 bounds.
 const (
 	ThrottleKeyFieldsMax     = 4
 	ThrottleCountStatusesMax = 16
@@ -9828,9 +9828,9 @@ type EdgeRuleResponse struct {
 	// reports that it has passed (the row is kept for the listing).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Expired   bool       `json:"expired,omitempty"`
-	// Match (ADR-906) is the optional condition ANDed with the selectors.
+	// Match (ADR-962) is the optional condition ANDed with the selectors.
 	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
-	// Mode (ADR-904) is "enforce" or "log"; log-mode rules only count matches.
+	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
 	Mode      string    `json:"mode"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -9908,13 +9908,13 @@ type UpdateEdgeRuleRequest struct {
 	// then applies indefinitely). Setting both is rejected.
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
-	// Match replaces the condition (ADR-906); ClearMatch removes it.
+	// Match replaces the condition (ADR-962); ClearMatch removes it.
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
 	Mode       *string            `json:"mode,omitempty"`
 }
 
-// Edge-rule modes (ADR-904).
+// Edge-rule modes (ADR-960).
 const (
 	EdgeRuleModeEnforce = "enforce"
 	EdgeRuleModeLog     = "log"
@@ -9929,7 +9929,7 @@ func ValidateEdgeRuleMode(mode string) *Problem {
 	return ErrValidation(fmt.Sprintf("mode %q must be enforce or log", mode))
 }
 
-// EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-904).
+// EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
 type EdgeRuleHitStatsResponse struct {
 	RuleID  string `json:"rule_id"`
 	Matched int64  `json:"matched"`
@@ -9943,7 +9943,7 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-908) is one sampled rule match. RuleName and
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match. RuleName and
 // RuleKind are empty once the rule has been deleted.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
@@ -9980,7 +9980,7 @@ type EdgeRuleEventsQuery struct {
 	Cursor  string
 }
 
-// EdgeRuleListResponse (ADR-907) is one account-level list. Items is
+// EdgeRuleListResponse (ADR-963) is one account-level list. Items is
 // returned only when a single list is fetched; ReferencedBy names the rules
 // whose match conditions use the list.
 type EdgeRuleListResponse struct {
@@ -10018,7 +10018,7 @@ type UpdateEdgeRuleListRequest struct {
 	Remove      []string  `json:"remove,omitempty"`
 }
 
-// EdgeRuleSetVersionResponse (ADR-905) describes one recorded state of an
+// EdgeRuleSetVersionResponse (ADR-961) describes one recorded state of an
 // app's whole edge-rule set. Rules is populated only when a single version
 // is fetched. Current marks the app's latest version.
 type EdgeRuleSetVersionResponse struct {

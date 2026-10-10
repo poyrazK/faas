@@ -11,7 +11,7 @@ T = TypeVar("T", bound="EdgeRuleHitStatsResponse")
 
 @_attrs_define
 class EdgeRuleHitStatsResponse:
-    """One rule's match counts over the window (ADR-904)."""
+    """One rule's match counts over the window (ADR-960)."""
 
     rule_id: str
     matched: int
