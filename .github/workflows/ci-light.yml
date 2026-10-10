@@ -343,8 +343,9 @@ jobs:
     runs-on: ubuntu-latest
     # A PR touching pkg/state runs a third of its race tests (~10-12 min)
     # beside its other packages after a cold compile; 20 min cancels it.
-    # A shard holding cmd/apid runs it before that third (~12 min compile +
-    # ~15 min cmd/apid + ~12 min pkg/state), so it needs 45.
+    # cmd/apid is split the same way and its third runs before pkg/state's
+    # (~12 min compile + ~5 min cmd/apid + ~12 min pkg/state); 45 leaves
+    # headroom for a cold cache.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -444,27 +445,27 @@ jobs:
           status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
-            # cmd/apid's clone tests and pkg/state's clone tests both create
-            # managed PostgreSQL copy targets on this one server; run
-            # concurrently they collide on cluster-wide copy journals and
-            # database OIDs. Finish cmd/apid before the split package starts.
-            if [[ " $PKGS " == *" ./cmd/apid "* && -n "$SPLIT" ]]; then
-              # shellcheck disable=SC2086 # space-separated package list
-              go test -race -count=1 -p 4 -timeout=16m $PKGS || status=1
-            else
-              # shellcheck disable=SC2086 # space-separated package list
-              go test -race -count=1 -p 4 -timeout=16m $PKGS &
-              pids+=("$!")
-            fi
+            # shellcheck disable=SC2086 # space-separated package list
+            go test -race -count=1 -p 4 -timeout=16m $PKGS &
+            pids+=("$!")
           fi
           # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above unless it held cmd/apid.
-          for pkg in $SPLIT; do
-            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
-            echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
+          # concurrently with the package set above but one after another:
+          # cmd/apid's and pkg/state's clone tests both create managed
+          # PostgreSQL copy targets on this one server and collide on its
+          # cluster-wide copy journals and database OIDs when run together.
+          if [[ -n "$SPLIT" ]]; then
+            (
+              split_status=0
+              for pkg in $SPLIT; do
+                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
+                echo "testing: $pkg (test shard $SHARD/3)"
+                go test -race -count=1 -timeout=16m -run "$run" "$pkg" || split_status=1
+              done
+              exit "$split_status"
+            ) &
             pids+=("$!")
-          done
+          fi
           for pid in "${pids[@]}"; do
             wait "$pid" || status=1
           done
