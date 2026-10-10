@@ -8327,9 +8327,23 @@ ownership, missing closure, changed terminal evidence and new borrowers block
 cleanup. Empty journal migrations can replay up/down; a journal in any owned
 state prevents downgrade.
 
-The private native coordinator and qualified provider adapter remain outstanding.
+The private native coordinator now renews the compensation lease, authenticates
+original borrower ownership and commits a dispatch claim before native IO.
+Lost reservation, claim, native, observation and finish replies recover from the
+saved journal; requested recovery only observes, while terminal replay performs
+no native IO. Adapter inputs have independent nested ownership records, and each
+native call is bounded by the worker lease deadline. Invalid closure proofs,
+cancelled workers and lease handoff leave the request owned and recoverable.
+
+A qualified provider adapter and whole-stage reconciliation remain outstanding.
 Public full-stage admission remains gated; these control-plane checks do not
-qualify a native provider or complete whole-stage reconciliation.
+qualify a native provider. Live provider qualification remains deferred.
+
+Validation: focused PostgreSQL API tests cover lost reservation/claim/native/
+observation/finish replies, worker handoff, cancelled finish, missing closure,
+changed source/digest proofs, absent or partial borrower ownership, nested adapter
+mutation and terminal replay without native IO. Existing durable journal and
+parent cleanup regressions pass alongside them.
 
 ### Checkpoint terminal compensation gate
 
