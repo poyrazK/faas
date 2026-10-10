@@ -666,6 +666,11 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
       - name: build CLI for local object storage wire journeys
         run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      # The SQL probe connects with TLS-required managed credentials.
+      - name: Enable TLS for SQL probe credential acceptance
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
