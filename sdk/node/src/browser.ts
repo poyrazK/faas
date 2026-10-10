@@ -13,6 +13,11 @@ export {
 export {
   consumeRealtimeChannel,
   consumeRealtimeChannels,
+  consumeRealtimeInbox,
+  RealtimeInboxResyncRequiredError,
+  type ConsumeRealtimeInboxOptions,
+  type RealtimeInboxConsumerOptions,
+  type RealtimeInboxMessage,
   REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
   RealtimeConfigurationError,
@@ -21,9 +26,39 @@ export {
   type ConsumeRealtimeChannelOptions,
   type ConsumeRealtimeChannelsOptions,
   type RealtimeChannelConsumerOptions,
+  type RealtimeChannelActions,
   type RealtimeConnectionOptions,
   type RealtimeCursorStore,
+  type RealtimeDirectMessage,
+  type RealtimeEphemeralRejection,
   type RealtimeMessage,
+  type RealtimePresenceEvent,
+  type RealtimePresenceMember,
+  type RealtimeSignal,
+  type RealtimeReadProgress,
+  type RealtimeReadActions,
+  type RealtimePushRegistration,
+  type RealtimeNotificationPreferences,
+  type RealtimePushActions,
+  realtimeWebPushRegistration,
+  recoverRealtimeChannelSnapshot,
+  publishRealtimeChannelBatch,
+  realtimeEventSchemaMetadata,
+  realtimeReducerEvent,
+  realtimeExpectedSequence,
+  type RealtimeReducerOperation, type RealtimeReducerCondition,
+  realtimeScheduledEvent, type RealtimeScheduleRequest, type RealtimeSchedule, type RealtimeScheduleCondition,
+  realtimeScheduleRetry, type RealtimeScheduleRetryRequest,
+  type RealtimeScheduleHistory, type RealtimeScheduleHistoryEvent,
+  type RealtimeScheduleCompletionWebhookPayload,
+  realtimeActivityScopeChannel,
+  createRealtimeSignalCoalescer, type RealtimeSignalCoalescer, type RealtimeSignalCoalescerOptions,
+  realtimeBackendSignal, type RealtimeBackendSignalRequest, type RealtimeBackendSignalResponse,
+  realtimeScheduleGroupRequest, type RealtimeScheduleGroupRequest, type RealtimeScheduleList, type RealtimeScheduleTotals,
+  type RealtimeBatchRequest,
+  type RealtimeBatchResult,
+  type RealtimeChannelSnapshot,
+  type RealtimeReadError,
   type RealtimeSocket,
 } from './realtime-resume.js';
 export {
@@ -49,3 +84,22 @@ export type { OperationWorkflowUnmetEffect } from './generated/models/OperationW
 export type { OperationBusinessEffectReference } from './generated/models/OperationBusinessEffectReference.js';
 export type { OperationBusinessCompensation } from './generated/models/OperationBusinessCompensation.js';
 export type { OperationBusinessCompensationPayload } from './generated/models/OperationBusinessCompensationPayload.js';
+
+export {
+  createRealtimeSignalTracker,
+  type RealtimeSignalTracker,
+  type RealtimeTemporarySignal,
+} from './realtime-signals.js';
+
+export {
+  createRealtimeActivityTracker,
+  type RealtimeActivity,
+  type RealtimeActivityTracker,
+  type RealtimeActivityTrackerOptions,
+} from './realtime-activity.js';
+
+export {
+  aggregateRealtimeActivity, formatRealtimeTypingSummary, createRealtimePresenceDirectory,
+  type RealtimeActivityParticipant, type RealtimeActivitySummary, type RealtimeActivitySummaryOptions,
+  type RealtimePresenceDirectory, type RealtimePresenceDirectoryOptions,
+} from './realtime-activity-summary.js';

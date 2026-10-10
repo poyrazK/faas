@@ -673,6 +673,45 @@ func (s *server) runManagedRealtimeHistoryReaper(ctx context.Context) {
 		} else if removed > 0 {
 			log.Info("managed realtime history reaper pass complete", "removed", removed)
 		}
+		if cursorReaper, ok := s.store.(state.ManagedRealtimeDurableCursorReaper); ok && ctx.Err() == nil {
+			removed, err := cursorReaper.PruneExpiredManagedRealtimeDurableCursors(ctx, managedRealtimeHistoryReapBatch)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime durable cursor reaper pass failed", "err", err)
+			} else if removed > 0 {
+				log.Info("managed realtime durable cursor reaper pass complete", "removed", removed)
+			}
+		}
+		if presenceReaper, ok := s.store.(state.ManagedRealtimePresenceReaper); ok && ctx.Err() == nil {
+			removed, err := presenceReaper.PruneExpiredManagedRealtimePresenceLeases(ctx, managedRealtimeHistoryReapBatch)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime presence lease reaper pass failed", "err", err)
+			} else if removed > 0 {
+				log.Info("managed realtime presence lease reaper pass complete", "removed", removed)
+			}
+		}
+		if receiptReaper, ok := s.store.(state.ManagedRealtimeDirectMessageReceiptReaper); ok && ctx.Err() == nil {
+			removed, err := receiptReaper.PruneExpiredManagedRealtimeDirectMessageReceipts(ctx, managedRealtimeHistoryReapBatch)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime direct message receipt reaper pass failed", "err", err)
+			} else if removed > 0 {
+				log.Info("managed realtime direct message receipt reaper pass complete", "removed", removed)
+			}
+		}
+		if inboxReaper, ok := s.store.(state.ManagedRealtimeInboxReaper); ok && ctx.Err() == nil {
+			if _, err := inboxReaper.PruneExpiredManagedRealtimeInboxMessages(ctx, managedRealtimeHistoryReapBatch); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime inbox retention pass failed", "err", err)
+			}
+			if ctx.Err() == nil {
+				if _, err := inboxReaper.PruneExpiredManagedRealtimeInboxCursors(ctx, managedRealtimeHistoryReapBatch); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("managed realtime inbox checkpoint retention pass failed", "err", err)
+				}
+			}
+		}
+		if gaps, ok := s.store.(state.ManagedRealtimeInboxGapObserver); ok && ctx.Err() == nil {
+			if _, err := gaps.ScanManagedRealtimeInboxGaps(ctx, managedRealtimeHistoryReapBatch); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime inbox gap notification pass failed", "err", err)
+			}
+		}
 		observer, ok := s.store.(state.ManagedRealtimeHistoryStorageObserver)
 		if !ok || ctx.Err() != nil {
 			return

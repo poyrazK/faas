@@ -70,7 +70,17 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
+	ConditionField   string              `json:"condition_field,omitempty"`
+	ConditionIndex   *int                `json:"condition_index,omitempty"`
+	FieldExists      *bool               `json:"field_exists,omitempty"`
+	EntityKey        string              `json:"entity_key,omitempty"`
+	ExpectedVersion  *int64              `json:"expected_version,omitempty"`
+	CurrentVersion   *int64              `json:"current_version,omitempty"`
+	EntityExists     *bool               `json:"entity_exists,omitempty"`
+	MessageIndex     *int                `json:"message_index,omitempty"`
+	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
+	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
+	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -640,6 +650,9 @@ const (
 	CodeAutomationVersionConflict       = "automation_version_conflict"
 	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
 	CodeAutomationInvalid               = "automation_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
@@ -1949,7 +1962,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,

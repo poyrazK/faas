@@ -26692,6 +26692,733 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals:send:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: sendManagedRealtimePrincipal
+      summary: Send to a verified principal, optionally retaining a notification with push fallback.
+      description: Retained sends require the retained-history preview gate and a stable message ID. Notification category is part of deduplication and defaults to notifications. Push preferences are evaluated before provider delivery; ACKs cancel queued fallback. Live sends can request receipts instead of retention.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimePrincipalMessageRequest'
+      responses:
+        '202':
+          description: Accepted; durable reports storage acceptance and queued reports live connection queueing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimePrincipalSendResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeActivityScopePath' }
+    post:
+      operationId: publishManagedRealtimeScopedSignal
+      summary: Send a backend signal to a private activity scope
+      description: Publishes to the canonical isolated activity channel for this parent and scope. Scope labels are at most 64 UTF-8 bytes and the encoded channel must fit 256 bytes. Subscribers require a separate read_activity authorization callback grant. Best-effort live delivery with no retained history, sequence, replay, or idempotency receipt. Sender member_id is backend. JSON data is limited to 2048 encoded bytes and the endpoint payload limit; request body is limited to 4096 bytes. Rate limit is 20 requests per second per endpoint/channel per API process, in addition to normal auth limits. Named signals default to a 5000 ms expiry; ttl_ms 0 clears a named signal. Deploy-write scopes and MFA apply. Acceptance is not subscriber acknowledgement; failures may follow partial delivery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeSignalRequest' }
+      responses:
+        '200':
+          description: Best-effort fanout accepted, including when no subscribers exist
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeSignalResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+    post:
+      operationId: publishManagedRealtimeSignal
+      summary: Send an ephemeral backend signal to connected v2 channel subscribers
+      description: Best-effort live delivery with no retained history, sequence, replay, or idempotency receipt. Sender member_id is backend. JSON data is limited to 2048 encoded bytes and the endpoint payload limit; request body is limited to 4096 bytes. Rate limit is 20 requests per second per endpoint/channel per API process, in addition to normal auth limits. Named signals default to a 5000 ms expiry; ttl_ms 0 clears a named signal. Deploy-write scopes and MFA apply. Acceptance is not subscriber acknowledgement; failures may follow partial delivery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeSignalRequest' }
+      responses:
+        '200':
+          description: 'Channel signal fanout accepted even when no subscribers exist.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeSignalResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+    get:
+      operationId: listManagedRealtimeSchedules
+      summary: List pending and recent terminal retained-event schedules
+      parameters:
+        - { $ref: '#/components/parameters/ManagedRealtimeGroupQuery' }
+        - { $ref: '#/components/parameters/ManagedRealtimeStatusQuery' }
+      responses:
+        '200':
+          description: Schedules ordered by delivery time and ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeSchedulesResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/groups/{group}/{group_action}:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeGroupPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeGroupActionPath' }
+    post:
+      operationId: applyManagedRealtimeScheduleGroup
+      summary: Atomically pause, resume, or cancel a channel schedule group
+      description: Requires exactly every pending/paused member's version. Membership/version changes or incompatible transitions reject the entire action. Terminal members are excluded. Already-target-state members remain unchanged. Supports one-time and recurring schedules; deploy-write scopes, MFA and preview gating apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleGroupRequest' }
+      responses:
+        '200':
+          description: Pending/paused members included in the action, with updated states and totals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schedules, totals]
+                properties:
+                  schedules:
+                    type: array
+                    maxItems: 256
+                    items: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+                  totals: { $ref: '#/components/schemas/ManagedRealtimeScheduleTotals' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeScheduleIdPathBounded' }
+    put:
+      operationId: putManagedRealtimeSchedule
+      summary: Schedule a retained channel event using an idempotent schedule ID
+      description: |
+        Future delivery within 30 days; timestamps normalize to microseconds.
+        Up to 256 pending and recent terminal schedules per endpoint. Terminal
+        receipts remain available for 24 hours. Identical ID/content retries
+        return the existing record; different content conflicts. Schema and reducer
+        validation run at delivery time. Preview gate and deploy-write scopes apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleRequest' }
+      responses:
+        '200':
+          description: Pending schedule or identical existing record
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { description: Endpoint schedule capacity reached }
+    patch:
+      operationId: rescheduleManagedRealtimeSchedule
+      summary: Change a pending schedule deadline with a version check
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeScheduleUpdate'
+      responses:
+        '200':
+          description: Updated pending schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: cancelManagedRealtimeSchedule
+      summary: Cancel a pending schedule with a version check
+      parameters:
+        - { $ref: '#/components/parameters/ManagedRealtimeExpectedVersionQuery' }
+      responses:
+        '200':
+          description: Canceled schedule; cancellation retries are idempotent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/pause:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeScheduleIdPath' }
+    post:
+      operationId: pauseManagedRealtimeSchedule
+      summary: Pause a recurring retained-event schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeSchedulePauseRequest'
+      responses:
+        '200':
+          description: Schedule updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/resume:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeScheduleIdPath' }
+    post:
+      operationId: resumeManagedRealtimeSchedule
+      summary: Resume a recurring retained-event schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeSchedulePauseRequest'
+      responses:
+        '200':
+          description: 'Schedule resumed with its updated version.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/history:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeScheduleIdPathBounded' }
+    get:
+      operationId: getManagedRealtimeScheduleHistory
+      summary: Inspect schedule changes and recorded delivery attempts
+      description: |
+        Events commit with schedule changes. Up to 128 entries are retained per
+        schedule, ordered by version. history_truncated marks missing earlier
+        history, including migrated baseline records. Terminal history expires
+        with its schedule receipt. Preview, ownership, MFA, and read scopes apply.
+      parameters:
+        - { $ref: '#/components/parameters/ManagedRealtimeAfterVersionQuery' }
+        - { $ref: '#/components/parameters/ManagedRealtimeLimitQuery' }
+      responses:
+        '200':
+          description: Consistent schedule timeline snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleHistoryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/retry:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeScheduleIdPathBounded' }
+    post:
+      operationId: retryManagedRealtimeSchedule
+      summary: Retry a failed schedule using its existing ID and payload
+      description: Requires the current version. Resets the cycle attempt budget, preserves lifetime attempts, and advances the version. Published or canceled schedules cannot retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeScheduleRetryRequest'
+      responses:
+        '200':
+          description: Retry pending
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+    put:
+      operationId: putManagedRealtimeReducer
+      summary: Enable a channel reducer from a state baseline matching the current sequence
+      description: |
+        Retained JSON events support set, merge, delete, increment, append, and remove operations.
+        Increment payloads use op=increment, key, field, and a required integer delta;
+        optional min/max bounds reject results outside the allowed range.
+        Values, deltas, bounds, and results must be safe integers in
+        [-9007199254740991, 9007199254740991]. Missing entities or fields start at zero.
+        Increment supports expected_version and preserves expires_at unless replaced
+        or cleared with null. Array operations use key, field, and items (1..32 JSON values).
+        Append accepts unique=true for structural JSON deduplication; remove deletes
+        all matching items. Optional max_length (0..256) rejects longer results.
+        Missing fields start as empty arrays; existing targets must be arrays of at
+        most 256 items. Array operations support expected_version and the same
+        expires_at behavior as increment. Every operation accepts optional conditions
+        (1..16 predicates), each with a literal field and exactly one of equals (any
+        JSON value) or absent:true. All predicates must hold before the update.
+        Equality is structural and compares numbers exactly. Failed conditions return
+        409 realtime_condition_conflict with entity_key, condition_field,
+        condition_index, message_index, current_version, entity_exists, and field_exists.
+        Invalid operations roll back the whole batch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeReducerRequest'
+      responses:
+        '200':
+          description: Enabled reducer or identical current state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeReducerResponse' }
+        '400': { description: Invalid state or size }
+        '409': { description: Stale baseline or attempt to reseed an active reducer }
+    get:
+      operationId: getManagedRealtimeReducer
+      summary: Read channel entities and their exact sequence
+      responses:
+        '200':
+          description: Current reduced state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeReducerResponse' }
+        '404': { description: Reducer not enabled }
+    delete:
+      operationId: deleteManagedRealtimeReducer
+      summary: Disable the reducer and remove its state and generated snapshot
+      responses:
+        '200': { description: Reducer disabled; retained history remains }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeEventTypePath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeVersionPath' }
+    put:
+      operationId: putManagedRealtimeEventSchema
+      summary: Register an immutable event schema version and enable channel enforcement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeEventSchemaRequest'
+      responses:
+        '200':
+          description: Registered version or identical existing version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeEventSchemaResponse' }
+        '400': { description: Invalid schema or identity }
+        '409': { description: Existing version has a different schema }
+        '429': { description: Endpoint has 64 registered versions }
+    get:
+      operationId: getManagedRealtimeEventSchema
+      summary: Get a registered event schema version
+      responses:
+        '200':
+          description: Immutable schema
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeEventSchemaResponse' }
+        '404': { description: Version not registered }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch:
+    post:
+      operationId: publishManagedRealtimeChannelBatch
+      summary: Atomically retain a bounded batch, then attempt live delivery
+      parameters:
+        - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+        - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+        - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeChannelBatchRequest'
+      responses:
+        '200':
+          description: Durable batch, including per-message best-effort fanout outcomes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeChannelBatchResponse'
+        '400': { description: "Invalid batch count, size or ID" }
+        '409': { description: 'Sequence conflict includes current_sequence and expected_sequence; also batch ID conflict or channel capacity reached.' }
+        '429': { description: Endpoint has 256 retained batch IDs }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeChannelPath' }
+    get:
+      operationId: getManagedRealtimeChannelSnapshot
+      summary: Get channel state and its replay baseline
+      responses:
+        '200':
+          description: Snapshot with a replayable tail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeChannelSnapshotResponse' }
+        '404': { description: Snapshot or channel not found }
+        '410': { description: Snapshot expired or tail no longer replayable }
+    put:
+      operationId: putManagedRealtimeChannelSnapshot
+      summary: Save state representing an explicit committed channel sequence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeChannelSnapshotRequest'
+      responses:
+        '200':
+          description: Saved snapshot, expires after 24 hours
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeChannelSnapshotResponse' }
+        '400': { description: "Invalid sequence, size, or older snapshot overwrite" }
+        '404': { description: Channel has no retained history }
+        '410': { description: Sequence no longer replayable }
+    delete:
+      operationId: deleteManagedRealtimeChannelSnapshot
+      summary: Remove a snapshot without deleting channel history
+      responses:
+        '200': { description: Snapshot removed }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}/timeline:
+    get:
+      operationId: listManagedRealtimeNotificationTimeline
+      summary: List notification state changes across devices, newest first
+      parameters:
+        - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+        - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+        - { $ref: '#/components/parameters/ManagedRealtimeMessageIdPath' }
+        - { $ref: '#/components/parameters/ManagedRealtimePrincipalQuery' }
+        - { name: before, in: query, schema: { type: integer, format: int64, minimum: 0 }, description: 'Exclusive event ID cursor. Omit or zero for the newest page.' }
+      responses:
+        '200':
+          description: Up to 100 retained events, newest first; empty when none remain.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ManagedRealtimeNotificationTimelineEvent' }
+        '400': { description: "Invalid principal, message ID or cursor" }
+        '404': { description: Endpoint or preview unavailable }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ManagedRealtimeSlugPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimeMessageIdPath' }
+      - { $ref: '#/components/parameters/ManagedRealtimePrincipalQuery' }
+    delete:
+      operationId: cancelManagedRealtimeNotification
+      summary: Cancel pending notification fallback and device deliveries without deleting inbox messages
+      responses:
+        '200':
+          description: Counts of affected pending fallback timers and device deliveries; zero counts are an idempotent no-op.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeNotificationControlResponse' }
+        '400': { description: Invalid principal or message ID }
+        '404': { description: 'Notification cancellation endpoint or preview unavailable.' }
+    put:
+      operationId: rescheduleManagedRealtimeNotification
+      summary: Reschedule active notifications across devices without reviving completed deliveries
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeNotificationRescheduleRequest'
+      responses:
+        '200':
+          description: Counts of affected active timers and device deliveries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeNotificationControlResponse' }
+        '400': { description: Invalid schedule or schedule beyond expiration }
+        '404': { description: 'Notification rescheduling endpoint or preview unavailable.' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - { $ref: '#/components/parameters/ManagedRealtimePrincipalQueryBounded' }
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeNotificationPreferences
+      summary: Read a user notification preference document.
+      description: Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not consume attempts. At most 256 preference documents per endpoint.
+      responses:
+        '200':
+          description: Current preference document.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtimeNotificationPreferences' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [realtime]
+      operationId: putManagedRealtimeNotificationPreferences
+      summary: Replace notification preferences across user devices.
+      description: 'Replaces the principal preference document under the retained-history preview gate. Built-in push uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no attempts. Each endpoint retains at most 256 documents.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RealtimeNotificationPreferences' }
+      responses:
+        '200':
+          description: 'Saved notification preference document.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtimeNotificationPreferences' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/providers:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimePushProviders
+      summary: List realtime push providers.
+      description: Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
+      responses:
+        '200':
+          description: Push metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ManagedRealtimePushProvider' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/devices:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - { $ref: '#/components/parameters/ManagedRealtimePrincipalQueryBounded' }
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimePushDevices
+      summary: List realtime push devices.
+      description: 'Lists registered devices under the retained-history preview gate. Device tokens and provider credentials are omitted.'
+      responses:
+        '200':
+          description: 'Registered push device metadata.'
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ManagedRealtimePushDevice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - { $ref: '#/components/parameters/ManagedRealtimePrincipalQueryBounded' }
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimePushDeliveries
+      summary: List realtime push deliveries.
+      description: 'Lists the latest 100 push delivery records for the principal under the retained-history preview gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.'
+      responses:
+        '200':
+          description: 'Recent push delivery attempt metadata.'
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ManagedRealtimePushDelivery' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - { $ref: '#/components/parameters/ManagedRealtimeProviderPath' }
+    put:
+      tags: [realtime]
+      operationId: configureManagedRealtimePushProvider
+      summary: Configure or disable a push provider.
+      description: Provider credentials are sealed at rest. Disabling cancels queued deliveries; re-enabling does not replay them. The retained-history preview gate is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimePushProviderRequest' }
+      responses:
+        '200':
+          description: Provider configured; credentials are omitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [provider, enabled]
+                properties:
+                  provider: { type: string, enum: [fcm, apns, webpush] }
+                  enabled: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - { $ref: '#/components/parameters/ManagedRealtimePrincipalQueryBounded' }
+      - { $ref: '#/components/parameters/ManagedRealtimeDevicePath' }
+    put:
+      tags: [realtime]
+      operationId: registerManagedRealtimePushDevice
+      summary: Register or rotate a device push token.
+      description: Requires the retained-history preview gate. Registration is limited to 16 devices per principal and 1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve pending deliveries; changed tokens cancel old work.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimePushRegistration' }
+      responses:
+        '200':
+          description: Registration updated; token is omitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [realtime]
+      operationId: unregisterManagedRealtimePushDevice
+      summary: Remove a push registration and cancel its queued work.
+      description: 'Removes a device registration under the retained-history preview gate and cancels its queued push deliveries.'
+      responses:
+        '200':
+          description: 'Device registration removed and pending work canceled.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
   /v1/apps/{slug}/log-drains:
     parameters:
@@ -34935,6 +35662,318 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimeChannelPath'
+    - $ref: '#/components/parameters/ManagedRealtimeMessageIdPath'
+    patch:
+      tags:
+      - realtime
+      operationId: updateManagedRealtimeChannelMessage
+      summary: Update a retained channel message
+      responses:
+        '200':
+          description: Update a retained channel message result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeMessageMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeMessageMutationRequest'
+    delete:
+      tags:
+      - realtime
+      operationId: deleteManagedRealtimeChannelMessage
+      summary: Delete a retained channel message
+      responses:
+        '200':
+          description: Delete a retained channel message result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeMessageMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeMessageMutationRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimeChannelPath'
+    - $ref: '#/components/parameters/ManagedRealtimePrincipalQuery'
+    get:
+      tags:
+      - realtime
+      operationId: getManagedRealtimeChannelReadProgress
+      summary: Read principal channel read progress
+      responses:
+        '200':
+          description: Read principal channel read progress result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeReadProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      tags:
+      - realtime
+      operationId: advanceManagedRealtimeChannelReadProgress
+      summary: Advance principal channel read progress
+      responses:
+        '200':
+          description: Advance principal channel read progress result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeReadProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeReadProgressRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimePrincipalQuery'
+    - $ref: '#/components/parameters/ManagedRealtimeMessageIdPath'
+    patch:
+      tags:
+      - realtime
+      operationId: updateManagedRealtimeInboxMessage
+      summary: Update a retained inbox message
+      responses:
+        '200':
+          description: Update a retained inbox message result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeMessageMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeMessageMutationRequest'
+    delete:
+      tags:
+      - realtime
+      operationId: deleteManagedRealtimeInboxMessage
+      summary: Delete a retained inbox message
+      responses:
+        '200':
+          description: Delete a retained inbox message result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeMessageMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeMessageMutationRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimePrincipalQuery'
+    get:
+      tags:
+      - realtime
+      operationId: getManagedRealtimeInboxReadProgress
+      summary: Read principal inbox read progress
+      responses:
+        '200':
+          description: Read principal inbox read progress result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeReadProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      tags:
+      - realtime
+      operationId: advanceManagedRealtimeInboxReadProgress
+      summary: Advance principal inbox read progress
+      responses:
+        '200':
+          description: Advance principal inbox read progress result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeReadProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimeReadProgressRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimePrincipalQuery'
+    - name: after
+      in: query
+      description: Exclusive inbox sequence cursor
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    - name: limit
+      in: query
+      description: Maximum inbox messages per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 100
+    - name: consumer
+      in: query
+      description: Durable inbox consumer name
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    get:
+      tags:
+      - realtime
+      operationId: readManagedRealtimeInbox
+      summary: Read retained principal inbox messages
+      responses:
+        '200':
+          description: Read retained principal inbox messages result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimeInboxResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt:
+    parameters:
+    - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+    - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+    - $ref: '#/components/parameters/ManagedRealtimeMessageIdPath'
+    get:
+      tags:
+      - realtime
+      operationId: getManagedRealtimePrincipalReceipt
+      summary: Get principal message receipt state
+      responses:
+        '200':
+          description: Get principal message receipt state result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimePrincipalReceiptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
 components:
 
   securitySchemes:
@@ -35001,6 +36040,26 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    ManagedRealtimeSlugPath: {"name": "slug", "description": "Application slug", "in": "path", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimeIdPath: {"name": "id", "description": "Realtime endpoint ID", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+    ManagedRealtimeChannelPath: {"name": "channel", "description": "Channel name", "in": "path", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimeActivityScopePath: {"name": "activity_scope", "description": "Private activity scope", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 64}}
+    ManagedRealtimeGroupQuery: {"name": "group", "description": "Schedule group filter", "in": "query", "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
+    ManagedRealtimeStatusQuery: {"name": "status", "description": "Schedule status filter", "in": "query", "schema": {"type": "string", "enum": ["pending", "paused", "published", "failed", "skipped", "canceled"]}}
+    ManagedRealtimeGroupPath: {"name": "group", "description": "Schedule group", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
+    ManagedRealtimeGroupActionPath: {"name": "group_action", "description": "Bulk schedule action", "in": "path", "required": true, "schema": {"type": "string", "enum": ["pause", "resume", "cancel"]}}
+    ManagedRealtimeScheduleIdPathBounded: {"name": "schedule_id", "description": "Bounded schedule identifier", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
+    ManagedRealtimeExpectedVersionQuery: {"name": "expected_version", "description": "Required current schedule version", "in": "query", "required": true, "schema": {"type": "integer", "format": "int64", "minimum": 1}}
+    ManagedRealtimeScheduleIdPath: {"name": "schedule_id", "description": "Schedule ID", "in": "path", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimeAfterVersionQuery: {"name": "after_version", "description": "Exclusive event version cursor", "in": "query", "schema": {"type": "integer", "format": "int64", "minimum": 0, "default": 0}}
+    ManagedRealtimeLimitQuery: {"name": "limit", "description": "Maximum history records", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}
+    ManagedRealtimeEventTypePath: {"name": "event_type", "description": "Retained event type", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^[a-z0-9_.-]{1,64}$"}}
+    ManagedRealtimeVersionPath: {"name": "version", "description": "Current schema version", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1, "maximum": 1000000}}
+    ManagedRealtimeMessageIdPath: {"name": "message_id", "description": "Notification message ID", "in": "path", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimePrincipalQuery: {"name": "principal", "description": "Verified principal ID", "in": "query", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimePrincipalQueryBounded: {"name": "principal", "description": "Verified push principal ID", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 256}}
+    ManagedRealtimeProviderPath: {"name": "provider", "description": "Push provider name", "in": "path", "required": true, "schema": {"type": "string", "enum": ["fcm", "apns", "webpush"]}}
+    ManagedRealtimeDevicePath: {"name": "device", "description": "Registered device ID", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
     OperationArtifact:
       name: artifact
       in: path
@@ -35399,6 +36458,566 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ManagedRealtimePrincipalMessageRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - principal
+      - data_base64
+      properties:
+        principal:
+          type: string
+          minLength: 1
+          maxLength: 256
+        data_base64:
+          type: string
+          maxLength: 5464
+          description: Standard base64; at most 4096 decoded bytes.
+        binary:
+          type: boolean
+          default: false
+        delivery:
+          type: string
+          enum:
+          - live
+          - retained
+          default: live
+        message_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        request_receipt:
+          type: boolean
+          default: false
+        fallback_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          default: 0
+          description: Requires retained delivery; zero disables fallback.
+        notification_group_key:
+          type: string
+          maxLength: 128
+          description: Stable conversation, job or project key; requires a fallback.
+        notification_not_before:
+          type: string
+          format: date-time
+          description: Earliest built-in push delivery time; RFC3339 with timezone, at most 48 hours ahead.
+            Requires fallback; explicit TTL must extend past this instant.
+        notification_collapse_key:
+          type: string
+          maxLength: 128
+          description: Requires fallback. Newer queued alerts supersede older alerts for the same recipient,
+            device, category, priority and collapse key.
+        notification_ttl_seconds:
+          type: integer
+          minimum: 0
+          maximum: 259200
+          description: Push lifetime in seconds from publication. Positive values require fallback and must exceed
+            its deadline. Zero or omission keeps default expiration.
+        notification_priority:
+          type: string
+          enum:
+          - low
+          - normal
+          - urgent
+          description: Defaults to normal when omitted; requires retained fallback. Urgent bypass requires user
+            opt-in.
+        notification_group_label:
+          type: string
+          maxLength: 128
+          description: Display name for summaries; requires a group key.
+        notification_category:
+          type: string
+          pattern: ^[a-z0-9_.-]{1,64}$
+          description: Requires a nonzero fallback deadline; omitted values use notifications for push
+            preferences.
+      description: Principal message payload with optional retained notification and push fallback settings.
+    ManagedRealtimePrincipalSendResponse:
+      type: object
+      properties:
+        message_id:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        durable:
+          type: boolean
+        fallback_deadline:
+          type: string
+          format: date-time
+        recipients:
+          type: integer
+        queued:
+          type: integer
+        unsupported:
+          type: integer
+        queue_full:
+          type: integer
+        failed:
+          type: integer
+        nodes_queried:
+          type: integer
+        nodes_unavailable:
+          type: integer
+        partial:
+          type: boolean
+        receipt_requested:
+          type: boolean
+        receipt_status:
+          type: string
+        acknowledged:
+          type: integer
+        pending:
+          type: integer
+        timed_out:
+          type: integer
+      description: Principal send outcome including fleet queueing and retained notification acceptance.
+    ManagedRealtimeChannelBatchRequest:
+      type: object
+      required:
+      - batch_id
+      - messages
+      properties:
+        expected_sequence:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+          description: Precondition for the channel head before the whole batch.
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            required:
+            - data_base64
+            properties:
+              data_base64:
+                type: string
+                maxLength: 5464
+              metadata:
+                type: object
+                maxProperties: 8
+                additionalProperties:
+                  type: string
+                  maxLength: 128
+              binary:
+                type: boolean
+                default: false
+      description: Atomic batch of retained channel messages with an optional sequence precondition.
+    ManagedRealtimeChannelBatchResponse:
+      type: object
+      required:
+      - batch_id
+      - durable
+      - partial
+      - messages
+      properties:
+        batch_id:
+          type: string
+        durable:
+          type: boolean
+          const: true
+        partial:
+          type: boolean
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedRealtimePublishResponse'
+      description: Committed retained batch and per-message live fanout outcomes.
+    ManagedRealtimeChannelSnapshotRequest:
+      type: object
+      required:
+      - sequence
+      - data_base64
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 0
+        data_base64:
+          type: string
+          maxLength: 87384
+        binary:
+          type: boolean
+          default: false
+      description: Encoded channel state representing an explicit committed sequence.
+    ManagedRealtimeReducerRequest:
+      type: object
+      required:
+      - sequence
+      - entities
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 0
+        entities:
+          type: object
+          maxProperties: 128
+          additionalProperties:
+            type: object
+          description: Seed entities, at most 64 KiB encoded. Keys are 1..128 UTF-8 bytes.
+      description: Initial entity state and sequence for the channel reducer.
+    ManagedRealtimeEventSchemaRequest:
+      type: object
+      required:
+      - schema
+      properties:
+        schema:
+          type:
+          - object
+          - boolean
+          description: JSON Schema Draft 2020-12, at most 16384 encoded bytes; external resources are unsupported.
+      description: JSON Schema document for one channel event type and version.
+    ManagedRealtimeScheduleUpdate:
+      type: object
+      required:
+      - deliver_at
+      - expected_version
+      properties:
+        deliver_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+      description: Version-checked change to a scheduled channel publication time.
+    ManagedRealtimeSchedulePauseRequest:
+      type: object
+      required:
+      - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+      description: Current schedule version required to pause or resume recurrence.
+    ManagedRealtimeScheduleRetryRequest:
+      type: object
+      required:
+      - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        deliver_at:
+          type: string
+          format: date-time
+          description: Optional future retry time within 30 days; omit to retry on the next worker pass.
+      description: Version-checked manual retry with an optional new delivery time.
+    ManagedRealtimeSchedulesResponse:
+      type: object
+      required:
+      - schedules
+      - totals
+      properties:
+        totals:
+          $ref: '#/components/schemas/ManagedRealtimeScheduleTotals'
+        schedules:
+          type: array
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/ManagedRealtimeScheduleResponse'
+      description: Matching retained channel schedules and their aggregate lifecycle totals.
+    ManagedRealtimeNotificationRescheduleRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - notification_not_before
+      properties:
+        notification_not_before:
+          type: string
+          format: date-time
+          description: RFC3339, up to 48 hours ahead; must precede expiration.
+      description: Replacement not-before instant for pending notification delivery work.
+    RealtimeQuietHours:
+      type: object
+      additionalProperties: false
+      required:
+      - timezone
+      - start
+      - end
+      description: Daily local-time interval during which push delivery is deferred.
+      properties:
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Named timezone, for example Europe/Rome; Local is rejected.
+        start:
+          type: string
+          pattern: ^(?:[01][0-9]|2[0-3]):[0-5][0-9]$
+        end:
+          type: string
+          pattern: ^(?:[01][0-9]|2[0-3]):[0-5][0-9]$
+    RealtimeNotificationRateLimit:
+      type: object
+      additionalProperties: false
+      required:
+      - max_notifications
+      - window_seconds
+      description: Shared provider-delivery quota for a principal across registered devices.
+      properties:
+        max_notifications:
+          type: integer
+          minimum: 1
+          maximum: 100
+        window_seconds:
+          type: integer
+          enum:
+          - 60
+          - 300
+          - 3600
+        allow_urgent_bypass:
+          type: boolean
+          default: false
+          description: Allow urgent alerts to bypass only this quota.
+    ManagedRealtimeInboxMessageResponse:
+      type: object
+      description: Retained principal inbox event with payload and mutation metadata.
+      required:
+      - version
+      - event
+      - deleted
+      - message_id
+      - sequence
+      - data_base64
+      - binary
+      - created_at
+      - expires_at
+      properties:
+        target_message_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        event:
+          type: string
+        deleted:
+          type: boolean
+        message_id:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        data_base64:
+          type: string
+        binary:
+          type: boolean
+        created_at:
+          type: string
+        expires_at:
+          type: string
+    ManagedRealtimeInboxResponse:
+      type: object
+      description: Principal inbox page with retention bounds and consumer checkpoint.
+      required:
+      - messages
+      - oldest_sequence
+      - latest_sequence
+      - history_unavailable
+      - has_more
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedRealtimeInboxMessageResponse'
+        oldest_sequence:
+          type: integer
+          format: int64
+        latest_sequence:
+          type: integer
+          format: int64
+        history_unavailable:
+          type: boolean
+        has_more:
+          type: boolean
+        consumer:
+          type: string
+        acknowledged_sequence:
+          anyOf:
+          - type: integer
+            format: int64
+          - type: 'null'
+    ManagedRealtimePrincipalReceiptDelivery:
+      type: object
+      description: Per-connection receipt state for a principal message dispatch.
+      required:
+      - connection_id
+      - status
+      - queue_status
+      - ack_supported
+      - created_at
+      properties:
+        connection_id:
+          type: string
+        status:
+          type: string
+        queue_status:
+          type: string
+        ack_supported:
+          type: boolean
+        created_at:
+          type: string
+        queued_at:
+          type: string
+        acknowledged_at:
+          type: string
+    ManagedRealtimePrincipalReceiptResponse:
+      type: object
+      description: Aggregate principal receipt and per-connection delivery states.
+      required:
+      - endpoint_id
+      - message_id
+      - status
+      - dispatch_complete
+      - created_at
+      - expires_at
+      - recipients
+      - queued
+      - acknowledged
+      - pending
+      - timed_out
+      - unsupported
+      - queue_full
+      - failed
+      - nodes_queried
+      - nodes_unavailable
+      - partial
+      - deliveries
+      properties:
+        endpoint_id:
+          type: string
+        message_id:
+          type: string
+        status:
+          type: string
+        dispatch_complete:
+          type: boolean
+        created_at:
+          type: string
+        expires_at:
+          type: string
+        recipients:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+        acknowledged:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        timed_out:
+          type: integer
+          format: int64
+        unsupported:
+          type: integer
+          format: int64
+        queue_full:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        nodes_queried:
+          type: integer
+          format: int64
+        nodes_unavailable:
+          type: integer
+          format: int64
+        partial:
+          type: boolean
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedRealtimePrincipalReceiptDelivery'
+    ManagedRealtimeMessageMutationRequest:
+      type: object
+      description: Expected message version and replacement payload for a retained event.
+      required:
+      - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        data_base64:
+          type: string
+          format: byte
+          maxLength: 5464
+        binary:
+          type: boolean
+    ManagedRealtimeMessageMutationResponse:
+      type: object
+      description: Committed retained message mutation and resulting stream sequence.
+      required:
+      - message_id
+      - version
+      - sequence
+      - event
+      - deleted
+      properties:
+        message_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        sequence:
+          type: integer
+          format: int64
+        event:
+          type: string
+        deleted:
+          type: boolean
+    ManagedRealtimeReadProgressRequest:
+      type: object
+      description: Monotonic principal read position to advance within a retained stream.
+      required:
+      - sequence
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 0
+    ManagedRealtimeReadProgressResponse:
+      type: object
+      description: Principal read position with unread count and current retention bounds.
+      required:
+      - sequence
+      - unread
+      - oldest_sequence
+      - latest_sequence
+      - history_unavailable
+      properties:
+        sequence:
+          type: integer
+          format: int64
+        unread:
+          type: integer
+          format: int64
+        oldest_sequence:
+          type: integer
+          format: int64
+        latest_sequence:
+          type: integer
+          format: int64
+        history_unavailable:
+          type: boolean
+        updated_at:
+          type: string
     OperationExecutionControlResponse:
       description: Current HTTP attempt observation. Contains no input, result, owner or capability; grants no renewal.
       type: object
@@ -36991,7 +38610,7 @@ components:
         operation_id: {type: string, format: uuid}
         workflow: {type: string}
         instance_id: {type: string}
-        from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
+        from_state: {type: string, description: "App state immediately before this retained revision, when the transition was declared." }
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
         contract_version: {type: integer, minimum: 1, maximum: 1000000}
@@ -40981,7 +42600,7 @@ components:
         reason: { type: string, enum: [insufficient_used_requests, http_5xx_rate_exceeded, p95_latency_exceeded, all_stages_complete] }
         flag: { type: string }
         rule_id: { type: string }
-        config_version: { type: integer, format: int64, minimum: 0, description: Current version after promotion, unchanged when held or complete. }
+        config_version: { type: integer, format: int64, minimum: 0, description: "Current version after promotion, unchanged when held or complete." }
         current_stage: { type: integer, minimum: 1, description: "One-based ordinal of the currently configured stage." }
         stage_count: { type: integer, minimum: 2 }
         rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Active rollout percentage in basis points." }
@@ -42268,7 +43887,7 @@ components:
       required: [source_bucket_id, prefix, created_at, updated_at]
       properties:
         source_bucket_id: { type: string, format: uuid }
-        prefix: { type: string, maxLength: 1024, description: Literal allowed source key prefix, bounded to 1024 UTF-8 bytes. }
+        prefix: { type: string, maxLength: 1024, description: "Literal allowed source key prefix, bounded to 1024 UTF-8 bytes." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ObjectS3CopySourceList:
@@ -45048,7 +46667,7 @@ components:
         receipt_id: { type: string, format: uuid, description: Durable identifier for this successful apply. }
         plan_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
         applied_at: { type: string, format: date-time }
-        applied: { type: boolean, description: True when the confirmed plan completed, including an already-converged no-op. }
+        applied: { type: boolean, description: "True when the confirmed plan completed, including an already-converged no-op." }
         changes:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
@@ -45585,7 +47204,7 @@ components:
         method: { type: string }
         path: { type: string }
         attempts: { type: integer }
-        result: { description: JSON result returned by the guest, when available. }
+        result: { description: "JSON result returned by the guest, when available." }
         last_error: { type: string }
         outcome: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
@@ -50722,7 +52341,7 @@ components:
       additionalProperties: false
       required: [id, client_event_id, accepted_at, receipt_url]
       properties:
-        id: { type: string, format: uuid, description: Canonical event id scoped by tenant, app, and source. }
+        id: { type: string, format: uuid, description: "Canonical event id scoped by tenant, app, and source." }
         client_event_id: { type: string, description: Caller-chosen event identifier. }
         accepted_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
@@ -51955,7 +53574,7 @@ components:
         source: { type: string, minLength: 1, maxLength: 256 }
         type: { type: string, minLength: 1, maxLength: 256 }
         version: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
-        schema: { description: Draft 2020-12 JSON Schema, at most 64 KiB, without external references. }
+        schema: { description: "Draft 2020-12 JSON Schema, at most 64 KiB, without external references." }
 
     RegisterEventSchemaResponse:
       description: Receipt for an immutable event schema version.
@@ -52454,7 +54073,7 @@ components:
         history:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
-        next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+        next_before: { type: string, description: "Opaque cursor bound to the app, event identity, and optional recipient filter." }
         coverage: { type: string, enum: [bounded_recorded_outcomes], description: Recorded observations only; pre-migration transitions and compacted details are unavailable. }
         summaries:
           type: array
@@ -62988,8 +64607,8 @@ components:
           additionalProperties: { type: string }
           description: Immutable versions declared by the selected profile and verified by its guest before caller code runs.
         id: { type: string, format: uuid }
-        workflow_id: { type: string, maxLength: 96, description: Caller-generated workflow grouping id, when assigned. }
-        step_label: { type: string, maxLength: 128, description: Optional step label, when assigned. }
+        workflow_id: { type: string, maxLength: 96, description: "Caller-generated workflow grouping id, when assigned." }
+        step_label: { type: string, maxLength: 128, description: "Optional step label, when assigned." }
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
         runtime: { type: string, enum: [node22, node24, python312, python313] }
         limits: { $ref: '#/components/schemas/ResolvedExecutionLimits' }
@@ -62998,7 +64617,7 @@ components:
           maxItems: 8
           items: { $ref: '#/components/schemas/ExecutionArtifact' }
           description: Selected output files, present only after successful execution and VM teardown.
-        result: { description: Terminal JSON result, omitted when unavailable. }
+        result: { description: "Terminal JSON result, omitted when unavailable." }
         stdout: { type: string }
         stderr: { type: string }
         output_truncated: { type: boolean }
@@ -63900,6 +65519,16 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        current_sequence: { type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.' }
+        condition_field: { type: string }
+        condition_index: { type: integer, minimum: 0 }
+        field_exists: { type: boolean }
+        entity_key: { type: string }
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        current_version: { type: integer, format: int64, minimum: 0 }
+        entity_exists: { type: boolean }
+        message_index: { type: integer, minimum: 0 }
+        expected_sequence: { type: integer, format: int64, minimum: 0, description: 'Requested channel head precondition.' }
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
@@ -65595,7 +67224,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -65636,6 +67265,373 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    RealtimeNotificationPreferences:
+      description: 'Push delivery preferences shared across devices for a verified principal.'
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        rate_limit:
+          anyOf:
+          - $ref: '#/components/schemas/RealtimeNotificationRateLimit'
+          - type: 'null'
+        allow_urgent_bypass: { type: boolean, default: false, description: 'Allow urgent alerts to bypass quiet hours and digest delays; mute settings still apply.' }
+        digest_interval_seconds: { type: integer, enum: [0, 300, 3600], default: 0, description: 'Immediate, five-minute or hourly UTC delivery windows.' }
+        summarize_quiet_hours: { type: [boolean, 'null'], default: true, description: 'Combine eligible alerts released after quiet hours; null inherits true.' }
+        enabled: { type: boolean, description: 'Master push switch for this principal.' }
+        categories:
+          type: [object, 'null']
+          maxProperties: 32
+          propertyNames: { pattern: '^[a-z0-9_.-]{1,64}$' }
+          additionalProperties: { type: boolean }
+          description: Unlisted categories are enabled. False cancels push for this category.
+        devices:
+          type: [array, 'null']
+          maxItems: 16
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+          description: Null or omitted selects all registered devices; empty array selects none.
+        quiet_hours:
+          anyOf:
+          - $ref: '#/components/schemas/RealtimeQuietHours'
+          - type: 'null'
+    ManagedRealtimePushProviderRequest:
+      description: 'Provider credentials and enablement settings for realtime push delivery.'
+      type: object
+      additionalProperties: false
+      required: [config]
+      properties:
+        enabled: { type: boolean, default: true }
+        config:
+          type: object
+          additionalProperties: false
+          required: [provider]
+          properties:
+            provider: { type: string, enum: [fcm, apns, webpush] }
+            project_id: { type: string, maxLength: 64 }
+            service_account_json:
+              type: object
+              description: FCM service-account JSON with Firebase Messaging permission.
+            team_id: { type: string, pattern: '^[A-Z0-9]{10}$' }
+            key_id: { type: string, pattern: '^[A-Z0-9]{10}$' }
+            topic: { type: string, maxLength: 256 }
+            private_key:
+              type: string
+              writeOnly: true
+              description: APNs PKCS8 PEM key or Web Push unpadded base64url P-256 private scalar.
+            sandbox: { type: boolean, default: false }
+            subject: { type: string, maxLength: 256, description: 'VAPID mailto or https contact URI.' }
+            title: { type: string, maxLength: 256 }
+            body: { type: string, maxLength: 1024 }
+    ManagedRealtimePushRegistration:
+      description: 'Device registration used to route push notifications to a principal.'
+      type: object
+      additionalProperties: false
+      required: [provider, target]
+      properties:
+        provider: { type: string, enum: [fcm, apns, webpush] }
+        target:
+          type: object
+          additionalProperties: false
+          description: FCM/APNs require token; Web Push requires endpoint, p256dh and auth.
+          properties:
+            token: { type: string, maxLength: 4096, writeOnly: true }
+            endpoint: { type: string, format: uri, maxLength: 2048, writeOnly: true }
+            p256dh: { type: string, writeOnly: true }
+            auth: { type: string, writeOnly: true }
+    ManagedRealtimePushProvider:
+      description: 'Configured push provider metadata with credentials omitted.'
+      type: object
+      required: [provider, enabled, updated_at]
+      properties:
+        provider: { type: string, enum: [fcm, apns, webpush] }
+        enabled: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    ManagedRealtimePushDevice:
+      description: 'Registered device metadata with delivery tokens omitted.'
+      type: object
+      required: [device, provider, enabled, version, updated_at]
+      properties:
+        device: { type: string }
+        provider: { type: string, enum: [fcm, apns, webpush] }
+        enabled: { type: boolean }
+        version: { type: integer, format: int64, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+    ManagedRealtimeScheduleHistoryEvent:
+      description: 'Recorded execution or lifecycle event for a channel publish schedule.'
+      type: object
+      required: [version, event, status, attempts, cycle_attempts, deliver_at, occurred_at, occurrence, completed_occurrences, skipped_occurrences]
+      properties:
+        skipped_occurrences: { type: integer, format: int64, minimum: 0 }
+        skip_reason: { type: string }
+        occurrence: { type: integer, format: int64, minimum: 1 }
+        completed_occurrences: { type: integer, format: int64, minimum: 0 }
+        version: { type: integer, format: int64, minimum: 1 }
+        event: { type: string, enum: [baseline, created, rescheduled, canceled, manual_retry, attempt_failed, published, paused, resumed, skipped] }
+        status: { type: string, enum: [pending, paused, published, canceled, failed, skipped] }
+        attempts: { type: integer, format: int64, minimum: 0 }
+        cycle_attempts: { type: integer, minimum: 0, maximum: 10 }
+        deliver_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        failure_code: { type: string }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        occurred_at: { type: string, format: date-time }
+    ManagedRealtimeScheduleHistoryResponse:
+      description: 'Retained execution history for a channel publish schedule.'
+      type: object
+      required: [schedule_id, channel, oldest_version, latest_version, history_truncated, has_more, events]
+      properties:
+        schedule_id: { type: string }
+        channel: { type: string }
+        oldest_version: { type: integer, format: int64, minimum: 0 }
+        latest_version: { type: integer, format: int64, minimum: 1 }
+        history_truncated: { type: boolean }
+        has_more: { type: boolean }
+        events:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ManagedRealtimeScheduleHistoryEvent' }
+
+    RealtimeScheduleCompletionWebhookPayload:
+      type: object
+      description: Committed occurrence outcome delivered through app webhooks. Recurring publications and skips emit independently of the next occurrence's status; failures emit only when the retry budget is exhausted.
+      required: [event_id, app_id, endpoint_id, channel, schedule_id, version, occurrence, completed_occurrences, skipped_occurrences, outcome, attempts, cycle_attempts, deliver_at, occurred_at]
+      properties:
+        event_id: { type: string }
+        app_id: { type: string }
+        endpoint_id: { type: string }
+        channel: { type: string }
+        schedule_id: { type: string }
+        version: { type: integer, format: int64 }
+        occurrence: { type: integer, format: int64, minimum: 1 }
+        completed_occurrences: { type: integer, format: int64, minimum: 0 }
+        skipped_occurrences: { type: integer, format: int64, minimum: 0 }
+        outcome: { type: string, enum: [published, failed, skipped] }
+        attempts: { type: integer, format: int64, minimum: 0 }
+        cycle_attempts: { type: integer, minimum: 0 }
+        deliver_at: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        failure_code: { type: string }
+        skip_reason: { type: string }
+
+    ManagedRealtimeSignalRequest:
+      description: 'Ephemeral backend signal payload with optional name and expiration.'
+      type: object
+      required: [data]
+      properties:
+        data:
+          description: Any JSON value, including null, within 2048 encoded UTF-8 bytes.
+        name: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,64}$' }
+        ttl_ms: { type: integer, minimum: 0, maximum: 30000, description: Requires name; defaults to 5000 for named signals. Zero clears. }
+    ManagedRealtimeSignalResponse:
+      description: 'Best-effort signal fanout result for currently connected subscribers.'
+      type: object
+      required: [accepted, member_id]
+      properties:
+        accepted: { type: boolean }
+        member_id: { type: string, enum: [backend] }
+        expires_at: { type: string, format: date-time }
+
+    ManagedRealtimeScheduleGroupRequest:
+      description: 'Bulk action and version preconditions for a named schedule group.'
+      type: object
+      required: [expected_versions]
+      properties:
+        expected_versions:
+          type: object
+          maxProperties: 256
+          description: Exact schedule ID/version map of all pending or paused group members; terminal members excluded.
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    ManagedRealtimeScheduleTotals:
+      type: object
+      required: [pending, paused, published, failed, skipped, canceled, completed_occurrences, skipped_occurrences]
+      description: Totals over returned retained records, not lifetime analytics. Completed occurrences include successful one-time schedules and recurring completion counts.
+      properties:
+        pending: { type: integer, minimum: 0 }
+        paused: { type: integer, minimum: 0 }
+        published: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        canceled: { type: integer, minimum: 0 }
+        completed_occurrences: { type: integer, format: int64, minimum: 0 }
+        skipped_occurrences: { type: integer, format: int64, minimum: 0 }
+
+    ManagedRealtimeScheduleRequest:
+      description: 'Scheduled channel publish payload with recurrence and retry settings.'
+      type: object
+      required: [data_base64, deliver_at]
+      properties:
+        group: { type: string, minLength: 1, maxLength: 128, description: Optional immutable channel-scoped group label; at most 128 UTF-8 bytes. }
+        conditions:
+          type: array
+          minItems: 1
+          maxItems: 16
+          description: AND predicates over reducer state in this channel; at most 4 KiB encoded. Each predicate has a key and exactly one operator.
+          items:
+            type: object
+            required: [key]
+            additionalProperties: false
+            properties:
+              key: { type: string, minLength: 1, maxLength: 128 }
+              field: { type: string, minLength: 1, maxLength: 128 }
+              exists: { type: boolean, description: Entity existence; field must be omitted. }
+              equals: { description: "Any JSON value, compared structurally; requires field." }
+              lt: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
+              lte: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
+              gt: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
+              gte: { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
+            oneOf:
+              - required: [exists]
+              - required: [field, equals]
+              - required: [field, lt]
+              - required: [field, lte]
+              - required: [field, gt]
+              - required: [field, gte]
+        on_condition_failure: { type: string, enum: [skip, retry], default: retry, description: Requires conditions; retry follows the configured attempt budget. }
+        interval_seconds: { type: integer, minimum: 5, maximum: 2592000, description: Fixed delay after each successful occurrence; omit for one-time publication. }
+        max_occurrences: { type: integer, format: int64, minimum: 0, maximum: 1000000, description: Optional completed-slot limit (published or intentionally skipped); zero is unlimited. }
+        end_at: { type: string, format: date-time, description: "Last permitted planned occurrence time, within one year of initial delivery." }
+        max_attempts: { type: integer, minimum: 1, maximum: 10, default: 1, description: Total attempts per retry cycle; one disables automatic retries. }
+        backoff_seconds: { type: integer, minimum: 5, maximum: 3600, default: 5, description: "Initial retry delay, doubled per failure up to one hour." }
+        data_base64: { type: string, maxLength: 5464, description: At most 4096 decoded bytes. }
+        binary: { type: boolean, default: false }
+        metadata: { type: object, maxProperties: 8, additionalProperties: { type: string } }
+        deliver_at: { type: string, format: date-time, description: Future time within 30 days of creation. }
+    ManagedRealtimeScheduleResponse:
+      description: 'Persisted channel publish schedule and current execution state.'
+      allOf:
+        - { $ref: '#/components/schemas/ManagedRealtimeScheduleRequest' }
+        - type: object
+          required: [schedule_id, channel, version, status, created_at, updated_at, max_attempts, backoff_seconds, attempts, cycle_attempts, initial_deliver_at, occurrence, completed_occurrences, skipped_occurrences]
+          properties:
+            initial_deliver_at: { type: string, format: date-time }
+            skipped_occurrences: { type: integer, format: int64, minimum: 0 }
+            skip_reason: { type: string }
+            occurrence: { type: integer, format: int64, minimum: 1 }
+            completed_occurrences: { type: integer, format: int64, minimum: 0 }
+            attempts: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, description: Lifetime recorded delivery attempts. }
+            cycle_attempts: { type: integer, minimum: 0, maximum: 10 }
+            next_attempt_at: { type: string, format: date-time, description: Next pending retry time; omitted after completion or cancellation. }
+            last_attempt_at: { type: string, format: date-time }
+            schedule_id: { type: string }
+            channel: { type: string }
+            version: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+            status: { type: string, enum: [pending, paused, published, canceled, failed, skipped] }
+            sequence: { type: integer, format: int64, minimum: 1, description: Committed history sequence when published. }
+            last_error: { type: string, description: Most recent recorded delivery failure code; retained after a successful retry. }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    ManagedRealtimeReducerResponse:
+      description: 'Configured channel state reducer and its current version.'
+      type: object
+      required: [channel, sequence, entities, entity_versions, updated_at]
+      properties:
+        channel: { type: string }
+        sequence: { type: integer, format: int64, minimum: 0 }
+        entities:
+          type: object
+          maxProperties: 128
+          additionalProperties: { type: object }
+        entity_expirations:
+          type: object
+          maxProperties: 128
+          description: Scheduled entity deadlines; cleanup is asynchronous.
+          additionalProperties: { type: string, format: date-time }
+        entity_versions:
+          type: object
+          maxProperties: 256
+          description: Entity versions, including deletion tombstones.
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        updated_at: { type: string, format: date-time }
+
+    ManagedRealtimeEventSchemaResponse:
+      description: 'Stored JSON Schema used to validate retained channel events.'
+      type: object
+      required: [channel, event_type, version, schema, created_at]
+      properties:
+        channel: { type: string }
+        event_type: { type: string }
+        version: { type: integer, minimum: 1, maximum: 1000000 }
+        schema: { type: [object, boolean] }
+        created_at: { type: string, format: date-time }
+
+    ManagedRealtimeChannelSnapshotResponse:
+      description: 'Channel state snapshot with sequence and entity expiration metadata.'
+      type: object
+      required: [channel, sequence, resume_after_sequence, data_base64, binary, updated_at, expires_at]
+      properties:
+        channel: { type: string }
+        sequence: { type: integer, format: int64, minimum: 0 }
+        resume_after_sequence: { type: integer, format: int64, minimum: 0 }
+        data_base64: { type: string, maxLength: 87384 }
+        binary: { type: boolean }
+        entity_expirations:
+          type: object
+          maxProperties: 128
+          description: 'Entity cleanup deadlines carried by this channel snapshot; cleanup runs asynchronously.'
+          additionalProperties: { type: string, format: date-time }
+        entity_versions:
+          type: object
+          maxProperties: 256
+          description: Entity versions, including deletion tombstones; reducer snapshots only.
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    ManagedRealtimeNotificationTimelineEvent:
+      description: 'Recorded notification delivery or lifecycle change for a principal.'
+      type: object
+      required: [id, message_id, event, attempts, status_code, occurred_at, not_before, next_attempt]
+      properties:
+        id: { type: integer, format: int64 }
+        message_id: { type: string }
+        device: { type: string }
+        delivery_id: { type: string }
+        event: { type: string, description: 'Delivery status or fallback_scheduled, fallback_rescheduled, fallback_removed.' }
+        reason: { type: string }
+        attempts: { type: integer }
+        status_code: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        not_before: { type: string, format: date-time }
+        next_attempt: { type: string, format: date-time }
+
+    ManagedRealtimeNotificationControlResponse:
+      description: 'Notification cancellation or rescheduling result across devices.'
+      type: object
+      required: [fallbacks, deliveries]
+      properties:
+        fallbacks: { type: integer, minimum: 0 }
+        deliveries: { type: integer, minimum: 0 }
+
+    ManagedRealtimePushDelivery:
+      description: 'Push delivery attempt metadata without provider credentials or device tokens.'
+      type: object
+      required: [priority, category, expires_at, id, device, provider, message_id, sequence, status, attempts, status_code, created_at, updated_at, next_attempt]
+      properties:
+        not_before: { type: string, format: date-time, description: 'Earliest scheduled delivery; epoch or zero time means no schedule.' }
+        collapse_key: { type: string, maxLength: 128 }
+        priority: { type: string, enum: [low, normal, urgent] }
+        group_key: { type: string }
+        group_label: { type: string }
+        digest_id: { type: string, format: uuid }
+        digest_count: { type: integer, minimum: 0, maximum: 128, description: 'Distinct message count at the most recent prepared digest attempt.' }
+        category: { type: string, pattern: '^[a-z0-9_.-]{1,64}$' }
+        expires_at: { type: string, format: date-time }
+        id: { type: string, format: uuid }
+        device: { type: string }
+        provider: { type: string, enum: [fcm, apns, webpush] }
+        message_id: { type: string }
+        sequence: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, sending, sent, failed, cancelled] }
+        attempts: { type: integer, minimum: 0 }
+        status_code: { type: integer, minimum: 0, description: 'Provider HTTP status; zero means no response.' }
+        code: { type: string, description: 'Sanitized outcome code; provider bodies are omitted.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        next_attempt: { type: string, format: date-time }
 
     ManagedRealtimeConnectionResponse:
       type: object
@@ -65896,6 +67892,13 @@ components:
       description: Binary-safe message payload encoded as standard base64.
       required: [data_base64]
       properties:
+        expected_sequence: { type: [integer, 'null'], format: int64, minimum: 0, description: 'Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes only.' }
+        metadata:
+          type: object
+          maxProperties: 8
+          propertyNames: { pattern: '^[a-z0-9_.-]{1,64}$' }
+          additionalProperties: { type: string, maxLength: 128 }
+          description: 'Exact-match routing metadata; at most 4096 encoded JSON bytes. Retained channel publishing only.'
         data_base64: { type: string, format: byte, maxLength: 1398104, description: Decoded payload is limited to 1 MiB. }
         binary: { type: boolean, default: false }
 
@@ -65925,6 +67928,13 @@ components:
       description: Binary-safe payload to append to retained channel history.
       required: [data_base64]
       properties:
+        expected_sequence: { type: [integer, 'null'], format: int64, minimum: 0, description: 'Optional channel head sequence required before this retained publish; zero requires an empty channel.' }
+        metadata:
+          type: object
+          maxProperties: 8
+          propertyNames: { pattern: '^[a-z0-9_.-]{1,64}$' }
+          additionalProperties: { type: string, maxLength: 128 }
+          description: 'Routing metadata attached to this retained publish; at most 4096 encoded JSON bytes.'
         data_base64: { type: string, format: byte, maxLength: 5464, description: Standard base64 for at most 4096 decoded bytes. }
         binary: { type: boolean, default: false }
         idempotency_key: { type: string, maxLength: 128, description: Deduplicates identical writes while retained. }
@@ -65932,13 +67942,43 @@ components:
     ManagedRealtimeRetainedMessageResponse:
       type: object
       description: A committed message and its channel-scoped sequence.
-      required: [sequence, data_base64, binary, created_at]
+      required:
+      - sequence
+      - data_base64
+      - binary
+      - created_at
       properties:
-        sequence: { type: integer, format: int64, minimum: 1 }
-        data_base64: { type: string, format: byte }
-        binary: { type: boolean }
-        created_at: { type: string, format: date-time }
-
+        metadata:
+          type: object
+          maxProperties: 8
+          propertyNames:
+            pattern: ^[a-z0-9_.-]{1,64}$
+          additionalProperties:
+            type: string
+            maxLength: 128
+          description: Exact-match routing metadata persisted with this channel message.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        data_base64:
+          type: string
+          format: byte
+        binary:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        target_message_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        event:
+          type: string
+        deleted:
+          type: boolean
     ManagedRealtimeRetainedHistoryResponse:
       type: object
       description: A consistent page of retained channel messages and retention bounds.
@@ -66084,7 +68124,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -66166,7 +68206,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -67732,7 +69772,7 @@ components:
       required: [gregale_operation_result, result, effects]
       properties:
         gregale_operation_result: { type: integer, enum: [1] }
-        result: { description: Business result persisted atomically with effect enqueue; any JSON value, including null. }
+        result: { description: "Business result persisted atomically with effect enqueue; any JSON value, including null." }
         effects:
           type: array
           maxItems: 32

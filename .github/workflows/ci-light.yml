@@ -341,10 +341,10 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Cover cold API compilation, sequential ordinary/state/API race runs,
+    # Cover cold API compilation, sequential ordinary/API/state race runs,
     # and container setup. State batches keep their own 12m timeouts and
     # default runtime settings, on the separate PostgreSQL service.
-    timeout-minutes: 45
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -453,17 +453,6 @@ jobs:
           set -euo pipefail
           PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
           SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
-          # The API integration suite also needs test-name sharding. Keep every
-          # selected API test while avoiding a whole-suite run on shard 1.
-          SELECTED_PKGS="$(python3 scripts/ci/affected_packages.py test --shard 1 --shards 1 < "$RUNNER_TEMP/changed-paths.txt")"
-          if [[ " $SELECTED_PKGS " == *" ./cmd/apid "* ]]; then
-            read -r -a TEST_PACKAGES <<< "$PKGS"
-            PKGS=""
-            for pkg in "${TEST_PACKAGES[@]}"; do
-              if [[ "$pkg" != ./cmd/apid ]]; then PKGS+=" $pkg"; fi
-            done
-            SPLIT="$SPLIT ./cmd/apid"
-          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0

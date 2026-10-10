@@ -36,7 +36,7 @@ class EventFanoutAttemptHistoryResponse:
     history: list[EventFanoutAttemptResponse]
     subscription_id: UUID | Unset = UNSET
     next_before: str | Unset = UNSET
-    """Opaque cursor bound to the app"""
+    """Opaque cursor bound to the app, event identity, and optional recipient filter."""
     coverage: EventFanoutAttemptHistoryResponseCoverage | Unset = UNSET
     """Recorded observations only; pre-migration transitions and compacted details are unavailable."""
     summaries: list[EventFanoutHistorySummaryResponse] | Unset = UNSET

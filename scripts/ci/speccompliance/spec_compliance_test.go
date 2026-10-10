@@ -1122,6 +1122,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
+		filepath.Join(root, "pkg", "api", "realtime_push.go"),
+		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
+		filepath.Join(root, "pkg", "api", "realtime_schedules.go"),
+		filepath.Join(root, "pkg", "api", "realtime_signals.go"),
+		filepath.Join(root, "pkg", "api", "realtime_reducers.go"),
+		filepath.Join(root, "pkg", "api", "realtime_schemas.go"),
+		filepath.Join(root, "pkg", "api", "realtime_mutations.go"),
+		filepath.Join(root, "pkg", "api", "realtime_read_progress.go"),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", "financial.go"),
@@ -1266,6 +1274,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 	delete(dtos, "EventReplayBackfillItem")
 	dtos["EventReplayBackfillItemResponse"] = backfillItemFields
+
+	// Push metadata schemas retain their public names while Go uses response suffixes.
+	for goName, schemaName := range map[string]string{
+		"ManagedRealtimePushProviderResponse": "ManagedRealtimePushProvider",
+		"ManagedRealtimePushDeviceResponse":   "ManagedRealtimePushDevice",
+		"ManagedRealtimePushDeviceRequest":    "ManagedRealtimePushRegistration",
+		"ManagedRealtimePushDeliveryResponse": "ManagedRealtimePushDelivery",
+	} {
+		dtos[schemaName] = dtos[goName]
+		delete(dtos, goName)
+	}
 
 	var missingInSpec []string
 	for name := range dtos {

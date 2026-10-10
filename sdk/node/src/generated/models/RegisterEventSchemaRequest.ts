@@ -10,7 +10,7 @@ export type RegisterEventSchemaRequest = {
   type: string;
   version: string;
   /**
-   * Draft 2020-12 JSON Schema
+   * Draft 2020-12 JSON Schema, at most 64 KiB, without external references.
    */
   schema: any;
 };
