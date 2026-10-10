@@ -1,0 +1,27 @@
+name: approval-flow
+trigger:
+  type: manual
+steps:
+  - name: request
+    path: /request-approval
+    input:
+      order_id: "{{input.order_id}}"
+  - name: approval
+    depends_on: [request]
+    wait_for_event: order.approved
+    timeout: 1h
+    on_timeout: expire
+  - name: fulfill
+    path: /fulfill-order
+    depends_on: [approval]
+    when:
+      ref: steps.approval.output.approved_by
+      op: exists
+      value: true
+    input:
+      order_id: "{{input.order_id}}"
+  - name: expire
+    path: /expire-approval
+    depends_on: [approval]
+    input:
+      order_id: "{{input.order_id}}"

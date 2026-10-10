@@ -25,6 +25,25 @@ func cmdIssues(args []string) int {
 		}
 		return 1
 	}
+	if args[0] == "get" || args[0] == "resolve" || args[0] == "ignore" || args[0] == "reopen" || args[0] == "assign" {
+		for _, arg := range args[1:] {
+			if arg == "--interactive" || strings.HasPrefix(arg, "--interactive=") {
+				if args[0] == "assign" {
+					return cmdIssuesAssignInteractive(args[1:])
+				}
+				if args[0] == "reopen" {
+					return cmdIssuesReopenInteractive(args[1:])
+				}
+				if args[0] == "ignore" {
+					return cmdIssuesIgnoreInteractive(args[1:])
+				}
+				if args[0] == "resolve" {
+					return cmdIssuesResolveInteractive(args[1:])
+				}
+				return cmdIssuesGetInteractive(args[1:])
+			}
+		}
+	}
 	action := args[0]
 	fs := newFlagSet("issues "+action, flag.ContinueOnError)
 	app := fs.String("app", "", "application slug")

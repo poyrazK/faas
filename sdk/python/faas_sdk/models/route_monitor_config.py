@@ -12,6 +12,10 @@ from ..models.route_monitor_config_customer_group_by import (
     RouteMonitorConfigCustomerGroupBy,
     check_route_monitor_config_customer_group_by,
 )
+from ..models.route_monitor_config_on_violation import (
+    RouteMonitorConfigOnViolation,
+    check_route_monitor_config_on_violation,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -31,6 +35,10 @@ class RouteMonitorConfig:
     routes: list[RouteMonitorRoute]
     customer_group_by: RouteMonitorConfigCustomerGroupBy | Unset = UNSET
     """Saved request-time identity dimension used for per-cohort budget evaluation."""
+    on_violation: RouteMonitorConfigOnViolation | Unset = UNSET
+    """Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving
+    all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default
+    report-only action."""
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -50,6 +58,10 @@ class RouteMonitorConfig:
         if not isinstance(self.customer_group_by, Unset):
             customer_group_by = self.customer_group_by
 
+        on_violation: str | Unset = UNSET
+        if not isinstance(self.on_violation, Unset):
+            on_violation = self.on_violation
+
         updated_at: str | Unset = UNSET
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
@@ -66,6 +78,8 @@ class RouteMonitorConfig:
         )
         if customer_group_by is not UNSET:
             field_dict["customer_group_by"] = customer_group_by
+        if on_violation is not UNSET:
+            field_dict["on_violation"] = on_violation
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
 
@@ -96,6 +110,13 @@ class RouteMonitorConfig:
         else:
             customer_group_by = check_route_monitor_config_customer_group_by(_customer_group_by)
 
+        _on_violation = d.pop("on_violation", UNSET)
+        on_violation: RouteMonitorConfigOnViolation | Unset
+        if isinstance(_on_violation, Unset):
+            on_violation = UNSET
+        else:
+            on_violation = check_route_monitor_config_on_violation(_on_violation)
+
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: datetime.datetime | Unset
         if isinstance(_updated_at, Unset):
@@ -109,6 +130,7 @@ class RouteMonitorConfig:
             revision=revision,
             routes=routes,
             customer_group_by=customer_group_by,
+            on_violation=on_violation,
             updated_at=updated_at,
         )
 

@@ -273,9 +273,16 @@ func automationRevisionResponse(revision state.AutomationRevision) (api.Automati
 	if err != nil {
 		return api.AutomationRevisionResponse{}, err
 	}
+	var evidence *api.AutomationCheckEvidence
+	if len(revision.CheckEvidence) > 0 {
+		if err := json.Unmarshal(revision.CheckEvidence, &evidence); err != nil {
+			return api.AutomationRevisionResponse{}, err
+		}
+	}
 	hash := sha256.Sum256(canonical)
 	return api.AutomationRevisionResponse{
-		Version: revision.Version, Definition: definition, DefinitionHash: hex.EncodeToString(hash[:]),
+		CheckEvidence: evidence,
+		Version:       revision.Version, Definition: definition, DefinitionHash: hex.EncodeToString(hash[:]),
 		RecordedAt: revision.RecordedAt.UTC(), LegacySnapshot: revision.LegacySnapshot,
 		PublishedByAccountID: revision.PublishedByAccountID, PublishedByAPIKeyID: revision.PublishedByAPIKeyID,
 	}, nil
@@ -298,6 +305,21 @@ func (s *server) automationList(ctx context.Context, app state.App, account stat
 		response.UnavailableReason = "deployment_unavailable"
 	}
 	response.Automations, err = automationResponses(dep.Workflows, records)
+	if err == nil {
+		if policies, ok := s.store.(state.AutomationFailurePolicyStore); ok {
+			names, readErr := policies.ListAutomationFailurePauses(ctx, app.ID)
+			if readErr != nil {
+				return response, readErr
+			}
+			paused := map[string]bool{}
+			for _, name := range names {
+				paused[name] = true
+			}
+			for i := range response.Automations {
+				response.Automations[i].FailurePaused = paused[response.Automations[i].Name]
+			}
+		}
+	}
 	return response, err
 }
 func automationResponses(manifest json.RawMessage, records []state.Automation) ([]api.AutomationResponse, error) {
@@ -366,7 +388,7 @@ func (s *server) publishAutomation(w http.ResponseWriter, r *http.Request, accou
 	if !decodeAutomationBody(w, r, &body) {
 		return
 	}
-	s.applyAutomationMutation(w, r, account, state.AutomationMutation{Action: "publish", ExpectedVersion: body.ExpectedVersion, TakeOverManifest: body.TakeOverManifest})
+	s.applyAutomationMutation(w, r, account, state.AutomationMutation{Action: "publish", ExpectedVersion: body.ExpectedVersion, TakeOverManifest: body.TakeOverManifest, CheckEvidence: body.CheckEvidence, CheckReceipt: body.CheckReceipt})
 }
 func (s *server) setAutomationEnabled(w http.ResponseWriter, r *http.Request, account state.Account) {
 	var body api.SetAutomationEnabledRequest
@@ -427,6 +449,22 @@ func (s *server) applyAutomationMutation(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	responses, err := automationResponses(dep.Workflows, []state.Automation{record})
+	if err == nil {
+		if policies, ok := s.store.(state.AutomationFailurePolicyStore); ok {
+			names, readErr := policies.ListAutomationFailurePauses(r.Context(), app.ID)
+			if readErr != nil {
+				writeAutomationError(w, readErr)
+				return
+			}
+			for i := range responses {
+				for _, name := range names {
+					if responses[i].Name == name {
+						responses[i].FailurePaused = true
+					}
+				}
+			}
+		}
+	}
 	if err != nil {
 		writeAutomationError(w, err)
 		return
@@ -501,6 +539,8 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.ErrAutomationDefinitionsQuota(quota.Plan, quota.Limit, quota.Observed))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such automation"))
+	case errors.Is(err, state.ErrAutomationPublishCheckRequired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "automation_publish_check_required", "Publishing checks required", err.Error()))
 	case errors.Is(err, state.ErrAutomationVersionConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAutomationVersionConflict, "Automation changed", err.Error()))
 	case errors.Is(err, state.ErrAutomationRevisionNotFound):

@@ -2877,14 +2877,45 @@ func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (Jo
 // is intentionally OMITTED from the wire response (internal
 // dispatch primitive).
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
+	return c.ListJobRunTasksPage(ctx, name, runID, 0, 0)
+}
+
+// ListJobRunTasksPage reads one offset page of task rows.
+func (c *Client) ListJobRunTasksPage(ctx context.Context, name, runID string, limit, offset int) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobTaskAttempts returns the retained terminal outcomes for a task.
 func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	return c.ListJobTaskAttemptsPage(ctx, name, runID, taskIndex, 0, 0)
+}
+
+// ListJobTaskAttemptsPage reads one offset page of retained task attempts.
+func (c *Client) ListJobTaskAttemptsPage(ctx context.Context, name, runID string, taskIndex, limit, offset int) (ListJobTaskAttemptsResponse, error) {
 	var out ListJobTaskAttemptsResponse
 	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

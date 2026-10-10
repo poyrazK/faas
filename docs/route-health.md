@@ -7,6 +7,10 @@ saved route policy requirements and the Test CLI.
 For monitoring after promotion, use [production route budgets](route-production-monitoring.md).
 For customer-safe retirement reviews, see [route lifecycle review](route-lifecycle.md).
 
+To see every route's canary, production and contract coverage together, run
+[`gregale routes status`](route-status.md).
+
+
 Create a JSON selector file using exact **gateway-normalized telemetry paths**.
 Use the method/path labels in debugger analytics, rather than expanded request
 URLs or arbitrary OpenAPI parameter names. For example, the gateway normalizes
@@ -126,6 +130,25 @@ include candidate/stable p95 estimates, delta, ratio, budget and independent
 signal verdicts. The CI flag exits nonzero for regressed, unknown or disabled
 reports. Report mode does not block progression.
 
+### Default selectors for unconfigured apps
+
+An app that has never saved route health configuration (revision 0) receives
+default report-mode selectors when its first canary stage advances. Gregale
+ranks the stable deployment's observed routes from the last seven days, clamped
+to plan retention, by distinct tenants and then requests, the same order as
+`routes health suggest`, and saves up to 10 of them at revision 1. Seeding
+requires request telemetry and exactly one stable deployment serving traffic.
+It never selects enforce mode, latency checks or watched statuses, and it never
+blocks or delays the advance. The audit log records `route_health.seeded`.
+
+Seeding happens at most once. Any saved configuration, including an empty
+selector list, stops it:
+
+```sh
+echo '[]' > no-routes.json
+gregale routes health set my-api --routes no-routes.json --mode report --expected-revision 0
+```
+
 After assessing traffic volume and telemetry availability, opt in using the
 current revision:
 
@@ -147,6 +170,47 @@ and the latest selector, latency-check, watched-status or mode update. Changes t
 new observations.
 At least 20 represented requests are required on each deployment **per route,
 per window**. Counts preserve telemetry publisher aggregation weights.
+
+### Low-traffic routes
+
+A route that is unknown only because its one-minute windows lack requests is
+re-evaluated over the stage so far: from the observation anchor to the newest
+closed minute, capped at the newest 30 minutes and split into two equal,
+consecutive halves of at least two minutes each. Each half uses the same
+request minimums and thresholds, and both must agree. The finding reports
+`evidence_window: pooled` with the pooled windows when this reaches a healthy
+or regressed verdict, and lists the pooled counts in `pooled_windows`; the
+one-minute `windows` are always kept. A route with
+about five candidate requests per minute therefore gets a verdict after about
+eight minutes of a stage. A regressed one-minute window is never pooled away.
+Customer cohorts, watched status codes and investigations keep one-minute
+windows; production monitoring pools the same way for its budgets.
+
+### Routes without organic traffic: synthetic probes
+
+A GET or HEAD selector can opt into synthetic probes for routes that get no
+traffic during a canary. Give a concrete path matching the selector:
+
+```json
+[
+  {"method": "GET", "path": "/reports/{id}", "probe": {"path": "/reports/7"}}
+]
+```
+
+While a canary is in flight and the route's organic evidence stays sparse,
+Gregale sends 10 bodyless requests per minute to the candidate and to the
+stable deployment. Probes keep your auth gates: a route that rejects anonymous
+requests with 401/403 stays unknown (`probe_unauthenticated`), so probe public
+or read-only routes. Probe requests never appear in request telemetry,
+analytics, customer reach or usage, but they wake the app like any request.
+At most 5 selectors can probe.
+
+When organic evidence (one-minute or pooled) is still sparse, the finding uses
+the probe results, reported as `evidence_window: synthetic` with
+`synthetic_windows`, under the same 5xx thresholds. Probes settle only the 5xx
+signal: a selected latency check still needs organic traffic, although a
+probe-detected regression is reported. Probes run only where the operator has
+enabled them.
 
 A window regresses when the candidate has at least two 5xx responses, a rate
 of at least 5%, at least three times stable's rate, and at least five percentage

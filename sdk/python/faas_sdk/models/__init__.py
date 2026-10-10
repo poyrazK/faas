@@ -92,12 +92,20 @@ from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
 from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_consumer_list_response import APIConsumerListResponse
+from .api_consumer_plan_assignment_list_response import APIConsumerPlanAssignmentListResponse
+from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResponse
+from .api_consumer_plan_list_response import APIConsumerPlanListResponse
+from .api_consumer_plan_response import APIConsumerPlanResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
+from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
 from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUnit
+from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
 from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
+from .api_consumer_usage_completeness_response import APIConsumerUsageCompletenessResponse
+from .api_consumer_usage_completeness_response_status import APIConsumerUsageCompletenessResponseStatus
 from .api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucketResponse
 from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
@@ -333,6 +341,7 @@ from .approve_route_removal_request_mappings_item import ApproveRouteRemovalRequ
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
+from .assign_api_consumer_plan_request import AssignAPIConsumerPlanRequest
 from .async_invoke_response import AsyncInvokeResponse
 from .audit_event_response import AuditEventResponse
 from .audit_event_response_data import AuditEventResponseData
@@ -346,11 +355,27 @@ from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
 from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
+from .automation_check_attempt import AutomationCheckAttempt
+from .automation_check_attempt_outcome import AutomationCheckAttemptOutcome
+from .automation_check_evidence import AutomationCheckEvidence
+from .automation_check_exclusion import AutomationCheckExclusion
+from .automation_check_exclusion_code import AutomationCheckExclusionCode
+from .automation_check_expectation import AutomationCheckExpectation
+from .automation_check_expectation_state import AutomationCheckExpectationState
+from .automation_check_scenario import AutomationCheckScenario
+from .automation_failure_policy import AutomationFailurePolicy
+from .automation_failure_policy_response import AutomationFailurePolicyResponse
+from .automation_failure_transition import AutomationFailureTransition
+from .automation_failure_transition_reason import AutomationFailureTransitionReason
+from .automation_failure_transition_state import AutomationFailureTransitionState
 from .automation_health_response import AutomationHealthResponse
 from .automation_health_response_status_counts import AutomationHealthResponseStatusCounts
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_publish_check_scenario import AutomationPublishCheckScenario
+from .automation_publish_policy import AutomationPublishPolicy
+from .automation_publish_policy_mode import AutomationPublishPolicyMode
 from .automation_queue_health import AutomationQueueHealth
 from .automation_queue_health_reason_counts import AutomationQueueHealthReasonCounts
 from .automation_response import AutomationResponse
@@ -448,6 +473,8 @@ from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
+from .check_automation_publication_request import CheckAutomationPublicationRequest
+from .check_automation_publication_response import CheckAutomationPublicationResponse
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
@@ -490,7 +517,9 @@ from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparis
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
+from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
+from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
@@ -2665,6 +2694,7 @@ from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
@@ -2763,6 +2793,7 @@ from .route_health_evaluation_policy import RouteHealthEvaluationPolicy
 from .route_health_evaluation_policy_version import RouteHealthEvaluationPolicyVersion
 from .route_health_finding import RouteHealthFinding
 from .route_health_finding_error_status import RouteHealthFindingErrorStatus
+from .route_health_finding_evidence_window import RouteHealthFindingEvidenceWindow
 from .route_health_finding_latency_status import RouteHealthFindingLatencyStatus
 from .route_health_finding_status import RouteHealthFindingStatus
 from .route_health_finding_watch_statuses_item import RouteHealthFindingWatchStatusesItem
@@ -2788,6 +2819,7 @@ from .route_health_investigation_window import RouteHealthInvestigationWindow
 from .route_health_latency_diagnostics import RouteHealthLatencyDiagnostics
 from .route_health_latency_diagnostics_coverage import RouteHealthLatencyDiagnosticsCoverage
 from .route_health_latency_sample import RouteHealthLatencySample
+from .route_health_probe import RouteHealthProbe
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
@@ -2821,6 +2853,7 @@ from .route_lifecycle_mapping_method import RouteLifecycleMappingMethod
 from .route_lifecycle_mapping_successor_method import RouteLifecycleMappingSuccessorMethod
 from .route_monitor_config import RouteMonitorConfig
 from .route_monitor_config_customer_group_by import RouteMonitorConfigCustomerGroupBy
+from .route_monitor_config_on_violation import RouteMonitorConfigOnViolation
 from .route_monitor_customer_cohort import RouteMonitorCustomerCohort
 from .route_monitor_customer_cohort_error_status import RouteMonitorCustomerCohortErrorStatus
 from .route_monitor_customer_cohort_latency_status import RouteMonitorCustomerCohortLatencyStatus
@@ -2843,6 +2876,7 @@ from .route_monitor_evidence_signal import RouteMonitorEvidenceSignal
 from .route_monitor_evidence_window import RouteMonitorEvidenceWindow
 from .route_monitor_finding import RouteMonitorFinding
 from .route_monitor_finding_error_status import RouteMonitorFindingErrorStatus
+from .route_monitor_finding_evidence_window import RouteMonitorFindingEvidenceWindow
 from .route_monitor_finding_latency_status import RouteMonitorFindingLatencyStatus
 from .route_monitor_finding_status import RouteMonitorFindingStatus
 from .route_monitor_incident import RouteMonitorIncident
@@ -2850,6 +2884,9 @@ from .route_monitor_incident_escalation import RouteMonitorIncidentEscalation
 from .route_monitor_incident_escalation_signal import RouteMonitorIncidentEscalationSignal
 from .route_monitor_incident_escalation_signal_signal import RouteMonitorIncidentEscalationSignalSignal
 from .route_monitor_incident_page import RouteMonitorIncidentPage
+from .route_monitor_incident_rollback import RouteMonitorIncidentRollback
+from .route_monitor_incident_rollback_reason import RouteMonitorIncidentRollbackReason
+from .route_monitor_incident_rollback_status import RouteMonitorIncidentRollbackStatus
 from .route_monitor_incident_status import RouteMonitorIncidentStatus
 from .route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
 from .route_monitor_incident_timeline_entry_coverage import RouteMonitorIncidentTimelineEntryCoverage
@@ -3015,6 +3052,9 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
+from .set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
+from .set_automation_publish_policy_request import SetAutomationPublishPolicyRequest
+from .set_automation_publish_policy_request_mode import SetAutomationPublishPolicyRequestMode
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
@@ -3040,6 +3080,7 @@ from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
+from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .severity_counts import SeverityCounts
@@ -3060,6 +3101,10 @@ from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
 from .simulate_automation_request import SimulateAutomationRequest
 from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
+from .simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
+from .simulate_automation_request_mock_item_attempts_additional_property import (
+    SimulateAutomationRequestMockItemAttemptsAdditionalProperty,
+)
 from .simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
 from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
 from .simulate_automation_response import SimulateAutomationResponse
@@ -3151,6 +3196,7 @@ from .update_alert_rule_request_action import UpdateAlertRuleRequestAction
 from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparison
 from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
+from .update_api_consumer_plan_limits_request import UpdateAPIConsumerPlanLimitsRequest
 from .update_app_log_drain_request import UpdateAppLogDrainRequest
 from .update_app_log_drain_request_kind import UpdateAppLogDrainRequestKind
 from .update_app_request import UpdateAppRequest
@@ -3467,12 +3513,20 @@ __all__ = (
     "AlertRuleResponseState",
     "AlertRuleResponseWindowSpec",
     "APIConsumerListResponse",
+    "APIConsumerPlanAssignmentListResponse",
+    "APIConsumerPlanAssignmentResponse",
+    "APIConsumerPlanListResponse",
+    "APIConsumerPlanResponse",
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
+    "APIConsumerRateCardResponseRouteWeights",
     "APIConsumerRateCardResponseUnit",
+    "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
     "APIConsumerUsageBucketResponse",
+    "APIConsumerUsageCompletenessResponse",
+    "APIConsumerUsageCompletenessResponseStatus",
     "APIConsumerUsageQuoteBucketResponse",
     "APIConsumerUsageQuoteResponse",
     "APIConsumerUsageResponse",
@@ -3708,6 +3762,7 @@ __all__ = (
     "AppWebhookResponseRetryPolicy",
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
+    "AssignAPIConsumerPlanRequest",
     "AsyncInvokeResponse",
     "AuditEventResponse",
     "AuditEventResponseData",
@@ -3721,11 +3776,27 @@ __all__ = (
     "AutomaticRouteCheckLastErrorCode",
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
+    "AutomationCheckAttempt",
+    "AutomationCheckAttemptOutcome",
+    "AutomationCheckEvidence",
+    "AutomationCheckExclusion",
+    "AutomationCheckExclusionCode",
+    "AutomationCheckExpectation",
+    "AutomationCheckExpectationState",
+    "AutomationCheckScenario",
+    "AutomationFailurePolicy",
+    "AutomationFailurePolicyResponse",
+    "AutomationFailureTransition",
+    "AutomationFailureTransitionReason",
+    "AutomationFailureTransitionState",
     "AutomationHealthResponse",
     "AutomationHealthResponseStatusCounts",
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationPublishCheckScenario",
+    "AutomationPublishPolicy",
+    "AutomationPublishPolicyMode",
     "AutomationQueueHealth",
     "AutomationQueueHealthReasonCounts",
     "AutomationResponse",
@@ -3823,6 +3894,8 @@ __all__ = (
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
     "CheckAccountWorkflowReadinessBody",
+    "CheckAutomationPublicationRequest",
+    "CheckAutomationPublicationResponse",
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
@@ -3863,7 +3936,9 @@ __all__ = (
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
+    "CreateAPIConsumerPlanRequest",
     "CreateAPIConsumerRateCardRequest",
+    "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
     "CreateAppLogDrainRequest",
@@ -5938,6 +6013,7 @@ __all__ = (
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
+    "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
@@ -6030,6 +6106,7 @@ __all__ = (
     "RouteHealthEvaluationPolicyVersion",
     "RouteHealthFinding",
     "RouteHealthFindingErrorStatus",
+    "RouteHealthFindingEvidenceWindow",
     "RouteHealthFindingLatencyStatus",
     "RouteHealthFindingStatus",
     "RouteHealthFindingWatchStatusesItem",
@@ -6055,6 +6132,7 @@ __all__ = (
     "RouteHealthLatencyDiagnostics",
     "RouteHealthLatencyDiagnosticsCoverage",
     "RouteHealthLatencySample",
+    "RouteHealthProbe",
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
@@ -6088,6 +6166,7 @@ __all__ = (
     "RouteLifecycleMappingSuccessorMethod",
     "RouteMonitorConfig",
     "RouteMonitorConfigCustomerGroupBy",
+    "RouteMonitorConfigOnViolation",
     "RouteMonitorCustomerCohort",
     "RouteMonitorCustomerCohortErrorStatus",
     "RouteMonitorCustomerCohortLatencyStatus",
@@ -6110,6 +6189,7 @@ __all__ = (
     "RouteMonitorEvidenceWindow",
     "RouteMonitorFinding",
     "RouteMonitorFindingErrorStatus",
+    "RouteMonitorFindingEvidenceWindow",
     "RouteMonitorFindingLatencyStatus",
     "RouteMonitorFindingStatus",
     "RouteMonitorIncident",
@@ -6117,6 +6197,9 @@ __all__ = (
     "RouteMonitorIncidentEscalationSignal",
     "RouteMonitorIncidentEscalationSignalSignal",
     "RouteMonitorIncidentPage",
+    "RouteMonitorIncidentRollback",
+    "RouteMonitorIncidentRollbackReason",
+    "RouteMonitorIncidentRollbackStatus",
     "RouteMonitorIncidentStatus",
     "RouteMonitorIncidentTimelineEntry",
     "RouteMonitorIncidentTimelineEntryCoverage",
@@ -6278,6 +6361,9 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
+    "SetAutomationFailurePolicyRequest",
+    "SetAutomationPublishPolicyRequest",
+    "SetAutomationPublishPolicyRequestMode",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
     "SetCanaryRouteGateRequest",
@@ -6301,6 +6387,7 @@ __all__ = (
     "SetRouteHealthGateRequestOnRegression",
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
+    "SetRouteMonitorRequestOnViolation",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
     "SeverityCounts",
@@ -6321,6 +6408,8 @@ __all__ = (
     "SidecarType",
     "SimulateAutomationRequest",
     "SimulateAutomationRequestMockAttempts",
+    "SimulateAutomationRequestMockItemAttempts",
+    "SimulateAutomationRequestMockItemAttemptsAdditionalProperty",
     "SimulateAutomationRequestMockItemOutputs",
     "SimulateAutomationRequestMockOutputs",
     "SimulateAutomationResponse",
@@ -6406,6 +6495,7 @@ __all__ = (
     "UpdateAlertRuleRequestComparison",
     "UpdateAlertRuleRequestMetric",
     "UpdateAlertRuleRequestWindowSpec",
+    "UpdateAPIConsumerPlanLimitsRequest",
     "UpdateAppLogDrainRequest",
     "UpdateAppLogDrainRequestKind",
     "UpdateAppRequest",

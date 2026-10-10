@@ -1726,23 +1726,40 @@ type BuildPlanView struct {
 // what was checked, and what artifact went live?" without exposing storage
 // internals such as the rootfs key.
 type HostingReceiptView struct {
-	AppURL          string
-	SourceKind      string
-	SourceURL       string
-	CommitSHA       string
-	ImageDigest     string
-	ProfileVersion  string
-	Framework       string
-	FrameworkVer    string
-	Port            int
-	HealthPath      string
-	SmokeStatus     string
-	SmokePath       string
-	SmokeStatusCode int
-	SmokeLatencyMS  int64
-	SmokeVerifiedAt string
-	SmokeErrorCode  string
-	SmokeError      string
+	AppURL                   string
+	SourceKind               string
+	SourceURL                string
+	CommitSHA                string
+	ImageDigest              string
+	ProfileVersion           string
+	Framework                string
+	FrameworkVer             string
+	Port                     int
+	HealthPath               string
+	SmokeStatus              string
+	SmokePath                string
+	SmokeStatusCode          int
+	SmokeLatencyMS           int64
+	SmokeVerifiedAt          string
+	SmokeErrorCode           string
+	SmokeError               string
+	RouteCheckSetStatus      string
+	RouteCheckDocumentSHA256 string
+	RouteChecks              []HostingRouteCheckView
+}
+
+// HostingRouteCheckView is the safe deployment-page projection of one
+// OpenAPI-selected candidate route check. It intentionally omits transport
+// request IDs and other receipt fields the page does not need.
+type HostingRouteCheckView struct {
+	Method     string
+	Path       string
+	Status     string
+	StatusCode int
+	LatencyMS  int64
+	VerifiedAt string
+	ErrorCode  string
+	Error      string
 }
 
 // DeploymentAuditRow is the dashboard-local projection of one

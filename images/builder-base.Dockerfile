@@ -8,13 +8,14 @@
 # CI can verify that the cross-compiled guest binaries and upstream assets stay
 # complete for every published platform.
 #
-# Railpack, BuildKit and runc are compiled from their checksum-pinned sources
+# Railpack, BuildKit, and runc are compiled from checksum-pinned sources
 # below so the image does not inherit stale Go dependencies from opaque
 # upstream binaries. Versions are pinned via build-args so CI can override
 # them per release without churning this file.
 
 # ---- railpack (Node/Python builder, spec §4.5) ---------------------------
-# Pin the source archive and retain the release's CLI/frontend version.
+# Keep the matching frontend release, but rebuild the CLI with patched Go
+# dependencies rather than importing its vulnerable upstream binary.
 ARG RAILPACK_VERSION=0.38.0
 ARG RAILPACK_SOURCE_SHA256=ae2ec93af2ecf000be8bf08d060a9440346f60407f16d072b25ac16eb8d34e11
 
@@ -106,12 +107,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         GOMAXPROCS=2 GOMEMLIMIT=2GiB GOGC=10 \
-        go build -p 1 -mod=mod -trimpath \
+        go build -p 1 -mod=mod -buildvcs=false -trimpath \
           -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
           -o /out/railpack ./cmd/cli && \
       go version -m /out/railpack | tee /tmp/railpack-build-info && \
       grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
-      grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info
+      grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info && \
+      ! grep -Eq 'v0.58.0|go1.26.7' /tmp/railpack-build-info
 
 # ---- runc (builder OCI runtime) -----------------------------------------
 # The official runc asset is intentionally not copied into the final image:

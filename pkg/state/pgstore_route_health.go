@@ -52,7 +52,9 @@ func (s *PgStore) SetRouteHealthGate(ctx context.Context, accountID, appID strin
 	if req.Mode == "enforce" && (!snapshot.Account.Plan.TrafficSplitAllowed() || !snapshot.Account.Plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
+	// The first explicit save records intent even when it matches the default,
+	// so an empty selector list opts out of default seeding (ADR-844).
+	if g.Revision > 0 && g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, tx.Commit(ctx)
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {
@@ -118,14 +120,60 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 		}
 	}
 	routehealth.Evaluate(&report, anchor, unavailable)
+	if unavailable == "" && report.StableDeploymentID != "" {
+		if err := pgPooledRouteHealth(ctx, db, snapshot.Account.ID, g, &report, anchor); err != nil {
+			return report, err
+		}
+	}
 	return report, nil
+}
+
+// pgPooledRouteHealth reads pooled_windows only for routes whose one-minute
+// windows lacked requests, then re-evaluates with unchanged thresholds
+// (ADR-846). One-minute windows stay in every finding.
+func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, anchor *time.Time) error {
+	windows, ok := routehealth.PooledWindows(anchor, report.CheckedAt)
+	if !ok {
+		return nil
+	}
+	selected := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
+	pooled := *report
+	pooled.Routes = []api.RouteHealthFinding{}
+	targets := []int{}
+	for i, f := range report.Routes {
+		if i >= len(g.Routes) || !routehealth.NeedsPooledEvidence(f) {
+			continue
+		}
+		selected.Routes = append(selected.Routes, g.Routes[i])
+		pooled.Routes = append(pooled.Routes, api.RouteHealthFinding{Method: f.Method, Path: f.Path, Windows: append([]api.RouteHealthWindowEvidence(nil), windows...)})
+		targets = append(targets, i)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, selected, &pooled, api.RouteHealthInvestigationSelection{}, windows); err != nil {
+		return err
+	}
+	for k, i := range targets {
+		report.Routes[i].PooledWindows = pooled.Routes[k].Windows
+	}
+	routehealth.Evaluate(report, anchor, "")
+	// Probes count only for opted-in routes that pooling left sparse (ADR-847).
+	if err := pgSyntheticRouteHealth(ctx, db, accountID, g, report, anchor, windows); err != nil {
+		return err
+	}
+	routehealth.Evaluate(report, anchor, "")
+	return nil
 }
 func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {
 	return pgRouteHealthObservationsForCustomer(ctx, db, accountID, g, report, api.RouteHealthInvestigationSelection{})
 }
 
 func pgRouteHealthObservationsForCustomer(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection) error {
-	windows := routehealth.Windows(report.CheckedAt)
+	return pgRouteHealthObservationsInWindows(ctx, db, accountID, g, report, selection, routehealth.Windows(report.CheckedAt))
+}
+
+func pgRouteHealthObservationsInWindows(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection, windows []api.RouteHealthWindowEvidence) error {
 	routesJSON, err := json.Marshal(g.Routes)
 	if err != nil {
 		return fmt.Errorf("encode selected routes: %w", err)

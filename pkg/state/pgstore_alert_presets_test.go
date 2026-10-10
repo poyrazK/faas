@@ -12,8 +12,8 @@
 // closed-set CHECK + the seed-only mutator posture), so the test
 // surface here is the schema-vs-row mapping + the (category, name)
 // order. TestPg_AlertPresetCatalog_SeedMigration pins that the
-// the base, safe-release, B3, login-abuse and automation-backlog migrations
-// seed the 18 catalog rows.
+// the base, safe-release, B3, login-abuse and automation notification migrations
+// seed the 19 catalog rows.
 //
 // pgtest.Open handles the skip when Postgres is unreachable, so
 // the test is safe to run on a dev box without /var/run/postgresql.
@@ -102,10 +102,10 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
-	// safe-releases, B3, O2, login-abuse and automation-backlog seeds ship
-	// 18 rows. This test pins the count and (category, name) ordering shape.
-	if len(got) != 18 {
-		t.Errorf("catalog row count = %d; want 18 (base + safe-releases + B3 + O2 + login-abuse + automation backlog seeds)", len(got))
+	// safe-releases, B3, O2, login-abuse and automation notification seeds ship
+	// 19 rows. This test pins the count and (category, name) ordering shape.
+	if len(got) != 19 {
+		t.Errorf("catalog row count = %d; want 19 (base + safe-releases + B3 + O2 + login-abuse + automation seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
@@ -320,6 +320,7 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"daily_spend_eur_1":             true,
 		"slo_burn_rate":                 true,
 		"automation_backlog":            true,
+		"automation_failures":           true,
 		"login_target_pressure":         true,
 		"login_target_signal_health":    true,
 	}
@@ -365,5 +366,15 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	}
 	if len(disabled) != 0 {
 		t.Errorf("alert_presets rows still disabled after PR-B flip: %v (expected empty — all catalog rows should be enabled)", disabled)
+	}
+}
+
+func TestPGAutomationFailureAlertPresetDefaults(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	preset, err := store.AlertPresetByName(ctx, "automation_failures")
+	if err != nil || preset.Metric != string(state.AlertMetricWorkflowFailures) || preset.Category != "reliability" || preset.Comparison != "gte" ||
+		preset.Threshold != api.WorkflowFailureAlertThreshold || preset.DefaultCooldownMinutes != api.WorkflowFailureAlertCooldownMinutes ||
+		preset.WindowSpec != "5m" || !preset.EnabledInCatalog || preset.MinimumPlan != "hobby" {
+		t.Fatalf("failure preset=%+v err=%v", preset, err)
 	}
 }

@@ -9970,6 +9970,46 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose billed usage is checked.
+        schema: { type: string, format: uuid }
+      - name: since
+        in: query
+        required: true
+        description: RFC3339 start of the period to check, usually a statement's period_start.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        required: true
+        description: RFC3339 exclusive end of the period to check; at most 90 days after since.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageCompleteness
+      summary: Check one API consumer's billed usage against request telemetry.
+      description: |
+        Compares successful requests in the billing ledger with successful
+        requests in request telemetry, hour by hour, so usage the ledger
+        never received is visible before a statement is invoiced. Only whole
+        UTC hours that have settled (10 minutes) and that telemetry still
+        retains (14 days) are checked. Telemetry is sampled, so it proves a
+        lower bound of missing usage but cannot prove completeness of every
+        request. Read-only; nothing is stored.
+      responses:
+        '200':
+          description: Completeness of billed usage over the checked hours.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageCompletenessResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -9994,8 +10034,8 @@ paths:
     post:
       tags: [consumers]
       operationId: createAPIConsumerUsageStatement
-      summary: Snapshot an API consumer usage quote.
-      description: Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+      summary: Snapshot an API consumer usage quote or create a late-usage adjustment.
+      description: Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -10005,12 +10045,12 @@ paths:
             schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
       responses:
         '200':
-          description: The existing statement for this consumer and period.
+          description: The latest existing revision; the period has no new usage or the draft is unchanged.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
         '201':
-          description: The newly created usage statement snapshot.
+          description: The newly created statement revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
@@ -10018,6 +10058,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
     parameters:
@@ -10168,6 +10209,119 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumer-plans:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlans
+      summary: List an app's consumer plans.
+      responses:
+        '200':
+          description: Consumer plans by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerPlan
+      summary: Create a named consumer plan.
+      description: |
+        A plan bundles enforcement limits with its own rate-card history
+        (rate cards created with plan_id). App-wide rate cards are the default
+        plan for consumers without an assignment. At most 20 plans per app.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumer-plans/{plan_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: plan_id
+        in: path
+        required: true
+        description: Consumer plan UUID.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [consumers]
+      operationId: updateAPIConsumerPlanLimits
+      summary: Replace a consumer plan's limits.
+      description: Limits are enforcement, not prices, so they change in place; the gateway applies them within 15 seconds. Prices change through new rate-card versions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAPIConsumerPlanLimitsRequest' }
+      responses:
+        '200':
+          description: The updated plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose plan assignments are listed or appended.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlanAssignments
+      summary: List a consumer's plan assignments, oldest first.
+      responses:
+        '200':
+          description: Append-only plan history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: assignAPIConsumerPlan
+      summary: Move a consumer onto a plan from a UTC minute.
+      description: The assignment takes effect from effective_from (default the next minute; never in the past) and requires the target plan to have a rate card in force then. Statements price each minute with the plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns the consumer to the default plan.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new assignment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
@@ -19879,6 +20033,97 @@ paths:
           default: false
         description: Explicitly return ownership to the current YAML definition after
           deletion.
+  /v1/apps/{slug}/automations/{name}/failure-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Published automation whose failure admission guard is inspected or changed.
+    get:
+      tags: [workflows]
+      operationId: getAutomationFailurePolicy
+      summary: Inspect failure pause policy and resume preview.
+      description: Returns aggregate terminal outcomes since monitoring began or resumed, current pause generation, active run counts, retained event count and the latest 100 pause/resume transitions. Counts are advisory; no run payloads or error messages are included.
+      responses:
+        '200':
+          description: Current monitoring policy, failure pause, retained work preview and recent transitions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; reload failure guard state before a conflicting operation.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+    put:
+      tags: [workflows]
+      operationId: setAutomationFailurePolicy
+      summary: Configure automatic pausing after repeated failures.
+      description: Opt-in policy for a published YAML or dashboard automation; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAutomationFailurePolicyRequest' }
+      responses:
+        '200':
+          description: Updated failure monitoring configuration with the current independent admission guard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; the expected failure policy version changed.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+
+  /v1/apps/{slug}/automations/{name}/failure-policy/resume:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Published automation whose current failure pause is explicitly resumed.
+    post:
+      tags: [workflows]
+      operationId: resumeAutomationFailurePause
+      summary: Explicitly clear a failure pause after inspecting retained work.
+      description: Requires deploy write scope and the current positive pause generation. Starts a fresh monitoring epoch and re-arms schedules without catch-up for the paused interval. Existing runs continue and captured events remain subject to their routing retention; events received without an eligible recipient are not replayed. This action does not change manual pause intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResumeAutomationFailurePauseRequest' }
+      responses:
+        '200':
+          description: Explicitly resumed guard state with fresh monitoring counts and transition history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+
   /v1/apps/{slug}/automations/{name}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -20033,6 +20278,122 @@ paths:
         '422': { $ref: '#/components/responses/AutomationInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations:publish-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags:
+        - workflows
+      operationId: getAutomationPublishPolicy
+      summary: Inspect required publishing checks.
+      responses:
+        '200':
+          description: Publishing policy currently configured for this app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationPublishPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - workflows
+      operationId: setAutomationPublishPolicy
+      summary: Set required publishing checks using admin scope and the current policy version.
+      responses:
+        '200':
+          description: Publishing policy after the requested versioned update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationPublishPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAutomationPublishPolicyRequest'
+  /v1/apps/{slug}/automations/{name}/publish-check:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description: Saved automation draft to check.
+    post:
+      tags:
+        - workflows
+      operationId: checkAutomationPublication
+      summary: Evaluate scenario assertions and coverage on the server and issue a bound receipt.
+      responses:
+        '200':
+          description: Server-issued publishing receipt and verified check metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckAutomationPublicationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckAutomationPublicationRequest'
   /v1/apps/{slug}/automations/{name}/publish:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -40771,6 +41132,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
+        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default report-only action."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -40782,6 +41144,7 @@ components:
       properties:
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
+        on_violation: {"type": "string", "enum": ["report", "rollback"], "description": "report (default) only records incidents. rollback requests one checked rollback per early error-budget incident and requires at least one route with max_5xx_rate_bps."}
         expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
     PreviewRouteMonitorRequest:
@@ -40815,6 +41178,8 @@ components:
         error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
+        pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -40953,6 +41318,18 @@ components:
         timeline_truncated: {"type": "boolean", "description": "True when older evaluations were dropped to preserve the opening baseline and bounded incident size."}
         escalations: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentEscalation"}, "maxItems": 20, "description": "Newest newly violated route/signal transitions with bounded evidence captured at each transition."}
         escalations_truncated: {"type": "boolean", "description": "True when older escalation records were dropped to preserve the newest transition details and incident size."}
+        rollback: {"$ref": "#/components/schemas/RouteMonitorIncidentRollback"}
+    RouteMonitorIncidentRollback:
+      type: object
+      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is transient while the checked rollback is requested."
+      required: [status, decided_at]
+      properties:
+        status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
+        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible"]}
+        route: {"type": "string", "maxLength": 256, "description": "First error-budget route that triggered the decision, as METHOD /path."}
+        target_deployment_id: {"type": "string", "format": "uuid"}
+        operation_id: {"type": "string", "format": "uuid", "description": "Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."}
+        decided_at: {"type": "string", "format": "date-time"}
     RouteMonitorIncidentTimelineEntry:
       type: object
       description: "One confirmed production monitor evaluation. It contains no customer identifiers or request details."
@@ -41047,6 +41424,14 @@ components:
         path: { type: string, minLength: 1, maxLength: 240, description: 'Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example /profiles/{id}.' }
         check_latency: { type: boolean, description: 'Opt in to the relative p95 slowdown check (at least 1.5 times stable and 100 ms slower). Omitted or false disables this check independently of max_p95_ms.' }
         max_p95_ms: { type: integer, format: int64, minimum: 0, maximum: 86400000, description: 'Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero disables it. Does not enable the relative slowdown check.' }
+        probe: { $ref: '#/components/schemas/RouteHealthProbe' }
+    RouteHealthProbe:
+      type: object
+      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 240, description: 'Concrete absolute path matching the selector, with a value for each {parameter}, for example /users/42 for /users/{id}. No query, fragment or wildcard.' }
     RouteHealthGate:
       type: object
       description: Current critical-route selection, health guard mode, recovery policy, and configuration revision.
@@ -41353,6 +41738,7 @@ components:
         server_errors: { type: integer, format: int64, minimum: 0 }
         error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
+        unauthenticated: { type: integer, format: int64, minimum: 0, description: 'Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).' }
     RouteHealthWindowEvidence:
       type: object
       description: Candidate and stable observations within one closed window, with independent error and latency verdicts.
@@ -41387,7 +41773,10 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
+        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+        pooled_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse." }
+        synthetic_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They settle the 5xx signal only." }
     RouteCustomerHealthAttribution:
       type: object
       description: Weighted request attribution for one selected identity dimension across both shared windows. Missing identities and unresolved scoped identities remain separate. Other requests are identified traffic outside the cohort output cap.
@@ -47632,18 +48021,114 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1000 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, default: 0, example: 10000, description: "Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order. Once any card includes units, effective_from cannot be in the past." }
+        tiers:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          maxProperties: 50
+          description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
+
+    CreateAPIConsumerPlanRequest:
+      description: "Named consumer plan. Zero limits are unlimited."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
+        max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+
+    UpdateAPIConsumerPlanLimitsRequest:
+      description: "Replacement limits for a consumer plan."
+      type: object
+      required: [max_requests_per_minute, max_units_per_month]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerPlanResponse:
+      description: "Named consumer plan with enforcement limits."
+      type: object
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    APIConsumerPlanListResponse:
+      description: "An app's consumer plans by name."
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+
+    AssignAPIConsumerPlanRequest:
+      description: "Plan assignment; an empty plan_id returns the consumer to the default plan."
+      type: object
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute the plan takes effect; omitted means the next minute." }
+
+    APIConsumerPlanAssignmentResponse:
+      description: "One append-only plan assignment; no plan_id is the default plan."
+      type: object
+      required: [id, consumer_id, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    APIConsumerPlanAssignmentListResponse:
+      description: "A consumer's plan assignments, oldest first."
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
+
+    APIConsumerRateCardTier:
+      description: "One step of a graduated per-request price ladder."
+      type: object
+      required: [up_to, price_millicents_per_unit]
+      properties:
+        up_to: { type: [integer, "null"], format: int64, minimum: 1, description: "Exclusive upper bound of this step's monthly position; null for the unbounded last step." }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerRateCardResponse:
       description: "Immutable, versioned app-level price for one API request unit."
       type: object
-      required: [id, app_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          description: "Units charged per request on a listed route; unlisted routes count 1."
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
+        plan_id: { type: string, format: uuid }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -47659,13 +48144,18 @@ components:
     APIConsumerUsageQuoteBucketResponse:
       description: "One durable usage minute priced by the rate card effective at that minute."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units billed at the price; the rest are covered by the rate card's monthly allowance." }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder."
+          items: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageQuoteResponse:
@@ -47686,6 +48176,25 @@ components:
           items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
 
+    APIConsumerUsageCompletenessResponse:
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      type: object
+      required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [verified, partial, gaps_detected, unverifiable]
+          description: "gaps_detected means telemetry saw successful requests the ledger never billed; partial means telemetry confirms only part of the billed requests; unverifiable means telemetry holds no evidence for them."
+        checked_from: { type: string, format: date-time, description: "First whole UTC hour checked, clamped to request telemetry retention." }
+        checked_until: { type: string, format: date-time, description: "Exclusive end of the checked hours, clamped to hours that have settled." }
+        ledger_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in the billing ledger." }
+        telemetry_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in request telemetry." }
+        confirmed_requests: { type: integer, format: int64, minimum: 0, description: "Billed successful requests telemetry corroborates." }
+        missing_requests: { type: integer, format: int64, minimum: 0, description: "Lower bound of successful requests telemetry saw that the ledger lacks." }
+        hours_checked: { type: integer, minimum: 0 }
+        hours_without_telemetry: { type: integer, minimum: 0, description: "Hours with billed requests but no telemetry." }
+
     CreateAPIConsumerUsageStatementRequest:
       description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
       type: object
@@ -47697,25 +48206,31 @@ components:
     APIConsumerUsageStatementBucketResponse:
       description: "One UTC minute captured in a durable usage statement."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge units it does not add when late usage exhausted the allowance sooner." }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be negative when late usage moved billed units into a cheaper step."
+          items: { type: integer, format: int64 }
+        amount_millicents: { type: integer, format: int64, description: "Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper step; a revision's total is never negative." }
 
     APIConsumerUsageStatementResponse:
-      description: "Immutable, auditable API consumer usage snapshot."
+      description: "Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later."
       type: object
-      required: [id, consumer_id, period_start, period_end, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
+      required: [id, consumer_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
       properties:
         id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
-        status: { type: string, enum: [draft, finalized] }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, finalized, superseded] }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         unpriced_units: { type: integer, format: int64, minimum: 0 }
@@ -51078,6 +51593,215 @@ components:
           additionalProperties: true
           description: Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input, overlap, and catch-up options.
 
+    AutomationFailurePolicy:
+      type: object
+      additionalProperties: false
+      description: Opt-in thresholds for scheduler-enforced failure admission pausing.
+      required:
+      - version
+      - enabled
+      - failure_threshold
+      - min_completed_runs
+      - window_seconds
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Monotonic failure monitoring policy revision; zero means no policy has been configured.
+        enabled:
+          type: boolean
+          description: Whether scheduler evaluation can create a new runtime failure pause.
+        failure_threshold:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Terminal failures required to latch a failure pause.
+          maximum: 10000
+        min_completed_runs:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Minimum terminal non-cancelled sample count before failure pausing.
+          maximum: 10000
+        window_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          description: Lookback in seconds, bounded by the latest monitoring epoch.
+          maximum: 86400
+    SetAutomationFailurePolicyRequest:
+      type: object
+      additionalProperties: false
+      description: Complete failure policy replacement guarded by an expected version.
+      required:
+      - expected_version
+      - enabled
+      - failure_threshold
+      - min_completed_runs
+      - window_seconds
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Failure policy revision the caller intends to replace.
+        enabled:
+          type: boolean
+          description: Requested setting controlling whether scheduler evaluation can create a new runtime failure pause.
+        failure_threshold:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Requested number of terminal failures required to latch a failure pause.
+          maximum: 10000
+        min_completed_runs:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Requested minimum terminal non-cancelled sample count before failure pausing.
+          maximum: 10000
+        window_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          description: Requested lookback in seconds, bounded by the latest monitoring epoch.
+          maximum: 86400
+    ResumeAutomationFailurePauseRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit failure guard resume guarded by its current generation.
+      required:
+      - expected_generation
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Positive pause generation reviewed by the caller.
+    AutomationFailureTransition:
+      type: object
+      additionalProperties: false
+      description: Immutable bounded aggregate evidence for a failure guard transition.
+      required:
+      - generation
+      - state
+      - reason
+      - recorded_at
+      - failures
+      - completed_runs
+      - policy_version
+      properties:
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Unique runtime transition generation for this automation.
+        state:
+          type: string
+          enum:
+          - paused
+          - resumed
+          description: Failure guard state resulting from this transition.
+        reason:
+          type: string
+          enum:
+          - failure_threshold
+          - operator_resume
+          description: Closed reason for the recorded transition.
+        recorded_at:
+          type: string
+          format: date-time
+          description: Server timestamp of the pause or operator resume.
+        failures:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed failures recorded with this transition.
+        completed_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed completed sample count recorded with this transition.
+        policy_version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Failure monitoring policy revision used for this transition.
+        actor_account_id:
+          type: string
+          description: Account that explicitly resumed; empty or omitted for an automatic pause.
+    AutomationFailurePolicyResponse:
+      type: object
+      additionalProperties: false
+      description: Failure guard state, monitoring configuration and advisory retained-work preview.
+      required:
+      - policy
+      - paused
+      - generation
+      - observed_failures
+      - observed_completed_runs
+      - pending_runs
+      - running_runs
+      - waiting_runs
+      - retained_events
+      - history
+      properties:
+        policy:
+          $ref: '#/components/schemas/AutomationFailurePolicy'
+        paused:
+          type: boolean
+          description: Whether automatic admissions are blocked by the durable failure guard.
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current guard generation; resume requires this value.
+        monitoring_since:
+          type: string
+          format: date-time
+          description: Start of the fresh monitoring epoch; absent before configuration.
+        paused_at:
+          type: string
+          format: date-time
+          description: Time the current failure pause was latched; absent while unpaused.
+        observed_failures:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Failed and dead runs completed in the current bounded observation window.
+        observed_completed_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Succeeded, failed and dead runs completed in the current observation window.
+        pending_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Existing pending runs that continue despite a failure admission pause.
+        running_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Already running workflows unaffected by admission pausing.
+        waiting_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Existing workflows parked on timers or external events.
+        retained_events:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Advisory count of unadmitted retained event recipients for this automation.
+        history:
+          type: array
+          maxItems: 100
+          description: Latest pause and resume transitions in descending generation order.
+          items:
+            $ref: '#/components/schemas/AutomationFailureTransition'
+
     AutomationResponse:
       type: object
       additionalProperties: false
@@ -51088,6 +51812,9 @@ components:
       - draft
       - enabled
       properties:
+        failure_paused:
+          type: boolean
+          description: Runtime failure guard blocks automatic admissions independently of configured enabled intent.
         name:
           type: string
         version:
@@ -51232,11 +51959,265 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/AutomationHealthStepFailure' }
       description: Bounded aggregate automation health. Customer payloads and error strings are never returned.
+    AutomationPublishPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - version
+      properties:
+        mode:
+          type: string
+          enum:
+            - optional
+            - scenarios
+            - coverage
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+      description: App policy for dashboard publication. YAML deployment is a separate surface. Changes
+        require admin scope and invalidate previously issued receipts.
+    SetAutomationPublishPolicyRequest:
+      description: Versioned app policy change; requires an admin credential.
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - expected_version
+      properties:
+        mode:
+          type: string
+          enum:
+            - optional
+            - scenarios
+            - coverage
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+    AutomationCheckAttempt:
+      description: Expected ordered simulation attempt outcome and optional failure status.
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+      properties:
+        outcome:
+          type: string
+          enum:
+            - success
+            - failure
+            - timeout
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+    AutomationCheckExpectation:
+      type: object
+      additionalProperties: false
+      required:
+        - step
+      properties:
+        step:
+          type: string
+          minLength: 1
+          maxLength: 512
+        loop:
+          type: string
+          maxLength: 256
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 127
+        state:
+          type: string
+          enum:
+            - mocked
+            - would_execute
+            - resolved
+            - expanded
+            - would_wait
+            - would_retry
+            - timed_out
+            - failed
+            - dead
+            - skipped
+            - blocked
+            - error
+        reason:
+          type: string
+        when_matched:
+          type: boolean
+        output:
+          description: Exact JSON assertion; explicit null differs from omitted.
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 25
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckAttempt'
+          maxItems: 25
+      description: Requires at least one assertion. Loop item assertions use step <loop>/action, loop
+        name and canonical zero-based item index.
+    AutomationPublishCheckScenario:
+      description: Named simulation and assertions to evaluate against a saved automation draft.
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - simulation
+        - expectations
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        simulation:
+          $ref: '#/components/schemas/SimulateAutomationRequest'
+        expectations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckExpectation'
+          minItems: 1
+          maxItems: 4096
+    CheckAutomationPublicationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_version
+        - scenarios
+        - exclusions
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        require_coverage:
+          type: boolean
+          default: false
+        scenarios:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationPublishCheckScenario'
+          minItems: 1
+          maxItems: 32
+        exclusions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckExclusion'
+          maxItems: 256
+      description: Run assertions and coverage on the saved draft on the server; mocks remain
+        hypothetical. At most 24 MiB total and 3 MiB per simulation. Complete, valid traces and passing
+        assertions are required. Coverage policy overrides require_coverage=false.
+    CheckAutomationPublicationResponse:
+      description: Expiring server receipt with safe verified scenario and coverage metadata.
+      type: object
+      additionalProperties: false
+      required:
+        - receipt
+        - expires_at
+        - evidence
+      properties:
+        receipt:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Opaque 30-minute receipt bound to app, name, draft, actor and policy version. Do
+            not log or expose it.
+        expires_at:
+          type: string
+          format: date-time
+        evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
+    AutomationCheckEvidence:
+      type: object
+      additionalProperties: false
+      description: Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock skew allowed).
+      required: [definition_hash, checked_version, checked_at, scenarios, coverage_required, coverage_passed, coverage_remaining, exclusions]
+      properties:
+        server_verified:
+          type: boolean
+          readOnly: true
+          description: True only when publication used a stored server-issued receipt. Clients cannot attest to this flag.
+        definition_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        checked_version:
+          type: integer
+          format: int64
+          minimum: 1
+        checked_at:
+          type: string
+          format: date-time
+        scenarios:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationCheckScenario'
+        coverage_required:
+          type: boolean
+        coverage_passed:
+          type: boolean
+          description: True when coverage_remaining is zero; required coverage must pass before publishing.
+        coverage_remaining:
+          type: integer
+          minimum: 0
+          maximum: 4096
+        exclusions:
+          type: array
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/AutomationCheckExclusion'
+    AutomationCheckScenario:
+      type: object
+      additionalProperties: false
+      description: A named scenario reported as passing, definition valid, and complete by the publishing client.
+      required: [name, passed, definition_valid, complete]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        passed:
+          type: boolean
+          enum: [true]
+        definition_valid:
+          type: boolean
+          enum: [true]
+        complete:
+          type: boolean
+          enum: [true]
+    AutomationCheckExclusion:
+      type: object
+      additionalProperties: false
+      description: An explicitly reviewed coverage exclusion. Reasons are user-authored metadata and should contain no secrets.
+      required: [step, code, reason]
+      properties:
+        step:
+          type: string
+          minLength: 1
+          maxLength: 512
+        loop:
+          type: string
+          minLength: 1
+          maxLength: 256
+        code:
+          type: string
+          enum: [guard_match_missing, guard_skip_missing, failure_route_missing, wait_success_missing, wait_timeout_missing, retry_missing, loop_empty_missing, loop_multiple_items_missing]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
     AutomationRevisionResponse:
       type: object
       additionalProperties: false
       required: [version, definition, definition_hash, recorded_at, legacy_snapshot, published_by_account_id]
       properties:
+        check_evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
         version:
           type: integer
           format: int64
@@ -51308,6 +52289,12 @@ components:
       required:
       - expected_version
       properties:
+        check_receipt:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Server-issued receipt required by scenarios or coverage policy; stale, expired, cross-identity and reused receipts are rejected.
+        check_evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
         expected_version:
           type: integer
           format: int64
@@ -51333,7 +52320,7 @@ components:
           type: boolean
       description: Publication revision and the desired state of automatic starts.
     SimulateAutomationRequest:
-      description: Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
+      description: Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation.
       type: object
       additionalProperties: false
       required: [definition]
@@ -51353,8 +52340,21 @@ components:
             type: array
             maxItems: 128
             items: {}
+        mock_item_attempts:
+          description: Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for failed items when continuing.
+          type: object
+          additionalProperties:
+            type: object
+            minProperties: 1
+            maxProperties: 128
+            additionalProperties:
+              type: array
+              minItems: 1
+              maxItems: 25
+              items:
+                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
         mock_attempts:
-          description: Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+          description: Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
           type: object
           additionalProperties:
             type: array
@@ -51372,7 +52372,7 @@ components:
           type: string
           enum: [success, failure, timeout]
         output:
-          description: Successful result; any JSON value, including null.
+          description: Successful action result or received event/callback payload; any JSON value, including null.
         error:
           type: string
           minLength: 1
@@ -51437,7 +52437,7 @@ components:
           description: Supplied successful mock, timeout sentinel or control output; omitted when no result is known.
         attempts:
           type: array
-          description: Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+          description: Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure context.
           maxItems: 25
           items:
             $ref: '#/components/schemas/AutomationSimulationAttempt'
@@ -51445,6 +52445,10 @@ components:
         path: { type: string }
         method: { type: string }
         integration_id: { type: string }
+        raw_query:
+          type: string
+          maxLength: 4096
+          description: Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when empty or unresolved.
         wait_for: { type: string }
         parent_step: { type: string }
         item_index: { type: integer, minimum: 0 }
@@ -67190,7 +68194,7 @@ components:
         provider_event_id: { type: string }
         workflow_name: { type: string }
         status: { type: string, enum: [accepted, ignored] }
-        ignored_reason: { type: string, enum: [automation_paused, event_filtered, automation_unpublished] }
+        ignored_reason: { type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished] }
         duplicate: { type: boolean }
         accepted_at: { type: string, format: date-time }
         event_source: { type: string }
@@ -67224,7 +68228,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -68124,7 +69128,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -68206,7 +69210,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

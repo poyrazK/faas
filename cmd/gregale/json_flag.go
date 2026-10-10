@@ -26,6 +26,8 @@ import (
 // no body, add it here AND to nonJSONAllowList — the audit test
 // fails CI otherwise.
 //
+//   - cmdCompletion                    — shell scripts/values are text;
+//     interactive installation rejects JSON
 //   - cmdLogin (commands.go)             — interactive paste-code prompt
 //   - cmdLogout (commands.go)            — emits a small status object
 //   - cmdInit / runCmdInit* (commands_init.go) — successful scaffolding

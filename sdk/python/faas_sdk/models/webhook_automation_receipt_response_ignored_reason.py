@@ -1,8 +1,11 @@
 from typing import Literal
 
-WebhookAutomationReceiptResponseIgnoredReason = Literal["automation_paused", "automation_unpublished", "event_filtered"]
+WebhookAutomationReceiptResponseIgnoredReason = Literal[
+    "automation_failure_paused", "automation_paused", "automation_unpublished", "event_filtered"
+]
 
 WEBHOOK_AUTOMATION_RECEIPT_RESPONSE_IGNORED_REASON_VALUES: set[WebhookAutomationReceiptResponseIgnoredReason] = {
+    "automation_failure_paused",
     "automation_paused",
     "automation_unpublished",
     "event_filtered",

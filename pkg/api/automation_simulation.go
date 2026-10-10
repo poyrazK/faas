@@ -7,16 +7,19 @@ import (
 
 // SimulateAutomationRequest supplies sample data, never execution authority.
 type SimulateAutomationRequest struct {
-	Definition      WorkflowSpec                                 `json:"definition"`
-	Input           json.RawMessage                              `json:"input,omitempty"`
-	MockOutputs     map[string]json.RawMessage                   `json:"mock_outputs,omitempty"`
-	MockItemOutputs map[string][]json.RawMessage                 `json:"mock_item_outputs,omitempty"`
-	MockAttempts    map[string][]AutomationSimulationMockAttempt `json:"mock_attempts,omitempty"`
+	Definition       WorkflowSpec                                            `json:"definition"`
+	Input            json.RawMessage                                         `json:"input,omitempty"`
+	MockOutputs      map[string]json.RawMessage                              `json:"mock_outputs,omitempty"`
+	MockItemOutputs  map[string][]json.RawMessage                            `json:"mock_item_outputs,omitempty"`
+	MockItemAttempts map[string]map[string][]AutomationSimulationMockAttempt `json:"mock_item_attempts,omitempty"`
+	MockAttempts     map[string][]AutomationSimulationMockAttempt            `json:"mock_attempts,omitempty"`
 }
 
 // AutomationSimulationMockAttempt supplies one hypothetical action or wait
 // outcome. Exactly one outcome shape is accepted: output, error/http_status,
 // or timeout.
+// Event and callback waits accept one success with the received payload as output,
+// or one timeout when a timeout route is configured. Other waits accept timeout only.
 type AutomationSimulationMockAttempt struct {
 	Outcome    string          `json:"outcome"`
 	Output     json.RawMessage `json:"output,omitempty"`
@@ -47,6 +50,7 @@ type AutomationSimulationStep struct {
 	Output        json.RawMessage               `json:"output,omitempty"`
 	Run           string                        `json:"run,omitempty"`
 	Path          string                        `json:"path,omitempty"`
+	RawQuery      string                        `json:"raw_query,omitempty"`
 	Method        string                        `json:"method,omitempty"`
 	IntegrationID string                        `json:"integration_id,omitempty"`
 	WaitFor       string                        `json:"wait_for,omitempty"`

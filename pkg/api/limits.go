@@ -5877,43 +5877,60 @@ var (
 )
 
 const (
-	AutomationSimulationRequestMaxBytes     int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes    int64 = 4 << 20
-	AutomationSimulationMaxSteps                  = 128
-	AutomationSimulationMaxTraceEntries           = 1024
-	AutomationDefinitionMaxBytes            int64 = 1 << 20
-	AutomationNameMaxBytes                        = 128
-	WorkflowRunInputMaxBytes                int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes          int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                 = 32 << 10
-	WorkflowWebhookNameMaxBytes                   = 128
-	WorkflowWebhookEventMaxBytes                  = 256
-	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps       = 10
-	WorkflowAutomationHealthReadTimeout           = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout             = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount           = 5
-	WorkflowSchedulePreviewMaxCount               = 20
-	WorkflowSchedulePreviewReadTimeout            = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds          = 300
-	WorkflowBacklogAlertCooldownMinutes           = 30
-	WorkflowAlertSnapshotReadTimeout              = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes              = 128
-	WorkflowResumeRequestMaxBytes           int64 = 4096
-	WorkflowRunMaxResumes                         = 16
-	WorkflowForEachMaxItems                       = 128
-	WorkflowForEachMaxParallelLimit               = 16
-	WorkflowForEachNameMaxBytes                   = 64
-	WorkflowForEachMaxInputBytes            int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes           int64 = 1 << 20
-	WorkflowJoinMaxDependencies                   = 128
-	WorkflowGuardMaxBytes                         = 16 << 10
-	WorkflowGuardMaxDepth                         = 8
-	WorkflowGuardMaxNodes                         = 32
-	WorkflowGuardNumberMaxBytes                   = 4096
-	WorkflowGuardNumberMaxExponent                = 4096
+	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
+	AutomationPublishCheckMaxScenarios          = 32
+	AutomationPublishCheckMaxExpectations       = 4096
+	AutomationPublishCheckMaxExclusions         = 256
+	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+
+	AutomationSimulationRequestMaxBytes         int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes        int64 = 4 << 20
+	AutomationSimulationMaxSteps                      = 128
+	AutomationSimulationMaxTraceEntries               = 1024
+	AutomationDefinitionMaxBytes                int64 = 1 << 20
+	AutomationNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                    int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                     = 32 << 10
+	WorkflowWebhookNameMaxBytes                       = 128
+	WorkflowWebhookEventMaxBytes                      = 256
+	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
+	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
+	WorkflowAutomationHealthMaxFailureSteps           = 10
+	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount               = 5
+	WorkflowSchedulePreviewMaxCount                   = 20
+	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds              = 300
+	WorkflowBacklogAlertCooldownMinutes               = 30
+	AutomationFailurePolicyMaxCount                   = 10000
+	AutomationFailurePolicyMinWindowSeconds           = 60
+	AutomationFailurePolicyMaxWindowSeconds           = 86400
+	AutomationFailurePolicyDefaultWindowSeconds       = 300
+	AutomationFailurePolicyDefaultThreshold           = 3
+	AutomationFailurePolicyDefaultMinRuns             = 5
+	AutomationFailurePolicyHistoryLimit               = 100
+	AutomationFailurePolicyBatch                      = 100
+	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                     = 1
+	WorkflowFailureAlertCooldownMinutes               = 30
+	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                  = 128
+	WorkflowResumeRequestMaxBytes               int64 = 4096
+	WorkflowRunMaxResumes                             = 16
+	WorkflowForEachMaxItems                           = 128
+	WorkflowForEachMaxParallelLimit                   = 16
+	WorkflowForEachNameMaxBytes                       = 64
+	WorkflowForEachMaxInputBytes                int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
+	WorkflowJoinMaxDependencies                       = 128
+	WorkflowGuardMaxBytes                             = 16 << 10
+	WorkflowGuardMaxDepth                             = 8
+	WorkflowGuardMaxNodes                             = 32
+	WorkflowGuardNumberMaxBytes                       = 4096
+	WorkflowGuardNumberMaxExponent                    = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -9095,6 +9112,37 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
 
+// RouteHealthSeed bounds the report-mode selectors apid saves for an app that
+// never configured route health when its first canary advances (ADR-844).
+const (
+	RouteHealthSeedRoutes   = 10
+	RouteHealthSeedLookback = 7 * 24 * time.Hour
+)
+
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
+// requests per route and deployment, only while a canary is in flight.
+// Probe requests are never written to request telemetry or usage.
+const (
+	RouteHealthProbeMaxRoutes         = 5
+	RouteHealthProbeRequestsPerMinute = 10
+	RouteHealthProbeRequestTimeout    = 10 * time.Second
+	RouteHealthProbeChallengeTTL      = 2 * time.Minute
+	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbeRetention         = 24 * time.Hour
+	// A probe window is unknown when at least this share of responses were
+	// 401/403: customer auth gates stay in force for probes.
+	RouteHealthProbeUnauthenticatedShare = 0.5
+)
+
+// RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// covering at most the newest RouteHealthPooledMaxSpan of the stage.
+const (
+	RouteHealthPooledMinSpan = 4 * time.Minute
+	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
@@ -9149,6 +9197,11 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// error-budget incident must open within this long after the deployment
+// started serving all traffic.
+const RouteMonitorRollbackWindow = 30 * time.Minute
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (

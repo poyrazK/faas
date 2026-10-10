@@ -102,6 +102,8 @@ type server struct {
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
 	notif          Notifier
+	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
+	routeProbes routeProbeSender
 	// edgeRuleFleetRequired is true on named multi-box control planes. Those
 	// deployments must see at least one active serving gateway before a policy
 	// mutation can commit; legacy single-box/dev installs have no compute
@@ -1717,7 +1719,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
+	// ADR-847: named consumer plans and minute-effective plan assignments.
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlans))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerPlan)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlanAssignments))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.assignAPIConsumerPlan)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageCompleteness))))
 	// Durable API consumer usage statements snapshot the quote for an explicit
 	// period. Creation is naturally idempotent on (consumer, period); finalize
 	// is an idempotent lifecycle transition once all units are priced.
@@ -2423,8 +2432,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewUnstartedWorkflowRunCancellations))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-queued", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelUnstartedWorkflowRuns))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations:publish-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationPublishPolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations:publish-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAutomationPublishPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/publish-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkAutomationPublication))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomations))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomation))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/failure-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationFailurePolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations/{name}/failure-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAutomationFailurePolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/failure-policy/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeAutomationFailurePause))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationHealth))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/revisions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomationRevisions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/revisions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationRevision))))

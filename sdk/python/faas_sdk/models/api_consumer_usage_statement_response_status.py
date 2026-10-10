@@ -1,10 +1,11 @@
 from typing import Literal
 
-APIConsumerUsageStatementResponseStatus = Literal["draft", "finalized"]
+APIConsumerUsageStatementResponseStatus = Literal["draft", "finalized", "superseded"]
 
 API_CONSUMER_USAGE_STATEMENT_RESPONSE_STATUS_VALUES: set[APIConsumerUsageStatementResponseStatus] = {
     "draft",
     "finalized",
+    "superseded",
 }
 
 

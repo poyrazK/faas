@@ -2683,6 +2683,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	if plans := newConsumerPlanStore(deps.pgStore); plans != nil {
+		handler.WithConsumerPlanStore(plans)
+	}
 	// E2 / issue #1397: browser wake pages use the same gatewayd audit
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.
