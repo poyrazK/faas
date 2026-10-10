@@ -438,11 +438,13 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
+          # Stream each test event so an interrupted runner identifies the last
+          # active test instead of hiding the entire package behind buffered output.
           status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS || status=1
+            go test -json -race -count=1 -p 4 -timeout=16m $PKGS || status=1
           fi
           # Private databases share PostgreSQL's cluster-wide catalogues.
           # Finish the standard packages before these partitions: API fixture
@@ -453,7 +455,7 @@ jobs:
             echo "testing: $pkg (test shard $SHARD/3)"
             # Large PostgreSQL partitions use the mega tier's process
             # budget; standard package tests use main's 16-minute deadline.
-            go test -race -count=1 -timeout=20m -run "$run" "$pkg" || status=1
+            go test -json -race -count=1 -timeout=20m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

@@ -675,7 +675,7 @@ jobs:
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
 
       - name: sdk-check
         run: make sdk-check
