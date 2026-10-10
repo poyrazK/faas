@@ -332,6 +332,15 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
+	if qualificationReceiptErr != nil {
+		slog.Default().Warn("qualification configuration receipt control is invalid")
+		qualificationReceiptToken = ""
+	} else if qualificationReceiptToken != "" && (secErr != nil || apiErr != nil) {
+		slog.Default().Warn("qualification configuration was not fully loaded; withholding receipt")
+		clear(qualificationReceiptMACKey)
+		qualificationReceiptToken = ""
+	}
 
 	// Issue #463 / ADR-069 / PR-B: discover the workload roster
 	// (deployment-level main + sidecars). A missing
@@ -348,7 +357,11 @@ func boot() error {
 		}
 	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
-		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
+		var receiptControl *qualificationConfigReceiptControl
+		if qualificationReceiptToken != "" {
+			receiptControl = &qualificationConfigReceiptControl{token: qualificationReceiptToken, macKey: qualificationReceiptMACKey}
+		}
+		return runWorkloadsWithQualificationReceipt(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy, receiptControl)
 	}
 	// Roster absent or empty Sidecars = legacy path. Log the
 	// roster error if it was a parse failure (the legacy
@@ -356,6 +369,10 @@ func boot() error {
 	// no roster file).
 	if rosterErr != nil && !isNotExist(rosterErr) {
 		slog.Default().Warn("workloads.json could not be parsed; proceeding without sidecars", "err_kind", errorKind(rosterErr))
+	}
+	if qualificationReceiptToken != "" {
+		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
+		clear(qualificationReceiptMACKey)
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a

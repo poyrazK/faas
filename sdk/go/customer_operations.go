@@ -63,6 +63,8 @@ type (
 	OperationMilestoneValidationResponse     = api.OperationMilestoneValidationResponse
 	OperationMilestonesResponse              = api.OperationMilestonesResponse
 	OperationMilestoneListOptions            = api.OperationMilestoneListOptions
+	OperationWorkflowBlockerEscalationPolicy = api.OperationWorkflowBlockerEscalationPolicy
+	OperationWorkflowBlockerEscalation       = api.OperationWorkflowBlockerEscalation
 	OperationWorkflowSpec                    = api.OperationWorkflowSpec
 	OperationWorkflowTransition              = api.OperationWorkflowTransition
 	OperationWorkflowStateReport             = api.OperationWorkflowStateReport
@@ -136,3 +138,28 @@ type OperationWorkflowActionPreviewRequest = api.OperationWorkflowActionPreviewR
 type OperationWorkflowActionPreviewResponse = api.OperationWorkflowActionPreviewResponse
 
 type OperationJobArtifactResponse = api.OperationJobArtifactResponse
+
+// OperationWorkflowResolutionVerification is a retained evidence finding.
+type OperationWorkflowResolutionVerification = api.OperationWorkflowResolutionVerification
+
+// Retained workflow duration observations.
+type OperationWorkflowBottlenecks = api.OperationWorkflowBottlenecks
+type OperationWorkflowStateDuration = api.OperationWorkflowStateDuration
+type OperationWorkflowBlockerDuration = api.OperationWorkflowBlockerDuration
+type OperationWorkflowVerificationDuration = api.OperationWorkflowVerificationDuration
+
+type OperationWorkflowPerformanceOptions = api.OperationWorkflowPerformanceOptions
+type OperationWorkflowPerformanceSummary = api.OperationWorkflowPerformanceSummary
+type OperationWorkflowDurationDistribution = api.OperationWorkflowDurationDistribution
+type OperationWorkflowPerformanceCoverageReason = api.OperationWorkflowPerformanceCoverageReason
+type OperationWorkflowPerformanceCohort = api.OperationWorkflowPerformanceCohort
+type OperationWorkflowStatePerformance = api.OperationWorkflowStatePerformance
+type OperationWorkflowBlockerPerformance = api.OperationWorkflowBlockerPerformance
+type OperationWorkflowVerificationPerformance = api.OperationWorkflowVerificationPerformance
+
+type OperationWorkflowPerformanceGroup = api.OperationWorkflowPerformanceGroup
+type OperationWorkflowPerformanceInstanceOptions = api.OperationWorkflowPerformanceInstanceOptions
+type OperationWorkflowPerformanceInstance = api.OperationWorkflowPerformanceInstance
+type OperationWorkflowPerformanceInstancesResponse = api.OperationWorkflowPerformanceInstancesResponse
+
+type OperationWorkflowStateSLA = api.OperationWorkflowStateSLA

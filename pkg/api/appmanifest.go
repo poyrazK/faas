@@ -173,6 +173,9 @@ type AppManifest struct {
 	WorkingDir string `json:"working_dir,omitempty"`
 	// Port is the readiness/serving port; 0 means DefaultAppPort.
 	Port int `json:"port,omitempty"`
+	// ServiceBindingTransport selects the URL scheme injected for reviewed
+	// service bindings. Empty preserves the legacy HTTP behavior.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// Ports preserves the OCI image's protocol-aware listener declarations.
 	// Port remains the primary HTTP/readiness contract; Ports lets workloads
 	// discover additional TCP or UDP listeners inside their shared netns. Named
@@ -586,6 +589,12 @@ func (m AppManifest) EffectiveWorkingDir() string {
 	return m.WorkingDir
 }
 
+// EffectiveServiceBindingTransport returns the configured transport or the
+// backwards-compatible default for older manifests.
+func (m AppManifest) EffectiveServiceBindingTransport() ServiceBindingTransport {
+	return m.ServiceBindingTransport.Effective()
+}
+
 // EffectiveExecutionMode returns ExecutionMode or the default
 // ExecutionModeRequest. The "request" default preserves the M-1
 // behaviour for existing customers (no ExecutionMode set).
@@ -697,6 +706,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if _, err := NormalizeServiceBindingTransport(m.ServiceBindingTransport); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	if err := m.PreAuthRateLimit.Validate(plan); err != nil {

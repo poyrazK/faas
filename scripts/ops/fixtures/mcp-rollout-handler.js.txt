@@ -1,0 +1,21 @@
+// Qualification-only handler. Never install this fixture in a customer app.
+export const mcpTaskHandlers = Object.freeze({
+  build_report: Object.freeze({
+    version: '1',
+    async execute({ report }, { signal, requestInput }) {
+      const generation = '__GENERATION__';
+      if (!['running', 'retrying', 'input-required'].includes(report)) throw new Error('Unknown qualification probe');
+      if (report === 'running' && generation === 'old') await delay(30 * 60_000, undefined, { signal });
+      if (report === 'retrying' && generation === 'old') throw new RetryableMcpTaskError('Qualification retry');
+      if (report === 'input-required') await requestInput('approval', {
+        method: 'elicitation/create', params: { mode: 'form', message: 'Approve the disposable qualification probe?' },
+      });
+      const { default: pg } = await import('pg');
+      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
+      try {
+        const role = (await pool.query('SELECT current_user AS role')).rows[0].role;
+        return { content: [{ type: 'text', text: JSON.stringify({ qualification: true, scenario: report, generation, role }) }] };
+      } finally { await pool.end(); }
+    },
+  }),
+});

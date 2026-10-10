@@ -2,6 +2,7 @@
 package pgintegration_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,11 @@ func TestEnvironmentGitOpsQueueCatalogNamesPreserveAdoptionAndAcceptedWork(t *te
 			t.Fatal(err)
 		}
 		definition := base.Definition
-		definition.Workloads["api"] = api.EnvironmentWorkload{App: app.Slug, QueueBindings: wanted}
+		smoke := make(map[string]api.EnvironmentQueueSmoke, len(wanted))
+		for name := range wanted {
+			smoke[name] = api.EnvironmentQueueSmoke{Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}
+		}
+		definition.Workloads["api"] = api.EnvironmentWorkload{App: app.Slug, QueueBindings: wanted, QueueSmoke: smoke}
 		desired, err := environmentsync.Compile(definition)
 		if err != nil {
 			t.Fatal(err)

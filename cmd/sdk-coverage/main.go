@@ -377,6 +377,10 @@ var methodRouteMap = map[string]string{
 	// Business workflow observation routes use domain-oriented SDK method names.
 	"GET /v1/apps/{slug}/workflow-attention":                                          "ListAccountWorkflowAttention",
 	"GET /v1/apps/{slug}/workflow-attention/summary":                                  "SummarizeAccountWorkflowAttention",
+	"GET /v1/apps/{slug}/workflow-performance/summary":                                "SummarizeAccountWorkflowPerformance",
+	"GET /v1/apps/{slug}/workflow-performance/instances":                              "ListAccountWorkflowPerformanceInstances",
+	"GET /v1/platform-tenant-self/workflow-performance/summary":                       "SummarizePlatformTenantSelfWorkflowPerformance",
+	"GET /v1/platform-tenant-self/workflow-performance/instances":                     "ListPlatformTenantSelfWorkflowPerformanceInstances",
 	"GET /v1/apps/{slug}/workflow-outcomes":                                           "ListAccountWorkflowOutcomes",
 	"GET /v1/apps/{slug}/workflow-outcomes/summary":                                   "SummarizeAccountWorkflowOutcomes",
 	"POST /v1/apps/{slug}/workflow-readiness":                                         "CheckAccountWorkflowReadiness",
@@ -549,6 +553,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/previews":                                             "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                             "ListInstances",
 	"POST /v1/apps/{slug}/park":                                                 "Park",
+	"POST /v1/apps/{slug}/park/conditional":                                     "ParkIfDeployment",
 	"POST /v1/apps/{slug}/wake":                                                 "Wake",
 	"POST /v1/apps/{slug}/restart":                                              "RestartApp",
 	"DELETE /v1/apps/{slug}/cache":                                              "PurgeAppCache",
@@ -558,6 +563,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/dev/test-runs/{run_id}":                                            "RegisterScenarioTest",
 	"DELETE /v1/dev/test-runs/{run_id}":                                         "DeleteScenarioTest",
 	"PUT /v1/dev/test-runs/{run_id}/chaos":                                      "InjectScenarioTestChaos",
+	"DELETE /v1/dev/test-runs/{run_id}/chaos":                                   "ClearScenarioTestChaos",
+	"GET /v1/dev/test-runs/{run_id}/chaos/matches":                              "ScenarioTestChaosMatches",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
 	"POST /v1/apps/{slug}/image-published":                                      "PublishAppImage",
@@ -883,6 +890,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/edge-rules/{id}":         "GetEdgeRule",
 	"PATCH /v1/edge-rules/{id}":       "UpdateEdgeRule",
 	"DELETE /v1/edge-rules/{id}":      "DeleteEdgeRule",
+	// ADR-961 §2 — rule-set versions and rollback.
+	"GET /v1/apps/{slug}/edge-rules/versions":           "ListEdgeRuleSetVersions",
+	"GET /v1/apps/{slug}/edge-rules/versions/{version}": "GetEdgeRuleSetVersion",
+	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",
+	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
+	"GET /v1/apps/{slug}/edge-rules/events":             "ListEdgeRuleEvents",
+	"GET /v1/edge-rule-lists":                           "ListEdgeRuleLists",
+	"POST /v1/edge-rule-lists":                          "CreateEdgeRuleList",
+	"GET /v1/edge-rule-lists/{name}":                    "GetEdgeRuleList",
+	"PATCH /v1/edge-rule-lists/{name}":                  "UpdateEdgeRuleList",
+	"DELETE /v1/edge-rule-lists/{name}":                 "DeleteEdgeRuleList",
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender. Auto-derivation would produce
 	// "GetAppsSlugThrottle-suggestions" (literal hyphen) due to the

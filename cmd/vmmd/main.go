@@ -845,7 +845,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("vmmd: register snapshot fan-out metrics: %w", metricErr)
 		}
 		fanout := snapshothipd.New(replicaStore, storageBackend, nodeID, log).
-			WithMetrics(fanoutMetrics)
+			WithMetrics(fanoutMetrics).
+			// ADR-911: on unless an operator switches it off.
+			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {
@@ -915,6 +917,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeSnapshotPublicationRoot != "" {
+		jailer.WithNativeSnapshotPublicationRoot(cfg.NativeSnapshotPublicationRoot)
+	}
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
@@ -950,6 +955,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// than silently handing its resources to the legacy allocator/reapers.
 	if err := recoverNative(ctx, mgr); err != nil {
 		return fmt.Errorf("vmmd: recover native ownership: %w", err)
+	}
+	if cfg.NativeSnapshotPublicationRoot != "" {
+		go runNativeArtifactRetirementRecovery(ctx, mgr, nativeArtifactRetirementRecoveryInterval, log)
+		log.Info("vmmd: recurring native artifact retirement recovery enabled",
+			"interval", nativeArtifactRetirementRecoveryInterval.String())
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
 	failureNodeID := nodeID
@@ -1228,6 +1238,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recv = nil
 	}
 	if recv != nil {
+		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
+			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+				runtimeName string, warmupMS int64) error {
+				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
+				return err
+			})
+		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
 		// account identity from vmmd's live map and persist the same canonical

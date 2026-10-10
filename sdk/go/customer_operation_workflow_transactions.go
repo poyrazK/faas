@@ -477,6 +477,15 @@ func saveCustomerOperationWorkflowStates(ctx context.Context, tx OperationSQLTra
 				}
 			}
 		}
+		for _, b := range report.Blockers {
+			if b.AcknowledgedAt != "" {
+				ack, err := time.Parse(time.RFC3339Nano, b.AcknowledgedAt)
+				first, _ := time.Parse(time.RFC3339Nano, b.FirstObservedAt)
+				if err != nil || ack.After(report.OccurredAt) || !first.IsZero() && ack.Before(first) {
+					return nil, errors.New("faas: blocker acknowledgement is outside observation/report interval")
+				}
+			}
+		}
 		blockers := report.Blockers
 		if blockers == nil {
 			blockers = []OperationWorkflowBlocker{}
@@ -550,12 +559,45 @@ func canonicalCustomerWorkflowBlockers(blockers []OperationWorkflowBlocker) ([]O
 	result := append(make([]OperationWorkflowBlocker, 0, len(blockers)), blockers...)
 	seen := make(map[string]bool, len(result))
 	for i, b := range result {
+		switch b.Priority {
+		case "", "low", "normal", "high", "urgent":
+		default:
+			return nil, errors.New("faas: invalid workflow blocker priority")
+		}
+		if !validCustomerWorkflowBlockerText(b.BusinessImpact, operationWorkflowBlockerImpactBytes) {
+			return nil, errors.New("faas: invalid public workflow blocker business impact")
+		}
+
+		if !validCustomerWorkflowBlockerText(b.Owner, operationWorkflowBlockerActorBytes) || !validCustomerWorkflowBlockerText(b.NextAction, operationWorkflowBlockerActionBytes) {
+			return nil, errors.New("faas: invalid workflow blocker owner or next action")
+		}
 		if b.FirstObservedAt != "" {
 			first, err := time.Parse(time.RFC3339Nano, b.FirstObservedAt)
 			if err != nil || first.UTC().Year() < 1 || first.UTC().Year() > 9999 {
 				return nil, errors.New("faas: invalid blocker observation time")
 			}
 			result[i].FirstObservedAt = first.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+
+		if !validCustomerWorkflowBlockerText(b.AcknowledgedBy, operationWorkflowBlockerActorBytes) || (b.AcknowledgedAt == "") != (b.AcknowledgedBy == "") || b.FollowUpAt != "" && b.AcknowledgedAt == "" {
+			return nil, errors.New("invalid blocker acknowledgement or follow-up")
+		}
+		var acknowledged time.Time
+		if b.AcknowledgedAt != "" {
+			var err error
+			acknowledged, err = time.Parse(time.RFC3339Nano, b.AcknowledgedAt)
+			first, _ := time.Parse(time.RFC3339Nano, b.FirstObservedAt)
+			if err != nil || acknowledged.UTC().Year() < 1 || acknowledged.UTC().Year() > 9999 || !first.IsZero() && acknowledged.Before(first) {
+				return nil, errors.New("invalid blocker acknowledgement time")
+			}
+			result[i].AcknowledgedAt = acknowledged.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+		if b.FollowUpAt != "" {
+			due, err := time.Parse(time.RFC3339Nano, b.FollowUpAt)
+			if err != nil || due.UTC().Year() < 1 || due.UTC().Year() > 9999 || due.Before(acknowledged) {
+				return nil, errors.New("follow-up must be at or after acknowledgement")
+			}
+			result[i].FollowUpAt = due.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
 		}
 		key := b.Operation + ":" + b.Code
 		if !customerOperationStateName.MatchString(b.Code) || !customerOperationStateName.MatchString(b.Operation) || b.Description == "" || len(b.Description) > 512 || !utf8.ValidString(b.Description) || strings.ContainsFunc(b.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) || seen[key] {
@@ -583,6 +625,26 @@ func canonicalCustomerWorkflowResolutions(resolutions []OperationWorkflowBlocker
 	}
 	result := append(make([]OperationWorkflowBlockerResolution, 0, len(resolutions)), resolutions...)
 	for _, v := range result {
+		if !validCustomerWorkflowBlockerText(v.VerificationOwner, operationWorkflowBlockerActorBytes) || (v.VerificationMilestoneID == "") != (v.VerificationMilestoneName == "") || v.VerificationMilestoneID == "" && (v.VerificationOperationID != "" || v.VerificationOwner != "") {
+			return nil, errors.New("faas: invalid resolution verification requirement")
+		}
+		if v.VerificationMilestoneID != "" {
+			if !customerOperationStateName.MatchString(v.VerificationMilestoneName) {
+				return nil, errors.New("faas: invalid resolution verification milestone name")
+			}
+			for _, value := range []string{v.VerificationMilestoneID, v.VerificationOperationID} {
+				if value == "" {
+					continue
+				}
+				if !customerOperationUUIDPattern.MatchString(value) || value == "00000000-0000-0000-0000-000000000000" {
+					return nil, errors.New("faas: invalid resolution verification identity")
+				}
+			}
+		}
+
+		if !validCustomerWorkflowBlockerText(v.ResolvedBy, operationWorkflowBlockerActorBytes) {
+			return nil, errors.New("faas: invalid workflow resolution attribution")
+		}
 		if !customerOperationUUIDPattern.MatchString(v.BlockerOperationID) || !customerOperationUUIDPattern.MatchString(v.BlockerReportID) || v.BlockerOperationID == "00000000-0000-0000-0000-000000000000" || v.BlockerReportID == "00000000-0000-0000-0000-000000000000" || v.BlockerRevision < 1 || v.BlockerRevision > 9007199254740991 || active[v.Operation+":"+v.Code] {
 			return nil, errors.New("faas: resolution requires prior report identity/revision and a cleared target/code")
 		}
@@ -711,4 +773,8 @@ func (tx *CustomerOperationTransaction) WorkflowDependencies(workflow, instanceI
 		return errors.New("faas: dependency report batch exceeds its byte limit")
 	}
 	return nil
+}
+
+func validCustomerWorkflowBlockerText(value string, maxBytes int) bool {
+	return len(value) <= maxBytes && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }

@@ -9,15 +9,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.create_edge_rule_request import CreateEdgeRuleRequest
 from ...models.edge_rule_response import EdgeRuleResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     *,
     body: CreateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(if_match, Unset):
+        headers["If-Match"] = if_match
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -67,6 +70,11 @@ def _parse_response(
 
         return response_409
 
+    if response.status_code == 412:
+        response_412 = Problem.from_dict(response.json())
+
+        return response_412
+
     if response.status_code == 422:
         response_422 = Problem.from_dict(response.json())
 
@@ -99,6 +107,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> Response[EdgeRuleResponse | Problem]:
     """Create an edge rule on an app.
 
@@ -112,6 +121,7 @@ def sync_detailed(
 
     Args:
         slug (str):
+        if_match (str | Unset):
         body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
 
     Raises:
@@ -125,6 +135,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        if_match=if_match,
     )
 
     response = client.get_httpx_client().request(
@@ -139,6 +150,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> EdgeRuleResponse | Problem | None:
     """Create an edge rule on an app.
 
@@ -152,6 +164,7 @@ def sync(
 
     Args:
         slug (str):
+        if_match (str | Unset):
         body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
 
     Raises:
@@ -166,6 +179,7 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        if_match=if_match,
     ).parsed
 
 
@@ -174,6 +188,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> Response[EdgeRuleResponse | Problem]:
     """Create an edge rule on an app.
 
@@ -187,6 +202,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        if_match (str | Unset):
         body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
 
     Raises:
@@ -200,6 +216,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        if_match=if_match,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -212,6 +229,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> EdgeRuleResponse | Problem | None:
     """Create an edge rule on an app.
 
@@ -225,6 +243,7 @@ async def asyncio(
 
     Args:
         slug (str):
+        if_match (str | Unset):
         body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
 
     Raises:
@@ -240,5 +259,6 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            if_match=if_match,
         )
     ).parsed

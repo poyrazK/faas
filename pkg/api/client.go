@@ -961,10 +961,22 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
-// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+// InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
 	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
+// ClearScenarioTestChaos removes the active fault plan from a live scenario run.
+func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+}
+
+// ScenarioTestChaosMatches returns bounded per-rule match counts for the
+// current or most recently cleared plan in one isolated run.
+func (c *Client) ScenarioTestChaosMatches(ctx context.Context, runID string) (ScenarioTestChaosMatchesResponse, error) {
+	var out ScenarioTestChaosMatchesResponse
+	return out, c.do(ctx, "GET", "/v1/dev/test-runs/"+runID+"/chaos/matches", nil, &out)
 }
 
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
@@ -2350,17 +2362,25 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 
 // Park and Wake toggle the app between cold-parked and live.
 func (c *Client) Park(ctx context.Context, slug string) error {
-	return c.park(ctx, slug, "/v1/apps/"+slug+"/park")
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park", nil)
 }
 
 // ParkPreviewFresh drains an isolated preview and invalidates its snapshots
 // after the drain. The next customer request must take the artifact boot path.
 // The server rejects production apps before changing their state.
 func (c *Client) ParkPreviewFresh(ctx context.Context, slug string) error {
-	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true")
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true", nil)
 }
 
-func (c *Client) park(ctx context.Context, slug, path string) error {
+// ParkIfDeployment refuses to park a newer deployment, including on drain retries.
+func (c *Client) ParkIfDeployment(ctx context.Context, slug, deploymentID string) error {
+	if deploymentID == "" {
+		return errors.New("expected deployment ID is required")
+	}
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park/conditional", map[string]string{"expected_deployment_id": deploymentID})
+}
+
+func (c *Client) park(ctx context.Context, slug, path string, body any) error {
 	// The first POST commits evicted_cold before schedd snapshots the live
 	// instances. A multi-revision app can need more than the API's five-second
 	// drain wait; the resulting retryable 503 does not mean the park failed.
@@ -2370,7 +2390,7 @@ func (c *Client) park(ctx context.Context, slug, path string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, maxDrainWait)
 	defer cancel()
 	for {
-		err := c.do(waitCtx, "POST", path, nil, nil)
+		err := c.do(waitCtx, "POST", path, body, nil)
 		if err == nil {
 			return nil
 		}
@@ -2877,14 +2897,45 @@ func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (Jo
 // is intentionally OMITTED from the wire response (internal
 // dispatch primitive).
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
+	return c.ListJobRunTasksPage(ctx, name, runID, 0, 0)
+}
+
+// ListJobRunTasksPage reads one offset page of task rows.
+func (c *Client) ListJobRunTasksPage(ctx context.Context, name, runID string, limit, offset int) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobTaskAttempts returns the retained terminal outcomes for a task.
 func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	return c.ListJobTaskAttemptsPage(ctx, name, runID, taskIndex, 0, 0)
+}
+
+// ListJobTaskAttemptsPage reads one offset page of retained task attempts.
+func (c *Client) ListJobTaskAttemptsPage(ctx context.Context, name, runID string, taskIndex, limit, offset int) (ListJobTaskAttemptsResponse, error) {
 	var out ListJobTaskAttemptsResponse
 	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -3296,6 +3347,87 @@ func (c *Client) UpdateEdgeRule(ctx context.Context, id string, req UpdateEdgeRu
 // DeleteEdgeRule removes the rule and returns nil on 204.
 func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rules/"+id, nil, nil)
+}
+
+// GetEdgeRuleStats returns per-rule match counts over window (1h, 24h or 7d;
+// empty means 24h) (ADR-960).
+func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	path := "/v1/apps/" + slug + "/edge-rules/stats"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
+// first (ADR-964). Pass the response's NextCursor to continue.
+func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
+	v := url.Values{}
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/events"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeRuleEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
+// items (ADR-963).
+func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+	var out ListEdgeRuleListsResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+}
+
+// GetEdgeRuleList returns one list with its items (ADR-963).
+func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+}
+
+// CreateEdgeRuleList creates a list (ADR-963).
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+}
+
+// UpdateEdgeRuleList edits a list (ADR-963).
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+}
+
+// DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+}
+
+// ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
+// newest first, without rule bodies (ADR-961).
+func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
+	var out []EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)
+}
+
+// GetEdgeRuleSetVersion returns one recorded version with its rules.
+func (c *Client) GetEdgeRuleSetVersion(ctx context.Context, slug string, version int) (EdgeRuleSetVersionResponse, error) {
+	var out EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions/"+strconv.Itoa(version), nil, &out)
+}
+
+// RollbackEdgeRules restores the app's edge rules to a recorded version and
+// returns the rules now in force. The restore is recorded as a new version.
+func (c *Client) RollbackEdgeRules(ctx context.Context, slug string, version int) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/edge-rules/rollback", RollbackEdgeRulesRequest{Version: version}, &out)
 }
 
 // CreateCORSEdgeRuleOpts is the typed CORS convenience shape used by

@@ -24,7 +24,7 @@
   "protocol_version": "2026-07-28",
   "resource_templates": [
     {
-      "description": "Example customer-record resource; enforce ownership in your own data lookup.",
+      "description": "Demo records are restricted by the verified OAuth subject.",
       "mimeType": "application/json",
       "name": "customer_record",
       "title": "Customer record",

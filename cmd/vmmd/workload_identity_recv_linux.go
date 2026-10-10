@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
@@ -62,6 +63,9 @@ func StartWorkloadIdentityReceiver(ctx context.Context, log *slog.Logger, mgr *f
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockWorkloadIdentityHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("workload identity receiver register port %d: %w", VsockWorkloadIdentityHostPort, err)
 	}
+	if err := jailer.RegisterEnvironmentQualificationRestoreStreamHandler(VsockWorkloadIdentityHostPort, r.handleQualificationRestoreStream); err != nil {
+		return nil, fmt.Errorf("qualification workload identity receiver register port %d: %w", VsockWorkloadIdentityHostPort, err)
+	}
 	log.Info("workload identity receiver registered", "vsock_host_port", VsockWorkloadIdentityHostPort, "transport", "firecracker_uds", "enabled", signer != nil)
 	return r, nil
 }
@@ -97,6 +101,17 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_audience"}))
 	}
 	return responseResult(r.writeResponse(conn, workloadIdentityResponse{Token: tok}))
+}
+
+// Qualification candidates receive no federated workload identity. A candidate
+// can execute unreviewed workload code, so the private restore channel returns
+// an explicit unavailable response rather than minting a production token.
+func (r *WorkloadIdentityReceiver) handleQualificationRestoreStream(ctx context.Context, _ state.EnvironmentQualificationExecution, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "qualification_identity_unavailable"}))
+	return err
 }
 
 func responseResult(err error) (string, error) {

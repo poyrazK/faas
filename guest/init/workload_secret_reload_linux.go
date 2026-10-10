@@ -24,13 +24,21 @@ func prepareWorkloadRuntimeSecrets(imageRoot string, manifest api.AppManifest, i
 // Prepare sidecar projections before workers can fetch updates, even when
 // dependencies delay the sidecar's first process start. Restarts never publish.
 func newSidecarWorkloadRuntimeAt(root string, spec workloadSpec, apiEnv map[string]string, log *slog.Logger, proxy *sidecarEventsProxy, workloadEnv map[string]string) (*workloadRuntime, error) {
+	sidecarEnv, err := loadSidecarEnvAt(root, spec.Name)
+	if err != nil && !isNotExist(err) {
+		return nil, fmt.Errorf("workload %q: load env overrides: %w", spec.Name, err)
+	}
+	if sidecarEnv == nil {
+		sidecarEnv = map[string]string{}
+	}
+	spec.preloadedEnv = sidecarEnv
 	manifest, found, err := sidecarManifestForRuntimeAt(root, spec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("workload %q: load runtime manifest: %w", spec.Name, err)
 	}
-	runtime := &workloadRuntime{spec: spec, state: newWorkloadDependencyState()}
+	runtime := &workloadRuntime{spec: spec, state: newWorkloadDependencyState(), sidecarEnv: sidecarEnv}
 	if found && manifest.SecretReloadSignal != "" && len(spec.GrantedEnvNames) > 0 && spec.Type == "sidecar" {
-		initial, err := sidecarInitialRuntimeSecrets(root, spec)
+		initial, err := sidecarInitialRuntimeSecrets(sidecarEnv, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -59,11 +67,7 @@ func newSidecarWorkloadRuntimeAt(root string, spec workloadSpec, apiEnv map[stri
 	return runtime, nil
 }
 
-func sidecarInitialRuntimeSecrets(root string, spec workloadSpec) (map[string]string, error) {
-	env, err := loadSidecarEnvAt(root, spec.Name)
-	if err != nil && !isNotExist(err) {
-		return nil, fmt.Errorf("workload %q: load secret grants: %w", spec.Name, err)
-	}
+func sidecarInitialRuntimeSecrets(env map[string]string, spec workloadSpec) (map[string]string, error) {
 	initial := make(map[string]string, len(spec.GrantedEnvNames))
 	for _, key := range spec.GrantedEnvNames {
 		value, ok := env[key]

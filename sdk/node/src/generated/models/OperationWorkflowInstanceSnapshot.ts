@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowBottlenecks } from './OperationWorkflowBottlenecks.js';
 import type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
 import type { OperationWorkflowDependencyImpact } from './OperationWorkflowDependencyImpact.js';
 import type { OperationWorkflowDependencyTrace } from './OperationWorkflowDependencyTrace.js';
@@ -9,12 +10,20 @@ import type { OperationWorkflowInstanceStep } from './OperationWorkflowInstanceS
 import type { OperationWorkflowInstanceTransition } from './OperationWorkflowInstanceTransition.js';
 import type { OperationWorkflowReadinessOverview } from './OperationWorkflowReadinessOverview.js';
 import type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';
+import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
 import type { OperationWorkflowStateHistoryEntry } from './OperationWorkflowStateHistoryEntry.js';
 /**
  * Grouped view of the selected contract's declared steps and allowed transitions, current explicit state, and transition-history page for one workflow instance. Allowed transitions are contract edges by target Operation; the application still checks its business row and authorization before using one. Page-scoped facts follow the milestone cursor; retention-wide step summaries cover all matching facts still retained under the normal Operation retention rules.
  */
 export type OperationWorkflowInstanceSnapshot = {
+  bottlenecks?: OperationWorkflowBottlenecks;
+  /**
+   * Selected instance proof preview with pending obligations first; exact counts include all distinct retained claims.
+   */
+  resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
+  awaiting_verification_count?: number;
+  resolution_verification_count?: number;
   readiness?: OperationWorkflowReadinessOverview;
   dependency_trace?: OperationWorkflowDependencyTrace;
   dependency_impact?: OperationWorkflowDependencyImpact;

@@ -725,3 +725,74 @@ retains its immutable copy; replay the same declaration after response loss.
 A private receipt is published on host-confirmed success with a typed result
 or explicit account success recovery. Approved Job retry clears file receipts.
 Published files use the existing customer-scoped artifact download methods.
+
+### Blocker responsibility
+
+Workflow blockers accept optional public `Owner` and `NextAction` fields;
+source-linked resolution facts accept `ResolvedBy`. Use the existing workflow
+blocker transaction helper to publish the complete replacement list with the
+business write. Assignment is application-authorized and does not grant platform
+permissions. Upgrade all writers to preserve these fields during metadata updates.
+See [blocker ownership](../../docs/operations.md#assign-blocker-ownership-and-a-next-action)
+for byte limits, reassignment, and resolution tracking.
+
+Attention queues support an exact owner or unassigned-only filter, and summaries
+can group by owner. Empty owner-group values represent unassigned work; shared
+workflows may count in several groups. See [owner queues](../../docs/operations.md#find-work-by-owner)
+for filter and count semantics.
+
+Workflow steps can declare versioned `blocker_escalations` policies by blocker
+code, with `after_seconds` and a recommended `owner`. Attention reads support
+`reason=escalated` and return threshold findings and escalated counts; unknown
+ages remain unknown. See [escalation policies](../../docs/operations.md#declare-blocker-escalation-policies).
+
+Blocker replacements also support paired `acknowledged_at` / `acknowledged_by`
+and an optional `follow_up_at` deadline. Preserve these fields on later reports.
+Acknowledgement keeps the blocker active and preserves its original age. Use
+attention reasons `unacknowledged` and `follow_up_overdue` to find unattended work;
+summary counts are available per owner. See the operations documentation for
+public actor and timestamp validation rules.
+
+Blockers also accept application-reported `priority` (`low`, `normal`, `high`,
+`urgent`) and public `business_impact` (at most 512 UTF-8 bytes without control
+characters). Omitted priority counts as normal. Preserve this context on later
+blocker replacements; changing it keeps age and acknowledgement intact.
+Attention queues and summaries accept a priority filter and expose counts per
+owner. Deadline queue sorting uses the workflow's existing `deadline_at`, with
+undated workflows last; update-time ordering remains the default. Summary groups
+retain group-value ordering. Reuse cursors only with the same filters and order.
+
+Resolution verification is opt-in: provide paired `verification_milestone_id` and
+`verification_milestone_name`, optionally `verification_operation_id` (defaults
+to the resolution's Operation) and a public `verification_owner`. Exact retained
+proof must match the same app/customer/environment/subject/workflow instance and
+resolution contract version. A name alone cannot verify a resolution.
+Use attention reason `awaiting_verification` and owner summaries for outstanding
+proof. Later state reports and terminal states preserve retained obligations.
+Workflow-instance previews are bounded to 16 findings with exact totals;
+paginated selected-instance history exposes each report's verification findings.
+Verification observes retained evidence and never authorizes or runs an action.
+
+### Workflow bottleneck analytics
+
+The selected workflow milestone snapshot exposes `bottlenecks`: state durations, blocked intervals by code/Operation/owner, and verification wait by owner. Analytics use up to 1,024 retained reports independently of history pagination. Each breakdown shows up to 32 groups; totals cover the full window. Inspect `history_complete`, `incomplete_reasons` and truncation flags before treating durations as complete. Unknown verification starts are counted without inferred waits. State/blocker time uses application occurrence timestamps; verification uses publication timestamps. Concurrent blocker and verification groups can overlap.
+
+### Compare workflow performance
+
+The workflow performance summary endpoints require an explicit app, environment and workflow. Account readers can optionally select a customer; customer readers inherit ownership from credentials. Completed and ongoing cohorts each select the latest 100 retained instances, with matching/sample/coverage counts. Only complete retained histories enter state, blocker and verification duration distributions. Groups expose nearest-rank p50/p95 and total seconds from one accumulated duration per eligible workflow. Up to 32 groups are ranked by total time. Ongoing durations are elapsed observations, and completed workflows may still await verification. Inspect coverage and truncation before comparing results.
+
+### Investigate performance contributors
+
+The performance instance endpoints list complete-history contributors ranked by observed duration. Select `cohort` and `dimension`; state groups require state/version, blocker groups require Operation/code/version and an exact owner or `unassigned=true`, and verification owner groups require an exact owner or unassigned selection. Overall dimensions reject group selectors. Pass the summary’s `cohort_token` to preserve its evaluation and cohort; changed retained evidence returns `409 workflow_performance_cohort_changed` and requires refreshing the summary. Without a token this evaluates a fresh cohort. Each result exposes the business subject, current blocker ownership/next action and bounded pending verification findings. Historical contributing ownership can differ from current ownership.
+
+### Workflow state SLA budgets
+
+Workflow steps accept `state_sla_budget_seconds`, a map of declared nonterminal states to positive whole-second budgets. Publish a new workflow contract version when changing budgets. The current workflow state exposes optional `sla` data with `within_budget`, `breached`, or `unknown` status; updates that keep the same state preserve the visit clock. Missing or ambiguous retained entry history produces `unknown`.
+
+Use the attention reason `sla_breached` to find known breaches. Performance cohorts expose configured, evaluated, breached, and unknown workflow counts, and state groups expose evaluated and breached visit counts, including visits that ended before completion. Budgets are observational and do not block application operations.
+
+### SLA early warnings
+
+Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
+
+Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.

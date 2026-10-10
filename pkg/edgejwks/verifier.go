@@ -95,6 +95,9 @@ type VerifierRule struct {
 	// independent of RequiredClaims. Named claims are retained before the
 	// generic custom-claim cap is filled.
 	ExtractClaims []string
+	// RequireExpiry rejects a token without an exp claim. go-jose validates
+	// exp only when present, so without it such a token never expires.
+	RequireExpiry bool
 }
 
 var allowedSignatureAlgorithms = map[string]struct{}{
@@ -244,6 +247,9 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 		exp.Time = time.Now()
 		if err := std.ValidateWithLeeway(exp, v.skew); err != nil {
 			return nil, mapParseError(err)
+		}
+		if rule.RequireExpiry && std.Expiry == nil {
+			return nil, fmt.Errorf("%w: exp", ErrJWTMissingClaim)
 		}
 		// Decode the verified payload once into a generic map. Besides
 		// validating required claims, the bounded scalar subset is returned to

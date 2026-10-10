@@ -1889,7 +1889,10 @@ type Store interface {
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
+	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
 	// PruneScenarioTestMembers removes abandoned namespaces only after every

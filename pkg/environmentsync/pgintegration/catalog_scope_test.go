@@ -3,6 +3,7 @@ package pgintegration_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func testCatalogScope(t *testing.T, basic gitOpsTestStore, scope string) {
 	definition.Workloads["api"] = api.EnvironmentWorkload{App: app.Slug, Variables: map[string]string{"MODE": "approved"},
 		SecretRefs: map[string]string{"DATABASE_URL": "secret:DATABASE"}, QueueBindings: map[string]api.EnvironmentQueueBinding{
 			"orders": {QueueName: "orders-v2", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 2},
-		}}
+		}, QueueSmoke: map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}}}
 	desired, err := environmentsync.Compile(definition)
 	if err != nil {
 		t.Fatal(err)

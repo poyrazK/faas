@@ -10,6 +10,7 @@ func TestCompileQueueRetentionAndPinnedRecovery(t *testing.T) {
 	d := definition()
 	w := d.Workloads["api"]
 	w.QueueBindings = map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", WorkloadClass: "worker"}}
+	w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: []byte(`{"id":"qualification"}`)}}
 	d.Workloads["api"] = w
 	baseline, err := Compile(d)
 	if err != nil {

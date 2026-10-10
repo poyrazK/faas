@@ -70,6 +70,10 @@ func templateDescription(name string) string {
 		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "mcp-node":
 		return "stateless MCP tool server with streaming and optional external OAuth"
+	case "mcp-go":
+		return "stateless Go MCP server with external OAuth and encrypted durable Tasks"
+	case "mcp-python":
+		return "stateless Python MCP server with external OAuth and encrypted durable Tasks"
 	case "cron-worker":
 		return "scheduled job worker with retries — bring your own schedule"
 	case "webhook-receiver":

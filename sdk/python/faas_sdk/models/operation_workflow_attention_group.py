@@ -14,7 +14,10 @@ T = TypeVar("T", bound="OperationWorkflowAttentionGroup")
 
 @_attrs_define
 class OperationWorkflowAttentionGroup:
-    """Attention statistics for one value of the selected grouping dimension."""
+    """Attention statistics for one value of the selected grouping dimension. Owner grouping uses an empty value for
+    unassigned blockers; owner counts and ages cover that owner only.
+
+    """
 
     value: str
     stats: OperationWorkflowAttentionStats

@@ -438,7 +438,7 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 	for _, action := range []string{"commit", "reuse"} {
 		t.Run(action, func(t *testing.T) {
-			f := newWorkflowUploadFixture(t, "postgres", 3*time.Second)
+			f := newWorkflowUploadFixture(t, "postgres", 8*time.Second)
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				ctx := t.Context()
 				a := state.OperationWorkflowAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.instanceID, RunID: proof.RunID, StepName: proof.StepName, Generation: proof.Generation, Attempt: proof.Attempt, Capability: proof.Capability}

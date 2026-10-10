@@ -88,8 +88,20 @@ func TestWorkerLeavesUnmanagedSourceOutsideQualification(t *testing.T) {
 	store, source, _, b, worker := setup(t, "enforce")
 	b.observation.State.Fields = append(b.observation.State.Fields, environmentsync.Field{
 		Resource: "workload/api", Path: "source", Value: json.RawMessage(`{"kind":"image","image":"registry.example/shop@sha256:` + strings.Repeat("c", 64) + `"}`)})
-	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked || lastRun(t, store, source).Status != "converged" {
-		t.Fatalf("unmanaged source prevented variable convergence: %v %v %+v", worked, err, lastRun(t, store, source))
+	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
+		t.Fatalf("worker: %v %v", worked, err)
+	}
+	run := lastRun(t, store, source)
+	var plan environmentsync.Plan
+	if err := json.Unmarshal(run.Plan, &plan); err != nil {
+		t.Fatal(err)
+	}
+	retained := false
+	for _, change := range plan.Changes {
+		retained = retained || change.Path == "source" && change.Action == "retain_unmanaged"
+	}
+	if !retained || b.applied != 0 || run.Status != "partial" || run.ErrorCode != "environment_runtime_unacknowledged" {
+		t.Fatalf("unmanaged source was changed or intent-only execution claimed convergence: plan=%+v backend=%+v run=%+v", plan, b, run)
 	}
 }
 
@@ -134,6 +146,8 @@ func TestWorkerReobservesBeforePublishingAppliedRevision(t *testing.T) {
 	for _, effect := range []bool{false, true} {
 		t.Run(map[bool]string{false: "executor-no-effect", true: "converged"}[effect], func(t *testing.T) {
 			store, source, desired, b, worker := setup(t, "enforce")
+			runtime := &runtimeBackend{backend: b, ready: effect}
+			worker.Backend = runtime
 			b.observation.State.Fields[1].Value = json.RawMessage(`"console-edit"`)
 			b.apply = func(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) ([]environmentgitops.Step, error) {
 				if effect {
@@ -147,7 +161,8 @@ func TestWorkerReobservesBeforePublishingAppliedRevision(t *testing.T) {
 			}
 			status, _ := store.EnvironmentGitSource(context.Background(), source.AccountID, source.ProjectID, source.EnvironmentSlug)
 			run := lastRun(t, store, source)
-			if effect && (run.Status != "converged" || status.AppliedRevisionID != source.ApprovedRevisionID) || !effect && (run.Status != "drifted" || status.AppliedRevisionID != "") {
+			if effect && (run.Status != "converged" || status.AppliedRevisionID != source.ApprovedRevisionID || runtime.verified != 1) ||
+				!effect && (run.Status != "drifted" || status.AppliedRevisionID != "" || runtime.verified != 0) {
 				t.Fatalf("false applied revision: %+v %+v", status, run)
 			}
 		})

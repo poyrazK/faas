@@ -114,4 +114,66 @@ func TestCacheRefreshFailureDoesNotServeExpiredKeys(t *testing.T) {
 	if err == nil || !registered || set != nil {
 		t.Fatalf("expired keys were served during a refresh failure: set=%v registered=%v err=%v", set, registered, err)
 	}
+	if !errors.Is(err, ErrJWKSUnavailable) {
+		t.Fatalf("refresh failure error = %v, want ErrJWKSUnavailable (the gateway maps it to 503)", err)
+	}
+}
+
+// ADR-091 D14 bound with outage grace: a short IdP outage serves the previous
+// set for one more refresh interval instead of rejecting every token, and the
+// failure backoff stops each request from re-dialling a down IdP.
+func TestCacheRefreshFailureServesGraceSetAndBacksOff(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	cache := NewCache(Options{HTTPClient: srv.Client()}).(*jwksCache)
+	if err := cache.Register(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	entry := cache.byURL[srv.URL]
+	entry.set = &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{KeyID: "k1"}}}
+	entry.lastFetch = time.Now().Add(-cache.refresh - time.Minute) // expired, inside grace
+	for range 10 {
+		set, _, err := cache.Get(t.Context(), srv.URL, "k1")
+		if err != nil || set == nil || len(set.Key("k1")) != 1 {
+			t.Fatalf("grace keyset not served during outage: set=%v err=%v", set, err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("fetches during failure backoff = %d, want 1", got)
+	}
+}
+
+// A kid missing from a still-fresh set refreshes early (key rotation), but at
+// most once per UnknownKIDRefreshInterval so random kids cannot force a fetch
+// per request.
+func TestCacheUnknownKIDRefreshesEarlyButBounded(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	defer srv.Close()
+	cache := NewCache(Options{HTTPClient: srv.Client()}).(*jwksCache)
+	if err := cache.Register(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	entry := cache.byURL[srv.URL]
+	entry.set = &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{KeyID: "old"}}}
+	entry.lastFetch = time.Now().Add(-UnknownKIDRefreshInterval) // fresh, but rotation-checkable
+	entry.lastAttempt = entry.lastFetch
+	if _, _, err := cache.Get(t.Context(), srv.URL, "rotated-in"); err != nil {
+		t.Fatal(err)
+	}
+	for _, kid := range []string{"random-1", "random-2", "random-3"} {
+		if _, _, err := cache.Get(t.Context(), srv.URL, kid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("fetches = %d, want 1 early refresh for the unknown kid, then none inside the interval", got)
+	}
 }

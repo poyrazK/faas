@@ -48,21 +48,25 @@ type OperationMilestonesResponse struct {
 // instance. Page-scoped facts and transition history follow their cursors;
 // retention summaries do not.
 type OperationWorkflowInstanceSnapshot struct {
-	Readiness            *OperationWorkflowReadinessOverview   `json:"readiness,omitempty"`
-	DependencyTrace      *OperationWorkflowDependencyTrace     `json:"dependency_trace,omitempty"`
-	DependencyImpact     *OperationWorkflowDependencyImpact    `json:"dependency_impact,omitempty"`
-	RelatedWorkflows     []OperationWorkflowRelatedInstance    `json:"related_workflows,omitempty"`
-	Decision             *OperationWorkflowDecision            `json:"decision,omitempty"`
-	Workflow             string                                `json:"workflow"`
-	InstanceID           string                                `json:"instance_id"`
-	ContractVersion      int                                   `json:"contract_version"`
-	State                *OperationWorkflowState               `json:"state,omitempty"`
-	Steps                []OperationWorkflowInstanceStep       `json:"steps"`
-	AllowedTransitions   []OperationWorkflowInstanceTransition `json:"allowed_transitions"`
-	Transitions          []OperationWorkflowStateHistoryEntry  `json:"transitions"`
-	HasMore              bool                                  `json:"has_more"`
-	NextMilestoneCursor  string                                `json:"next_milestone_cursor,omitempty"`
-	NextTransitionCursor string                                `json:"next_transition_cursor,omitempty"`
+	Bottlenecks                 *OperationWorkflowBottlenecks             `json:"bottlenecks,omitempty"`
+	ResolutionVerifications     []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
+	AwaitingVerificationCount   int64                                     `json:"awaiting_verification_count"`
+	ResolutionVerificationCount int64                                     `json:"resolution_verification_count"`
+	Readiness                   *OperationWorkflowReadinessOverview       `json:"readiness,omitempty"`
+	DependencyTrace             *OperationWorkflowDependencyTrace         `json:"dependency_trace,omitempty"`
+	DependencyImpact            *OperationWorkflowDependencyImpact        `json:"dependency_impact,omitempty"`
+	RelatedWorkflows            []OperationWorkflowRelatedInstance        `json:"related_workflows,omitempty"`
+	Decision                    *OperationWorkflowDecision                `json:"decision,omitempty"`
+	Workflow                    string                                    `json:"workflow"`
+	InstanceID                  string                                    `json:"instance_id"`
+	ContractVersion             int                                       `json:"contract_version"`
+	State                       *OperationWorkflowState                   `json:"state,omitempty"`
+	Steps                       []OperationWorkflowInstanceStep           `json:"steps"`
+	AllowedTransitions          []OperationWorkflowInstanceTransition     `json:"allowed_transitions"`
+	Transitions                 []OperationWorkflowStateHistoryEntry      `json:"transitions"`
+	HasMore                     bool                                      `json:"has_more"`
+	NextMilestoneCursor         string                                    `json:"next_milestone_cursor,omitempty"`
+	NextTransitionCursor        string                                    `json:"next_transition_cursor,omitempty"`
 }
 
 // OperationWorkflowInstanceTransition is an allowed edge from the selected
@@ -170,6 +174,7 @@ type OperationWorkflowStateReportResponse struct {
 // OperationWorkflowState is the latest explicit state reported for one
 // business workflow instance.
 type OperationWorkflowState struct {
+	SLA                *OperationWorkflowStateSLA           `json:"sla,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
 	OutcomeCode        string                               `json:"outcome_code,omitempty"`
@@ -201,28 +206,29 @@ type OperationWorkflowState struct {
 // OperationWorkflowStateHistoryEntry is one retained app-reported state
 // update, ordered within a run by its app-assigned revision.
 type OperationWorkflowStateHistoryEntry struct {
-	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
-	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
-	OutcomeCode        string                               `json:"outcome_code,omitempty"`
-	OutcomeDescription string                               `json:"outcome_description,omitempty"`
-	OutcomeOnly        bool                                 `json:"outcome_only,omitempty"`
-	DeadlineAt         string                               `json:"deadline_at,omitempty"`
-	DeadlineOnly       bool                                 `json:"deadline_only,omitempty"`
-	BlockerResolutions []OperationWorkflowBlockerResolution `json:"blocker_resolutions,omitempty"`
-	Blockers           []OperationWorkflowBlocker           `json:"blockers,omitempty"`
-	BlockersOnly       bool                                 `json:"blockers_only,omitempty"`
-	ID                 string                               `json:"id"`
-	OperationID        string                               `json:"operation_id"`
-	Workflow           string                               `json:"workflow"`
-	InstanceID         string                               `json:"instance_id"`
-	FromState          string                               `json:"from_state,omitempty"`
-	State              string                               `json:"state"`
-	Revision           int64                                `json:"revision"`
-	ContractVersion    int                                  `json:"contract_version"`
-	EvidenceMilestones []OperationWorkflowEvidenceMilestone `json:"evidence_milestones,omitempty"`
-	OccurredAt         time.Time                            `json:"occurred_at"`
-	PublishedAt        time.Time                            `json:"published_at"`
-	PlatformTenantID   string                               `json:"platform_tenant_id,omitempty"`
+	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
+	DependsOn               []OperationWorkflowDependency             `json:"depends_on,omitempty"`
+	DependenciesOnly        bool                                      `json:"dependencies_only,omitempty"`
+	OutcomeCode             string                                    `json:"outcome_code,omitempty"`
+	OutcomeDescription      string                                    `json:"outcome_description,omitempty"`
+	OutcomeOnly             bool                                      `json:"outcome_only,omitempty"`
+	DeadlineAt              string                                    `json:"deadline_at,omitempty"`
+	DeadlineOnly            bool                                      `json:"deadline_only,omitempty"`
+	BlockerResolutions      []OperationWorkflowBlockerResolution      `json:"blocker_resolutions,omitempty"`
+	Blockers                []OperationWorkflowBlocker                `json:"blockers,omitempty"`
+	BlockersOnly            bool                                      `json:"blockers_only,omitempty"`
+	ID                      string                                    `json:"id"`
+	OperationID             string                                    `json:"operation_id"`
+	Workflow                string                                    `json:"workflow"`
+	InstanceID              string                                    `json:"instance_id"`
+	FromState               string                                    `json:"from_state,omitempty"`
+	State                   string                                    `json:"state"`
+	Revision                int64                                     `json:"revision"`
+	ContractVersion         int                                       `json:"contract_version"`
+	EvidenceMilestones      []OperationWorkflowEvidenceMilestone      `json:"evidence_milestones,omitempty"`
+	OccurredAt              time.Time                                 `json:"occurred_at"`
+	PublishedAt             time.Time                                 `json:"published_at"`
+	PlatformTenantID        string                                    `json:"platform_tenant_id,omitempty"`
 }
 
 type OperationMilestoneListOptions struct {
@@ -255,6 +261,13 @@ type OperationWorkflowDecision struct {
 
 // OperationWorkflowBlocker is a public application-reported reason a target Operation must wait.
 type OperationWorkflowBlocker struct {
+	Priority        string `json:"priority,omitempty"`
+	BusinessImpact  string `json:"business_impact,omitempty"`
+	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy  string `json:"acknowledged_by,omitempty"`
+	FollowUpAt      string `json:"follow_up_at,omitempty"`
+	Owner           string `json:"owner,omitempty"`
+	NextAction      string `json:"next_action,omitempty"`
 	FirstObservedAt string `json:"first_observed_at,omitempty"`
 	Code            string `json:"code"`
 	Description     string `json:"description"`
@@ -264,6 +277,12 @@ type OperationWorkflowBlocker struct {
 // OperationWorkflowBlockerResolution records why one prior reported blocker was cleared.
 // Its containing state report provides the resolution identity, revision and timestamps.
 type OperationWorkflowBlockerResolution struct {
+	VerificationMilestoneID   string `json:"verification_milestone_id,omitempty"`
+	VerificationMilestoneName string `json:"verification_milestone_name,omitempty"`
+	VerificationOperationID   string `json:"verification_operation_id,omitempty"`
+	VerificationOwner         string `json:"verification_owner,omitempty"`
+
+	ResolvedBy         string `json:"resolved_by,omitempty"`
 	Code               string `json:"code"`
 	Operation          string `json:"operation"`
 	Description        string `json:"description"`

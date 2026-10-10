@@ -4234,7 +4234,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4260,6 +4260,7 @@ func cmdRollback(args []string) int {
 	}
 	slug := args[0]
 	var to, current, reason string
+	interactive := false
 	checked := false
 	var err error
 	wait := false
@@ -4268,6 +4269,8 @@ func cmdRollback(args []string) int {
 	for i := 0; i < len(rest); i++ {
 		a := rest[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(rest).
 		switch {
+		case a == "--interactive":
+			interactive = true
 		case a == "--to":
 			i++
 			if i >= len(rest) {
@@ -4321,6 +4324,25 @@ func cmdRollback(args []string) int {
 		default:
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
+	}
+	if interactive {
+		for i := 0; i < len(rest); i++ {
+			switch {
+			case rest[i] == "--interactive":
+			case rest[i] == "--timeout" || rest[i] == "--poll-interval":
+				i++ // The parser above already checked the value.
+			case strings.HasPrefix(rest[i], "--timeout=") || strings.HasPrefix(rest[i], "--poll-interval="):
+			default:
+				return printErr("Invalid interactive rollback flags", errors.New("--interactive accepts only --timeout and --poll-interval; choose the target and confirm in the flow"))
+			}
+		}
+		if err := validateRollbackFlags(false, "", "", "", false, timeout, interval); err != nil {
+			return printErr("Invalid rollback", err)
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("--interactive requires terminal input and output; use --to and --expected-current for scripts or JSON"))
+		}
+		return cmdRollbackInteractive(slug, timeout, interval)
 	}
 	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
 		return printErr("Invalid rollback", err)
@@ -4873,10 +4895,12 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
+	case "setup":
+		return cmdDomainsSetup(args[1:])
 	case subList:
 		client, err := authedClient()
 		if err != nil {
@@ -4997,10 +5021,12 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|next|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
+	case "next":
+		return cmdCronsNext(args[1:])
 	case subList:
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
@@ -5044,6 +5070,7 @@ func cmdCrons(args []string) int {
 		return 0
 	case subAdd:
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
+		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
@@ -5063,6 +5090,25 @@ func cmdCrons(args []string) int {
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
+		}
+		if *interactive {
+			invalid := false
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name != "interactive" && f.Name != "app" {
+					invalid = true
+				}
+			})
+			if invalid {
+				return printErr("Invalid interactive cron flags", errors.New("--interactive accepts only --app; choose the HTTP path, schedule, and timezone in the flow"))
+			}
+			if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+				return printErr("Interactive terminal required", errors.New("use crons add --app APP --schedule EXPR --path PATH for scripts"))
+			}
+			selected, err := resolveReadAppTarget(*slug)
+			if err != nil {
+				return readAppTargetError(err)
+			}
+			return cmdCronsAddInteractive(selected)
 		}
 		if *slug == "" || *schedule == "" {
 			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
@@ -5133,22 +5179,7 @@ func cmdCrons(args []string) int {
 			req.RetryMax = *retryMax
 			req.RetryBackoffSeconds = *retryBackoff
 		}
-		c, err := client.CreateCron(context.Background(), *slug, req)
-		if err != nil {
-			return printErr("Create failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(c))
-		}
-		target := c.Path
-		if c.Kind == "command" {
-			target = "command " + formatCronCommand(c)
-		}
-		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-		// The id is what every other crons verb takes; without it the
-		// next step was `crons list` to find it.
-		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
-		return 0
+		return createCronAndRender(context.Background(), client, *slug, req)
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
@@ -5202,6 +5233,23 @@ func cmdCrons(args []string) int {
 // deploymentIDPattern — same 32-hex convention across the platform.
 var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
+	c, err := client.CreateCron(ctx, slug, req)
+	if err != nil {
+		return printErr("Create failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(c))
+	}
+	target := c.Path
+	if c.Kind == "command" {
+		target = "command " + formatCronCommand(c)
+	}
+	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+	_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
+	return 0
+}
+
 // renderCronState writes the human multi-line state block for one
 // cron. Routes through io.Writer so tests can capture the body via
 // the osStdout seam (same pattern as renderDeploymentRow in
@@ -5252,6 +5300,8 @@ func formatCronCommand(c api.CronResponse) string {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose and edit an HTTP task")
+	app := fs.String("app", "", "app slug for interactive task selection")
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
 	timezone := fs.String("timezone", "", "IANA timezone (empty resets to UTC)")
@@ -5265,6 +5315,28 @@ func cmdCronsUpdate(args []string) int {
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive cron flags", errors.New("use crons update --interactive with optional --app; choose the task and settings in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("use crons update ID with explicit flags for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdCronsUpdateInteractive(slug)
+	}
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid app flag", errors.New("--app is only accepted with --interactive; use a task ID for explicit updates"))
 	}
 	if fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
@@ -5362,7 +5434,11 @@ func cmdCronsUpdate(args []string) int {
 		}
 		req.FailureRules = rules
 	}
-	updated, err := client.UpdateCron(context.Background(), id, req)
+	return updateCronAndRender(context.Background(), client, id, req)
+}
+
+func updateCronAndRender(ctx context.Context, client *Client, id string, req api.UpdateCronRequest) int {
+	updated, err := client.UpdateCron(ctx, id, req)
 	if err != nil {
 		return printErr("Update failed", err)
 	}
@@ -5928,10 +6004,16 @@ func cmdOpen(args []string) int {
 		return cmdOpenDocs(args[1:])
 	}
 	fs := newFlagSet("open", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	dash := fs.Bool("dashboard", false, "open the dashboard page instead of the live URL")
 	flags, positional := splitArgsForFlags(args, "dashboard")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	var mergeErr error
+	positional, mergeErr = mergeAppFlag(positional, *appFlag, 1)
+	if mergeErr != nil {
+		return printErr("Invalid app target", mergeErr)
 	}
 	if len(positional) > 1 {
 		PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
@@ -5942,13 +6024,9 @@ func cmdOpen(args []string) int {
 		slug = positional[0]
 	} else {
 		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
+		slug, resolveErr = resolveReadAppTarget("")
 		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
+			return readAppTargetError(resolveErr)
 		}
 	}
 	client, err := authedClient()
@@ -6206,10 +6284,15 @@ func validateRepoSlug(s string) error {
 // (e.g. `logs list` for batch tail of all app's deployments) without
 // a wire-format break.
 func cmdLogs(args []string) int {
+	if len(args) > 0 && args[0] == "views" {
+		return cmdLogViews(args[1:])
+	}
 	if len(args) > 0 && args[0] == subLogsTail {
 		return cmdLogsTail(args[1:])
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
+	viewName := fs.String("view", "", "reuse a named local log view")
+	interactive := fs.Bool("interactive", false, "choose log source, time window, and filters interactively")
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	fs.StringVar(deployment, "release", "", "release id or revision (alias for --deployment)")
@@ -6239,6 +6322,57 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
 	}
+	if logsFlagWasSet(fs, "view") {
+		invalid := *viewName == "" || fs.NArg() > 1
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "view" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid log view flags", errors.New("--view NAME accepts only an app target; inspect the saved filters with logs views show NAME"))
+		}
+		views, err := loadLogViews()
+		if err != nil {
+			return printErr("Could not read log views", err)
+		}
+		view, exists := views.Views[*viewName]
+		if !exists {
+			return printErr("Unknown log view", errors.New("run gregale logs views list to see saved views"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		return cmdLogs(append(pos, view.args()...))
+	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "app" && f.Name != "interactive" {
+				invalid = true
+			}
+		})
+		if invalid || fs.NArg() > 1 {
+			return printErr("Invalid interactive log flags", errors.New("--interactive accepts only an app target; choose filters in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("use explicit log filters for scripts or JSON"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		target := ""
+		if len(pos) == 1 {
+			target = pos[0]
+		}
+		slug, err := resolveReadAppTarget(target)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdLogsInteractive(slug)
+	}
 	if *explain && jsonOutput {
 		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable)", "logs")
 		return 2
@@ -6246,23 +6380,6 @@ func cmdLogs(args []string) int {
 	if fs.NArg() > 1 {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
 		return 1
-	}
-	slug := ""
-	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>|--app SLUG] ...\nerror: "+mergeErr.Error(), "logs")
-		return 1
-	} else if len(pos) == 1 {
-		slug = pos[0]
-	} else {
-		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
-		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale logs [<slug>] ... (slug defaults to linked project context)", "logs")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
-		}
 	}
 	if logsFlagWasSet(fs, "deployment") && logsFlagWasSet(fs, "release") {
 		PrintUsage(os.Stderr, "--release and --deployment are aliases; use only one", "logs")
@@ -6346,6 +6463,19 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
 		return 2
 	}
+	slug := ""
+	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>|--app SLUG] ...\nerror: "+mergeErr.Error(), "logs")
+		return 1
+	} else if len(pos) == 1 {
+		slug = pos[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveReadAppTarget("")
+		if resolveErr != nil {
+			return readAppTargetError(resolveErr)
+		}
+	}
 	// ADR-198: --deployment accepts a vN handle. `slug` is already
 	// resolved above (positional, else linked project), so the revision is
 	// unambiguous without a second flag. A uuid short-circuits.
@@ -6400,20 +6530,6 @@ func cmdLogsTail(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] (slug defaults to linked project context)", "logs")
 		return 1
 	}
-	slug := ""
-	if fs.NArg() == 1 {
-		slug = fs.Arg(0)
-	} else {
-		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
-		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] ... (slug defaults to linked project context)", "logs")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
-		}
-	}
 	if *follow {
 		PrintFail(os.Stderr, "--follow is redundant with `logs tail` (alias always follows); drop the flag")
 		return 2
@@ -6426,6 +6542,16 @@ func cmdLogsTail(args []string) int {
 	if sinceErr != nil {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
 		return 2
+	}
+	slug := ""
+	if fs.NArg() == 1 {
+		slug = fs.Arg(0)
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveReadAppTarget("")
+		if resolveErr != nil {
+			return readAppTargetError(resolveErr)
+		}
 	}
 	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
 		Grep:  *grep,

@@ -160,6 +160,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH` | schedd | `default` |  | 0 | `` | explicit opt-in for preview qualification dispatch; leave off until dedicated native Linux acceptance passes |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL` | schedd | `default` |  |  | `url` | optional local private HTTPS service proxy URL for qualification; unset rejects HTTPS service-bound graphs before VM admission |
+| `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL` | schedd | `default` |  |  | `url` | optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission |
 | `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED` | apid | `default` |  | false | `` | ADR-568 opt-in continuous Git-owned environment drift reporting; disabled unless explicitly true; grants no intent execution or qualification dispatch |
 | `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED` | apid | `default` |  | true | `` | ADR-568 immutable definition polling and reviewed source approval for registered sources; explicit false disables polling; grants no environment execution authority |
 | `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` | schedd | `default` |  | 1 | `` | ADR-647 independent event recipient routing defaults on when unset; explicit 1 also enables, other nonempty values disable adoption; set 0 during mixed-version API/scheduler upgrades; disabling continues draining adopted receipts |
@@ -201,6 +204,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
+| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
@@ -454,6 +458,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
+| `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-911 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

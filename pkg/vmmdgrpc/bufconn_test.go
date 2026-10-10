@@ -6,6 +6,8 @@ package vmmdgrpc_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -15,16 +17,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/qualificationwire"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -80,7 +86,9 @@ type fakeVMM struct {
 	waitBuilderReadyFn   func(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error)
 	deleteWarmSnapshotFn func(ctx context.Context, storageKey, vmstateStorageKey string) error
 	jobBootFn            func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
+	qualificationJobFn   func(context.Context, state.EnvironmentQualificationExecution, fcvm.JobBootRequest) (*fcvm.Instance, error)
 	jobExitFn            func(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
+	jobStartFn           func(context.Context, string) error
 	live                 int
 	leased               int
 }
@@ -318,11 +326,25 @@ func (f *fakeVMM) BootJob(ctx context.Context, req fcvm.JobBootRequest) (*fcvm.I
 	return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance}}, nil
 }
 
+func (f *fakeVMM) BootEnvironmentQualificationJob(ctx context.Context, frame state.EnvironmentQualificationExecution, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
+	if f.qualificationJobFn != nil {
+		return f.qualificationJobFn(ctx, frame, req)
+	}
+	return f.BootJob(ctx, req)
+}
+
 func (f *fakeVMM) WaitJobExit(ctx context.Context, instance string, deadline time.Duration) (fcvm.JobExitPayload, error) {
 	if f.jobExitFn != nil {
 		return f.jobExitFn(ctx, instance, deadline)
 	}
 	return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease"}, nil
+}
+
+func (f *fakeVMM) ReleaseJobStart(ctx context.Context, instance string) error {
+	if f.jobStartFn != nil {
+		return f.jobStartFn(ctx, instance)
+	}
+	return nil
 }
 
 // errNotLive is a sentinel for the Manager-equivalent "not live" error.
@@ -335,10 +357,17 @@ const errNotLive = stringErr("park live-1: not live")
 // newServer spins up a vmmdgrpc.Server on a bufconn listener and returns
 // both the listener (kept open by t.Cleanup) and the dialed client.
 func newServer(t *testing.T, fake *fakeVMM) (vmmdpb.VmmdClient, func()) {
+	return newServerForNode(t, fake, "")
+}
+
+func newServerForNode(t *testing.T, fake *fakeVMM, nodeID string) (vmmdpb.VmmdClient, func()) {
 	t.Helper()
 	ops := wire.NewOpsMetrics("vmmd_test")
 	srv := grpc.NewServer()
 	impl := vmmdgrpc.New(fake, ops, "1.0.0", nil)
+	if nodeID != "" {
+		impl.WithNodeID(nodeID)
+	}
 	impl.Register(srv)
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -434,7 +463,8 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 	f := &fakeVMM{
 		jobBootFn: func(_ context.Context, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
 			boot = req
-			return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance}}, nil
+			return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, Netns: "fc-job-1",
+				HostIP: netip.MustParseAddr("10.100.0.7"), UID: 22007}}, nil
 		},
 		jobExitFn: func(_ context.Context, instance string, deadline time.Duration) (fcvm.JobExitPayload, error) {
 			if instance != "job-1" {
@@ -446,28 +476,114 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 		},
 	}
 	cli, _ := newServer(t, f)
-	if _, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
+	resp, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
 		Instance: "job-1", AccountId: "acct-1", NodeId: "node-1", Plan: "pro",
 		RunId: "run-1", TaskIndex: 2, ImageRef: "image", KernelKey: "kernel/1",
 		BaseKey: "base/base.ext4", Command: []string{"/bin/job"},
 		Env: map[string]string{"MODE": "test"}, VcpuCount: 1, MemSizeMib: 256,
 		TaskTimeoutSec: 30, LeaseToken: "lease-1",
-	}); err != nil {
+		SealedEnv: []*vmmdpb.SealedSecret{{Key: "DATABASE_URL", Ciphertext: []byte("ciphertext"), SourceKey: "DATABASE"}},
+	})
+	if err != nil {
 		t.Fatalf("JobColdBoot: %v", err)
 	}
-	if boot.Instance != "job-1" || string(boot.Plan) != "pro" || boot.TaskIndex != 2 || boot.Env["MODE"] != "test" {
+	if boot.Instance != "job-1" || string(boot.Plan) != "pro" || boot.TaskIndex != 2 || boot.Env["MODE"] != "test" ||
+		len(boot.SealedEnvEntries) != 1 || boot.SealedEnvEntries[0].Key != "DATABASE_URL" ||
+		boot.SealedEnvEntries[0].SourceKey != "DATABASE" || string(boot.SealedEnvEntries[0].Ciphertext) != "ciphertext" {
 		t.Fatalf("BootJob request = %+v", boot)
 	}
-	resp, err := cli.WaitJobExit(context.Background(), &vmmdpb.WaitJobExitRequest{Instance: "job-1"})
+	if resp.GetInstance() != "job-1" || resp.GetNodeId() != "node-1" || resp.GetNetns() != "fc-job-1" ||
+		resp.GetHostIp() != "10.100.0.7" || resp.GetGuestUid() != 22007 {
+		t.Fatalf("JobColdBoot runtime identity response = %+v", resp)
+	}
+	exitResponse, err := cli.WaitJobExit(context.Background(), &vmmdpb.WaitJobExitRequest{Instance: "job-1"})
 	if err != nil {
 		t.Fatalf("WaitJobExit: %v", err)
 	}
-	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" ||
-		resp.GetOutputManifestJson() != `{"version":1,"artifacts":[]}` {
-		t.Fatalf("JobExitResponse = %+v", resp)
+	if exitResponse.GetExitCode() != 0 || exitResponse.GetErrorClass() != "succeeded" || exitResponse.GetLeaseToken() != "lease-1" ||
+		exitResponse.GetOutputManifestJson() != `{"version":1,"artifacts":[]}` {
+		t.Fatalf("JobExitResponse = %+v", exitResponse)
 	}
 	if waited != fcvm.JobDestroyWaitDefault {
 		t.Fatalf("default wait deadline = %s, want %s", waited, fcvm.JobDestroyWaitDefault)
+	}
+}
+
+func TestQualificationJobColdBootCarriesAttemptFrame(t *testing.T) {
+	nodeID, instanceID, appID, deploymentID, wakeID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	requestID, graphID, sourceID, environmentID, revisionID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	frame := state.EnvironmentQualificationExecution{InstanceID: instanceID, RequestID: requestID, GraphID: graphID, AppID: appID,
+		DeploymentID: deploymentID, NodeID: nodeID, WakeID: wakeID, SourceID: sourceID, EnvironmentID: environmentID,
+		RevisionID: revisionID, Resource: "workload/api", Scope: "production",
+		Generation: 1, IntentVersion: 1, Attempt: 1, RAMMB: 256, CleanupToken: uuid.NewString(),
+		Artifact: state.EnvironmentWorkloadArtifact{RootfsKey: "images/candidate.ext4", RootfsBytes: 1024, Kind: state.DeploymentKindImage}}
+	planHash := sha256.Sum256([]byte("reviewed-plan"))
+	frame.PlanHash = hex.EncodeToString(planHash[:])
+	encoded, err := qualificationwire.ExecutionToProto(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotFrame state.EnvironmentQualificationExecution
+	var gotBoot fcvm.JobBootRequest
+	regularBootCalled := false
+	f := &fakeVMM{
+		jobBootFn: func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error) {
+			regularBootCalled = true
+			return nil, fmt.Errorf("ordinary job boot must not be selected")
+		},
+		qualificationJobFn: func(_ context.Context, got state.EnvironmentQualificationExecution, boot fcvm.JobBootRequest) (*fcvm.Instance, error) {
+			gotFrame, gotBoot = got, boot
+			return &fcvm.Instance{Lease: fcvm.Lease{Instance: boot.Instance, Netns: "fc-qualification-job",
+				HostIP: netip.MustParseAddr("10.100.0.8"), UID: 22008}}, nil
+		},
+	}
+	cli, _ := newServerForNode(t, f, nodeID)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("x-faas-node-id", nodeID,
+		"x-faas-instance-id", instanceID, "x-faas-app-id", appID, "x-faas-deployment-id", deploymentID, "x-faas-wake-id", wakeID))
+	resp, err := cli.JobColdBoot(ctx, &vmmdpb.JobColdBootRequest{Instance: instanceID, AccountId: uuid.NewString(), NodeId: nodeID,
+		Plan: string(api.PlanHobby), RunId: requestID, TaskIndex: 1, ImageRef: frame.Artifact.RootfsKey,
+		KernelKey: "kernel/current", BaseKey: "base/runtime.ext4", Command: []string{"node", "smoke.js"}, VcpuCount: 1,
+		MemSizeMib: 256, TaskTimeoutSec: 30, LeaseToken: uuid.NewString(), QualificationExecution: encoded,
+		SealedEnv: []*vmmdpb.SealedSecret{{Key: "DATABASE_URL", SourceKey: "DATABASE", Ciphertext: []byte("sealed")}}})
+	if err != nil {
+		t.Fatalf("qualification JobColdBoot: %v", err)
+	}
+	if regularBootCalled || gotFrame != frame || gotBoot.Instance != instanceID || gotBoot.NodeID != nodeID ||
+		gotBoot.RunID != requestID || gotBoot.TaskIndex != 1 || gotBoot.ImageRef != frame.Artifact.RootfsKey ||
+		len(gotBoot.SealedEnvEntries) != 1 || gotBoot.SealedEnvEntries[0].Key != "DATABASE_URL" ||
+		gotBoot.SealedEnvEntries[0].SourceKey != "DATABASE" || string(gotBoot.SealedEnvEntries[0].Ciphertext) != "sealed" ||
+		resp.GetInstance() != instanceID || resp.GetNodeId() != nodeID || resp.GetNetns() != "fc-qualification-job" ||
+		resp.GetHostIp() != "10.100.0.8" || resp.GetGuestUid() != 22008 {
+		t.Fatalf("qualification frame/boot/response = %+v / %+v / %+v", gotFrame, gotBoot, resp)
+	}
+}
+
+func TestHeldJobColdBootRequiresDistinctRPCAndCanRelease(t *testing.T) {
+	var boot fcvm.JobBootRequest
+	released := ""
+	f := &fakeVMM{
+		jobBootFn: func(_ context.Context, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
+			boot = req
+			return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, Netns: "fc-held",
+				HostIP: netip.MustParseAddr("10.100.0.9"), UID: 22009}, IsJob: true,
+				JobStartGateEnabled: req.StartHeld}, nil
+		},
+		jobStartFn: func(_ context.Context, instance string) error { released = instance; return nil },
+	}
+	cli, _ := newServer(t, f)
+	request := &vmmdpb.JobColdBootRequest{Instance: "job-held", AccountId: "acct-1", NodeId: "node-1", Plan: "pro",
+		RunId: "run-1", TaskIndex: 0, ImageRef: "image", KernelKey: "kernel/1", BaseKey: "base/base.ext4",
+		Command: []string{"/bin/job"}, VcpuCount: 1, MemSizeMib: 256, TaskTimeoutSec: 30, LeaseToken: "lease-1"}
+	resp, err := cli.JobColdBootHeld(context.Background(), request)
+	if err != nil {
+		t.Fatalf("JobColdBootHeld: %v", err)
+	}
+	if !boot.StartHeld || !resp.GetStartHeld() || resp.GetInstance() != "job-held" {
+		t.Fatalf("held boot request/response = %+v / %+v", boot, resp)
+	}
+	release, err := cli.ReleaseJobStart(context.Background(), &vmmdpb.ReleaseJobStartRequest{Instance: "job-held"})
+	if err != nil || !release.GetReleased() || release.GetInstance() != "job-held" || released != "job-held" {
+		t.Fatalf("ReleaseJobStart = %+v, released=%q, err=%v", release, released, err)
 	}
 }
 
@@ -479,6 +595,20 @@ func TestJobColdBoot_RejectsIncompleteRequest(t *testing.T) {
 	}
 	if code := status.Code(err); code != codes.InvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+func TestJobColdBoot_RejectsMissingRuntimeIdentity(t *testing.T) {
+	cli, _ := newServer(t, &fakeVMM{jobBootFn: func(_ context.Context, req fcvm.JobBootRequest) (*fcvm.Instance, error) {
+		return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance}}, nil
+	}})
+	_, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
+		Instance: "job-1", AccountId: "acct-1", NodeId: "node-1", Plan: "pro", RunId: "run-1",
+		TaskIndex: 0, ImageRef: "image", KernelKey: "kernel/1", BaseKey: "base/base.ext4",
+		Command: []string{"/bin/job"}, VcpuCount: 1, MemSizeMib: 256, TaskTimeoutSec: 30, LeaseToken: "lease-1",
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("JobColdBoot missing runtime identity error = %v, want Internal", err)
 	}
 }
 
