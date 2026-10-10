@@ -26,7 +26,12 @@ func newInstanceFlight(ctx context.Context) (context.Context, *instanceFlight) {
 	recoveryCtx, cancelRecovery := context.WithCancel(context.WithoutCancel(ctx))
 	flight := &instanceFlight{
 		done: make(chan struct{}), recoveryCtx: recoveryCtx,
-		cancel: func() { cancelOperation(); cancelRecovery() },
+		cancel: func() {
+			// An operation that observes cancellation may immediately try
+			// snapshot recovery. Fence recovery before waking that path.
+			cancelRecovery()
+			cancelOperation()
+		},
 	}
 	return operationCtx, flight
 }
