@@ -89,7 +89,7 @@ func TestNativeRestoreStagingRequiresOriginalTargetAndCompleteInputs(t *testing.
 				case "backing":
 					inputs.Backing.Base += "-changed"
 				case "backing_digest":
-					body, err := json.Marshal(map[string]any{"version": inputs.Backing.Version, "kernel": inputs.Backing.Kernel, "base": inputs.Backing.Base})
+					body, err := json.Marshal(map[string]any{"version": inputs.Backing.Version, "kernel": inputs.Backing.Kernel, "base": inputs.Backing.Base, "timer": inputs.Backing.Timer})
 					if err != nil || len(body) != len(f.bodies[3]) || bytes.Equal(body, f.bodies[3]) {
 						t.Fatal("fixture must retain backing identity and length while changing original bytes", err)
 					}

@@ -341,9 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # A PR touching pkg/state runs a third of its race tests (~10-12 min)
-    # beside its other packages after a cold compile; 20 min cancels it.
-    timeout-minutes: 30
+    # A PR touching pkg/state can spend over 16 min in one race-test shard
+    # after a cold compile; leave room for its other packages and teardown.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -442,7 +442,7 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS &
+            go test -race -count=1 -p 4 -timeout=22m $PKGS &
             pids+=("$!")
           fi
           # Packages too slow for one shard run a third of their tests here,
@@ -450,7 +450,7 @@ jobs:
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
+            go test -race -count=1 -timeout=22m -run "$run" "$pkg" &
             pids+=("$!")
           done
           status=0

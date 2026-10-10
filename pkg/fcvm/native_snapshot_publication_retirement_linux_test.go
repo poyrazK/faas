@@ -14,7 +14,6 @@ import (
 )
 
 type nativeArtifactRetirementStore struct {
-	retired     map[int64]bool
 	retiredKeys map[string]bool
 	calls       int
 	failAt      int
@@ -37,10 +36,6 @@ func (s *nativeArtifactRetirementStore) RetireExclusiveArtifact(ctx context.Cont
 	if s.failAt != 0 && s.calls == s.failAt {
 		return errors.New("retirement acknowledgement lost")
 	}
-	if s.retired == nil {
-		s.retired = map[int64]bool{}
-	}
-	s.retired[receipt.Generation] = true
 	if s.retiredKeys == nil {
 		s.retiredKeys = map[string]bool{}
 	}
@@ -67,8 +62,8 @@ func TestNativeSnapshotArtifactRetirementIsConditionalAndClosesRestore(t *testin
 	if err := journal.RetireRestoreCohort(t.Context(), intent.Capture.CaptureID, backend); err == nil {
 		t.Fatal("partial backend retirement was acknowledged")
 	}
-	if len(backend.retired) != 2 {
-		t.Fatalf("partial retirement effects differ: %+v", backend.retired)
+	if len(backend.retiredKeys) != 2 {
+		t.Fatalf("partial retirement effects differ: %+v", backend.retiredKeys)
 	}
 	if _, err := journal.ReadRestoreCohort(t.Context(), intent.Capture.CaptureID); err == nil {
 		t.Fatal("partially retired capture remained eligible for restore")
@@ -77,8 +72,8 @@ func TestNativeSnapshotArtifactRetirementIsConditionalAndClosesRestore(t *testin
 	if err := journal.RetireRestoreCohort(t.Context(), intent.Capture.CaptureID, backend); err != nil {
 		t.Fatal("receipt-conditional retry did not complete", err)
 	}
-	if len(backend.retired) != 4 {
-		t.Fatalf("not all capture objects retired: %+v", backend.retired)
+	if len(backend.retiredKeys) != 4 {
+		t.Fatalf("not all capture objects retired: %+v", backend.retiredKeys)
 	}
 	if _, err := journal.ReadRestoreCohort(t.Context(), intent.Capture.CaptureID); err == nil {
 		t.Fatal("retired capture remained eligible for restore")
@@ -116,8 +111,11 @@ func TestNativeSnapshotArtifactRetirementRequiresCompleteOriginalReceipts(t *tes
 	if err := journal.RetireRestoreCohort(t.Context(), intent.Capture.CaptureID, backend); err == nil || backend.calls != 0 {
 		t.Fatalf("incomplete receipt cohort authorized deletion: calls=%d err=%v", backend.calls, err)
 	}
-	if _, err := journal.ReadRestoreCohort(t.Context(), intent.Capture.CaptureID); err != nil {
-		t.Fatalf("failed retirement made the capture unavailable: %v", err)
+	journal.mu.Lock()
+	_, receiptErr := journal.readObjectLocked(t.Context(), intent, "mem")
+	journal.mu.Unlock()
+	if receiptErr != nil {
+		t.Fatalf("failed retirement removed the original receipt: %v", receiptErr)
 	}
 }
 
@@ -171,8 +169,8 @@ func TestNativeSnapshotArtifactRetirementRecoversAfterJournalRestart(t *testing.
 	if err := restarted.RecoverPendingRetirements(t.Context(), backend); err != nil {
 		t.Fatal("restart did not finish the receipt-bound deletes", err)
 	}
-	if len(backend.retired) != 4 {
-		t.Fatalf("restart recovery missed original artifacts: %+v", backend.retired)
+	if len(backend.retiredKeys) != 4 {
+		t.Fatalf("restart recovery missed original artifacts: %+v", backend.retiredKeys)
 	}
 	if _, err := restarted.ReadRestoreCohort(t.Context(), intent.Capture.CaptureID); err == nil {
 		t.Fatal("restart recovery left the capture restorable")

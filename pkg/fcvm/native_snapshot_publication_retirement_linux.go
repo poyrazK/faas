@@ -272,10 +272,23 @@ func (j *linuxNativeSnapshotPublicationJournal) pendingRetirementCaptures(ctx co
 	if err := errors.Join(readErr, directory.Close()); err != nil {
 		return nil, err
 	}
-	captures := make([]string, 0)
+	pending := make(map[string]bool)
+	completed := make(map[string]bool)
 	for _, entry := range entries {
 		capture, complete, ok := nativePublicationRetirementEntry(entry.Name())
-		if ok && !complete {
+		if !ok {
+			continue
+		}
+		if complete {
+			completed[capture] = true
+		} else {
+			pending[capture] = true
+		}
+	}
+	captures := make([]string, 0, len(pending))
+	for capture := range pending {
+		// The durable in-progress marker remains after completion.
+		if !completed[capture] {
 			captures = append(captures, capture)
 		}
 	}
