@@ -8,20 +8,17 @@
 # CI can verify that the cross-compiled guest binaries and upstream assets stay
 # complete for every published platform.
 #
-# Railpack is pulled as an upstream release tarball (it is not packaged in
-# Alpine). BuildKit and runc are compiled from their checksum-pinned sources
+# Railpack, BuildKit and runc are compiled from checksum-pinned sources
 # below so the image does not inherit stale Go dependencies from opaque
 # upstream binaries. Versions are pinned via build-args so CI can override
 # them per release without churning this file.
 
 # ---- railpack (Node/Python builder, spec §4.5) ---------------------------
-# Upstream switched from flat `-linux-amd64` binaries to Rust-target-triple
-# names in v0.10+. The current naming is `-x86_64-unknown-linux-musl` /
-# `-arm64-unknown-linux-musl`. v0.5.0 with the old naming is no longer
-# published, so bumping to v0.38.0 (current stable as of 2026-08) is mandatory.
+# Keep the release behavior while rebuilding the CLI with the image's patched
+# Go toolchain and dependency floor. The upstream binary embeds Go 1.26.7 and
+# x/net v0.58.0, including fixed HIGH/CRITICAL vulnerabilities.
 ARG RAILPACK_VERSION=0.38.0
-ARG RAILPACK_SHA256_AMD64=7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950
-ARG RAILPACK_SHA256_ARM64=d33716e87f0e39314898746c806e26d9edde890ac65156891b2f06c8d07ba8c4
+ARG RAILPACK_SOURCE_SHA256=ae2ec93af2ecf000be8bf08d060a9440346f60407f16d072b25ac16eb8d34e11
 
 # Railpack 0.38.0 bootstraps mise 2026.7.6 using its glibc linux-x64
 # asset. The builder rootfs is Alpine, so stage the matching musl asset and
@@ -166,6 +163,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildctl ./cmd/buildctl
 
+# ---- railpack (same release, patched compiler and dependencies) ----------
+# Reuse the native checksum-pinned Go stage and cross-compile for TARGETARCH.
+# Binary build metadata is checked before the final image can copy it.
+WORKDIR /src/railpack
+ARG RAILPACK_VERSION
+ARG RAILPACK_SOURCE_SHA256
+RUN curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+        -o /tmp/railpack-source.tgz \
+        "https://github.com/railwayapp/railpack/archive/refs/tags/v${RAILPACK_VERSION}.tar.gz" && \
+      echo "${RAILPACK_SOURCE_SHA256}  /tmp/railpack-source.tgz" | sha256sum -c - && \
+      tar -xzf /tmp/railpack-source.tgz --strip-components=1 -C /src/railpack && \
+      rm /tmp/railpack-source.tgz && \
+      go mod edit -go=1.26.9 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
+      GOTOOLCHAIN=local go mod tidy && \
+      CGO_ENABLED=0 GOTOOLCHAIN=local GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+        go build -mod=mod -trimpath \
+          -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
+          -o /out/railpack ./cmd/cli && \
+      go version -m /out/railpack | tee /tmp/railpack-build-info && \
+      grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
+      grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info
+
 # ---- stage 2: assemble the runtime rootfs -------------------------------
 # See the stage 1 FROM above re: $TARGETPLATFORM handling.
 # Docker's build-time /etc/resolv.conf is a read-only injected mount, so keep
@@ -187,8 +207,6 @@ ARG MISE_VERSION
 ARG MISE_SHA256_AMD64
 ARG MISE_SHA256_ARM64
 ARG TARGETARCH
-ARG RAILPACK_SHA256_AMD64
-ARG RAILPACK_SHA256_ARM64
 ARG RUNC_VERSION
 
 # Railpack's mise/python-build path executes Bash scripts. Alpine's BusyBox
@@ -228,25 +246,10 @@ COPY --from=buildkit-client-build /out/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit-client-build /out/buildctl /usr/local/bin/buildctl
 RUN chmod 0755 /usr/local/bin/buildkitd /usr/local/bin/buildctl
 
-# Railpack. The current naming convention is `<ver>-<arch>-unknown-linux-musl.tar.gz`
-# where <arch> is `x86_64` or `arm64`. We resolve the right arch from TARGETARCH.
-RUN case "${TARGETARCH}" in \
-      amd64) RAILPACK_ARCH=x86_64 ;; \
-      arm64) RAILPACK_ARCH=arm64 ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac && \
-    curl -fsSL -o /tmp/railpack.tgz \
-      "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${RAILPACK_ARCH}-unknown-linux-musl.tar.gz" && \
-    case "${TARGETARCH}" in \
-      amd64) RAILPACK_SHA256="${RAILPACK_SHA256_AMD64}" ;; \
-      arm64) RAILPACK_SHA256="${RAILPACK_SHA256_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac && \
-    echo "${RAILPACK_SHA256}  /tmp/railpack.tgz" | sha256sum -c - && \
-    tar -C /usr/local/bin -xzf /tmp/railpack.tgz railpack && \
-      chmod +x /usr/local/bin/railpack && \
-      rm /tmp/railpack.tgz && \
-      /usr/local/bin/railpack --version
+# The same Railpack release is built above with checked compiler/module
+# metadata. Each target manifest gets its own static CLI binary.
+COPY --from=buildkit-client-build /out/railpack /usr/local/bin/railpack
+RUN chmod 0755 /usr/local/bin/railpack && /usr/local/bin/railpack --version
 
 # Railpack currently downloads a glibc mise asset at build time. Keep a
 # musl-compatible copy in the builder image; guest-init stages it into the

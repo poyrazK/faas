@@ -525,8 +525,12 @@ func TestResumeHistoryFailureClosesWithRetryableCode(t *testing.T) {
 	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" {
 		t.Fatalf("subscribe = %+v", frame)
 	}
-	for range 2 {
-		_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// Presence/control frames may be queued before the retryable close.
+	// Bound the whole wait instead of assuming a fixed frame count.
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for {
 		_, _, err := client.ReadMessage()
 		var closeErr *websocket.CloseError
 		if errors.As(err, &closeErr) && closeErr.Code == websocket.CloseTryAgainLater {
@@ -536,5 +540,4 @@ func TestResumeHistoryFailureClosesWithRetryableCode(t *testing.T) {
 			t.Fatalf("history failure close = %v", err)
 		}
 	}
-	t.Fatal("history failure did not close v2 connection")
 }
