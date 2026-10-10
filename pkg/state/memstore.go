@@ -842,13 +842,13 @@ type MemStore struct {
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
 	platformTenantUsage   map[string]APIConsumerUsageBucket
-	// Consumer plans (ADR-847): plans by ID, assignments by ID, and admission
+	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan
 	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
 	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
 	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
-	// no request telemetry of its own (ADR-848).
+	// no request telemetry of its own (ADR-954).
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	apiConsumerUsageEvents    map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is

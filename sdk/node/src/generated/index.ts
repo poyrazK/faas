@@ -363,6 +363,7 @@ export type { DebugCriticalPathHistoryItem } from './models/DebugCriticalPathHis
 export type { DebugCriticalPathHistoryResponse } from './models/DebugCriticalPathHistoryResponse.js';
 export type { DebugCriticalPathSegment } from './models/DebugCriticalPathSegment.js';
 export type { DebugCriticalPathSpan } from './models/DebugCriticalPathSpan.js';
+export type { DebugDependencyDeploymentComparison } from './models/DebugDependencyDeploymentComparison.js';
 export type { DebugDependencyImpactEdge } from './models/DebugDependencyImpactEdge.js';
 export type { DebugDependencyImpactExemplar } from './models/DebugDependencyImpactExemplar.js';
 export type { DebugDependencyLatencyItem } from './models/DebugDependencyLatencyItem.js';
@@ -390,6 +391,7 @@ export type { DebugRunningFlowSummary } from './models/DebugRunningFlowSummary.j
 export type { DebugRunningObservation } from './models/DebugRunningObservation.js';
 export type { DebugRunningRequestAttribution } from './models/DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
+export type { DebugSuspectedDependency } from './models/DebugSuspectedDependency.js';
 export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';
@@ -1742,6 +1744,7 @@ export type { ThrottleSuggestionRow } from './models/ThrottleSuggestionRow.js';
 export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsResponse.js';
 export type { Trace } from './models/Trace.js';
 export type { TraceSpan } from './models/TraceSpan.js';
+export type { TracingConfig } from './models/TracingConfig.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';
 export type { Trigger } from './models/Trigger.js';
 export type { TriggerDeadLetter } from './models/TriggerDeadLetter.js';

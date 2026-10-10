@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for affected_packages.py package selection and sharding."""
 import importlib.util
+import io
 import pathlib
+import sys
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "affected_packages", pathlib.Path(__file__).with_name("affected_packages.py"))
@@ -103,6 +106,35 @@ class ShardTest(unittest.TestCase):
         self.assertEqual([d for s in shards for d in s], ["pkg/x"])
         for pkg in ("cmd/apid", "pkg/state"):
             self.assertIn(pkg, ap.SPLIT_PACKAGES)
+
+
+class CommandTest(unittest.TestCase):
+    def run_command(self, kind, paths, shard=1):
+        output = io.StringIO()
+        with mock.patch.object(ap, "go_packages", return_value=PKGS), \
+                mock.patch.object(sys, "argv", ["affected_packages.py", kind, "--shard", str(shard), "--shards", "3"]), \
+                mock.patch.object(sys, "stdin", io.StringIO("\n".join(paths))), \
+                mock.patch.object(sys, "stdout", output):
+            ap.main()
+        return output.getvalue().split()
+
+    def test_split_command_selects_only_affected_large_packages(self):
+        for paths, want in [
+            (["cmd/apid/handler_test.go"], ["./cmd/apid"]),
+            (["pkg/state/store_test.go"], ["./pkg/state"]),
+            (["cmd/apid/handler_test.go", "pkg/state/store_test.go"], ["./cmd/apid", "./pkg/state"]),
+            (["pkg/util/helper.go"], []),
+        ]:
+            with self.subTest(paths=paths):
+                self.assertEqual(self.run_command("split", paths), want)
+
+    def test_standard_and_name_split_commands_cover_selected_packages_once(self):
+        paths = ["cmd/apid/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]
+        ordinary = [p for i in (1, 2, 3) for p in self.run_command("test", paths, i)]
+        large = self.run_command("split", paths)
+        self.assertEqual(sorted(ordinary), ["./pkg/util", "./tests/property"])
+        self.assertEqual(large, ["./cmd/apid", "./pkg/state"])
+        self.assertEqual(len(ordinary + large), len(set(ordinary + large)))
 
 
 if __name__ == "__main__":

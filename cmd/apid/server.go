@@ -58,6 +58,7 @@ import (
 type server struct {
 	profileBackend                           profiling.Backend
 	profileQuerySlots                        chan struct{}
+	guestTracingEnabled                      bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
 	durableEntities                          *durableentity.Manager
 	durableEntityOwner                       string
 	durableEntityApps                        map[string]bool
@@ -109,7 +110,7 @@ type server struct {
 	// companion declarations. Values are immutable OCI digest references.
 	companionImages map[string]string
 	// cliAuthURLBase is the public web origin used by the CLI device-code
-	// response. The public edge at this origin forwards /cli-auth to apid.
+	// response and as the default GitHub App OAuth callback base.
 	cliAuthURLBase string
 	notif          Notifier
 	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
@@ -713,8 +714,8 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	return s
 }
 
-// WithCLIAuthURLBase attaches the public web origin used in browser URLs
-// returned by the CLI device-code endpoint. The setter keeps existing
+// WithCLIAuthURLBase attaches the public web origin used by the CLI device-code
+// endpoint and the default GitHub App OAuth callback. The setter keeps existing
 // positional server constructors source-compatible while allowing production
 // config to supply a provider-specific console hostname.
 func (s *server) WithCLIAuthURLBase(base string) *server {
@@ -1735,7 +1736,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
-	// ADR-847: named consumer plans and minute-effective plan assignments.
+	// ADR-953: named consumer plans and minute-effective plan assignments.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlans))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerPlan)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))

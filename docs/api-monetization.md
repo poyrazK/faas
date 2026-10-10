@@ -225,9 +225,9 @@ those consumers with app statements.
 - Gregale records the handoff to your billing system but never charges your
   customers.
 
-See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
-[ADR-844](adr/844-api-consumer-monthly-allowances.md),
-[ADR-845](adr/845-api-consumer-graduated-tiers.md),
-[ADR-846](adr/846-api-consumer-route-weights.md),
-[ADR-847](adr/847-api-consumer-plans.md), and
-[ADR-848](adr/848-api-consumer-usage-completeness.md) for the billing rules.
+See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-billing.md),
+[ADR-950](adr/950-api-consumer-monthly-allowances.md),
+[ADR-951](adr/951-api-consumer-graduated-tiers.md),
+[ADR-952](adr/952-api-consumer-route-weights.md),
+[ADR-953](adr/953-api-consumer-plans.md), and
+[ADR-954](adr/954-api-consumer-usage-completeness.md) for the billing rules.

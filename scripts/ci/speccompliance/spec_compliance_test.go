@@ -1176,6 +1176,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
+		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-958 — zero-config guest tracing manifest DTO
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
@@ -1191,8 +1192,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
-		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-847 consumer plan DTOs
-		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-848 usage completeness DTO
+		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
+		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),

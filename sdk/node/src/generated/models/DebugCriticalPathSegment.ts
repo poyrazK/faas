@@ -6,7 +6,7 @@
  * One redacted span identity in a canonical historical critical-path signature.
  */
 export type DebugCriticalPathSegment = {
-  type: 'application' | 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal';
+  type: 'application' | 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal' | 'app_dependency';
   kind?: string;
   name: string;
 };

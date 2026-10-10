@@ -28,6 +28,16 @@ func TestWorkflowBacklogAlertMigrationPreservesRulesAndRejectsActions(t *testing
 	if !ok {
 		t.Fatal("missing down migration")
 	}
+	// Later presets use a wider metric constraint. Unwind that dependent
+	// migration before this older rollback, then restore it after replay.
+	laterRaw, err := migrations.FS.ReadFile("20261010071621984_automation_failure_alert.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laterUp, laterDown, ok := strings.Cut(string(laterRaw), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing dependent down migration")
+	}
 	const insert = `INSERT INTO alert_rules(account_id,app_id,name,metric,comparison,threshold,window_spec,webhook_url,webhook_secret_sealed,action)
  VALUES($1,$2,$3,$4,'gte',300,'5m','https://example.com/hook',$5,$6)`
 	for _, tc := range []struct{ name, metric string }{{"existing workflow rule", "workflow_pending_age_seconds"}, {"backlog rule", "workflow_due_age_seconds"}} {
@@ -52,6 +62,9 @@ func TestWorkflowBacklogAlertMigrationPreservesRulesAndRejectsActions(t *testing
 	if _, err := pool.Exec(ctx, "DELETE FROM alert_rules WHERE account_id=$1 AND metric='workflow_due_age_seconds'", account); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, laterDown); err != nil {
+		t.Fatal("unwind dependent preset", err)
+	}
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal("rollback", err)
 	}
@@ -65,6 +78,12 @@ func TestWorkflowBacklogAlertMigrationPreservesRulesAndRejectsActions(t *testing
 	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM alert_presets WHERE name='automation_backlog'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("preset seed is not idempotent: %d %v", count, err)
+	}
+	if _, err := pool.Exec(ctx, laterUp); err != nil {
+		t.Fatal("restore dependent preset", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM alert_presets WHERE name='automation_failures'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("dependent preset not restored: %d %v", count, err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM alert_rules WHERE account_id=$1", account).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("migration changed existing workflow rule: %d %v", count, err)

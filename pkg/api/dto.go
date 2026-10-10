@@ -564,6 +564,7 @@ type CreateAppRequest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                   `json:"max_retries,omitempty"`
 	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
@@ -945,6 +946,7 @@ type UpdateAppRequest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
@@ -1340,15 +1342,15 @@ type CreateAPIConsumerRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-950).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
-	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// Tiers is an optional graduated ladder (ADR-951) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
-	// as that many units (ADR-846); unlisted routes count 1.
+	// as that many units (ADR-952); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
-	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// PlanID adds the version to a consumer plan's price history (ADR-953);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
@@ -10904,6 +10906,10 @@ type DebugTelemetrySpan struct {
 	// classifications. Raw span attributes never cross the debugger boundary.
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	// DependencyName is the bounded grouping identity of an app_dependency
+	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
+	// carries literals, paths, query strings or credentials.
+	DependencyName string `json:"dependency_name,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -10928,6 +10934,7 @@ type DebugCriticalPathSpan struct {
 	Kind           string `json:"kind"`
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	DependencyName string `json:"dependency_name,omitempty"`
 	Status         string `json:"status,omitempty"`
 	StartTime      string `json:"start_time"`
 	EndTime        string `json:"end_time"`
@@ -11041,6 +11048,27 @@ type DebugDependencyLatencyResponse struct {
 	SpanSamples         int64                        `json:"span_samples"`
 	Dependencies        []DebugDependencyLatencyItem `json:"dependencies"`
 	Edges               []DebugDependencyImpactEdge  `json:"edges"`
+	// DeploymentComparison compares the newest deployment observed in the
+	// window with the deployment before it. Absent when fewer than two
+	// deployments have retained spans.
+	DeploymentComparison *DebugDependencyDeploymentComparison `json:"deployment_comparison,omitempty"`
+}
+
+// DebugDependencyDeploymentComparison splits dependency latency by deployment
+// instead of by time (ADR-958 §5). In each item the Baseline* fields describe
+// the previous deployment and the Current* fields the compared deployment;
+// Regression uses the same thresholds as the time-split history. Items are
+// regressions first, then by current p95.
+type DebugDependencyDeploymentComparison struct {
+	CurrentDeploymentID   string                       `json:"current_deployment_id"`
+	CurrentDeploymentTag  string                       `json:"current_deployment_tag,omitempty"`
+	CurrentCommitSHA      string                       `json:"current_commit_sha,omitempty"`
+	PreviousDeploymentID  string                       `json:"previous_deployment_id"`
+	PreviousDeploymentTag string                       `json:"previous_deployment_tag,omitempty"`
+	PreviousCommitSHA     string                       `json:"previous_commit_sha,omitempty"`
+	Route                 string                       `json:"route,omitempty"`
+	Dependencies          []DebugDependencyLatencyItem `json:"dependencies"`
+	Truncated             bool                         `json:"truncated"`
 }
 
 // DebugCriticalPathSegment is one redacted span identity in a historical
@@ -11206,10 +11234,14 @@ type DebugRequestEvidenceResponse struct {
 	CriticalPath               *DebugRequestCriticalPath       `json:"critical_path,omitempty"`
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
-	Spans                      []DebugTelemetrySpan            `json:"spans"`
-	SpansTruncated             bool                            `json:"spans_truncated"`
-	Explanation                DebugEvidenceExplanation        `json:"explanation"`
-	GeneratedAt                string                          `json:"generated_at"`
+	// DependencyComparison compares this route's dependencies on the request's
+	// deployment with the previous deployment (ADR-958 §5); absent without a
+	// prior deployment that has retained spans.
+	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
+	Spans                []DebugTelemetrySpan                 `json:"spans"`
+	SpansTruncated       bool                                 `json:"spans_truncated"`
+	Explanation          DebugEvidenceExplanation             `json:"explanation"`
+	GeneratedAt          string                               `json:"generated_at"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by
@@ -11484,6 +11516,22 @@ type DebugRegressionItem struct {
 	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
 	DismissedUntil  string `json:"dismissed_until,omitempty"`
 	ResolvedAt      string `json:"resolved_at,omitempty"`
+	// SuspectedDependency is the dependency whose p95 regressed most between
+	// the previous and this deployment on the route (ADR-958 §5); absent when
+	// no dependency regressed or no spans were retained.
+	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+}
+
+// DebugSuspectedDependency is a bounded, redacted dependency identity with
+// its p95 on the previous (base) and the regressed deployment. The same JSON
+// object is stored on the observation and sent in regression webhooks.
+type DebugSuspectedDependency struct {
+	Type             string  `json:"type"`
+	Kind             string  `json:"kind,omitempty"`
+	Name             string  `json:"name"`
+	P95BaseMS        int64   `json:"p95_base_ms"`
+	P95MS            int64   `json:"p95_ms"`
+	RegressionFactor float64 `json:"regression_factor"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug
