@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -694,5 +695,24 @@ func TestServiceProxyRejectsMalformedPathAndEmptyRegistry(t *testing.T) {
 	proxy.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("empty registry status = %d, want 503", rec.Code)
+	}
+}
+
+func TestServiceProxyTCPRulesDoNotAffectHTTP(t *testing.T) {
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
+			return chaos.Lease{ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{
+				{To: "cache", Kind: chaos.KindTCPLatency, Port: 6379, LatencyMS: 30000, Percent: 100},
+				{To: "cache", Kind: chaos.KindTCPReset, Port: 6379, Percent: 100},
+			}}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodGet, "http://cache/healthz", nil)
+	ctx, cancel := context.WithTimeout(request.Context(), 50*time.Millisecond)
+	defer cancel()
+	request = request.WithContext(ctx)
+	recorder := httptest.NewRecorder()
+	if handled := proxy.applyScenarioChaos(recorder, request, trace.SpanFromContext(ctx), "run", "caller", "cache"); handled || recorder.Header().Get("X-Gregale-Chaos-Injected") != "" || ctx.Err() != nil {
+		t.Fatal("TCP rules affected an HTTP request")
 	}
 }

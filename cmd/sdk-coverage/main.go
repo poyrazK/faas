@@ -562,6 +562,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/dev/test-runs/{run_id}":                                            "RegisterScenarioTest",
 	"DELETE /v1/dev/test-runs/{run_id}":                                         "DeleteScenarioTest",
 	"PUT /v1/dev/test-runs/{run_id}/chaos":                                      "InjectScenarioTestChaos",
+	"DELETE /v1/dev/test-runs/{run_id}/chaos":                                   "ClearScenarioTestChaos",
+	"GET /v1/dev/test-runs/{run_id}/chaos/matches":                              "ScenarioTestChaosMatches",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
 	"POST /v1/apps/{slug}/image-published":                                      "PublishAppImage",

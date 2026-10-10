@@ -8892,6 +8892,9 @@ const (
 	// through one node's proxy across all accounts, independent of the
 	// per-account plan cap.
 	ServiceTCPSessionsPerNodeMax = 8192
+	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
+	ScenarioTCPChaosMaxRoutesPerNode    = 256
+	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service

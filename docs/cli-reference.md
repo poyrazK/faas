@@ -5562,7 +5562,7 @@ Inject bounded faults into isolated real-VM scenario tests
 
 Run one scenario profile with a scoped service fault
 
-`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
+`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--tcp-port <PORT>] [--direction <DIRECTION>] [--bandwidth <N>] [--timeout] [--reset] [--reset-after <DURATION>] [--connect-timeout] [--connect-refused] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5572,7 +5572,15 @@ Run one scenario profile with a scoped service fault
 | `--from <SERVICE>` | only affect calls from this workload |  |
 | `--latency <DURATION>` | add this delay to selected requests, such as 1500ms |  |
 | `--error <CODE>` | return this synthetic HTTP 5xx status |  |
-| `--percent <N>` | fraction of matching requests affected (1..100) |  |
+| `--tcp-port <PORT>` | target TCP port; selects TCP latency |  |
+| `--direction <DIRECTION>` | TCP traffic direction | one of `upstream` · `downstream` · `both` |
+| `--bandwidth <N>` | TCP throughput cap in KiB/s |  |
+| `--timeout` | stall TCP traffic until the lease expires |  |
+| `--reset` | reset selected TCP connections |  |
+| `--reset-after <DURATION>` | delay before a TCP reset |  |
+| `--connect-timeout` | hold new service connections until timeout or fault clear |  |
+| `--connect-refused` | reset new service connections before reaching the target |  |
+| `--percent <N>` | fraction of matching requests or TCP connections affected (1..100) |  |
 | `--duration <DURATION>` | maximum fault lease duration (1s..5m) |  |
 | `--profile <PROFILE>` | real-VM lifecycle profile | one of `warm` · `cold` · `restored` |
 | `--seed <N>` | deterministic fault-selection seed |  |
@@ -5580,8 +5588,11 @@ Run one scenario profile with a scoped service fault
 Examples:
 
 ```sh
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --bandwidth 64 --direction downstream
 gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m
 gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-timeout --duration 8s
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-refused
 ```
 
 

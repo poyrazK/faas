@@ -3021,7 +3021,10 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_match import ScenarioTestChaosMatch
+from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesResponse
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
@@ -6376,7 +6379,10 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosMatch",
+    "ScenarioTestChaosMatchesResponse",
     "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",

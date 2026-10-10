@@ -1622,6 +1622,8 @@ export type { ScalingPolicy } from './models/ScalingPolicy.js';
 export type { ScalingSchedule } from './models/ScalingSchedule.js';
 export type { ScalingTarget } from './models/ScalingTarget.js';
 export type { ScanResult } from './models/ScanResult.js';
+export type { ScenarioTestChaosMatch } from './models/ScenarioTestChaosMatch.js';
+export type { ScenarioTestChaosMatchesResponse } from './models/ScenarioTestChaosMatchesResponse.js';
 export type { ScenarioTestChaosRule } from './models/ScenarioTestChaosRule.js';
 export type { ScenarioTestWorkload } from './models/ScenarioTestWorkload.js';
 export type { ScheduleOccurrenceResponse } from './models/ScheduleOccurrenceResponse.js';

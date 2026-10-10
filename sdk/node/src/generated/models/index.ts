@@ -1617,6 +1617,8 @@ export type { ScalingPolicy } from './ScalingPolicy.js';
 export type { ScalingSchedule } from './ScalingSchedule.js';
 export type { ScalingTarget } from './ScalingTarget.js';
 export type { ScanResult } from './ScanResult.js';
+export type { ScenarioTestChaosMatch } from './ScenarioTestChaosMatch.js';
+export type { ScenarioTestChaosMatchesResponse } from './ScenarioTestChaosMatchesResponse.js';
 export type { ScenarioTestChaosRule } from './ScenarioTestChaosRule.js';
 export type { ScenarioTestWorkload } from './ScenarioTestWorkload.js';
 export type { ScheduleOccurrenceResponse } from './ScheduleOccurrenceResponse.js';
