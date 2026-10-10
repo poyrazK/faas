@@ -2,6 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppEventPublicationVerification } from '../models/AppEventPublicationVerification.js';
+import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
+import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
+import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -18,6 +22,13 @@ import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
 import type { EventRecoveryItems } from '../models/EventRecoveryItems.js';
 import type { EventRecoveryJob } from '../models/EventRecoveryJob.js';
 import type { EventRecoveryJobs } from '../models/EventRecoveryJobs.js';
+import type { EventRecoveryNotificationRetryBacklog } from '../models/EventRecoveryNotificationRetryBacklog.js';
+import type { EventRecoveryNotificationRetryDecisionDetail } from '../models/EventRecoveryNotificationRetryDecisionDetail.js';
+import type { EventRecoveryNotificationRetryHistory } from '../models/EventRecoveryNotificationRetryHistory.js';
+import type { EventRecoveryNotificationRetryPreview } from '../models/EventRecoveryNotificationRetryPreview.js';
+import type { EventRecoveryNotificationRetryRequest } from '../models/EventRecoveryNotificationRetryRequest.js';
+import type { EventRecoveryNotificationRetryResponse } from '../models/EventRecoveryNotificationRetryResponse.js';
+import type { EventRecoveryNotifications } from '../models/EventRecoveryNotifications.js';
 import type { EventRecoveryPreflight } from '../models/EventRecoveryPreflight.js';
 import type { EventRecoveryPreview } from '../models/EventRecoveryPreview.js';
 import type { EventRecoveryRateRequest } from '../models/EventRecoveryRateRequest.js';
@@ -28,6 +39,7 @@ import type { EventReplayBackfillRequest } from '../models/EventReplayBackfillRe
 import type { EventReplayBackfillRetryRequest } from '../models/EventReplayBackfillRetryRequest.js';
 import type { EventReplayBackfillRetryResponse } from '../models/EventReplayBackfillRetryResponse.js';
 import type { EventReplayPreviewResponse } from '../models/EventReplayPreviewResponse.js';
+import type { EventRetentionHealth } from '../models/EventRetentionHealth.js';
 import type { EventRoutingRetryPolicy } from '../models/EventRoutingRetryPolicy.js';
 import type { EventRoutingRetryPolicyResponse } from '../models/EventRoutingRetryPolicyResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
@@ -42,6 +54,8 @@ import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSub
 import type { PlatformTenantPublishEventResponse } from '../models/PlatformTenantPublishEventResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
+import type { PublishEventBatchRequest } from '../models/PublishEventBatchRequest.js';
+import type { PublishEventBatchResponse } from '../models/PublishEventBatchResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
 import type { RegisterEventSchemaRequest } from '../models/RegisterEventSchemaRequest.js';
@@ -88,6 +102,209 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `The router could not read the current subscription set.`,
+      },
+    });
+  }
+  /**
+   * Compare intended publication content with retained acceptance.
+   * Read-only despite POST: requires an owned app, apps:read/admin, MFA and rate limits.
+   * Accepts the original app publish body within its existing 1 MiB limit and
+   * derives the same stable app/key identity. Compares normalized type, schema
+   * version and semantic JSON data using the ordinary publication identity rules.
+   * Occurrence time and trace metadata are excluded. Current schema admission
+   * rules do not invalidate verification of previously accepted content.
+   * Returns match, conflict or unavailable with HTTP 200. Match and conflict
+   * include the retained original receipt from the same comparison snapshot.
+   * Conflict is an observation, not a publish rejection. Unavailable cannot
+   * distinguish never accepted, pruning or concurrent acceptance not yet visible.
+   * No append, fanout, lease, replay, retention refresh or idempotency response
+   * cache occurs. Neither match nor conflict establishes consumer execution.
+   * Request and stored payloads and raw producer keys are not returned.
+   * Read errors remain errors rather than being reported as unavailable.
+   * An optional expected_accepted_at returns acceptance=same_acceptance,
+   * replacement_acceptance or unavailable independently of content status.
+   * Returned receipts describe the currently observed acceptance even on mismatch.
+   * Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
+   *
+   * @returns AppEventPublicationVerification Content comparison observation with retained acceptance when available.
+   * @throws ApiError
+   */
+  public static verifyAppEventPublication({
+    slug,
+    requestBody,
+    expectedAcceptedAt,
+  }: {
+    /**
+     * Owned application for the exact producer-key content comparison.
+     */
+    slug: string,
+    /**
+     * Original application producer-key publication intent.
+     */
+    requestBody: AppPublishEventRequest,
+    /**
+     * Exact saved acceptance instant, with original fractional precision; offsets compare by UTC instant.
+     */
+    expectedAcceptedAt?: string,
+  }): CancelablePromise<AppEventPublicationVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/events/verify-publication',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'expected_accepted_at': expectedAcceptedAt,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Reconcile an app producer key without publishing another event.
+   * Requires an owned app, apps:read/admin scopes, MFA and existing rate limits.
+   * Derives exactly the same source and event ID as app key publication.
+   * Read-only five-second receipt snapshot; no append, claim, replay or retention refresh.
+   * Returns processing while retained routing is unsettled, accepted after routing
+   * settles, or unavailable when no retained receipt is visible. Both processing
+   * and accepted prove durable acceptance. Accepted does not prove delivery or
+   * handler success; consult independent recipient execution and workflow evidence.
+   * Unavailable cannot distinguish never accepted, concurrent acceptance not yet
+   * visible, or pruning. It must not automatically trigger a replacement publish.
+   * Evidence includes full routing summaries and a bounded recipient page.
+   * Follow evidence.next_after using after; pages are live snapshots and cursors
+   * bind account, source, event ID and acceptance identity. Stale cursors fail 400.
+   * With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+   * or unavailable separately from routing status. Evidence describes the currently
+   * observed acceptance, which can be a replacement. Never treat its outcomes as
+   * proof for the expected acceptance. Raw keys and event payloads are not returned. App renames preserve
+   * identity; replacement apps have a different UUID namespace. Matching legacy
+   * account/source/ID publication addresses the same identity.
+   *
+   * @returns AppEventPublishStatusResponse Retained acceptance evidence or explicitly unavailable observation.
+   * @throws ApiError
+   */
+  public static getAppEventPublishStatus({
+    slug,
+    key,
+    after,
+    limit = 100,
+    expectedAcceptedAt,
+  }: {
+    /**
+     * Owned application whose producer-key namespace is inspected.
+     */
+    slug: string,
+    /**
+     * Exact original printable ASCII producer key, without spaces.
+     */
+    key: string,
+    /**
+     * Bound receipt recipient continuation cursor from evidence.next_after.
+     */
+    after?: string,
+    /**
+     * Number of consumer evidence rows in this page.
+     */
+    limit?: number,
+    /**
+     * Saved acceptance timestamp for routing and consumer evidence; preserve its exact precision.
+     */
+    expectedAcceptedAt?: string,
+  }): CancelablePromise<AppEventPublishStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/events/publish-status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'key': key,
+        'after': after,
+        'limit': limit,
+        'expected_accepted_at': expectedAcceptedAt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Publish with an application-scoped stable producer key.
+   * Requires an owned app, MFA and events:publish, deploy:write or admin.
+   * Source is app.<canonical-app-UUID>; event ID is key.<SHA-256 hex of key>.
+   * The key is exact, case-sensitive printable ASCII without spaces, 1..256 bytes.
+   * Identical type, schema version and JSON data return the original retained
+   * acceptance with duplicate=true, without extra fanout or storage charge.
+   * Changed content for the same app/key returns 409, including concurrent
+   * requests. Retained duplicate lookup precedes current schema admission.
+   * Occurrence time and trace context are first-publication metadata and do
+   * not change duplicate identity. Fanout uses normal account subscriptions
+   * matching the generated source; the publishing app is not the only consumer.
+   * Deduplication lasts while the normal receipt is retained: settled receipts
+   * become eligible for pruning after 30 days; holds can extend this window.
+   * After pruning the same key may be accepted again. App renames preserve
+   * identity; replacement apps have a new UUID and a new key namespace.
+   * No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
+   * with the same app, key and content. Acceptance does not mean delivery success.
+   *
+   * @returns AppPublishEventResponse Original or new durable event acceptance.
+   * @throws ApiError
+   */
+  public static publishAppEvent({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Owned producer application slug.
+     */
+    slug: string,
+    requestBody: AppPublishEventRequest,
+  }): CancelablePromise<AppPublishEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/events:publish',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }
@@ -139,6 +356,121 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect receipt pruning eligibility, retention holds and account storage.
+   * Read-only account snapshot under apps:read/admin scopes and MFA.
+   * Receipt retention is 30 days after routing settles; unsettled receipts
+   * have no pruning deadline. Reports current eligible, upcoming expiring
+   * and held receipts using the pruning worker's shared hold predicate.
+   * Running backfills pin their acceptance ranges; retained completed
+   * backfills pin retryable failed items. Opted-in active recovery jobs hold
+   * pending items until admission or job expiry. Backfill reasons take
+   * precedence over recovery_pending in primary hold counts. Eligible
+   * means the nominal deadline has passed without a current hold, not
+   * that pruning will occur immediately.
+   * Source/app filters affect receipt counts and samples only. Storage
+   * usage and utilization always cover the entire account; utilization
+   * is the maximum of count and byte percentages and can exceed 100 after
+   * a plan downgrade. Samples are bounded and ordered by nominal deadline,
+   * source and id. No payloads, work keys, mutations or reservations.
+   *
+   * @returns EventRetentionHealth Current retention and account storage health.
+   * @throws ApiError
+   */
+  public static getEventRetentionHealth({
+    source,
+    app,
+    window = '24h',
+    limit = 100,
+  }: {
+    /**
+     * Exact event source filter.
+     */
+    source?: string,
+    /**
+     * Owned application slug; matches captured or backfilled recipients.
+     */
+    app?: string,
+    /**
+     * Expiry lookahead as a Go duration, in whole seconds from 1s to 720h.
+     */
+    window?: string,
+    /**
+     * Maximum sampled receipts; aggregate counts include every match.
+     */
+    limit?: number,
+  }): CancelablePromise<EventRetentionHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/retention',
+      query: {
+        'source': source,
+        'app': app,
+        'window': window,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        504: `Snapshot exceeded its bounded read budget.`,
+      },
+    });
+  }
+  /**
+   * Publish up to 100 independent events in input order.
+   * Accepts a nonempty batch of at most 100 events in a body of at most
+   * 1 MiB. Authentication, MFA and events:publish/deploy:write/admin scopes
+   * match single-event publication. Invalid outer JSON, size or count
+   * rejects the entire request before acceptance. Each item otherwise has
+   * its own transaction, schema validation, identity and storage charge.
+   * Results use zero-based input indexes in input order. accepted and
+   * duplicate include a receipt with the original acceptance timestamp.
+   * rejected includes a problem; unknown means acceptance could not be
+   * confirmed, including an interrupted commit. Retry retryable items or
+   * an unanswered request with exactly the original source/id/content.
+   * Stable per-event identities provide deduplication; there is no batch
+   * transaction or request-wide Idempotency-Key replay. Processing is
+   * sequential with a 30-second budget; unattempted items are rejected
+   * with retryable=true and code event_publish_not_attempted.
+   * Newly accepted items preserve their input acceptance order. Duplicates
+   * retain their original position; rejections create none. Concurrent
+   * requests may interleave. Execution ordering remains opt-in per keyed
+   * lane, and delivery remains at least once.
+   *
+   * @returns PublishEventBatchResponse Per-event results, including partial or complete rejection.
+   * @throws ApiError
+   */
+  public static publishEventBatch({
+    requestBody,
+  }: {
+    requestBody: PublishEventBatchRequest,
+  }): CancelablePromise<PublishEventBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events:publish-batch',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        413: `Batch request exceeds 1 MiB; no events accepted.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1556,9 +1888,60 @@ export class EventsService {
     });
   }
   /**
-   * Inspect active recovery progress and expiry risk.
-   * Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
-   * @returns EventRecoveryHealth Current active recovery health; terminal jobs are omitted.
+   * Inspect app-wide recovery notification retry backlog.
+   * Requires apps:read or admin and MFA. Reads original-generation retry outcomes across a bounded page of owned retained recovery jobs containing saved retry requests. Defaults to failed, pending, and inconclusive requests. Totals cover every request in scanned jobs before status filtering and are explicitly job-page scoped. Empty filtered pages may still have a next cursor. Each page is a fresh read-only snapshot; refresh from the beginning to see newer jobs or updated previously scanned jobs.
+   * @returns EventRecoveryNotificationRetryBacklog Original-generation retry requests and explicitly page-scoped counts.
+   * @throws ApiError
+   */
+  public static listEventRecoveryNotificationRetryBacklog({
+    slug,
+    status = 'failed,pending,inconclusive',
+    pageSize = 5,
+    cursor,
+  }: {
+    /**
+     * Owned app slug whose retained recovery retry requests are inspected.
+     */
+    slug: string,
+    /**
+     * Distinct comma-separated request statuses selected as a union. Omission selects failed, pending, and inconclusive. Include succeeded explicitly to inspect successful requests.
+     */
+    status?: string,
+    /**
+     * Number of retained recovery jobs with saved retry requests inspected per page; this limits jobs rather than request rows.
+     */
+    pageSize?: number,
+    /**
+     * Opaque continuation bound to account, app, and canonical status selection. Continue even when a filtered page has no request rows.
+     */
+    cursor?: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryBacklog> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-recoveries/notification-retry-backlog',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'status': status,
+        'page_size': pageSize,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Invalid retry backlog query or cursor.`,
+        401: `Authentication required for the app retry backlog.`,
+        403: `Read scope or MFA required for the app retry backlog.`,
+        404: `App retry backlog not found or not owned.`,
+        429: `App retry backlog request rate exceeded.`,
+        500: `App retry backlog could not be read.`,
+        504: `App retry backlog evidence deadline expired.`,
+      },
+    });
+  }
+  /**
+   * Inspect recovery admission and unresolved execution health.
+   * Requires apps:read or admin and MFA. Current app-scoped admission observations and bounded unresolved execution health. Execution inspects the oldest 50 retained terminal-admission jobs missing exact saved replay results, samples up to three, and marks partial counts as lower bounds. Prolonged execution waits measure 15 minutes since admission completion; retention risk starts 24 hours before the nominal 30-day job retention boundary. Reads do not capture results or notifications. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
+   * @returns EventRecoveryHealth Admission health and bounded unresolved execution observations.
    * @throws ApiError
    */
   public static getEventRecoveryHealth({
@@ -1933,6 +2316,177 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Recovery preflight timed out.`,
+      },
+    });
+  }
+  /**
+   * Inspect recovery notification capture and receiver acknowledgements.
+   * Requires apps:read or admin and MFA. Read-only account-scoped report for a retained recovery job. Admission and execution notifications are separate. Preserved receiver snapshots and retained outbox rows can establish complete selection; retained deliveries alone cannot. Reports up to 100 receivers per notification and marks incomplete counts. Missing/pruned evidence is unknown, never proof of acknowledgement. Existing retry paths require their normal write scope and MFA. No query parameters are accepted.
+   * @returns EventRecoveryNotifications Current metadata-only notification and delivery report.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotifications({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job ID.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotifications> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid recovery notification job ID or unsupported query parameters.`,
+        401: `Authentication is required to inspect recovery notification delivery.`,
+        403: `Read scope or MFA required.`,
+        404: `Recovery job not found or not owned.`,
+        429: `Request rate limited.`,
+        500: `Internal notification reporting failure or invalid capture metadata.`,
+      },
+    });
+  }
+  /**
+   * Preview selective recovery notification retries.
+   * Requires apps:read or admin and MFA. Read-only preview of admission and execution receivers. Only retained dead deliveries with an enabled owned receiver and an eligible current plan are eligible. Incomplete evidence remains explicit; preview reserves nothing and accepts no query parameters.
+   * @returns EventRecoveryNotificationRetryPreview Notification retry-preview decision for the selected job.
+   * @throws ApiError
+   */
+  public static previewEventRecoveryNotificationRetry({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job identifier for retry-preview.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry-preview',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid notification retry-preview input or query parameters.`,
+        401: `Authentication required for notification retry-preview.`,
+        403: `Required scope or MFA missing for notification retry-preview.`,
+        404: `Retained job unavailable for notification retry-preview.`,
+        429: `Notification retry-preview request rate limited.`,
+        500: `Notification retry-preview storage failure.`,
+        504: `Notification retry-preview request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * Retry selected recovery notification deliveries.
+   * Requires deploy:write or admin and MFA. Explicit targets require notification kind, webhook and delivery identity, and expected replay generation. Revalidates each receiver and records queued or skipped decisions atomically with resets. A stable request_id returns the saved decision regardless of later delivery state; reuse with different targets conflicts. At most 100 targets and 100 saved decisions per retained job. Decisions expire with job pruning. Delivery IDs and source event IDs remain stable; queued means pending delivery, not acknowledgement. No query parameters are accepted.
+   * @returns EventRecoveryNotificationRetryResponse Notification retry decision for the selected job.
+   * @throws ApiError
+   */
+  public static retryEventRecoveryNotifications({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Retained recovery job identifier for retry.
+     */
+    jobId: string,
+    requestBody: EventRecoveryNotificationRetryRequest,
+  }): CancelablePromise<EventRecoveryNotificationRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid notification retry input or query parameters.`,
+        401: `Authentication required for notification retry.`,
+        403: `Required scope or MFA missing for notification retry.`,
+        404: `Retained job unavailable for notification retry.`,
+        409: `Notification retry request ID conflicts or saved decision limit reached.`,
+        429: `Notification retry request rate limited.`,
+        500: `Notification retry storage failure.`,
+        504: `Notification retry request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * List saved recovery notification retry decisions.
+   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. The optional status filter selects a comma-separated union of original-generation request statuses. Totals cover all retained requests before filtering; matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is pruned.
+   * @returns EventRecoveryNotificationRetryHistory Saved retry request summaries and counts.
+   * @throws ApiError
+   */
+  public static listEventRecoveryNotificationRetryHistory({
+    jobId,
+    status,
+  }: {
+    /**
+     * Retained recovery job identifier whose retry decisions are listed.
+     */
+    jobId: string,
+    /**
+     * Comma-separated distinct request statuses selected as a union; omitting returns all retained requests. Aggregate totals remain unfiltered.
+     */
+    status?: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'status': status,
+      },
+      errors: {
+        400: `Invalid job identifier or unsupported query parameters for retry history.`,
+        401: `Authentication required to list retry decisions.`,
+        403: `Read scope or MFA required to list retry decisions.`,
+        404: `Recovery job not found or not owned for retry history.`,
+        429: `Retry history request rate limited.`,
+        500: `Saved retry history could not be read.`,
+      },
+    });
+  }
+  /**
+   * Inspect a saved recovery notification retry decision.
+   * Requires apps:read or admin and MFA. Returns the original queued or skipped decision for each target and current retained delivery status observed now. Missing or pruned deliveries are unavailable; original decisions remain unchanged. Query parameters are not accepted.
+   * @returns EventRecoveryNotificationRetryDecisionDetail Frozen decision and latest retained delivery status.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotificationRetryDecision({
+    jobId,
+    requestId,
+  }: {
+    /**
+     * Retained recovery job that owns the saved retry decision.
+     */
+    jobId: string,
+    /**
+     * Canonical request identifier returned by retry history.
+     */
+    requestId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryDecisionDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}',
+      path: {
+        'jobID': jobId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `Invalid request or recovery identifier or unsupported query parameters.`,
+        401: `Authentication required to inspect a saved retry decision.`,
+        403: `Read scope or MFA required to inspect a saved retry decision.`,
+        404: `Recovery job or saved request not found or not owned.`,
+        429: `Retry decision detail request rate limited.`,
+        500: `Saved retry decision could not be read.`,
       },
     });
   }

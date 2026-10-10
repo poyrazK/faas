@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.event_recovery_execution_evidence_source import (
+    EventRecoveryExecutionEvidenceSource,
+    check_event_recovery_execution_evidence_source,
+)
 from ..models.event_recovery_execution_source import EventRecoveryExecutionSource, check_event_recovery_execution_source
 from ..models.event_recovery_execution_state import EventRecoveryExecutionState, check_event_recovery_execution_state
 from ..types import UNSET, Unset
@@ -15,8 +19,9 @@ T = TypeVar("T", bound="EventRecoveryExecution")
 
 @_attrs_define
 class EventRecoveryExecution:
-    """Read-only observation of this job's admitted replay generation. Later replays are not attributed to this item.
-    Missing history, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and
+    """Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take
+    precedence and survive execution-history pruning until recovery job retention. Later replays never replace them.
+    Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and
     items not admitted.
 
     """
@@ -26,6 +31,10 @@ class EventRecoveryExecution:
     source: EventRecoveryExecutionSource
     attempts: int
     """Recorded dispatch attempt count for the tracked generation."""
+    recorded_at: datetime.datetime | Unset = UNSET
+    """When terminal evidence was saved; present only for recovery_result."""
+    evidence_source: EventRecoveryExecutionEvidenceSource | Unset = UNSET
+    """Original source of a saved terminal result; present only for recovery_result."""
     completed_at: datetime.datetime | Unset = UNSET
     """Recorded terminal completion time when available."""
 
@@ -37,6 +46,14 @@ class EventRecoveryExecution:
         source: str = self.source
 
         attempts = self.attempts
+
+        recorded_at: str | Unset = UNSET
+        if not isinstance(self.recorded_at, Unset):
+            recorded_at = self.recorded_at.isoformat()
+
+        evidence_source: str | Unset = UNSET
+        if not isinstance(self.evidence_source, Unset):
+            evidence_source = self.evidence_source
 
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
@@ -52,6 +69,10 @@ class EventRecoveryExecution:
                 "attempts": attempts,
             }
         )
+        if recorded_at is not UNSET:
+            field_dict["recorded_at"] = recorded_at
+        if evidence_source is not UNSET:
+            field_dict["evidence_source"] = evidence_source
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
 
@@ -68,6 +89,20 @@ class EventRecoveryExecution:
 
         attempts = d.pop("attempts")
 
+        _recorded_at = d.pop("recorded_at", UNSET)
+        recorded_at: datetime.datetime | Unset
+        if isinstance(_recorded_at, Unset):
+            recorded_at = UNSET
+        else:
+            recorded_at = datetime.datetime.fromisoformat(_recorded_at)
+
+        _evidence_source = d.pop("evidence_source", UNSET)
+        evidence_source: EventRecoveryExecutionEvidenceSource | Unset
+        if isinstance(_evidence_source, Unset):
+            evidence_source = UNSET
+        else:
+            evidence_source = check_event_recovery_execution_evidence_source(_evidence_source)
+
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
         if isinstance(_completed_at, Unset):
@@ -80,6 +115,8 @@ class EventRecoveryExecution:
             state=state,
             source=source,
             attempts=attempts,
+            recorded_at=recorded_at,
+            evidence_source=evidence_source,
             completed_at=completed_at,
         )
 

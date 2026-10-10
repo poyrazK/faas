@@ -111,4 +111,7 @@ type BuildDone struct {
 	// image. They remain empty when the VM dies before the probes can run.
 	BuildkitVersion string `json:"buildkit_version,omitempty"`
 	RailpackVersion string `json:"railpack_version,omitempty"`
+	// DevPatch records, for a successful build, whether its source reached
+	// the image unchanged (ADR-740). Older guests omit it.
+	DevPatch *DevPatchSourceMap `json:"dev_patch,omitempty"`
 }

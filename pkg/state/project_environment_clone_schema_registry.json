@@ -1331,6 +1331,7 @@
       "builder_node_id",
       "buildkit_version",
       "commit_sha",
+      "dev_patch",
       "finished_at",
       "framework_version",
       "id",
@@ -2480,6 +2481,36 @@
     "kind": "operational"
   },
   {
+    "table": "dev_source_manifests",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "manifest",
+      "source_root"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "dev_source_patches",
+    "columns": [
+      "app_id",
+      "applied_at",
+      "apply_error",
+      "apply_ms",
+      "archive",
+      "base_deployment_id",
+      "created_at",
+      "deleted",
+      "digest",
+      "expires_at",
+      "generation",
+      "id",
+      "image_dir"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "developer_sync_history",
     "columns": [
       "app_id",
@@ -2966,6 +2997,22 @@
     "kind": "operational"
   },
   {
+    "table": "event_recovery_execution_results",
+    "columns": [
+      "attempts",
+      "completed_at",
+      "evidence_source",
+      "job_id",
+      "position",
+      "recorded_at",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_history",
     "columns": [
       "action",
@@ -3014,12 +3061,18 @@
       "capacity_wait_started_at",
       "completed_at",
       "created_at",
+      "execution_finished_at",
+      "execution_notification_captured",
+      "execution_notification_next_at",
       "expires_at",
       "id",
       "last_progress_at",
       "next_attempt_at",
+      "notification_receipts",
+      "notification_retry_receipts",
       "paused_at",
       "rate_per_second",
+      "request_id",
       "selection",
       "state",
       "updated_at",

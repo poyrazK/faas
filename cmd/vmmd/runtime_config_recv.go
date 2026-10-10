@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 )
 
 // A Scale app can receive up to 100 secrets of 32 KiB each; JSON can expand
@@ -39,6 +40,12 @@ type runtimeConfigRequest struct {
 	ErrorCode               string `json:"error_code,omitempty"`
 	ApplicationAck          string `json:"application_ack,omitempty"`
 	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
+	// PatchGeneration is the last developer live patch the guest applied
+	// (ADR-740); only valid on dev_patch requests.
+	PatchGeneration int64 `json:"patch_generation,omitempty"`
+	// PatchApplyMS is how long the guest took to apply a patch; only valid
+	// on dev_patch_ack requests.
+	PatchApplyMS int64 `json:"patch_apply_ms,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -49,6 +56,7 @@ type runtimeConfigResponse struct {
 	Unchanged  bool               `json:"unchanged,omitempty"`
 	Accepted   bool               `json:"accepted,omitempty"`
 	Error      string             `json:"error,omitempty"`
+	DevPatch   *runtimeDevPatch   `json:"dev_patch,omitempty"`
 }
 
 type runtimeConfigStore interface {
@@ -72,6 +80,10 @@ type runtimeConfigReceiver struct {
 	log   *slog.Logger
 	mgr   *fcvm.Manager
 	store runtimeConfigStore
+	// ADR-740: serving a developer live patch marks the instance so vmmd
+	// never snapshots it; delivery also needs the operator flag.
+	diverged        *vmmdgrpc.DivergedInstances
+	devPatchEnabled bool
 }
 
 func (*runtimeConfigReceiver) Close() {}
@@ -89,6 +101,22 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 	if err := json.Unmarshal(body, &req); err != nil || (req.Scope != "" && req.Scope != api.DefaultEnvScope) {
 		_ = writeRuntimeConfigResponse(conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		return "protocol", errors.New("runtime config request has unsupported scope")
+	}
+	if req.Kind == runtimeDevPatchKind {
+		if req.Scope != "" || req.PatchGeneration < 0 || req.PatchApplyMS != 0 || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" ||
+			req.ErrorCode != "" || req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeDevPatch(instance, req, conn)
+	}
+	if req.Kind == runtimeDevPatchAckKind {
+		if !validRuntimeDevPatchAck(req) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeDevPatchAck(instance, req, conn)
+	}
+	if req.PatchGeneration != 0 || req.PatchApplyMS != 0 {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
 	if req.Kind == "secret_generation_start" || req.Kind == "secret_generation_retire" {
 		if !validRuntimeSecretProcessRequest(req) {

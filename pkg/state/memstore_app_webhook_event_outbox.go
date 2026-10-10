@@ -60,6 +60,7 @@ func (m *MemStore) relayAppWebhookOutboxEventLocked(event appWebhookOutboxEvent)
 			Event: event.Event, Payload: append([]byte(nil), event.Payload...),
 			Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
 		}
+		m.trackRecoveryNotificationDeliveryLocked(event, webhookID, id)
 	}
 	delete(m.appWebhookEventOutbox, event.ID)
 }

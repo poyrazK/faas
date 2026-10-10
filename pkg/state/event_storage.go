@@ -65,6 +65,10 @@ func (s *PgStore) AppendTenantPublishedEvent(ctx context.Context, actor, account
 }
 
 func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string, accountID, tenantID, appID string, payload []byte, traceID *string, at *time.Time) error {
+	return s.appendCustomerPublishedEventResult(ctx, actor, accountID, tenantID, appID, payload, traceID, at, nil)
+}
+
+func (s *PgStore) appendCustomerPublishedEventResult(ctx context.Context, actor string, accountID, tenantID, appID string, payload []byte, traceID *string, at *time.Time, result *PublishedEventAcceptance) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -107,7 +111,7 @@ func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string
 		if !existing {
 			return ErrConflict
 		}
-		return tx.Commit(ctx)
+		return commitPublishedEventAcceptance(ctx, tx, q, accountID, identity, true, result)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -128,6 +132,17 @@ func (s *PgStore) appendCustomerPublishedEvent(ctx context.Context, actor string
 	}
 	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes+charge); err != nil {
 		return err
+	}
+	return commitPublishedEventAcceptance(ctx, tx, q, accountID, identity, false, result)
+}
+
+func commitPublishedEventAcceptance(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, accountID string, identity publishedEventIdentity, duplicate bool, result *PublishedEventAcceptance) error {
+	if result != nil {
+		at, err := q.EventReceiptAcceptedAt(ctx, tx, sqlc.EventReceiptAcceptedAtParams{AccountID: mustPgUUID(accountID), EventSource: identity.Source, EventID: identity.ID})
+		if err != nil {
+			return err
+		}
+		*result = PublishedEventAcceptance{AcceptedAt: timeFromPgtype(at), Duplicate: duplicate}
 	}
 	return tx.Commit(ctx)
 }
