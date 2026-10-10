@@ -86,7 +86,8 @@ class AppManifest:
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme for canonical service binding URLs; omitted manifests retain legacy HTTP behavior."""
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     ports: list[WorkloadPort] | Unset = UNSET
     """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
     listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
@@ -209,7 +210,7 @@ class AppManifest:
 
         service_binding_transport: str | Unset = UNSET
         if not isinstance(self.service_binding_transport, Unset):
-            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
+            service_binding_transport = self.service_binding_transport
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):

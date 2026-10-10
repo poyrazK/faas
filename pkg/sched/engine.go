@@ -412,12 +412,13 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
-	store  state.Store
-	ledger *NodeLedger
-	vmm    RoutedVMM
-	notif  Notifier
-	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log    *slog.Logger
+	validatorArtifactCheck func(context.Context, string, string) error
+	store                  state.Store
+	ledger                 *NodeLedger
+	vmm                    RoutedVMM
+	notif                  Notifier
+	fcVer                  string // running Firecracker version — snapshots load only on a match (ADR-005)
+	log                    *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit                         func(context.Context, string)
 	environmentQualificationServiceURL             func(context.Context, string) (string, error)
@@ -5955,6 +5956,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
+	if e.validatorArtifactCheck != nil {
+		if err := e.validatorArtifactCheck(ctx, appID, deploymentID); err != nil {
+			return fmt.Errorf("sched: prime: validator artifact preflight: %w", err)
+		}
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return nil
 	}
@@ -9948,4 +9954,11 @@ func (e *Engine) streamWarmHints(ctx context.Context, sink WarmHintSink, heartbe
 			// no need for a duplicated ctx.Err() check here.
 		}
 	}
+}
+
+// WithValidatorArtifactCheck installs a shared artifact preflight for deployment
+// priming. Ordinary wakes of an existing serving deployment do not depend on it.
+func (e *Engine) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Engine {
+	e.validatorArtifactCheck = check
+	return e
 }

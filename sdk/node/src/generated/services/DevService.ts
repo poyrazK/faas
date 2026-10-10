@@ -499,7 +499,7 @@ export class DevService {
     runId,
   }: {
     /**
-     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     * Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
      */
     runId: string,
   }): CancelablePromise<ScenarioTestChaosMatchesResponse> {

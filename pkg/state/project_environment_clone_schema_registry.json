@@ -2684,6 +2684,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "entity_outbox_acceptances",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "fingerprint",
+      "message_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",

@@ -2345,6 +2345,14 @@ type EmailVerificationToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type EntityOutboxAcceptance struct {
+	MessageID   pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Fingerprint string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID

@@ -3048,7 +3048,8 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	StageState json.RawMessage `json:"stage_state,omitempty"`
+	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
+	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).

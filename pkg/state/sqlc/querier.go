@@ -1000,6 +1000,7 @@ type Querier interface {
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetDevSourceManifest(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DevSourceManifest, error)
 	GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error)
+	GetEntityOutboxAcceptanceFingerprint(ctx context.Context, db DBTX, messageID string) (string, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
 	GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg GetEnvironmentGitRevisionApprovalParams) (EnvironmentGitRevisionApproval, error)
@@ -1229,6 +1230,8 @@ type Querier interface {
 	// Generations are dense per base deployment. A concurrent insert for the same
 	// base collides on the unique key and the caller retries.
 	InsertDevSourcePatch(ctx context.Context, db DBTX, arg InsertDevSourcePatchParams) (InsertDevSourcePatchRow, error)
+	InsertEntityOutboxAcceptance(ctx context.Context, db DBTX, arg InsertEntityOutboxAcceptanceParams) (int64, error)
+	InsertEntityOutboxWebhookDelivery(ctx context.Context, db DBTX, arg InsertEntityOutboxWebhookDeliveryParams) (int64, error)
 	InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	InsertEnvironmentGitOpsConfig(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsConfigParams) error
 	InsertEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsEffectParams) error
