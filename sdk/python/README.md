@@ -422,6 +422,132 @@ holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
+## Batch event publication
+
+Use `faas_sdk.api.events.publish_event_batch.sync_detailed` or
+`asyncio_detailed` with `PublishEventBatchRequest(events=[...])`. Batches contain
+1–100 stable-id envelopes in at most 1 MiB. Inspect each parsed result: HTTP 200
+can include rejected or unknown items. Retry with the original source/id/content;
+duplicates retain their original receipt and do not create more deliveries.
+See [batch publication](../../docs/event-driven.md#batch-event-publishing).
+
+## Event retention health
+
+The generated events service exposes `getEventRetentionHealth` (Node) or
+`faas_sdk.api.events.get_event_retention_health` (Python). Filter receipt
+observations by source/app and choose an expiry lookahead; storage utilization
+remains account-wide. Recovery preflight also returns current receipt expiry
+warnings and current retention holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
+
+## Recovery receipt protection
+
+Set `protect_receipts: true` when creating an event recovery job (Go:
+`EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
+items are pending and the job is active, until its original 24-hour expiry.
+Preview reserves nothing. Held receipts continue counting against account
+storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+
+## Durable recovery outcomes
+
+Existing recovery status and item reads prefer saved terminal results for the
+exact admitted replay generation. `execution.source` is `recovery_result`, with
+`recorded_at` and original `evidence_source`; job execution summaries include
+`saved_results`. These results survive execution-history pruning until the
+recovery job is pruned. Uncertain outcomes remain unknown. See
+[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+
+Recovery webhook filters support `event_recovery.execution_finished`, separately
+from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
+contains saved terminal execution counts and `unresolved_count=0`; `all_succeeded`
+refers only to queued executions. Recovery job `execution_finished_at` is capture
+time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
+created execution jobs with queued deliveries qualify. Update strict webhook
+event-enum consumers before API rollout; existing webhook delivery retries and
+dead-letter tools apply. See [ADR-915](../../docs/adr/915-recovery-execution-completion-notifications.md).
+
+Existing recovery preview/create methods accept `parent_job_id` with
+`mode=execution` to select only saved failed/dead-lettered deliveries from a
+retained terminal recovery in the same app. Child creation requires a stable
+`request_id` UUID: repeat it with the same normalized selection to return the same
+retained child. Changed selections conflict, and the original audit reason wins.
+Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
+execution evidence is skipped at admission; newer replays are never substituted.
+See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+
+`get_event_recovery_health` includes optional execution health for the oldest
+retained unresolved terminal-admission jobs. `counts_complete=False` marks
+lower-bound counts; prolonged waits measure time since admission completion.
+See [execution recovery health](../../docs/adr/917-execution-recovery-health-alerts.md).
+
+Use `faas_sdk.api.events.get_event_recovery_notifications` for a read-only report
+of admission/execution capture and each selected receiver's current delivery.
+Missing selection or pruned delivery evidence remains unknown; capture alone
+does not prove acknowledgement. Retained dead deliveries link to independent
+retry. See [notification delivery reports](../../docs/adr/918-recovery-notification-delivery-report.md).
+
+### Recovery notification health
+
+Recovery health responses include `notifications`, with separate admission and execution
+counts for overdue, dead, unknown, and no-receiver jobs. Overdue requires known
+unacknowledged delivery evidence at least 15 minutes after capture. Phase
+`counts_complete` flags cover evidence uncertainty and the 50-job candidate bound;
+partial observations cannot clear alerts. Use the notification report for receiver
+details. New alert metrics are optional and require the notification health migration.
+
+### Selective recovery notification retries
+
+Use the job-scoped notification retry preview to choose receivers explicitly.
+Submit a stable UUID request ID and targets containing kind, webhook ID, delivery
+ID, and expected replay generation. The API revalidates each receiver and saves
+queued or skipped decisions atomically. Repeating identical intent returns the
+original decisions; use a new ID and current evidence for later failures.
+Decisions expire with the recovery job. See the events documentation for limits
+and migration rollout.
+
+### Recovery notification retry history
+
+Use the retry history methods to list saved request summaries or inspect one
+request by ID. Detail preserves each receiver’s original queued or skipped
+decision and shows its current retained delivery status with a separate read
+timestamp. Missing deliveries are reported as unavailable; job pruning removes
+the history.
+
+Retry history detail also exposes `retry_outcome` for the original queued
+generation, `retained_attempt_count`, `attempt_count_complete`, and optional
+`completed_at`. Later retries do not establish an earlier generation's outcome.
+Missing terminal evidence reports unknown; skipped decisions are not applicable.
+
+History list summaries now include succeeded, failed, pending, and unknown
+counts for the originally queued generations, aggregate `status`,
+`evidence_complete`, and optional `completed_at`. Completion time requires
+terminal evidence for every queued target. All-skipped requests are inconclusive;
+later retries never establish an earlier generation's outcome.
+
+Retry history lists accept an optional comma-separated `status` union such as
+`failed,inconclusive`. Statuses must be distinct values from succeeded, failed,
+pending, and inconclusive. The response includes `matched_count` and `totals`;
+totals count all retained requests before filtering, including a separate count
+of requests with incomplete evidence. No matches returns an empty list and
+preserves full totals. Request detail and waiting do not accept this filter.
+
+### App-wide recovery notification retry backlog
+
+Use the notification retry backlog list method to discover original-generation
+retry outcomes across retained recovery jobs for an app. Default statuses are
+failed, pending, and inconclusive; an explicit status union can include succeeded.
+`page_size` counts inspected jobs (default 5, maximum 10), not request rows.
+Totals have `counts_scope: job_page` and cover scanned jobs before filtering.
+Continue with `next_cursor` even when `requests` is empty, retaining the same
+status selection. Each page is a fresh read-only snapshot. Returned detail and
+retry-preview paths use existing recovery inspection endpoints.
+
+Application-scoped producer keys: use `faas_sdk.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.
+
+Read-only producer-key reconciliation: `faas_sdk.api.events.get_app_event_publish_status` accepts the app slug and original exact key. The response contains the retained receipt and paginated consumer evidence. `accepted` means routing settled, not consumer success; `processing` is still durably accepted. `unavailable` remains uncertain and must not automatically trigger publication. Follow `evidence.next_after` using `after`, with up to 200 recipients per page (default 100).
+
+Read-only content verification: call `faas_sdk.api.events.verify_app_event_publication` with the original `AppPublishEventRequest`. It returns match/conflict/unavailable, comparing normalized type, schema version and semantic JSON data rather than occurrence time or trace metadata. Match and conflict include the retained acceptance receipt. No publish or retention refresh occurs, and missing evidence remains uncertain.
+
+Acceptance guards: pass `expected_accepted_at` as the exact RFC3339 string from the saved receipt to status or verification. Query parameters deliberately use strings to preserve nanosecond precision rather than converting through Python's microsecond datetime. The independent acceptance result is same_acceptance/replacement_acceptance/unavailable. Replacement content may still match; never assign its consumer outcomes to the expected acceptance. Reconciliation remains read-only.
 ### Workflow blockers
 
 Inside the customer Operation transaction callback, use `tx.workflow_blockers(workflow, instance_id, locked_row_state, [OperationWorkflowBlocker(code="payment-pending", description="Payment confirmation is pending.", operation="fulfill-order")])` to replace
@@ -685,7 +811,7 @@ the previous outcome. A successful retry can return `replayed: true`. Checksum
 validation requires serialization fidelity; do not edit the exported data.
 
 This implementation is local and unqualified; tests/builds are pending. See
-[ADR-851](../../docs/adr/851-durable-entity-owner-state-recovery-api.md).
+[ADR-941](../../docs/adr/941-durable-entity-owner-state-recovery-api.md).
 
 Use generated `faas_sdk.api.invocations.export_durable_entity` and `restore_durable_entity` sync/async methods. Restore models use `export` for the JSON `export` property.
 
@@ -720,6 +846,6 @@ independently disabled by the current runtime. Validators do not migrate data.
 The read-only metadata preview remains separate and does not execute the guest.
 Deployment selection is checked before/after validation, but deployment routing
 and bucket publication are not atomic; avoid deployment changes during recovery.
-See [ADR-853](../../docs/adr/853-durable-entity-application-validated-restore.md).
+See [ADR-943](../../docs/adr/943-durable-entity-application-validated-restore.md).
 
 Use generated `faas_sdk.api.invocations.validate_durable_entity_restore`. The returned `deployment_id` and request `validation_deployment_id` use UUID values. Python guest helpers are not included in this slice.

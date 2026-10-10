@@ -1,0 +1,9 @@
+definition: automation.yaml
+scenarios:
+  - name: sample
+    input_file: sample-input.json
+    mock_outputs_file: mock-outputs.json
+    mock_attempts_file: mock-attempts.json
+    expect:
+      lookup: {state: mocked}
+      enrich: {state: mocked, output: {recorded: true}}

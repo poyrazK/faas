@@ -16,7 +16,7 @@ class RegisterEventSchemaRequest:
     type_: str
     version: str
     schema: Any
-    """Draft 2020-12 JSON Schema"""
+    """Draft 2020-12 JSON Schema, at most 64 KiB, without external references."""
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source

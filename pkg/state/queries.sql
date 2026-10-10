@@ -12759,14 +12759,15 @@ ORDER BY s.start,s.deployment_id,s.position;
 -- name: ReadRouteMonitorConfig :one
 SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
 	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
- CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END ||
+ CASE WHEN coalesce(m.on_violation,'report')='report' THEN '{}'::jsonb ELSE jsonb_build_object('on_violation',m.on_violation) END)::text AS config
 FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
 WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
 
 -- name: WriteRouteMonitorConfig :exec
-INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
-VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text)
-ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by,on_violation)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text,sqlc.arg(on_violation)::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,on_violation=EXCLUDED.on_violation,
 	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb;
 
 -- name: ReadRouteMonitorRecoveryCustomers :one
@@ -12781,6 +12782,12 @@ ORDER BY m.next_check_at,m.app_id LIMIT sqlc.arg(batch_limit)::integer;
 SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
  ,coalesce(last_healthy_deployment,'{}'::jsonb)::text AS last_healthy_deployment
 FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE SKIP LOCKED;
+
+-- name: LockRouteMonitorRollbackIncident :one
+-- ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+-- claim reads the incident that evaluation committed.
+SELECT coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
 
 -- name: WriteRouteMonitorState :exec
 UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_id=nullif(sqlc.arg(deployment_id)::text,'')::uuid,
@@ -14060,8 +14067,8 @@ SELECT * FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND vers
 
 -- name: InsertWorkflowAutomationRevision :exec
 INSERT INTO workflow_automation_revisions(
- app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id
-) VALUES($1,$2,$3,$4,$5,false,$6,$7);
+ app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
+) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8);
 
 -- name: SaveAutomation :exec
 INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
@@ -17282,3 +17289,141 @@ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
 SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+
+-- name: GetAutomationPublishPolicy :one
+SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
+FROM apps a LEFT JOIN workflow_automation_publish_policies p ON p.app_id=a.id
+WHERE a.id=$1 AND a.status <> 'deleted';
+
+-- name: UpsertAutomationPublishPolicy :exec
+INSERT INTO workflow_automation_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
+ON CONFLICT(app_id) DO UPDATE SET mode=EXCLUDED.mode,version=EXCLUDED.version;
+
+-- name: GetAutomationPublishDraftVersion :one
+SELECT version FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
+
+-- name: UpsertAutomationPublishReceipt :exec
+INSERT INTO workflow_automation_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT(app_id,name,account_id,api_key_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,policy_version=EXCLUDED.policy_version,expires_at=EXCLUDED.expires_at,evidence=EXCLUDED.evidence;
+
+-- name: GetAutomationPublishReceipt :one
+SELECT * FROM workflow_automation_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4;
+
+-- name: AutomationFailureTargetExists :one
+SELECT EXISTS(SELECT 1 FROM jsonb_array_elements(app_workflow_definitions(sqlc.arg(app_id)::uuid,
+ coalesce((SELECT workflows FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid AND status='live' AND scope='default' ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1),'[]'::jsonb))) d WHERE d->>'name'=sqlc.arg(name)::text)::boolean;
+
+-- name: GetAutomationFailurePolicy :one
+SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
+ 'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
+ 'paused',g.paused_at IS NOT NULL,'generation',coalesce(g.generation,0),'monitoring_since',g.monitoring_since,'paused_at',g.paused_at,
+ 'history',coalesce((SELECT jsonb_agg(jsonb_build_object('generation',h.generation,'state',h.state,'reason',h.reason,'recorded_at',h.recorded_at,
+ 'failures',h.failures,'completed_runs',h.completed_runs,'policy_version',h.policy_version,'actor_account_id',coalesce(h.actor_account_id::text,'')) ORDER BY h.generation DESC)
+ FROM (SELECT * FROM workflow_automation_failure_history WHERE app_id=a.id AND name=sqlc.arg(name)::text ORDER BY generation DESC LIMIT sqlc.arg(history_limit)::int) h),'[]'::jsonb))::jsonb
+FROM apps a LEFT JOIN workflow_automation_failure_policies p ON p.app_id=a.id AND p.name=sqlc.arg(name)::text
+LEFT JOIN workflow_automation_failure_guards g ON g.app_id=a.id AND g.name=sqlc.arg(name)::text WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
+
+-- name: UpsertAutomationFailurePolicy :exec
+INSERT INTO workflow_automation_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
+VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,
+ failure_threshold=excluded.failure_threshold,min_completed_runs=excluded.min_completed_runs,window_seconds=excluded.window_seconds;
+
+-- name: EnsureAutomationFailureGuard :exec
+INSERT INTO workflow_automation_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING;
+
+-- name: AutomationFailureSignals :one
+SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS failures,
+ count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS completed_runs,
+ count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
+ count(*) FILTER(WHERE status='running')::bigint AS running_runs,
+ count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
+FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(name)::text;
+
+-- name: AutomationFailureRetainedEvents :one
+SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
+WHERE o.state IN ('pending','processing') AND r->>'app_id'=sqlc.arg(app_id)::text AND r->'workflow'->>'name'=sqlc.arg(name)::text
+AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid);
+
+-- name: ListAutomationFailurePolicyCandidates :many
+SELECT p.app_id::text AS app_id,p.name FROM workflow_automation_failure_policies p JOIN apps a ON a.id=p.app_id
+JOIN accounts ac ON ac.id=a.account_id
+WHERE p.enabled AND a.status<>'deleted' AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id=sqlc.narg(owner_node_id)::uuid)
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+AND p.app_id::text||'/'||p.name>sqlc.arg(after_key)::text
+ORDER BY p.app_id::text,p.name LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListAutomationFailurePauses :many
+SELECT name FROM workflow_automation_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name;
+
+-- name: AutomationFailurePaused :one
+SELECT EXISTS(SELECT 1 FROM workflow_automation_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean;
+
+-- name: LatchAutomationFailurePause :exec
+WITH changed AS (
+ UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=sqlc.arg(now_at)::timestamptz
+ WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND paused_at IS NULL RETURNING *
+), history AS (
+ INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
+ SELECT app_id,name,generation,'paused','failure_threshold',paused_at,sqlc.arg(failures)::bigint,sqlc.arg(completed_runs)::bigint,sqlc.arg(policy_version)::bigint FROM changed RETURNING *
+), recipients AS (
+ SELECT h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at,array_agg(w.id ORDER BY w.id) AS ids
+ FROM history h JOIN apps a ON a.id=h.app_id JOIN app_webhooks w ON w.app_id=a.id AND w.account_id=a.account_id AND w.scope='app' AND w.enabled
+ AND (cardinality(w.event_filter)=0 OR 'automation.paused'=ANY(w.event_filter))
+ GROUP BY h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at
+)
+INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT account_id,app_id,'automation.paused',id,jsonb_build_object('app_id',app_id::text,'automation_name',name,'generation',generation,
+ 'reason','failure_threshold','failures',failures,'completed_runs',completed_runs,'policy_version',policy_version,'paused_at',recorded_at),ids FROM recipients
+ON CONFLICT(event,source_id) DO NOTHING;
+
+-- name: ResumeAutomationFailurePause :exec
+WITH changed AS (
+ UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
+ WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND paused_at IS NOT NULL RETURNING *
+)
+INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
+SELECT app_id,name,generation,'resumed','operator_resume',monitoring_since,sqlc.arg(failures)::bigint,sqlc.arg(completed_runs)::bigint,
+ sqlc.arg(policy_version)::bigint,sqlc.arg(actor_account_id)::uuid FROM changed;
+
+-- name: ListRouteProbeTargets :many
+-- ADR-847: apps whose route health gate opts a selector into probes and that
+-- have exactly one in-flight canary candidate in the default scope.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
+FROM route_health_gates g
+JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+WHERE jsonb_path_exists(g.routes, '$[*].probe')
+ORDER BY a.id, d.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ClaimRouteProbeRound :one
+INSERT INTO route_probe_rounds (app_id, window_start)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(window_start))
+ON CONFLICT (app_id, window_start) DO NOTHING
+RETURNING app_id::text;
+
+-- name: RecordRouteProbeObservation :exec
+INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(deployment_id)::text::uuid, sqlc.arg(method), sqlc.arg(path), sqlc.arg(window_start), sqlc.arg(requests), sqlc.arg(server_errors), sqlc.arg(unauthenticated))
+ON CONFLICT (app_id, deployment_id, method, path, window_start) DO UPDATE SET
+ requests = route_probe_observations.requests + EXCLUDED.requests,
+ server_errors = route_probe_observations.server_errors + EXCLUDED.server_errors,
+ unauthenticated = route_probe_observations.unauthenticated + EXCLUDED.unauthenticated;
+
+-- name: RouteProbeObservations :many
+SELECT deployment_id::text AS deployment_id, method, path, window_start, requests, server_errors, unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+ORDER BY window_start, method, path;
+
+-- name: PruneRouteProbeObservations :exec
+DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
+
+-- name: PruneRouteProbeRounds :exec
+DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
+

@@ -1,4 +1,4 @@
-// ADR-849: application schema versions, distinct from business commit versions.
+// ADR-939: application schema versions, distinct from business commit versions.
 import { decodeDurableEntityCall, type DurableEntityCall, type DurableEntityCallOptions, DurableEntityTransitionBuilder } from './durable-entity-call.js';
 import { decodeDurableEntityHandlerRequest, durableEntityJSON, encodeDurableEntityTransition } from './durable-entity-handler.js';
 

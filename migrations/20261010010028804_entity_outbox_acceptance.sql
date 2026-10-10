@@ -1,4 +1,4 @@
--- ADR-843: transport acceptance only. Entity state/pending work stay in the bucket.
+-- ADR-933: transport acceptance only. Entity state/pending work stay in the bucket.
 -- +goose Up
 CREATE TABLE IF NOT EXISTS entity_outbox_acceptances (
     message_id uuid PRIMARY KEY,

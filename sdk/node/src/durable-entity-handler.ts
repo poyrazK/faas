@@ -1,4 +1,4 @@
-// ADR-844. Guest helpers describe pure transitions; they never commit or send.
+// ADR-934. Guest helpers describe pure transitions; they never commit or send.
 import {
   DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION,
   DURABLE_ENTITY_MAX_REQUEST_BYTES, DURABLE_ENTITY_MAX_TRANSITION_BYTES,

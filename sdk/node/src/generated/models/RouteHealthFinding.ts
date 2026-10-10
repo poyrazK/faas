@@ -32,6 +32,18 @@ export type RouteHealthFinding = {
    */
   latency_status?: 'healthy' | 'regressed' | 'unknown';
   latency_reason?: string;
+  /**
+   * pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are unchanged.
+   */
+  evidence_window?: 'pooled' | 'synthetic';
   windows: Array<RouteHealthWindowEvidence>;
+  /**
+   * Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse.
+   */
+  pooled_windows?: Array<RouteHealthWindowEvidence>;
+  /**
+   * Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They settle the 5xx signal only.
+   */
+  synthetic_windows?: Array<RouteHealthWindowEvidence>;
 };
 

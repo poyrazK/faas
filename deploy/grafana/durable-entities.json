@@ -1,7 +1,7 @@
 {
   "uid": "faas-durable-entities",
   "title": "Gregale durable entities",
-  "description": "ADR-855 local unqualified operations dashboard. Bounded metrics; no entity identities or payloads. See docs/runbooks/FaasDurableEntityOperations.md. These observations do not prove durability or recovery readiness.",
+  "description": "ADR-945 local unqualified operations dashboard. Bounded metrics; no entity identities or payloads. See docs/runbooks/FaasDurableEntityOperations.md. These observations do not prove durability or recovery readiness.",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,

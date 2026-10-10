@@ -9,6 +9,10 @@ import type { EventRecoveryRequest } from './EventRecoveryRequest.js';
  */
 export type EventRecoveryJob = {
   /**
+   * Time the scheduler captured confirmed terminal results for all queued deliveries of an eligible new execution recovery. Omitted while unresolved or for historical jobs; does not imply success or webhook acknowledgement.
+   */
+  execution_finished_at?: string;
+  /**
    * Current admission rate; selection.rate_per_second retains the original requested rate.
    */
   rate_per_second: number;

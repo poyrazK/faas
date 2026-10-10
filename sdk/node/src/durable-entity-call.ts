@@ -1,4 +1,4 @@
-// ADR-848: typed guest computation, without client/transport dependencies.
+// ADR-938: typed guest computation, without client/transport dependencies.
 import {
   decodeDurableEntityHandlerRequest, encodeDurableEntityTransition, durableEntityWebhookIntent,
   type DurableEntityHandlerRequest, type DurableEntityIdentity, type DurableEntityTransition,

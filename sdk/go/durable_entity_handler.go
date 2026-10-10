@@ -1,4 +1,4 @@
-// ADR-844: pure, versioned durable entity guest transitions.
+// ADR-934: pure, versioned durable entity guest transitions.
 package faas
 
 import (

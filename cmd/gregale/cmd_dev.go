@@ -35,8 +35,11 @@ func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
 	return devSourceConfig{shape: resolvedShape, runtime: runtime, handler: handler}, nil
 }
 
-func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string) api.UpsertDevSessionRequest {
-	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID}
+// sessionRequest builds the idempotent session upsert. A zero lease leaves
+// lease_seconds unset so the API applies its default; every refresh resends
+// the chosen lease because each sync renews it from scratch.
+func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string, lease time.Duration) api.UpsertDevSessionRequest {
+	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID, LeaseSeconds: int64(lease / time.Second)}
 	if c.shape == shapeFunction {
 		req.Type = devSessionFunction
 		req.Runtime = c.runtime
@@ -270,6 +273,8 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]]"
+
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
 // deployable files change. --once is useful for scripts; --stop tears the
@@ -291,6 +296,12 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "history" {
 		return cmdDevHistory(args[1:])
 	}
+	if len(args) > 0 && args[0] == "info" {
+		return cmdDevInfo(args[1:])
+	}
+	if len(args) > 0 && args[0] == "trigger" {
+		return cmdDevTrigger(args[1:])
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -302,12 +313,18 @@ func cmdDev(args []string) int {
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
+	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
+	postgresSeed := fs.String("postgres-seed", "", "shell command run once in the developer app after its database is ready")
+	reseed := fs.Bool("reseed", false, "run the --postgres-seed command again even if this database was already seeded")
+	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
+	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
+	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
+		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
@@ -323,10 +340,28 @@ func cmdDev(args []string) int {
 	if *stop && *serviceOverrideFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--service-override-file cannot be combined with --stop"))
 	}
+	if *stop && *ttl != "" {
+		return printErr("Invalid flags", fmt.Errorf("--ttl cannot be combined with --stop"))
+	}
+	if *stop && (*postgresSeed != "" || *reseed) {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-seed and --reseed cannot be combined with --stop"))
+	}
+	if *stop && (*debug || explicitFlags["debug-port"]) {
+		return printErr("Invalid flags", fmt.Errorf("--debug cannot be combined with --stop"))
+	}
+	if *debugPort < 1 || *debugPort > 65535 {
+		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
+	}
+	if *all {
+		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
+			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
+			ttl: *ttl,
+		})
 	}
 	linkedContext, _, linkedErr := linkedProjectContext(cwd)
 	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
@@ -340,9 +375,39 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Invalid developer manifest", err)
 	}
-	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	// --stop only tears the environment down, so team defaults for files that
+	// would be synced on start must not turn it into a flag conflict.
+	if !*stop {
+		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
+		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
+		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
+	}
+	if *debug && *once {
+		// --once exits after one sync, which would close the local
+		// debugger port immediately.
+		return printErr("Invalid flags", fmt.Errorf("--debug needs the watcher; remove --once"))
+	}
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
+	}
+	lease := time.Duration(0)
+	if !*stop {
+		// A manifest dev.ttl is harmless with --stop; only validate the lease
+		// when it will actually be sent.
+		if lease, err = resolveDevTTL(*ttl); err != nil {
+			return printErr("Invalid --ttl", err)
+		}
+	}
+	if *postgresSeed != "" && !*withPostgres {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-seed requires --postgres"))
+	}
+	if *reseed && *postgresSeed == "" {
+		return printErr("Invalid flags", fmt.Errorf("--reseed requires --postgres-seed or dev.postgres_seed"))
+	}
+	if *postgresSeed != "" {
+		if err := validateDevSeedCommand(*postgresSeed); err != nil {
+			return printErr("Invalid --postgres-seed", err)
+		}
 	}
 	if *stop && *envFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
@@ -377,19 +442,9 @@ func cmdDev(args []string) int {
 	if *withPostgres && serviceOverrideContainsKey(serviceOverridePairs, "DATABASE_URL") {
 		return printErr("Invalid flags", fmt.Errorf("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 	}
-	project := *name
-	if project == "" {
-		if linkedErr == nil {
-			if linkedContext.App == "" {
-				return printErr("No app selected", fmt.Errorf("linked project %q has multiple or no workloads; pass --name or relink with --app <slug>", linkedContext.Project))
-			}
-			project = linkedContext.App
-		} else {
-			project = sanitizeSlug(filepath.Base(sourceDir))
-		}
-	}
-	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
-		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
+	project, targetErr := selectDevProject(*name, sourceDir, linkedContext, linkedErr)
+	if targetErr != nil {
+		return targetErr.print()
 	}
 	developerID, err := loadOrCreateDeveloperID()
 	if err != nil {
@@ -422,13 +477,19 @@ func cmdDev(args []string) int {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
 
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion))
+	if *debug && !devDebugSupported(sourceDir, config) {
+		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
+	}
+	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
+	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {
+		return code
+	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
-		PrintProgress(osStdout, "lease expires %s after the latest sync", session.ExpiresAt.Local().Format(time.RFC822))
+		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 		}
@@ -439,9 +500,12 @@ func cmdDev(args []string) int {
 	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
 	defer cancelRuntimeLogs()
 	runtimeLogsStarted := false
+	debugProxyStarted := false
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
+	seedPending := *postgresSeed != ""
+	forceReseed := *reseed
 	reportDevDiagnostic := func(d devDiagnostic) {
 		d.SourceDir = sourceDir
 		if jsonOutput {
@@ -519,6 +583,16 @@ func cmdDev(args []string) int {
 				}(),
 				onQueued: func(dep api.DeploymentResponse) {
 					devTelemetry.setDeploymentID(dep.ID)
+					devTelemetry.setDevPatch(dep.DevPatch)
+					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 {
+						go watchDevPatch(deployCtx, dep.DevPatch.Generation,
+							func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
+								return client.GetDevPatchStatus(ctx, project, workspaceID, generation)
+							}, devPatchWatchInterval, devPatchWatchTimeout,
+							func(status api.DevPatchStatusResponse, observedAt time.Time) {
+								reportDevPatch(dep.ID, status, devTelemetry.patchDelivered(status, observedAt))
+							})
+					}
 					if queued != nil {
 						queued(dep.ID)
 					}
@@ -571,12 +645,26 @@ func cmdDev(args []string) int {
 					devTelemetry.render(osStdout)
 				}
 			}
+			if code == 0 && seedPending {
+				switch runDevSeedAfterLiveSync(deployCtx, client, session, *postgresSeed, forceReseed, reportDevDiagnostic) {
+				case devSeedOutcomeDone:
+					seedPending, forceReseed = false, false
+				case devSeedOutcomeFailed:
+					if *once {
+						code = 1
+					}
+				}
+			}
 			if code == 0 {
 				openDevBrowser()
 			}
 			return code
 		},
 		onLive: func() {
+			if *debug && !debugProxyStarted {
+				debugProxyStarted = true
+				startDevDebugSession(ctx, session.App.Slug, *debugPort)
+			}
 			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
 				return
 			}
@@ -596,7 +684,7 @@ func cmdDev(args []string) int {
 		waitForChange: waitForChange,
 		resolve:       resolveDevSourceConfigWithManifest,
 		refresh: func(config devSourceConfig) error {
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion))
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
 			if refreshErr == nil {
 				session = refreshed
 			}
@@ -714,46 +802,18 @@ func cmdDevHistory(args []string) int {
 		PrintUsage(osStderr, "usage: gregale dev history [--path DIR] [--name PROJECT] [--limit N]", "dev")
 		return 1
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return printErr("Could not read current directory", err)
+	target, targetErr := resolveDevTarget(*sourcePath, *name)
+	if targetErr != nil {
+		return targetErr.print()
 	}
-	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
-	if err != nil {
-		return printErr("Invalid developer source", err)
-	}
-	project := *name
-	if project == "" {
-		linkedContext, _, linkedErr := linkedProjectContext(cwd)
-		if linkedErr == nil {
-			if linkedContext.App == "" {
-				return printErr("No app selected", fmt.Errorf("linked project %q has multiple or no workloads; pass --name or relink with --app <slug>", linkedContext.Project))
-			}
-			project = linkedContext.App
-		} else if !errors.Is(linkedErr, errProjectContextNotFound) {
-			return printErr("Could not read local project context", linkedErr)
-		} else {
-			project = sanitizeSlug(filepath.Base(sourceDir))
-		}
-	}
-	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
-		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
-	}
-	developerID, err := loadOrCreateDeveloperID()
-	if err != nil {
-		return printErr("Could not load local developer identity", err)
-	}
-	workspaceID, err := deriveDevWorkspaceID(developerID, sourceDir)
-	if err != nil {
-		return printErr("Could not identify developer workspace", err)
-	}
+	project := target.Project
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	history, err := client.GetDevSyncHistory(ctx, project, workspaceID, *limit)
+	history, err := client.GetDevSyncHistory(ctx, project, target.WorkspaceID, *limit)
 	if err != nil {
 		return printErr("Could not load developer sync history", err)
 	}
@@ -779,7 +839,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID)
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }

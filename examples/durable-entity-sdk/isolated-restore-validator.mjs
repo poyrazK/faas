@@ -1,4 +1,4 @@
-// ADR-854: bundle this entrypoint separately from the production application.
+// ADR-944: bundle this entrypoint separately from the production application.
 // Match these rules to your deployed application's schema. No imports or I/O.
 export default function validateRestore(input) {
   const candidate = input?.candidate;

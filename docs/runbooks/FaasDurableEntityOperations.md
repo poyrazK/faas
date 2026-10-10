@@ -2,7 +2,7 @@
 
 Local and unqualified. Import [the dashboard](../../deploy/grafana/durable-entities.json)
 into the operator Grafana using the existing `prometheus` datasource. This work
-does not import it into a running service. See [ADR-855](../adr/855-durable-entity-operation-observability.md)
+does not import it into a running service. See [ADR-945](../adr/945-durable-entity-operation-observability.md)
 for metric boundaries and [the qualification handoff](FaasDurableEntityQualification.md)
 for evidence requirements.
 

@@ -396,6 +396,9 @@ func TestResumeReplayAckAndPollAcrossConnections(t *testing.T) {
 	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" || frame.LatestSequence != 3 {
 		t.Fatalf("subscribe = %+v", frame)
 	}
+	if frame := readResumeTestFrame(t, client); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("initial presence snapshot = %+v", frame)
+	}
 	for _, want := range []struct {
 		sequence int64
 		data     string
@@ -426,6 +429,9 @@ func TestResumeReplayAckAndPollAcrossConnections(t *testing.T) {
 	sendResumeTestFrame(t, next, resumeClientFrame{Type: "subscribe", Channel: "updates", After: 3})
 	if frame := readResumeTestFrame(t, next); frame.Type != "subscribed" {
 		t.Fatalf("resubscribe = %+v", frame)
+	}
+	if frame := readResumeTestFrame(t, next); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("reconnect presence snapshot = %+v", frame)
 	}
 	if frame := readResumeTestFrame(t, next); frame.Type != "message" || frame.Sequence != 4 || frame.MessageID != live.MessageID {
 		t.Fatalf("reconnect replay = %+v", frame)

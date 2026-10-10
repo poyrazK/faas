@@ -1,4 +1,4 @@
-// ADR-848.
+// ADR-938.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { once } from 'node:events';

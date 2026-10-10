@@ -70,7 +70,17 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
+	ConditionField   string              `json:"condition_field,omitempty"`
+	ConditionIndex   *int                `json:"condition_index,omitempty"`
+	FieldExists      *bool               `json:"field_exists,omitempty"`
+	EntityKey        string              `json:"entity_key,omitempty"`
+	ExpectedVersion  *int64              `json:"expected_version,omitempty"`
+	CurrentVersion   *int64              `json:"current_version,omitempty"`
+	EntityExists     *bool               `json:"entity_exists,omitempty"`
+	MessageIndex     *int                `json:"message_index,omitempty"`
+	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
+	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
+	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -405,6 +415,7 @@ const (
 	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
 	CodePlanLimitApps                      = "plan_limit_apps"
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
+	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
 	CodePlanLimitConcur                    = "plan_limit_concurrency"
 	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
@@ -639,6 +650,9 @@ const (
 	CodeAutomationVersionConflict       = "automation_version_conflict"
 	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
 	CodeAutomationInvalid               = "automation_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
@@ -758,6 +772,13 @@ const (
 	// CodeBeforeCheckpointFailed identifies an application callback that
 	// rejected a terminal init snapshot, distinct from storage or VM failures.
 	CodeBeforeCheckpointFailed = "before_checkpoint_failed"
+	// CodeDevSourceDiverged (ADR-740) is vmmd's refusal to snapshot an
+	// instance that was served a developer live patch. The VM is destroyed
+	// instead, and the next wake restores the unpatched artifact.
+	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
+	// one developer environment.
+	CodeDevDebugSessionLimit = "dev_debug_session_limit"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1877,12 +1898,12 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -1941,7 +1962,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
@@ -1951,7 +1972,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
 	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
@@ -2389,6 +2410,22 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		"Developer environment limit reached",
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrPlanLimitDeveloperLease is returned when a developer session requests a
+// lease longer than the plan's `gregale dev --ttl` ceiling. Limit and observed
+// values are whole hours; the observed value rounds up so it always exceeds
+// the limit it is compared with.
+func ErrPlanLimitDeveloperLease(l Limits, requestedSeconds int64) *Problem {
+	observedHours := requestedSeconds / 3600
+	if requestedSeconds%3600 != 0 {
+		observedHours++
+	}
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperLease,
+		"Developer environment lease over plan limit",
+		fmt.Sprintf("%s plan allows a developer environment lease of at most %dh; requested %dh. Choose a shorter --ttl.", l.Plan, l.DeveloperLeaseMaxHours, observedHours)).
+		WithLimit(int64(l.DeveloperLeaseMaxHours), observedHours).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 

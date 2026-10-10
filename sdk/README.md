@@ -1,5 +1,5 @@
 
-Isolated restore validation (ADR-854, default off) returns `bundle_sha256` and
+Isolated restore validation (ADR-944, default off) returns `bundle_sha256` and
 `isolation: "networkless"` from application validation. Copy the digest into
 `validation_bundle_sha256` on restore alongside `validation_deployment_id`.
 Operators must register a separate deployment-bound, secret-free validator bundle

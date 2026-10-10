@@ -196,6 +196,45 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_plan_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_plan_assignments",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_plans",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_requests_per_minute",
+      "max_units_per_month",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "api_consumer_rate_cards",
     "columns": [
       "account_id",
@@ -204,10 +243,27 @@
       "currency",
       "effective_from",
       "id",
+      "included_units_per_month",
+      "plan_id",
       "price_millicents_per_unit",
+      "route_weights",
+      "tiers",
       "unit"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "consumer_key",
+      "route",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_usage_events",
@@ -274,6 +330,7 @@
       "period_end",
       "period_start",
       "priced",
+      "revision",
       "status",
       "unpriced_units"
     ],
@@ -1274,6 +1331,7 @@
       "builder_node_id",
       "buildkit_version",
       "commit_sha",
+      "dev_patch",
       "finished_at",
       "framework_version",
       "id",
@@ -2423,6 +2481,36 @@
     "kind": "operational"
   },
   {
+    "table": "dev_source_manifests",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "manifest",
+      "source_root"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "dev_source_patches",
+    "columns": [
+      "app_id",
+      "applied_at",
+      "apply_error",
+      "apply_ms",
+      "archive",
+      "base_deployment_id",
+      "created_at",
+      "deleted",
+      "digest",
+      "expires_at",
+      "generation",
+      "id",
+      "image_dir"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "developer_sync_history",
     "columns": [
       "app_id",
@@ -2920,6 +3008,22 @@
     "kind": "operational"
   },
   {
+    "table": "event_recovery_execution_results",
+    "columns": [
+      "attempts",
+      "completed_at",
+      "evidence_source",
+      "job_id",
+      "position",
+      "recorded_at",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_history",
     "columns": [
       "action",
@@ -2968,12 +3072,18 @@
       "capacity_wait_started_at",
       "completed_at",
       "created_at",
+      "execution_finished_at",
+      "execution_notification_captured",
+      "execution_notification_next_at",
       "expires_at",
       "id",
       "last_progress_at",
       "next_attempt_at",
+      "notification_receipts",
+      "notification_retry_receipts",
       "paused_at",
       "rate_per_second",
+      "request_id",
       "selection",
       "state",
       "updated_at",
@@ -4547,6 +4657,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_realtime_channel_batches",
+    "columns": [
+      "batch_id",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "first_sequence",
+      "message_count",
+      "payload_hash"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_channel_heads",
     "columns": [
       "channel",
@@ -4562,10 +4685,29 @@
       "channel",
       "created_at",
       "data",
+      "deleted",
       "endpoint_id",
       "idempotency_key",
       "is_binary",
-      "sequence"
+      "message_event",
+      "metadata",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_channel_reducers",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "entities",
+      "entity_expirations",
+      "entity_versions",
+      "next_expiry",
+      "sequence",
+      "updated_at"
     ],
     "kind": "customer_data"
   },
@@ -4620,6 +4762,19 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_channel_snapshots",
+    "columns": [
+      "channel",
+      "data",
+      "endpoint_id",
+      "expires_at",
+      "is_binary",
+      "sequence",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -4628,6 +4783,35 @@
       "lease_token",
       "node_id",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_deliveries",
+    "columns": [
+      "ack_supported",
+      "acknowledged_at",
+      "connection_id",
+      "created_at",
+      "endpoint_id",
+      "message_id",
+      "node_id",
+      "queue_status",
+      "queued_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_receipts",
+    "columns": [
+      "created_at",
+      "dispatch_complete",
+      "dispatch_lease_until",
+      "endpoint_id",
+      "expires_at",
+      "message_id",
+      "payload_fingerprint",
+      "summary"
     ],
     "kind": "operational"
   },
@@ -4664,6 +4848,18 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_durable_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_endpoints",
     "columns": [
       "account_id",
@@ -4690,6 +4886,271 @@
       "max_message_bytes",
       "message_path",
       "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_event_schemas",
+    "columns": [
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_type",
+      "schema",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_inbox_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "gap_reported",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_fallbacks",
+    "columns": [
+      "category",
+      "collapse_key",
+      "deadline",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "message_id",
+      "not_before",
+      "principal",
+      "priority",
+      "sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_heads",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "next_sequence",
+      "oldest_sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_messages",
+    "columns": [
+      "channel",
+      "created_at",
+      "data",
+      "deleted",
+      "endpoint_id",
+      "fallback_after_seconds",
+      "idempotency_key",
+      "is_binary",
+      "message_event",
+      "metadata",
+      "notification_category",
+      "notification_collapse_key",
+      "notification_group_key",
+      "notification_group_label",
+      "notification_not_before",
+      "notification_priority",
+      "notification_ttl_seconds",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_notification_timeline",
+    "columns": [
+      "attempts",
+      "delivery_id",
+      "device",
+      "endpoint_id",
+      "event",
+      "id",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "occurred_at",
+      "principal",
+      "reason",
+      "status_code"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_presence_leases",
+    "columns": [
+      "channel",
+      "connection_id",
+      "endpoint_id",
+      "expires_at",
+      "member_id",
+      "node_id",
+      "principal",
+      "state",
+      "state_updated_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_push_deliveries",
+    "columns": [
+      "attempts",
+      "category",
+      "code",
+      "collapse_key",
+      "created_at",
+      "device",
+      "digest_at",
+      "digest_count",
+      "digest_id",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "hard_expires_at",
+      "id",
+      "lease",
+      "lease_until",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "principal",
+      "priority",
+      "provider",
+      "sequence",
+      "status",
+      "status_code",
+      "updated_at",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_push_devices",
+    "columns": [
+      "device",
+      "enabled",
+      "endpoint_id",
+      "fingerprint",
+      "principal",
+      "provider",
+      "sealed",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_preferences",
+    "columns": [
+      "endpoint_id",
+      "preferences",
+      "principal",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_providers",
+    "columns": [
+      "enabled",
+      "endpoint_id",
+      "provider",
+      "sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_rate_reservations",
+    "columns": [
+      "digest_id",
+      "endpoint_id",
+      "principal",
+      "reserved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_read_progress",
+    "columns": [
+      "endpoint_id",
+      "inbox",
+      "principal",
+      "sequence",
+      "stream",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_schedule_history",
+    "columns": [
+      "attempts",
+      "channel",
+      "completed_occurrences",
+      "cycle_attempts",
+      "deliver_at",
+      "endpoint_id",
+      "event",
+      "failure_code",
+      "next_attempt_at",
+      "occurred_at",
+      "occurrence",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_schedules",
+    "columns": [
+      "attempts",
+      "backoff_seconds",
+      "channel",
+      "completed_occurrences",
+      "conditions",
+      "created_at",
+      "cycle_attempts",
+      "data",
+      "deliver_at",
+      "end_at",
+      "endpoint_id",
+      "initial_deliver_at",
+      "interval_seconds",
+      "is_binary",
+      "last_attempt_at",
+      "last_error",
+      "max_attempts",
+      "max_occurrences",
+      "metadata",
+      "next_attempt_at",
+      "occurrence",
+      "on_condition_failure",
+      "schedule_group",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "updated_at",
+      "version"
     ],
     "kind": "configuration"
   },
@@ -7424,6 +7885,7 @@
       "last_deployment_id",
       "last_healthy_deployment",
       "next_check_at",
+      "on_violation",
       "revision",
       "routes",
       "updated_at"
@@ -7440,6 +7902,30 @@
       "idempotency_key",
       "receipt",
       "request_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_observations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "deployment_id",
+      "method",
+      "path",
+      "requests",
+      "server_errors",
+      "unauthenticated",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_probe_rounds",
+    "columns": [
+      "app_id",
+      "claimed_at",
+      "window_start"
     ],
     "kind": "operational"
   },
@@ -8401,10 +8887,75 @@
     ]
   },
   {
+    "table": "workflow_automation_failure_guards",
+    "columns": [
+      "app_id",
+      "generation",
+      "monitoring_since",
+      "name",
+      "paused_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_history",
+    "columns": [
+      "actor_account_id",
+      "app_id",
+      "completed_runs",
+      "failures",
+      "generation",
+      "id",
+      "name",
+      "policy_version",
+      "reason",
+      "recorded_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "min_completed_runs",
+      "name",
+      "version",
+      "window_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_publish_policies",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "mode",
+      "version"
+    ]
+  },
+  {
+    "table": "workflow_automation_publish_receipts",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "api_key_id",
+      "app_id",
+      "evidence",
+      "expires_at",
+      "name",
+      "policy_version",
+      "token_hash"
+    ]
+  },
+  {
     "table": "workflow_automation_revisions",
     "kind": "configuration",
     "columns": [
       "app_id",
+      "check_evidence",
       "definition",
       "legacy_snapshot",
       "name",

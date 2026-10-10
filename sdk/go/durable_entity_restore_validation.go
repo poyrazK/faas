@@ -1,4 +1,4 @@
-// ADR-853: verdict-only pure application validation; no transition builder.
+// ADR-943: verdict-only pure application validation; no transition builder.
 package faas
 
 import (

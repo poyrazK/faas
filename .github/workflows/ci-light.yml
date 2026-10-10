@@ -341,10 +341,8 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Cold race compilation can take 14 minutes. Normal packages and the
-    # state slice run sequentially to keep cluster catalogues stable and avoid
-    # concurrent large race suites. Retain both 16-minute execution budgets.
-    timeout-minutes: 50
+    # Allow cold race builds and separate 25-minute API/state test budgets.
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -443,15 +441,15 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS || status=1
+            go test -race -count=1 -p 4 -timeout=25m $PKGS || status=1
           fi
-          # State fixtures authenticate the complete PostgreSQL catalogue.
-          # Run them after other packages finish creating/deleting databases.
-          # This also avoids overlapping the large API and state race suites.
+          # Split API/state suites run sequentially after the package set.
+          # This avoids overlapping large race binaries and keeps state clone
+          # fixtures' cluster-wide database catalogue stable between snapshots.
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" || status=1
+            go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

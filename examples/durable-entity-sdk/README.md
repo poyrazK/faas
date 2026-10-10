@@ -57,7 +57,7 @@ Deploy schema-aware readers/writers at the existing schema before enabling an
 upgrade. An old handler that ignores this SDK contract is not fenced by schema
 metadata and must stop before newer envelopes are written. After an upgrade,
 rollbacks must retain support for the committed schema. See
-[ADR-849](../../docs/adr/849-durable-entity-application-schema-migrations.md).
+[ADR-939](../../docs/adr/939-durable-entity-application-schema-migrations.md).
 
 ### Pure restore validation
 
@@ -67,4 +67,4 @@ Mount it separately from the normal business handler before an operator enables
 application validation. It checks namespace, exact current schema and counter
 invariants without I/O, migration or a transition. Keep the route private using
 the same platform routing/authentication boundary; decoding an envelope is not
-public-route authentication. See ADR-853 for the owner validation/restore flow.
+public-route authentication. See ADR-943 for the owner validation/restore flow.

@@ -144,7 +144,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if req.Enabled && (!owner.Account.Plan.DebugTelemetryEnabled() || !owner.Account.MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.OnViolation(c.OnViolation) == routemonitor.OnViolation(req.OnViolation) && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, tx.Commit(ctx)
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -165,7 +165,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if err != nil {
 		return c, fmt.Errorf("encode monitor routes: %w", err)
 	}
-	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body, CustomerGroupBy: req.CustomerGroupBy}); err != nil {
+	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body, CustomerGroupBy: req.CustomerGroupBy, OnViolation: routemonitor.OnViolation(req.OnViolation)}); err != nil {
 		return c, fmt.Errorf("write monitor config: %w", err)
 	}
 	c, err = pgRouteMonitorConfig(ctx, tx, accountID, appID)
@@ -238,6 +238,11 @@ func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 		}
 	}
 	routemonitor.Evaluate(&r, unavailable)
+	if unavailable == "" && r.DeploymentID != "" {
+		if err := pgPooledRouteMonitor(ctx, db, owner.Account.ID, &r); err != nil {
+			return r, recovery, nil, err
+		}
+	}
 	if c.CustomerGroupBy == "" {
 		recovery = emptyRouteMonitorRecoveryState()
 	} else if r.DeploymentID != "" {
@@ -490,5 +495,46 @@ func (s *PgStore) DeferRouteMonitor(ctx context.Context, t RouteMonitorTarget) e
 	if err != nil {
 		return fmt.Errorf("defer failed route monitor: %w", err)
 	}
+	return nil
+}
+
+// pgPooledRouteMonitor reads pooled_windows only for routes whose one-minute
+// windows were sparse, then re-evaluates with unchanged budgets (ADR-846).
+// One-minute windows and customer cohorts stay as evaluated.
+func pgPooledRouteMonitor(ctx context.Context, db sqlc.DBTX, accountID string, r *api.RouteMonitorReport) error {
+	windows, ok := routemonitor.PooledWindows(r.ObservationAnchor, r.CheckedAt)
+	if !ok {
+		return nil
+	}
+	gate := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
+	health := api.RouteHealthReport{AppID: r.AppID, DeploymentID: r.DeploymentID, StableDeploymentID: r.DeploymentID, CheckedAt: r.CheckedAt, Routes: []api.RouteHealthFinding{}}
+	healthWindows := make([]api.RouteHealthWindowEvidence, 0, len(windows))
+	for _, w := range windows {
+		healthWindows = append(healthWindows, api.RouteHealthWindowEvidence{Start: w.Start, End: w.End})
+	}
+	targets := []int{}
+	for i, f := range r.Routes {
+		if !routemonitor.NeedsPooledEvidence(f) {
+			continue
+		}
+		gate.Routes = append(gate.Routes, api.RouteHealthRoute{Method: f.Route.Method, Path: f.Route.Path, MaxP95MS: f.Route.MaxP95MS})
+		health.Routes = append(health.Routes, api.RouteHealthFinding{Method: f.Route.Method, Path: f.Route.Path, MaxP95MS: f.Route.MaxP95MS, Windows: append([]api.RouteHealthWindowEvidence(nil), healthWindows...)})
+		targets = append(targets, i)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	// Passing the same ID reads one population. Only the candidate counts are used.
+	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, gate, &health, api.RouteHealthInvestigationSelection{}, healthWindows); err != nil {
+		return err
+	}
+	for k, i := range targets {
+		pooled := append([]api.RouteMonitorWindow(nil), windows...)
+		for j, w := range health.Routes[k].Windows {
+			pooled[j].Observed = w.Candidate
+		}
+		r.Routes[i].PooledWindows = pooled
+	}
+	routemonitor.Evaluate(r, "")
 	return nil
 }

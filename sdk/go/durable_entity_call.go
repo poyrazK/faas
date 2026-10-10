@@ -1,4 +1,4 @@
-// ADR-848: typed, pure guest transitions.
+// ADR-938: typed, pure guest transitions.
 package faas
 
 import (

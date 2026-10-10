@@ -1,4 +1,4 @@
-// ADR-849: explicit application-state upgrades inside pure transitions.
+// ADR-939: explicit application-state upgrades inside pure transitions.
 package faas
 
 import (

@@ -60,6 +60,14 @@ type realtimeNodeRetainedPublishStatus interface {
 	PublishRetainedWithStatus(context.Context, string, string, realtime.Message, int64) (realtime.PublishStatus, error)
 }
 
+type realtimeNodeEphemeralPublisher interface {
+	BroadcastEphemeral(context.Context, string, string, realtime.EphemeralFrame) error
+}
+
+type realtimeNodePrincipalSender interface {
+	SendToPrincipal(context.Context, string, api.ManagedRealtimePrincipalMessageRequest, realtime.Message) (realtime.PrincipalSendStatus, error)
+}
+
 type localRealtimeNodeOperator struct {
 	owner  realtimeOwner
 	client *realtime.Client
@@ -106,6 +114,12 @@ func (o localRealtimeNodeOperator) PublishRetainedWithStatus(ctx context.Context
 		}, err
 	}
 	return o.PublishWithStatus(ctx, endpointID, channel, message)
+}
+func (o localRealtimeNodeOperator) BroadcastEphemeral(ctx context.Context, endpointID, channel string, frame realtime.EphemeralFrame) error {
+	return o.client.BroadcastEphemeral(ctx, endpointID, channel, frame)
+}
+func (o localRealtimeNodeOperator) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message realtime.Message) (realtime.PrincipalSendStatus, error) {
+	return o.client.SendToPrincipal(ctx, endpointID, request, message)
 }
 func (o localRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
@@ -167,6 +181,12 @@ func (o remoteRealtimeNodeOperator) PublishRetainedWithStatus(ctx context.Contex
 		return o.client.PublishWithStatus(ctx, endpointID, channel, message)
 	}
 	return status, err
+}
+func (o remoteRealtimeNodeOperator) BroadcastEphemeral(ctx context.Context, endpointID, channel string, frame realtime.EphemeralFrame) error {
+	return o.client.BroadcastEphemeral(ctx, endpointID, channel, frame)
+}
+func (o remoteRealtimeNodeOperator) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message realtime.Message) (realtime.PrincipalSendStatus, error) {
+	return o.client.SendToPrincipal(ctx, endpointID, request, message)
 }
 func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
@@ -580,6 +600,96 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 	return result.Queued, err
 }
 
+// SendToPrincipal fans a live-only message to each active node, where the
+// local manager matches verified principals and queues messages to sockets.
+func (o *leasedRealtimeOwner) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message realtime.Message) (api.ManagedRealtimePrincipalSendResponse, error) {
+	result := api.ManagedRealtimePrincipalSendResponse{MessageID: request.MessageID, ReceiptRequested: request.RequestReceipt}
+	if err := api.ValidateRealtimePrincipal(request.Principal); err != nil {
+		return result, err
+	}
+	if o.nodes == nil {
+		return result, errManagedRealtimeOwnerUnavailable
+	}
+	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	if err != nil {
+		return result, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	if len(nodes) == 0 {
+		return result, errManagedRealtimeOwnerUnavailable
+	}
+	type sendResult struct {
+		attempted bool
+		status    realtime.PrincipalSendStatus
+		err       error
+	}
+	results := make([]sendResult, len(nodes))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(len(nodes), maxConcurrentRealtimePublishes) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				results[index].attempted = true
+				if err := ctx.Err(); err != nil {
+					results[index].err = err
+					continue
+				}
+				op, err := o.nodeOperator(nodes[index])
+				if err == nil {
+					var sender realtimeNodePrincipalSender
+					sender, _ = op.(realtimeNodePrincipalSender)
+					if sender == nil {
+						err = errors.New("realtime node does not support principal delivery")
+					} else {
+						results[index].status, err = sender.SendToPrincipal(ctx, endpointID, request, message)
+					}
+				}
+				results[index].err = err
+			}
+		}()
+	}
+dispatch:
+	for index := range nodes {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- index:
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	var lastErr error
+	for _, outcome := range results {
+		if !outcome.attempted {
+			result.NodesUnavailable++
+			continue
+		}
+		if outcome.err != nil {
+			result.NodesUnavailable++
+			lastErr = outcome.err
+			continue
+		}
+		result.NodesQueried++
+		result.Recipients += outcome.status.Recipients
+		result.Queued += outcome.status.Queued
+		result.Unsupported += outcome.status.Unsupported
+		result.QueueFull += outcome.status.QueueFull
+		result.Failed += outcome.status.Failed
+	}
+	result.Partial = result.NodesUnavailable > 0 || result.Unsupported > 0 || result.QueueFull > 0 || result.Failed > 0
+	if result.NodesQueried > 0 {
+		return result, nil
+	}
+	if ctx.Err() != nil {
+		lastErr = ctx.Err()
+	}
+	if lastErr == nil {
+		lastErr = errManagedRealtimeOwnerUnavailable
+	}
+	return result, fmt.Errorf("%w: %w", errManagedRealtimeOwnerUnavailable, lastErr)
+}
+
 // PublishWithStatus reports partial fleet delivery. A successful node may
 // have queued messages even when another is unavailable, so returning only
 // an error would invite duplicate sends on a blind retry.
@@ -635,6 +745,90 @@ func (o *leasedRealtimeOwner) PublishRetainedWithStatus(ctx context.Context, end
 		return api.ManagedRealtimePublishResponse{NodesUnavailable: 1, Partial: true}, errManagedRealtimeOwnerUnavailable
 	}
 	return o.publishNodesWithStatus(ctx, nodes, endpointID, channel, message, sequence, started)
+}
+
+// RelayEphemeral routes a transient event to the current channel subscriber
+// nodes, excluding the node that already delivered the local copy.
+func (o *leasedRealtimeOwner) RelayEphemeral(ctx context.Context, originNodeID, endpointID, channel string, frame realtime.EphemeralFrame) error {
+	if o.nodes == nil || !realtime.ValidateChannel(channel) || !realtime.ValidateEphemeralFrame(frame) {
+		return errManagedRealtimeOwnerUnavailable
+	}
+	nodes, noSubscribers, err := o.publishTargetNodes(ctx, endpointID, channel)
+	if frame.Type == "read_receipt" && frame.Inbox {
+		nodes, err = o.nodes.ActiveComputeNodes(ctx)
+		noSubscribers = false
+	}
+	if err != nil {
+		return fmt.Errorf("%w: resolve ephemeral targets: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	if noSubscribers {
+		return nil
+	}
+	targets := make([]state.ComputeNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node.ID != originNodeID {
+			targets = append(targets, node)
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	results := make([]error, len(targets))
+	attempted := make([]bool, len(targets))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(len(targets), maxConcurrentRealtimePublishes) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if err := ctx.Err(); err != nil {
+					results[index] = err
+					continue
+				}
+				op, err := o.nodeOperator(targets[index])
+				if err == nil {
+					publisher, ok := op.(realtimeNodeEphemeralPublisher)
+					if !ok {
+						err = errors.New("realtime node does not support ephemeral delivery")
+					} else {
+						err = publisher.BroadcastEphemeral(ctx, endpointID, channel, frame)
+					}
+				}
+				results[index] = err
+			}
+		}()
+	}
+dispatch:
+	for index := range targets {
+		select {
+		case <-ctx.Done():
+			for remaining := index; remaining < len(targets); remaining++ {
+				results[remaining] = ctx.Err()
+			}
+			break dispatch
+		case jobs <- index:
+			attempted[index] = true
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	var failures int
+	var lastErr error
+	for index, result := range results {
+		if !attempted[index] && result == nil {
+			result = context.Canceled
+		}
+		if result != nil {
+			failures++
+			lastErr = result
+		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("realtime: ephemeral event delivery failed on %d of %d nodes: %w", failures, len(targets), lastErr)
+	}
+	return nil
 }
 
 func (o *leasedRealtimeOwner) publishNodesWithStatus(ctx context.Context, nodes []state.ComputeNode, endpointID, channel string, message realtime.Message, retainedSequence int64, started time.Time) (api.ManagedRealtimePublishResponse, error) {

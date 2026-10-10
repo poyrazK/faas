@@ -243,6 +243,10 @@ func TestEnginePark_EmitsFailedWithClosedReason(t *testing.T) {
 		{name: "callback rejected", snapshotErr: api.NewProblem(422, api.CodeBeforeCheckpointFailed,
 			"Before checkpoint callback failed", "private callback response"), wantReason: api.CodeBeforeCheckpointFailed},
 		{name: "other snapshot error", snapshotErr: errors.New("private snapshot path"), wantReason: "snapshot_failed"},
+		// ADR-740: vmmd destroyed a live-patched instance instead of
+		// snapshotting it; the park closes with the expected reason.
+		{name: "patched developer instance", snapshotErr: api.NewProblem(409, api.CodeDevSourceDiverged,
+			"Instance not snapshotted", "served a developer live patch"), wantReason: api.CodeDevSourceDiverged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

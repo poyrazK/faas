@@ -138,61 +138,71 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	productionLifecycleHistory      []api.RouteLifecycleHistoryEntry
-	nextProductionLifecycleReviewID int64
-	productionLifecycleDecisions    map[string]api.RouteGateDecision
-	lifecycleApprovalConfigurations map[string]string
-	lifecycleApprovalSuccessors     map[string]string
-	lifecycleRecovery               bool
-	routeLifecycleApprovals         map[string]api.RouteLifecycleApproval
-	routeRemovalPolicies            map[string]api.RouteRemovalPolicy
+	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
+	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
+	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
+	managedRealtimeScheduleHistory       map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
+	managedRealtimeEventSchemas          map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
+	managedRealtimeBatches               map[managedRealtimeBatchKey]managedRealtimeBatchRecord
+	managedRealtimeSnapshots             map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
+	realtimeNotificationTimeline         map[string][]api.ManagedRealtimeNotificationTimelineEvent
+	realtimeNotificationTimelineSequence int64
+	realtimePushRateReservations         map[string]map[string]time.Time
+	deploymentDependencyGates            map[string]DeploymentDependencyGate
+	invocationAttemptHistory             map[int64]retainedInvocationAttempt
+	nextInvocationAttemptID              int64
+	checkedRollbacks                     map[string]api.RollbackOperation
+	alertRollbacks                       map[string]api.AlertRollback
+	alertHistoricalClaims                map[string]string
+	recoveryPredecessors                 map[string]string
+	bindingReleasePolicies               map[bindingReleasePolicyKey]api.BindingReleasePolicy
+	bindingReleasePolicyHistory          []api.BindingReleasePolicy
+	operationData                        *operationMemory
+	operationCodePins                    map[string]time.Time
+	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners            map[string]environmentExternalFieldOwner
+	environmentGitOps                    map[string]*environmentGitOpsMemory
+	financialEvidence                    []FinancialUsageRecord
+	financialSamplingWindows             map[time.Time]financialSamplingWindow
+	financialNextSequence                int64
+	financialPrices                      map[string]FinancialPriceSnapshot
+	financialBudgets                     map[string]FinancialBudget
+	financialBudgetRevisions             map[string][]FinancialBudgetRevision
+	financialRetainedFrom                time.Time
+	exclusivePolicies                    map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings             map[string]ExclusiveTriggerBinding
+	exclusiveKeys                        map[string]exclusiveKey
+	exclusiveOperations                  map[string]ExclusiveOperation
+	exclusiveEffects                     map[string][]exclusiveStoredEffect
+	exclusiveNow                         func() time.Time
+	exclusiveSubmissions                 map[string]string
+	capacityInstanceResources            map[string]capacityResources
+	serviceCapacityProtection            bool
+	serviceRecovery                      map[string]ServiceRecovery
+	devBridgeSessions                    map[string]devbridge.Session
+	devBridgeWebhookReplays              map[string]devbridge.WebhookReplay
+	featureFlagVersions                  map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil          time.Time
+	requestAuditEvents                   map[string]RequestAuditRecord
+	discoveredAPIRoutes                  map[string]DiscoveredAPIRoute
+	discoveryReceipts                    map[string]struct{}
+	revisionPins                         map[string]time.Time
+	imagePreparations                    map[string]ImagePreparation
+	deploymentActivationMu               sync.Mutex
+	deploymentActivationLocks            map[string]*deploymentActivationLock
+	productionLifecycleHistory           []api.RouteLifecycleHistoryEntry
+	nextProductionLifecycleReviewID      int64
+	productionLifecycleDecisions         map[string]api.RouteGateDecision
+	lifecycleApprovalConfigurations      map[string]string
+	lifecycleApprovalSuccessors          map[string]string
+	lifecycleRecovery                    bool
+	routeLifecycleApprovals              map[string]api.RouteLifecycleApproval
+	routeRemovalPolicies                 map[string]api.RouteRemovalPolicy
 
-	eventCircuitBreakers        map[string]*eventCircuitRecord
-	eventSubscriptionControls   map[string]*memEventSubscriptionControl
-	eventRecoveryJobs           map[string]*memEventRecoveryJob
-	deploymentDependencyGates   map[string]DeploymentDependencyGate
-	invocationAttemptHistory    map[int64]retainedInvocationAttempt
-	nextInvocationAttemptID     int64
-	checkedRollbacks            map[string]api.RollbackOperation
-	alertRollbacks              map[string]api.AlertRollback
-	alertHistoricalClaims       map[string]string
-	recoveryPredecessors        map[string]string
-	bindingReleasePolicies      map[bindingReleasePolicyKey]api.BindingReleasePolicy
-	bindingReleasePolicyHistory []api.BindingReleasePolicy
-	operationData               *operationMemory
-	operationCodePins           map[string]time.Time
-	workflowCodePins            map[string]time.Time
-	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
-	environmentExternalOwners   map[string]environmentExternalFieldOwner
-	environmentGitOps           map[string]*environmentGitOpsMemory
-	financialEvidence           []FinancialUsageRecord
-	financialSamplingWindows    map[time.Time]financialSamplingWindow
-	financialNextSequence       int64
-	financialPrices             map[string]FinancialPriceSnapshot
-	financialBudgets            map[string]FinancialBudget
-	financialBudgetRevisions    map[string][]FinancialBudgetRevision
-	financialRetainedFrom       time.Time
-	exclusivePolicies           map[string]ExclusiveWorkPolicy
-	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
-	exclusiveKeys               map[string]exclusiveKey
-	exclusiveOperations         map[string]ExclusiveOperation
-	exclusiveEffects            map[string][]exclusiveStoredEffect
-	exclusiveNow                func() time.Time
-	exclusiveSubmissions        map[string]string
-	capacityInstanceResources   map[string]capacityResources
-	serviceCapacityProtection   bool
-	serviceRecovery             map[string]ServiceRecovery
-	devBridgeSessions           map[string]devbridge.Session
-	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
-	featureFlagVersions         map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil time.Time
-	requestAuditEvents          map[string]RequestAuditRecord
-	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
-	discoveryReceipts           map[string]struct{}
-	revisionPins                map[string]time.Time
-	imagePreparations           map[string]ImagePreparation
-	deploymentActivationMu      sync.Mutex
-	deploymentActivationLocks   map[string]*deploymentActivationLock
+	eventCircuitBreakers      map[string]*eventCircuitRecord
+	eventSubscriptionControls map[string]*memEventSubscriptionControl
+	eventRecoveryJobs         map[string]*memEventRecoveryJob
+	workflowCodePins          map[string]time.Time
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -364,8 +374,13 @@ type MemStore struct {
 	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
 	// overwrites the same row instead of doubling.
 	buildProvenance map[string]BuildProvenance
-	domains         map[string]CustomDomain
-	defaultDomains  map[string]string
+	// ADR-740 developer live patches; allocated on first use.
+	devSourceManifests   map[string]DevSourceManifest
+	devSourceManifestSeq int64
+	devSourcePatches     []DevSourcePatch
+	devSourcePatchSeq    int64
+	domains              map[string]CustomDomain
+	defaultDomains       map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
@@ -420,6 +435,11 @@ type MemStore struct {
 	workflowSchedules           map[string]WorkflowScheduleCursor
 	workflowTenantSchedules     map[string]WorkflowScheduleCursor
 	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
+	automationFailurePolicies   map[string]api.AutomationFailurePolicy
+	automationFailureGuards     map[string]automationFailureGuard
+	automationFailureHistory    map[string][]api.AutomationFailureTransition
+	automationPublishPolicies   map[string]api.AutomationPublishPolicy
+	automationPublishReceipts   map[string]automationPublishReceipt
 	automationVersion           int64
 	automations                 map[string]Automation
 	automationRevisions         map[string][]AutomationRevision
@@ -475,6 +495,18 @@ type MemStore struct {
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
 	managedRealtimeHistory          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState
+	managedRealtimeDurableCursors   map[managedRealtimeDurableCursorKey]managedRealtimeDurableCursorState
+	managedRealtimePresence         map[managedRealtimePresenceKey]ManagedRealtimePresenceLease
+	managedRealtimeReadProgress     map[managedRealtimeReadKey]managedRealtimeReadMarker
+	managedRealtimeInboxFallbacks   map[managedRealtimeFallbackKey]managedRealtimeFallback
+	managedRealtimePushProviders    map[managedRealtimePushKey]ManagedRealtimePushProvider
+	managedRealtimePushDevices      map[managedRealtimeDurableCursorKey]ManagedRealtimePushDevice
+	managedRealtimePushDeliveries   map[string]ManagedRealtimePushDelivery
+	managedRealtimePushVersion      int64
+	managedRealtimePushPreferences  map[managedRealtimeHistoryKey]api.RealtimeNotificationPreferences
+	managedRealtimeInboxStreams     map[managedRealtimeHistoryKey]*managedRealtimeInboxStreamState
+	managedRealtimeInboxCursors     map[managedRealtimeDurableCursorKey]managedRealtimeDurableCursorState
+	managedRealtimeDirectReceipts   map[managedRealtimeDirectMessageKey]*managedRealtimeDirectMessageState
 	realtimeChannelRoutes           map[ManagedRealtimeChannelRoute]struct{}
 	realtimeChannelRouteCounts      map[string]int
 	realtimeChannelRouteOverflow    map[string]managedRealtimeChannelRouteOverflowState
@@ -528,11 +560,14 @@ type MemStore struct {
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
-	routeHealthGates          map[string]api.RouteHealthGate
-	routeHealthHistory        map[string][]routeHealthStoredDecision
-	routeHealthNotifications  map[string]routeHealthNotificationState
-	profilePeriodicMonitors   map[string]*memPeriodicMonitor
-	profileAlertStates        map[string]profileAlertState
+	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
+	routeProbeOnce           sync.Once
+	routeProbeData           *memRouteProbes
+	routeHealthGates         map[string]api.RouteHealthGate
+	routeHealthHistory       map[string][]routeHealthStoredDecision
+	routeHealthNotifications map[string]routeHealthNotificationState
+	profilePeriodicMonitors  map[string]*memPeriodicMonitor
+	profileAlertStates       map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -782,9 +817,18 @@ type MemStore struct {
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
 	// committed gRPC batch after a response loss.
-	apiConsumerUsage       map[string]APIConsumerUsageBucket
-	platformTenantUsage    map[string]APIConsumerUsageBucket
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	apiConsumerUsage      map[string]APIConsumerUsageBucket
+	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	platformTenantUsage   map[string]APIConsumerUsageBucket
+	// Consumer plans (ADR-847): plans by ID, assignments by ID, and admission
+	// counters by consumer ID.
+	apiConsumerPlans           map[string]APIConsumerPlan
+	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
+	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
+	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
+	// no request telemetry of its own (ADR-848).
+	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
+	apiConsumerUsageEvents    map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -1309,6 +1353,17 @@ func NewMemStore() *MemStore {
 		queueBindings:                   map[string]QueueBinding{},
 		managedRealtimeEndpoints:        map[string]ManagedRealtimeEndpoint{},
 		managedRealtimeHistory:          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState{},
+		managedRealtimeDurableCursors:   map[managedRealtimeDurableCursorKey]managedRealtimeDurableCursorState{},
+		managedRealtimePresence:         map[managedRealtimePresenceKey]ManagedRealtimePresenceLease{},
+		managedRealtimeReadProgress:     map[managedRealtimeReadKey]managedRealtimeReadMarker{},
+		managedRealtimeInboxFallbacks:   map[managedRealtimeFallbackKey]managedRealtimeFallback{},
+		managedRealtimePushProviders:    map[managedRealtimePushKey]ManagedRealtimePushProvider{},
+		managedRealtimePushDevices:      map[managedRealtimeDurableCursorKey]ManagedRealtimePushDevice{},
+		managedRealtimePushDeliveries:   map[string]ManagedRealtimePushDelivery{},
+		managedRealtimePushPreferences:  map[managedRealtimeHistoryKey]api.RealtimeNotificationPreferences{},
+		managedRealtimeInboxStreams:     map[managedRealtimeHistoryKey]*managedRealtimeInboxStreamState{},
+		managedRealtimeInboxCursors:     map[managedRealtimeDurableCursorKey]managedRealtimeDurableCursorState{},
+		managedRealtimeDirectReceipts:   map[managedRealtimeDirectMessageKey]*managedRealtimeDirectMessageState{},
 		realtimeChannelRoutes:           map[ManagedRealtimeChannelRoute]struct{}{},
 		realtimeChannelRouteCounts:      map[string]int{},
 		realtimeChannelRouteOverflow:    map[string]managedRealtimeChannelRouteOverflowState{},
@@ -1414,7 +1469,11 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
+		apiConsumerPlans:                  map[string]APIConsumerPlan{},
+		apiConsumerPlanAssignments:        map[string]APIConsumerPlanAssignment{},
+		apiConsumerPlanAdmissions:         map[string]planAdmissionCounter{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},
 		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},
@@ -25851,7 +25910,8 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if _, ok := m.invocations[id]; ok {
+		if inv, ok := m.invocations[id]; ok {
+			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

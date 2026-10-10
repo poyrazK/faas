@@ -14,6 +14,7 @@ import (
 // Status reads never submit, reselect or retry deployment actions.
 func cmdAlertActions(args []string) int {
 	fs := newFlagSet("alerts actions", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose and inspect an automatic rollback action")
 	slug := fs.String("app", "", "app slug (required)")
 	fire := fs.String("fire", "", "production alert fire UUID (optional)")
 	wait := fs.Bool("wait", false, "wait for the selected alert action to complete")
@@ -25,6 +26,26 @@ func cmdAlertActions(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" && f.Name != "timeout" && f.Name != "poll-interval" {
+				invalid = true
+			}
+		})
+		if invalid || *timeout <= 0 || *interval <= 0 {
+			return printErr("Invalid interactive action flags", fmt.Errorf("use --interactive with optional --app, --timeout and --poll-interval"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use alerts actions --app APP --fire UUID for scripts"))
+		}
+		app, err := resolveReadAppTarget(*slug)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdAlertActionsInteractive(app, *timeout, *interval)
+	}
+
 	if *slug == "" || *wait && *fire == "" || *timeout <= 0 || *interval <= 0 {
 		PrintUsage(os.Stderr, alertActionsUsage, "alerts")
 		return 1

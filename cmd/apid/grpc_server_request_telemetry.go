@@ -124,6 +124,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 		WindowStart:                          time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
 		RequestCount:                         req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
 		DiscoveredRoute: req.GetDiscoveredRoute(),
+		BillingRoute:    req.GetBillingRoute(),
 	}
 	if req.GetDiscoveredAtUnixMs() != 0 {
 		event.DiscoveredAt = time.UnixMilli(req.GetDiscoveredAtUnixMs()).UTC()

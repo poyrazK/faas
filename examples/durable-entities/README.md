@@ -308,10 +308,10 @@ acceptance and fenced acknowledgement/removal. It remains unqualified and adds
 no customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
 remain pure. The separately gated v2/SDK follow-on is documented in the
 [reservation example](../durable-entity-reservations/README.md) and
-[ADR-844](../../docs/adr/844-durable-entity-guest-outbox-protocol.md).
+[ADR-934](../../docs/adr/934-durable-entity-guest-outbox-protocol.md).
 Relay qualification must precede guest enablement. See
 [ADR-903](../../docs/adr/903-object-storage-entity-outbox-contract.md) and
-[ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md).
+[ADR-933](../../docs/adr/933-durable-entity-outbox-relay.md).
 
 ## Deploy the counter invocation preview
 
@@ -650,6 +650,6 @@ existing webhook delivery history for receiver outcomes after entity handoff.
 Downgrade must preserve pending state/reservations and acceptance receipts while
 any delayed relay can repeat work. Do not drop the new table or remove bucket
 state to resolve uncertainty. Keep bucket lifecycle deletion disabled. See
-[ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md) for the failure and
+[ADR-933](../../docs/adr/933-durable-entity-outbox-relay.md) for the failure and
 upgrade contract. No local tests, live-bucket drills or deployment were run for
 this local implementation.

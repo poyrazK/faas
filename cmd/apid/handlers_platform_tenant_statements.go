@@ -161,6 +161,9 @@ func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
 	case errors.Is(err, billing.ErrNoNewTenantUsage):
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"No tenant usage", "the requested period has no billable tenant-attributed usage"))
+	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Included units need an app statement", "an app rate card with included_units_per_month cannot price a cross-app statement; add a platform tenant rate card or bill through app consumer statements"))
 	case errors.Is(err, billing.ErrTenantUsageRegressed):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Usage coverage conflict", "current usage is below an earlier immutable statement snapshot"))

@@ -1,4 +1,4 @@
-// ADR-853: synchronous pure validator, with no transition or outgoing intents.
+// ADR-943: synchronous pure validator, with no transition or outgoing intents.
 import { DURABLE_ENTITY_MAX_REQUEST_BYTES, DURABLE_ENTITY_MAX_TRANSITION_BYTES, DURABLE_ENTITY_RESTORE_VALIDATION_PROTOCOL_VERSION } from './durable-entity-contract.js';
 import { durableEntityJSON, type DurableEntityIdentity } from './durable-entity-handler.js';
 

@@ -19,10 +19,12 @@ var _ EventRecoveryStore = (*PgStore)(nil)
 var _ EventRecoveryStore = (*MemStore)(nil)
 
 var (
-	ErrEventRecoveryState     = errors.New("event recovery job is completed, cancelled, or expired")
-	ErrEventRecoveryQuery     = errors.New("invalid event recovery request")
-	ErrEventRecoveryQuota     = errors.New("event recovery active-job limit reached")
-	ErrEventRecoverySelection = errors.New("event recovery selection exceeds recipient limit; narrow the filters")
+	ErrEventRecoveryRetryParent     = errors.New("parent must be a completed or cancelled execution recovery")
+	ErrEventRecoveryRequestConflict = errors.New("request_id is already used with a different recovery selection")
+	ErrEventRecoveryState           = errors.New("event recovery job is completed, cancelled, or expired")
+	ErrEventRecoveryQuery           = errors.New("invalid event recovery request")
+	ErrEventRecoveryQuota           = errors.New("event recovery active-job limit reached")
+	ErrEventRecoverySelection       = errors.New("event recovery selection exceeds recipient limit; narrow the filters")
 )
 
 type EventRecoveryStore interface {
@@ -49,6 +51,12 @@ func normalizeEventRecovery(accountID, appID string, req *api.EventRecoveryReque
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrEventRecoveryQuery, err)
 	}
+	if req.ParentJobID != "" {
+		req.ParentJobID = canonicalMemUUID(req.ParentJobID)
+	}
+	if req.RequestID != "" {
+		req.RequestID = canonicalMemUUID(req.RequestID)
+	}
 	if req.RatePerSecond == 0 {
 		req.RatePerSecond = api.EventRecoveryRateDefault
 	}
@@ -63,16 +71,22 @@ func eventRecoveryIDs(accountID, jobID string) error {
 	return nil
 }
 func eventRecoveryCandidates(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, accountID, appID string, req api.EventRecoveryRequest, now time.Time) ([]sqlc.EventRecoveryCandidatesRow, error) {
+	if req.ParentJobID != "" {
+		return eventRecoveryRetryCandidates(ctx, q, db, accountID, appID, req, now)
+	}
 	if req.Mode == "execution" {
 		return eventExecutionRecoveryCandidates(ctx, q, db, accountID, appID, req, now)
 	}
 	return q.EventRecoveryCandidates(ctx, db, sqlc.EventRecoveryCandidatesParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), SubscriptionID: req.SubscriptionID, EventSource: req.EventSource, EventType: req.EventType, FailureCode: req.FailureCode, IncludeNonRetryable: req.IncludeNonRetryable, FailedBefore: pgtypeFromTime(now.Add(-time.Duration(req.MinAgeSeconds) * time.Second)), PageLimit: api.EventRecoveryRecipientsMax + 1})
 }
 func recoveryCandidateItem(row sqlc.EventRecoveryCandidatesRow, position int64) api.EventRecoveryItem {
-	return api.EventRecoveryItem{InvocationID: executionRecoveryInvocationID(row.ExpectedProgress), Position: position, EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SubscriptionID: row.SubscriptionID, FailedAt: timeFromPgtype(row.FailedAt), FailureCode: eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes), Retryable: row.Retryable, State: "pending"}
+	out := api.EventRecoveryItem{InvocationID: executionRecoveryInvocationID(row.ExpectedProgress), Position: position, EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SubscriptionID: row.SubscriptionID, FailedAt: timeFromPgtype(row.FailedAt), FailureCode: eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes), Retryable: row.Retryable, State: "pending"}
+	recoveryItemLineage(&out, row.ExpectedProgress)
+	return out
 }
 func recoveryStoredItem(row sqlc.EventRecoveryItem) api.EventRecoveryItem {
 	out := api.EventRecoveryItem{InvocationID: executionRecoveryInvocationID(row.ExpectedProgress), Position: row.Position, EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SubscriptionID: row.SubscriptionID, FailedAt: timeFromPgtype(row.FailedAt), FailureCode: eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes), Retryable: row.Retryable, State: row.State, Reason: row.Reason}
+	recoveryItemLineage(&out, row.ExpectedProgress)
 	if row.ReplayInvocationID.Valid {
 		out.ReplayInvocationID = uuidString(row.ReplayInvocationID)
 	}
@@ -108,6 +122,9 @@ func (s *PgStore) PreviewEventRecovery(ctx context.Context, accountID, appID str
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
+	if req.ParentJobID != "" && req.RequestID == "" {
+		return api.EventRecoveryJob{}, fmt.Errorf("%w: request_id is required for a child recovery", ErrEventRecoveryQuery)
+	}
 	if err := normalizeEventRecovery(accountID, appID, &req); err != nil {
 		return api.EventRecoveryJob{}, err
 	}
@@ -131,6 +148,13 @@ func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID stri
 	} else if err != nil {
 		return api.EventRecoveryJob{}, err
 	}
+	existing, err := prepareRecoveryRetry(ctx, q, tx, accountID, appID, req)
+	if err != nil {
+		return api.EventRecoveryJob{}, err
+	}
+	if existing != nil {
+		return *existing, tx.Commit(ctx)
+	}
 	active, err := q.EventRecoveryActiveCount(ctx, tx, mustPgUUID(accountID))
 	if err != nil {
 		return api.EventRecoveryJob{}, err
@@ -150,7 +174,7 @@ func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID stri
 	if err != nil {
 		return api.EventRecoveryJob{}, err
 	}
-	id, err := q.EventRecoveryCreate(ctx, tx, sqlc.EventRecoveryCreateParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Selection: selection, RatePerSecond: int32(req.RatePerSecond), NowAt: pgtypeFromTime(now), ExpiresAt: pgtypeFromTime(now.Add(api.EventRecoveryJobLifetime))})
+	id, err := q.EventRecoveryCreate(ctx, tx, sqlc.EventRecoveryCreateParams{RequestID: recoveryRequestUUID(req.RequestID), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Selection: selection, RatePerSecond: int32(req.RatePerSecond), NowAt: pgtypeFromTime(now), ExpiresAt: pgtypeFromTime(now.Add(api.EventRecoveryJobLifetime))})
 	if err != nil {
 		return api.EventRecoveryJob{}, err
 	}
@@ -192,7 +216,7 @@ func getEventRecoveryMetadata(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX
 	return eventRecoveryMetadata(row)
 }
 func eventRecoveryMetadata(row sqlc.EventRecoveryGetRow) (api.EventRecoveryJob, error) {
-	out := api.EventRecoveryJob{RatePerSecond: int(row.RatePerSecond), PausedAt: timestamptzToTimePtr(row.PausedAt), ID: uuidString(row.ID), AppID: uuidString(row.AppID), Coverage: EventRecoveryCoverage, State: row.State, SelectedCount: row.SelectedCount, PendingCount: row.PendingCount, QueuedCount: row.QueuedCount, SkippedCount: row.SkippedCount, CancelledCount: row.CancelledCount, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), ExpiresAt: timeFromPgtype(row.ExpiresAt), CompletedAt: timestamptzToTimePtr(row.CompletedAt)}
+	out := api.EventRecoveryJob{ExecutionFinishedAt: timestamptzToTimePtr(row.ExecutionFinishedAt), RatePerSecond: int(row.RatePerSecond), PausedAt: timestamptzToTimePtr(row.PausedAt), ID: uuidString(row.ID), AppID: uuidString(row.AppID), Coverage: EventRecoveryCoverage, State: row.State, SelectedCount: row.SelectedCount, PendingCount: row.PendingCount, QueuedCount: row.QueuedCount, SkippedCount: row.SkippedCount, CancelledCount: row.CancelledCount, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), ExpiresAt: timeFromPgtype(row.ExpiresAt), CompletedAt: timestamptzToTimePtr(row.CompletedAt)}
 	if err := json.Unmarshal(row.Selection, &out.Selection); err != nil {
 		return api.EventRecoveryJob{}, err
 	}

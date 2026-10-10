@@ -1,8 +1,8 @@
 # Durable entity health and recovery
 
 This local preview adds observations and alert rules; it has not been qualified
-on a native host or live bucket. See [ADR-847](../adr/847-durable-entity-operational-health.md)
-and [the recovery contract](../adr/846-durable-entity-exhausted-work-recovery.md).
+on a native host or live bucket. See [ADR-937](../adr/937-durable-entity-operational-health.md)
+and [the recovery contract](../adr/936-durable-entity-exhausted-work-recovery.md).
 
 ## Enablement and scan cost
 

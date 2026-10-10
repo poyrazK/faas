@@ -10,7 +10,7 @@ confirmation or needs a SQL database, bucket credentials or persistent disk.
 
 The testing agent must first qualify the relay, apply migration
 `20261010010028804_entity_outbox_acceptance.sql`, and complete the schema-6 writer
-upgrade in [ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md). Keep the
+upgrade in [ADR-933](../../docs/adr/933-durable-entity-outbox-relay.md). Keep the
 invocation preview's private backend/bucket placement stable and its explicit
 app allowlist configured. No feature is enabled by this example.
 
@@ -99,7 +99,7 @@ New cases have not been run here. Run durableentity/apid/state and Go SDK checks
 lint/SQL/SDK drift gates using pinned toolchains. Then qualify native guest
 dispatch, GCS failure/restart recovery, actual signed receiver delivery, duplicate
 handling and exhausted-head recovery before enabling either gate. See
-[ADR-844](../../docs/adr/844-durable-entity-guest-outbox-protocol.md).
+[ADR-934](../../docs/adr/934-durable-entity-guest-outbox-protocol.md).
 
 ## Inspect durable entity metadata
 

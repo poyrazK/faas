@@ -104,6 +104,13 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
+	paused, err := queries.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(recipient.AppID), Name: run.WorkflowName})
+	if err != nil {
+		return "", false, err
+	}
+	if paused {
+		return "", false, ErrWorkflowEventTargetUnavailable
+	}
 	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID)})
 	if err != nil {
 		return "", false, err

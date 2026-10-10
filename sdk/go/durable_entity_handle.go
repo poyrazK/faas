@@ -1,4 +1,4 @@
-// ADR-848: scope-bound typed entity clients.
+// ADR-938: scope-bound typed entity clients.
 package faas
 
 import (

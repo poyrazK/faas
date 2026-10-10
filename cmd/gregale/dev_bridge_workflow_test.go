@@ -62,6 +62,8 @@ func TestDevBridgeCommandToLocalProcessToRemoteDependency(t *testing.T) {
 	defer restore()
 	t.Setenv("GREGALE_BRIDGE_HELPER", "1")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	reservation, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -7,8 +7,12 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.event_recovery_execution_health import EventRecoveryExecutionHealth
     from ..models.event_recovery_job_health import EventRecoveryJobHealth
+    from ..models.event_recovery_notifications_health import EventRecoveryNotificationsHealth
 
 
 T = TypeVar("T", bound="EventRecoveryHealth")
@@ -16,7 +20,7 @@ T = TypeVar("T", bound="EventRecoveryHealth")
 
 @_attrs_define
 class EventRecoveryHealth:
-    """Bounded application recovery health summary and sampled actionable jobs."""
+    """Application admission health and bounded unresolved execution health with sampled actionable jobs."""
 
     capacity_wait_warning_seconds: int
     capacity_waiting_jobs: int
@@ -35,6 +39,13 @@ class EventRecoveryHealth:
     """Running jobs with pending work approaching expiry; excludes paused jobs."""
     paused_expiring_jobs: int
     jobs: list[EventRecoveryJobHealth]
+    notifications: EventRecoveryNotificationsHealth | Unset = UNSET
+    """Bounded retained notification candidates, oldest admission completion first. Candidate-set completeness is
+    separate from phase evidence completeness. Counts describe jobs and can overlap; reads do not capture or retry
+    notifications."""
+    execution: EventRecoveryExecutionHealth | Unset = UNSET
+    """Oldest retained terminal admission jobs still missing exact saved execution results. Counts overlap and are
+    lower bounds when counts_complete is false. Reads do not capture results or notifications."""
 
     def to_dict(self) -> dict[str, Any]:
         capacity_wait_warning_seconds = self.capacity_wait_warning_seconds
@@ -66,6 +77,14 @@ class EventRecoveryHealth:
             jobs_item = jobs_item_data.to_dict()
             jobs.append(jobs_item)
 
+        notifications: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.notifications, Unset):
+            notifications = self.notifications.to_dict()
+
+        execution: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.execution, Unset):
+            execution = self.execution.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -85,12 +104,18 @@ class EventRecoveryHealth:
                 "jobs": jobs,
             }
         )
+        if notifications is not UNSET:
+            field_dict["notifications"] = notifications
+        if execution is not UNSET:
+            field_dict["execution"] = execution
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_recovery_execution_health import EventRecoveryExecutionHealth
         from ..models.event_recovery_job_health import EventRecoveryJobHealth
+        from ..models.event_recovery_notifications_health import EventRecoveryNotificationsHealth
 
         d = dict(src_dict)
         capacity_wait_warning_seconds = d.pop("capacity_wait_warning_seconds")
@@ -124,6 +149,20 @@ class EventRecoveryHealth:
 
             jobs.append(jobs_item)
 
+        _notifications = d.pop("notifications", UNSET)
+        notifications: EventRecoveryNotificationsHealth | Unset
+        if isinstance(_notifications, Unset):
+            notifications = UNSET
+        else:
+            notifications = EventRecoveryNotificationsHealth.from_dict(_notifications)
+
+        _execution = d.pop("execution", UNSET)
+        execution: EventRecoveryExecutionHealth | Unset
+        if isinstance(_execution, Unset):
+            execution = UNSET
+        else:
+            execution = EventRecoveryExecutionHealth.from_dict(_execution)
+
         event_recovery_health = cls(
             capacity_wait_warning_seconds=capacity_wait_warning_seconds,
             capacity_waiting_jobs=capacity_waiting_jobs,
@@ -138,6 +177,8 @@ class EventRecoveryHealth:
             expiring_jobs=expiring_jobs,
             paused_expiring_jobs=paused_expiring_jobs,
             jobs=jobs,
+            notifications=notifications,
+            execution=execution,
         )
 
         return event_recovery_health

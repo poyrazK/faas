@@ -11,7 +11,7 @@ export type WebhookAutomationReceiptResponse = {
   provider_event_id: string;
   workflow_name: string;
   status: 'accepted' | 'ignored';
-  ignored_reason?: 'automation_paused' | 'event_filtered' | 'automation_unpublished';
+  ignored_reason?: 'automation_paused' | 'automation_failure_paused' | 'event_filtered' | 'automation_unpublished';
   duplicate: boolean;
   accepted_at: string;
   event_source: string;

@@ -54,7 +54,7 @@ SQL deployment/bucket commit race as a limitation; do not claim it is atomic.
 
 ## Shared validator artifact delivery
 
-Qualify ADR-857 publication/lookup with separate API, imaged and schedd processes.
+Qualify ADR-947 publication/lookup with separate API, imaged and schedd processes.
 Confirm no API restart is required after publishing, conditional creation and read
 integrity on native GCS, no deployment rebinding, identical retries after lost content
 or metadata acknowledgement, and no fallback to a local registry in shared mode.
@@ -67,7 +67,7 @@ are not covered by a universal fence. No tests or live artifact uploads were per
 
 ## Built validators and project copies
 
-Qualify ADR-858's ordinary source build and cache-hit paths with a reviewed
+Qualify ADR-948's ordinary source build and cache-hit paths with a reviewed
 `gregale.validator.json`, selected SourceRoot and consistent builderd artifact settings.
 Missing, duplicate, linked, malformed and oversized descriptors must publish no
 binding; cancellation must not bypass checks. Verify deployment digest/availability

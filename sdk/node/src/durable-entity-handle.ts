@@ -1,4 +1,4 @@
-// ADR-848: scope-bound clients. Uses the existing FaaSClient global configuration.
+// ADR-938: scope-bound clients. Uses the existing FaaSClient global configuration.
 import { InvocationsService } from './generated/services/InvocationsService.js';
 import { inspectDurableEntity, retryDurableEntity } from './durable-entities.js';
 import { durableEntityJSON } from './durable-entity-handler.js';

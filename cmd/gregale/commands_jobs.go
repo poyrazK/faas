@@ -63,7 +63,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|occurrences|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|next|run|runs|occurrences|wait|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -77,12 +77,16 @@ func cmdJobs(args []string) int {
 		return cmdJobsUpdate(args[1:])
 	case subRm:
 		return cmdJobsRm(args[1:])
+	case "next":
+		return cmdJobsNext(args[1:])
 	case "run":
 		return cmdJobsRun(args[1:])
 	case subRuns:
 		return cmdJobsRuns(args[1:])
 	case "occurrences":
 		return cmdJobsOccurrences(args[1:])
+	case "wait":
+		return cmdJobsWait(args[1:])
 	case "cancel":
 		return cmdJobsCancel(args[1:])
 	case "tasks":
@@ -173,6 +177,9 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsAddInteractive()
+	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
@@ -253,6 +260,9 @@ func cmdJobsAdd(args []string) int {
 // posture as `gregale apps info`).
 func cmdJobsInfo(args []string) int {
 	if len(args) != 1 {
+		return cmdJobsInfoWaitArgs(args)
+	}
+	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs info <name>", "jobs")
 		return 1
 	}
@@ -280,6 +290,9 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsUpdateInteractive()
+	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")
@@ -421,6 +434,9 @@ func cmdJobsUpdate(args []string) int {
 // enforces the soft-delete guard via the soft_delete_job_if_no_live
 // _instances stored function (migrations/00576).
 func cmdJobsRm(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRmInteractive()
+	}
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs rm <name>", "jobs")
 		return 1
@@ -447,6 +463,9 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRunInteractive()
+	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
@@ -599,6 +618,9 @@ func cmdJobsRuns(args []string) int {
 }
 
 func cmdJobsOccurrences(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsOccurrencesInteractive()
+	}
 	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "number of occurrence decisions to return (1..200)")
 	before := fs.String("before", "", "occurrence id cursor from the previous page")
@@ -653,6 +675,9 @@ func cmdJobsOccurrences(args []string) int {
 // tasks: the server SIGTERMs via vmmd; the guest's job supervisor
 // handles the 30s grace window before SIGKILL.
 func cmdJobsCancel(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsCancelInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>", "jobs")
 		return 1
@@ -680,6 +705,9 @@ func cmdJobsCancel(args []string) int {
 // Returns a page of tasks 0..N-1 (zero-based). LeaseToken is OMITTED
 // from the wire (internal dispatch primitive).
 func cmdJobsTasks(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsTasksInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs tasks <name> <run-id>", "jobs")
 		return 1
@@ -706,6 +734,9 @@ func cmdJobsTasks(args []string) int {
 // cmdJobsAttempts returns retained terminal outcomes, including earlier
 // attempts whose task projection was subsequently retried.
 func cmdJobsAttempts(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsAttemptsInteractive()
+	}
 	if len(args) != 3 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id> <task-index>", "jobs")
 		return 1
@@ -740,6 +771,9 @@ func cmdJobsAttempts(args []string) int {
 
 // cmdJobsReplayFailed creates a linked run containing unsuccessful inputs.
 func cmdJobsReplayFailed(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsReplayFailedInteractive()
+	}
 	if len(args) != 2 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed <name> <run-id>", "jobs")
 		return 1
@@ -762,6 +796,9 @@ func cmdJobsReplayFailed(args []string) int {
 // cmdJobsArtifactURL verifies a managed result and returns its short-lived
 // signed GET URL together with the expected size and SHA-256.
 func cmdJobsArtifactURL(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsArtifactURLInteractive()
+	}
 	if len(args) != 4 || !jobRunIDPattern.MatchString(args[1]) || args[3] == "" {
 		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>", "jobs")
 		return 1
@@ -792,6 +829,9 @@ func cmdJobsArtifactURL(args []string) int {
 // The server enforces the task state and retry budget; this command only
 // validates the stable positional shape before making the request.
 func cmdJobsRetry(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRetryInteractive()
+	}
 	if len(args) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>", "jobs")
 		return 1
@@ -827,6 +867,11 @@ func cmdJobsRetry(args []string) int {
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func cmdJobsLogs(args []string) int {
+	for _, arg := range args {
+		if arg == "--interactive" || arg == "-interactive" || strings.HasPrefix(arg, "--interactive=") || strings.HasPrefix(arg, "-interactive=") {
+			return cmdJobsLogsInteractiveArgs(args)
+		}
+	}
 	positionals, maxBytes, maxBytesSet, ok := parseJobsLogsArgs(args)
 	if !ok || len(positionals) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index> [--max-bytes N]", "jobs")
@@ -855,13 +900,17 @@ func cmdJobsLogs(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(logs))
 	}
+	return renderJobTaskLogs(logs)
+}
+
+func renderJobTaskLogs(logs api.JobTaskLogResponse) int {
 	if logs.LogContent == "" && !logs.Truncated {
-		_, _ = fmt.Fprintf(os.Stdout, "(task %s produced no output)\n", logs.TaskStatus)
+		_, _ = fmt.Fprintf(osStdout, "(task %s produced no output)\n", logs.TaskStatus)
 		return 0
 	}
-	_, _ = fmt.Fprint(os.Stdout, logs.LogContent)
+	_, _ = fmt.Fprint(osStdout, logs.LogContent)
 	if logs.Truncated {
-		_, _ = fmt.Fprintln(os.Stdout, "...[truncated]")
+		_, _ = fmt.Fprintln(osStdout, "...[truncated]")
 	}
 	return 0
 }

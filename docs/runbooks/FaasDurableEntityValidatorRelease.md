@@ -1,14 +1,14 @@
 # Packaging a durable entity restore validator
 
 This is local, unqualified release tooling. No registry has been installed by this
-work. Use [ADR-856](../adr/856-durable-entity-validator-release-tooling.md) for scope
+work. Use [ADR-946](../adr/946-durable-entity-validator-release-tooling.md) for scope
 and [qualification](FaasDurableEntityQualification.md) for acceptance requirements.
 
 Create the deployment identity through the existing release process. Supply a
 reviewed, secret-free one-shot validator entrypoint for that exact application
 schema. Keep app credentials and production configuration outside this directory.
 Node validators export a default input function; Python validators define
-`main(input, context)`. The input/verdict protocol is ADR-853's existing contract.
+`main(input, context)`. The input/verdict protocol is ADR-943's existing contract.
 
 The following is an example release hook; identities are non-secret release variables.
 Run the Go command only in your build/release environment, not as validator execution:
@@ -35,7 +35,7 @@ Stage the complete output using the existing operator deployment process, config
 writers. A local artifact alone does not register a validator on a running API.
 Keep isolation and release gates disabled until qualification is complete. To enforce
 local availability on explicit API traffic changes, set
-`FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED=1` alongside ADR-854's isolation
+`FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED=1` alongside ADR-944's isolation
 prerequisites. Missing bundles produce `durable_entity_validator_release_required`.
 Reducing target traffic can increase a predecessor's traffic, so its bundle is required
 as well. Initial build publication and autonomous scheduler/recovery paths are outside
@@ -52,7 +52,7 @@ rejection, output collision protection, missing-bundle promotion rejection and t
 redistribution across predecessors. Qualify actual staging/restarts on all writers;
 no fleet-ready claim follows from a single process passing preflight.
 
-## Shared private artifact backend (ADR-857)
+## Shared private artifact backend (ADR-947)
 
 The local implementation can replace registry staging/restarts with conditional
 private object storage. Keep this mode disabled until qualification. Set the same
@@ -113,7 +113,7 @@ failed initial live publication, predecessor rollback and serving wakes during a
 outage. Verify actual permissions and bucket lifecycle policy on the dedicated GCS
 acceptance bucket. Builds/tests and all live qualification remain pending.
 
-## Automatic source-build publication and copied deployments (ADR-858)
+## Automatic source-build publication and copied deployments (ADR-948)
 
 Create a reviewed descriptor before uploading the normal source tarball:
 
@@ -134,7 +134,7 @@ Review it for secrets before committing/uploading. No app or deployment ID is ne
 Existing output files are protected; create a new artifact and update the source tree
 through your normal reviewed release process.
 
-Configure builderd with the same ADR-857 artifact provider and app allowlist as API,
+Configure builderd with the same ADR-947 artifact provider and app allowlist as API,
 imaged and schedd. Its optional private S3 EnvironmentFile is
 `/etc/faas/secrets/builderd/builderd.env`; provisioning and permissions remain operator
 steps. GCS uses the established ADC identity. Then ordinary verified source builds

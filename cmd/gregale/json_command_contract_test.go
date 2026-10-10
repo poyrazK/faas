@@ -39,6 +39,8 @@ func TestJSONCommandReceipts(t *testing.T) {
 		t.Run(tc.args[0], func(t *testing.T) {
 			resetJSONOut(t)
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+			t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 			t.Setenv("FAAS_JSON", "0")
 			t.Setenv("FAAS_TOKEN", "test-token")
 			requests := 0
@@ -80,6 +82,8 @@ func TestJSONProjectContextLifecycle(t *testing.T) {
 	resetJSONOut(t)
 	t.Chdir(t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_JSON", "0")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +174,8 @@ func TestJSONUploadCacheDryRunReceipt(t *testing.T) {
 	resetJSONOut(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_JSON", "0")
 	out, stderr, restore := swapIO(t)
 	defer restore()
@@ -188,6 +194,8 @@ func TestJSONUploadCacheDryRunReceipt(t *testing.T) {
 func TestJSONManUnknownCommand(t *testing.T) {
 	resetJSONOut(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_JSON", "0")
 	out, stderr, restore := swapIO(t)
 	defer restore()

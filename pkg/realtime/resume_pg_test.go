@@ -107,6 +107,9 @@ func TestResumePostgresContinuityAcrossOwnersAndRestart(t *testing.T) {
 	if frame := readResumeTestFrame(t, firstClient); frame.Type != "subscribed" || frame.LatestSequence != 2 {
 		t.Fatalf("first subscription = %+v", frame)
 	}
+	if frame := readResumeTestFrame(t, firstClient); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("first presence snapshot = %+v", frame)
+	}
 	for sequence, data := range []string{"b25l", "dHdv"} {
 		frame := readResumeTestFrame(t, firstClient)
 		if frame.Type != "message" || frame.Sequence != int64(sequence+1) || frame.DataBase64 != data {
@@ -134,6 +137,9 @@ func TestResumePostgresContinuityAcrossOwnersAndRestart(t *testing.T) {
 	sendResumeTestFrame(t, secondClient, resumeClientFrame{Type: "subscribe", Channel: "updates", After: 2})
 	if frame := readResumeTestFrame(t, secondClient); frame.Type != "subscribed" || frame.LatestSequence != 4 {
 		t.Fatalf("second subscription = %+v", frame)
+	}
+	if frame := readResumeTestFrame(t, secondClient); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("second presence snapshot = %+v", frame)
 	}
 	for sequence, data := range []string{"dGhyZWU=", "Zm91cg=="} {
 		frame := readResumeTestFrame(t, secondClient)
@@ -165,6 +171,9 @@ func TestResumePostgresContinuityAcrossOwnersAndRestart(t *testing.T) {
 	sendResumeTestFrame(t, restartedClient, resumeClientFrame{Type: "subscribe", Channel: "updates", After: 5})
 	if frame := readResumeTestFrame(t, restartedClient); frame.Type != "subscribed" || frame.LatestSequence != 6 {
 		t.Fatalf("restarted subscription = %+v", frame)
+	}
+	if frame := readResumeTestFrame(t, restartedClient); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("restarted presence snapshot = %+v", frame)
 	}
 	if frame := readResumeTestFrame(t, restartedClient); frame.Type != "message" || frame.Sequence != 6 || frame.DataBase64 != "c2l4" {
 		t.Fatalf("restarted replay = %+v", frame)

@@ -40,6 +40,9 @@ type Event struct {
 	Audit                                *AuditEvidence `json:"audit,omitempty"`
 	DiscoveredRoute                      string         `json:"discovered_route,omitempty"`
 	DiscoveredAtUnixMs                   int64          `json:"discovered_at_unix_ms,omitempty"`
+	// BillingRoute is the bounded route label of consumer-attributed
+	// traffic, kept as route-level billable minutes for weights (ADR-846).
+	BillingRoute string `json:"billing_route,omitempty"`
 }
 
 // AuditEvidence is opt-in request metadata attached to the same fsynced

@@ -84,6 +84,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
 	var historyReader realtime.ManagedRealtimeHistoryReader
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
+	var fleetClient realtime.ManagedRealtimeFleetClient
 	if resumePreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
@@ -104,6 +105,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		defer func() { _ = reader.Close() }()
 		historyReader = reader
 		routeReporter = reader
+		fleetClient = reader
 	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
@@ -119,6 +121,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ResumePreview:        resumePreview,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
+		FleetClient:          fleetClient,
+		FleetReportFailure: func(err error) {
+			log.Warn("realtimed: fleet presence or ephemeral relay failed", "err", err)
+		},
 		ChannelRouteReportFailure: func(err error) {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
 		},
