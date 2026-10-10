@@ -148,7 +148,15 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		candidate := d.deployLive(t, "sr-bad", api.CreateDeploymentRequest{Image: bad, Canary: customCanary("50", "10m")})
 		stop := d.sendTraffic("sr-bad", "/api", 500*time.Millisecond)
 		defer stop()
+		// Log the circuit breaker's own input (the request-telemetry summary
+		// meterd reads) so a missed abort shows whether telemetry arrived.
+		stageStart := time.Now().Add(-time.Minute)
+		lastLogged := time.Time{}
 		got := d.waitDeployment(t, candidate.ID, 4*time.Minute, func(dep state.Deployment) bool {
+			if time.Since(lastLogged) >= 30*time.Second {
+				d.logBreakerInput(t, dep.AppID, candidate.ID, stable.ID, stageStart)
+				lastLogged = time.Now()
+			}
 			return dep.RolloutState == "aborted" || dep.Status != state.DeployLive || dep.TrafficPercent == 0
 		})
 		t.Logf("DRILL bad_release state=%q status=%q reason=%q", got.RolloutState, got.Status, got.RolloutAbortedReason)
@@ -256,6 +264,16 @@ func (d *safeReleaseDrill) waitDeployment(t *testing.T, id string, timeout time.
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func (d *safeReleaseDrill) logBreakerInput(t *testing.T, appID, candidateID, stableID string, since time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now()
+	cr, c5, cp95, _, _, _, _, cErr := d.store.RequestTelemetryCircuitBreakerSummary(ctx, appID, candidateID, since, now)
+	sr, s5, sp95, _, _, _, _, sErr := d.store.RequestTelemetryCircuitBreakerSummary(ctx, appID, stableID, since, now)
+	t.Logf("DRILL breaker_input candidate=%d/%d p95=%.0f stable=%d/%d p95=%.0f errs=%v/%v",
+		c5, cr, cp95, s5, sr, sp95, cErr, sErr)
 }
 
 func (d *safeReleaseDrill) waitLease(ready bool, timeout time.Duration) {
