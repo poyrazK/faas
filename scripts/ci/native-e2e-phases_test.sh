@@ -47,6 +47,11 @@ for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
   [[ "${found}" -eq 1 ]] || fail "required test ${required} is in no phase"
 done
 
+# Keep the opt-in benchmark in the wake phase; all its test names are derived
+# from the file along with the ordinary wake scenarios.
+native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
+  fail "platform wake benchmark is missing from the wake phase"
+
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
 probe="$(mktemp -d)"
