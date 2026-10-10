@@ -25,7 +25,7 @@ func withConsumersTestAPI(t *testing.T, handler http.HandlerFunc) *bytes.Buffer 
 	return &stdout
 }
 
-// adr: 843 — the CLI drives the consumer monetization lifecycle end to end.
+// adr: 970 — the CLI drives the consumer monetization lifecycle end to end.
 func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 	var key api.CreateConsumerKeyRequest
 	var card api.CreateAPIConsumerRateCardRequest
@@ -104,7 +104,8 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		"non-numeric tier bound":  {"rate-card-create", "my-api", "--currency", "EUR", "--tier", "ten:0", "--tier", "inf:5"},
 		"malformed weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "POST /generate"},
 		"duplicate weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2", "--weight", "GET /a=3"},
-		"tenant allowance":        {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--included-units", "5"},
+		"tenant tiers and units":  {"rate-card-create", "--id", "t1", "--currency", "EUR", "--included-units", "5", "--tier", "10:0", "--tier", "inf:5"},
+		"tenant weight":           {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2"},
 		"bad currency":            {"rate-card-create", "my-api", "--currency", "EURO", "--price-millicents", "1"},
 		"missing invoice":         {"statement-handoff", "my-api", "c1", "s1"},
 		"tenant without id":       {"rate-cards"},
@@ -124,7 +125,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 	}
 }
 
-// adr: 845
+// adr: 972
 func TestCmdConsumersTieredRateCard(t *testing.T) {
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +143,7 @@ func TestCmdConsumersTieredRateCard(t *testing.T) {
 	}
 }
 
-// adr: 846
+// adr: 973
 func TestCmdConsumersRouteWeights(t *testing.T) {
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +162,7 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 	}
 }
 
-// adr: 847
+// adr: 974
 func TestCmdConsumersPlans(t *testing.T) {
 	var created api.CreateAPIConsumerPlanRequest
 	var updated api.UpdateAPIConsumerPlanLimitsRequest

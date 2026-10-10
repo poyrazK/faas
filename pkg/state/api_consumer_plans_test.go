@@ -9,30 +9,30 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 847
+// adr: 974
 func TestDecidePlanAdmissionWindows(t *testing.T) {
 	now := time.Date(2026, 9, 30, 23, 59, 30, 0, time.UTC)
 	policy := APIConsumerPlanPolicy{MaxRequestsPerMinute: 2, MaxUnitsPerMonth: 30}
 	var counter planAdmissionCounter
 	var decision APIConsumerPlanDecision
 	for i := range 2 {
-		if counter, decision = decidePlanAdmission(counter, policy, 10, now); !decision.Allowed {
+		if counter, decision, _ = decidePlanAdmission(counter, policy, 10, now); !decision.Allowed {
 			t.Fatalf("request %d denied: %+v", i, decision)
 		}
 	}
-	if _, decision = decidePlanAdmission(counter, policy, 1, now); decision.Allowed || decision.Scope != "minute" || decision.RetryAfterSeconds != 30 {
+	if _, decision, _ = decidePlanAdmission(counter, policy, 1, now); decision.Allowed || decision.Scope != "minute" || decision.RetryAfterSeconds != 30 {
 		t.Fatalf("third request in the minute = %+v, want minute denial retrying in 30s", decision)
 	}
 	next := now.Add(31 * time.Second) // a new minute and a new month
-	if counter, decision = decidePlanAdmission(counter, policy, 10, next); !decision.Allowed || counter.MonthUsed != 10 || counter.MinuteUsed != 1 {
+	if counter, decision, _ = decidePlanAdmission(counter, policy, 10, next); !decision.Allowed || counter.MonthUsed != 10 || counter.MinuteUsed != 1 {
 		t.Fatalf("new month = %+v %+v, want both windows reset", counter, decision)
 	}
 	counter.MinuteUsed = 0
 	counter.MonthUsed = 25
-	if _, decision = decidePlanAdmission(counter, policy, 10, next); decision.Allowed || decision.Scope != "month" || decision.Observed != 25 {
+	if _, decision, _ = decidePlanAdmission(counter, policy, 10, next); decision.Allowed || decision.Scope != "month" || decision.Observed != 25 {
 		t.Fatalf("over monthly cap = %+v, want month denial", decision)
 	}
-	if _, decision = decidePlanAdmission(planAdmissionCounter{}, APIConsumerPlanPolicy{}, 1000, next); !decision.Allowed {
+	if _, decision, _ = decidePlanAdmission(planAdmissionCounter{}, APIConsumerPlanPolicy{}, 1000, next); !decision.Allowed {
 		t.Fatal("zero limits must be unlimited")
 	}
 }
@@ -72,7 +72,7 @@ func TestMemConsumerPlansAssignmentsAndPolicy(t *testing.T) {
 	if err != nil || after.PlanID != plan.ID || after.MaxUnitsPerMonth != 100 || after.Units("POST /generate") != 20 || after.Units("GET /x") != 1 {
 		t.Fatalf("policy after assignment = %+v err=%v", after, err)
 	}
-	updated, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 60, 0)
+	updated, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 60, 0, nil)
 	if err != nil || updated.MaxRequestsPerMinute != 60 || updated.MaxUnitsPerMonth != 0 {
 		t.Fatalf("updated = %+v err=%v", updated, err)
 	}

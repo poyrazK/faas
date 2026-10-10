@@ -771,7 +771,7 @@ type APIConsumerUsageEvent struct {
 	DiscoveredRoute string // optional normalized method/template
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
-	// so rate cards can weight routes (ADR-846).
+	// so rate cards can weight routes (ADR-973).
 	BillingRoute  string
 	DiscoveredAt  time.Time
 	WindowStart   time.Time
@@ -829,7 +829,7 @@ type APIConsumerUsageBucket struct {
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
-// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// bounded route label in one UTC minute (ADR-973). The per-minute totals in
 // APIConsumerUsageBucket stay authoritative; a minute's route units never
 // exceed them, and routes missing here count at weight 1.
 type APIConsumerRouteUsageBucket struct {
@@ -863,17 +863,17 @@ type APIConsumerRateCard struct {
 	Unit                   string
 	PriceMillicentsPerUnit int64
 	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-971).
 	IncludedUnitsPerMonth int64
-	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// Tiers is an optional graduated price ladder (ADR-972). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
 	// RouteWeights counts each request on a listed route label as that many
-	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// units (ADR-973); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
-	// to (ADR-847); empty is the app default plan.
+	// to (ADR-974); empty is the app default plan.
 	PlanID        string
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
@@ -954,8 +954,21 @@ type PlatformTenantRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth are free units per tenant per UTC calendar month
+	// across every attributed app (ADR-975).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated ladder counted per tenant per UTC month
+	// across every attributed app (ADR-975); it replaces the flat price and
+	// allowance, and PriceMillicentsPerUnit records the last step's price.
+	Tiers         []APIConsumerRateCardTier
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// MonthlyPricing reports whether the card prices usage by its position in
+// the tenant's UTC month, so statements must re-price whole months.
+func (c PlatformTenantRateCard) MonthlyPricing() bool {
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
@@ -979,13 +992,13 @@ type APIConsumerUsageStatementBucket struct {
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
 	// ChargedUnits is how many units this bucket bills at its price
-	// (ADR-844). Nil on buckets written before allowances existed, where
+	// (ADR-971). Nil on buckets written before allowances existed, where
 	// every priced unit was charged; read it through Charged. An adjustment
 	// may charge more units than it adds when late usage used allowance
 	// that later minutes had consumed.
 	ChargedUnits *int64 `json:"charged_units,omitempty"`
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// (ADR-972); AmountMillicents is the sum of each step's units times its
 	// price. In an adjustment, entries can be negative when late usage moved
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
@@ -3689,6 +3702,7 @@ const (
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
@@ -3755,6 +3769,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventConsumerUsageThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,

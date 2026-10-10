@@ -5,7 +5,7 @@
       "id": "api-monetization",
       "name": "API monetization",
       "category": "billing",
-      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans, price usage with versioned rate cards (monthly included requests, graduated tiers, and per-route weights), and produce revisioned usage statements to invoice through your own billing system.",
+      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage with versioned rate cards (monthly included requests, graduated tiers, and per-route weights), and produce revisioned usage statements to invoice through your own billing system.",
       "maturity": "preview",
       "plans": [
         "hobby",

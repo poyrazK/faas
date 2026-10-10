@@ -29,7 +29,7 @@ func chargedUnits(q APIConsumerUsageQuote) []int64 {
 	return out
 }
 
-// adr: 844
+// adr: 971
 func TestQuoteAPIConsumerUsageConsumesMonthlyAllowanceInMinuteOrder(t *testing.T) {
 	cards := []state.APIConsumerRateCard{allowanceCard(allowanceStart, 10, 5)}
 	usage := []state.APIConsumerUsageBucket{

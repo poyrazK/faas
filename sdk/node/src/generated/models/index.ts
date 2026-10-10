@@ -10,6 +10,8 @@ export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListR
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
+export type { APIConsumerUsageAlertListResponse } from './APIConsumerUsageAlertListResponse.js';
+export type { APIConsumerUsageAlertResponse } from './APIConsumerUsageAlertResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
 export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
@@ -20,6 +22,7 @@ export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './APICons
 export type { APIConsumerUsageStatementHandoffResponse } from './APIConsumerUsageStatementHandoffResponse.js';
 export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
+export type { APIConsumerUsageThresholdWebhookPayload } from './APIConsumerUsageThresholdWebhookPayload.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
 export type { AccountAbuseHold } from './AccountAbuseHold.js';

@@ -10,6 +10,7 @@ import type { APIConsumerPlanResponse } from '../models/APIConsumerPlanResponse.
 import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerUsageAlertListResponse } from '../models/APIConsumerUsageAlertListResponse.js';
 import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
@@ -816,6 +817,42 @@ export class ConsumersService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List the plan usage alerts a consumer crossed.
+   * Returns up to 100 recorded crossings of the consumer's plan alert
+   * thresholds, newest first. Each crossing also emitted one
+   * consumer.usage_threshold webhook; this list reconciles missed
+   * deliveries.
+   *
+   * @returns APIConsumerUsageAlertListResponse The consumer's usage alerts.
+   * @throws ApiError
+   */
+  public static listApiConsumerUsageAlerts({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose usage alerts are listed.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerUsageAlertListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-alerts',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

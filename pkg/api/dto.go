@@ -1342,15 +1342,15 @@ type CreateAPIConsumerRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-971).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
-	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// Tiers is an optional graduated ladder (ADR-972) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
-	// as that many units (ADR-846); unlisted routes count 1.
+	// as that many units (ADR-973); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
-	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// PlanID adds the version to a consumer plan's price history (ADR-974);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`

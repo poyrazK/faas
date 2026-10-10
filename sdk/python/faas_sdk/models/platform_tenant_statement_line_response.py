@@ -18,7 +18,10 @@ class PlatformTenantStatementLineResponse:
     """Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price
     source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included
     minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id,
-    surface_id, or jwt_authorization_rule_id is present.
+    surface_id, or jwt_authorization_rule_id is present. Each line is billable_units × price_millicents_per_unit; free
+    allowance units and each ladder step have their own line. In an adjustment that re-prices a month for a tenant
+    allowance or tiers (ADR-975), a line is the difference from finalized revisions and can be negative, while the
+    revision total never is.
 
     """
 
@@ -27,7 +30,9 @@ class PlatformTenantStatementLineResponse:
     window_end: datetime.datetime
     """Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage."""
     billable_units: int
+    """Units on this line; negative only in a re-priced month adjustment (ADR-975)."""
     amount_millicents: int
+    """billable_units × price_millicents_per_unit; negative only in a re-priced month adjustment (ADR-975)."""
     consumer_id: UUID | Unset = UNSET
     surface_id: UUID | Unset = UNSET
     jwt_authorization_rule_id: UUID | Unset = UNSET

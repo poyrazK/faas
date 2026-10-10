@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -20,6 +20,8 @@ class APIConsumerPlanResponse:
     name: str
     max_requests_per_minute: int
     max_units_per_month: int
+    alert_thresholds_percent: list[int]
+    """The plan's usage alert thresholds, ascending; empty means no alerts."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -35,6 +37,8 @@ class APIConsumerPlanResponse:
 
         max_units_per_month = self.max_units_per_month
 
+        alert_thresholds_percent = self.alert_thresholds_percent
+
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
@@ -48,6 +52,7 @@ class APIConsumerPlanResponse:
                 "name": name,
                 "max_requests_per_minute": max_requests_per_minute,
                 "max_units_per_month": max_units_per_month,
+                "alert_thresholds_percent": alert_thresholds_percent,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }
@@ -68,6 +73,8 @@ class APIConsumerPlanResponse:
 
         max_units_per_month = d.pop("max_units_per_month")
 
+        alert_thresholds_percent = cast(list[int], d.pop("alert_thresholds_percent"))
+
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
@@ -78,6 +85,7 @@ class APIConsumerPlanResponse:
             name=name,
             max_requests_per_minute=max_requests_per_minute,
             max_units_per_month=max_units_per_month,
+            alert_thresholds_percent=alert_thresholds_percent,
             created_at=created_at,
             updated_at=updated_at,
         )

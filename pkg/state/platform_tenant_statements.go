@@ -130,6 +130,12 @@ type PlatformTenantStatementInput struct {
 	Lines            []PlatformTenantStatementLine
 	Coverage         []PlatformTenantStatementCoverage `json:"-"`
 	AsOf             time.Time
+	// Repriced marks a revision that re-prices a whole UTC month for tenant
+	// allowances or tiers (ADR-975). Its lines are the difference from the
+	// finalized revisions' lines, so a line can be negative and a subject can
+	// carry offsetting lines without new usage. Totals, per-subject units,
+	// and units × price per line still hold, and the amount is never negative.
+	Repriced bool `json:"-"`
 }
 
 type PlatformTenantStatementHandoff struct {
@@ -188,7 +194,14 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			!line.WindowStart.Equal(line.WindowStart.UTC().Truncate(time.Minute)) ||
 			!line.WindowEnd.Equal(line.WindowEnd.UTC().Truncate(time.Minute)) ||
 			!line.WindowEnd.After(line.WindowStart) || line.WindowEnd.After(in.PeriodEnd) ||
-			line.BillableUnits < 1 || line.AmountMillicents < 0 || line.PriceMillicentsPerUnit < 0 {
+			line.PriceMillicentsPerUnit < 0 {
+			return ErrInvalidArgument
+		}
+		if in.Repriced {
+			if line.BillableUnits == 0 {
+				return ErrInvalidArgument
+			}
+		} else if line.BillableUnits < 1 || line.AmountMillicents < 0 {
 			return ErrInvalidArgument
 		}
 		subject := platformTenantStatementSubjectKey(line.AppID, line.ConsumerID, line.SurfaceID, line.JWTAuthorizationRuleID)
@@ -205,7 +218,7 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			window.end = line.WindowEnd
 		}
 		lineWindows[subject] = window
-		if lineUnitsBySubject[subject] > maxAPIConsumerUsageStatementInt64-line.BillableUnits {
+		if !addsWithin(lineUnitsBySubject[subject], line.BillableUnits) {
 			return ErrInvalidArgument
 		}
 		lineUnitsBySubject[subject] += line.BillableUnits
@@ -213,7 +226,7 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			if line.Currency != "" || line.PriceMillicentsPerUnit != 0 || line.AmountMillicents != 0 {
 				return ErrInvalidArgument
 			}
-			if lineUnpriced > maxAPIConsumerUsageStatementInt64-line.BillableUnits {
+			if !addsWithin(lineUnpriced, line.BillableUnits) {
 				return ErrInvalidArgument
 			}
 			lineUnpriced += line.BillableUnits
@@ -228,13 +241,17 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 			if _, err := uuid.Parse(cardID); err != nil {
 				return ErrInvalidArgument
 			}
+			absUnits := line.BillableUnits
+			if absUnits < 0 {
+				absUnits = -absUnits
+			}
 			if line.Currency != in.Currency || !isUpperASCIICurrency(line.Currency) ||
-				(line.PriceMillicentsPerUnit != 0 && line.BillableUnits > maxAPIConsumerUsageStatementInt64/line.PriceMillicentsPerUnit) ||
+				(line.PriceMillicentsPerUnit != 0 && absUnits > maxAPIConsumerUsageStatementInt64/line.PriceMillicentsPerUnit) ||
 				line.BillableUnits*line.PriceMillicentsPerUnit != line.AmountMillicents {
 				return ErrInvalidArgument
 			}
 		}
-		if lineUnits > maxAPIConsumerUsageStatementInt64-line.BillableUnits || lineAmount > maxAPIConsumerUsageStatementInt64-line.AmountMillicents {
+		if !addsWithin(lineUnits, line.BillableUnits) || !addsWithin(lineAmount, line.AmountMillicents) {
 			return ErrInvalidArgument
 		}
 		lineUnits += line.BillableUnits
@@ -275,14 +292,28 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 		return ErrInvalidArgument
 	}
 	for subject, units := range lineUnitsBySubject {
-		if coverageUnitsBySubject[subject] != units || lineWindows[subject] != coverageWindows[subject] {
+		if coverageUnitsBySubject[subject] != units || (!in.Repriced && lineWindows[subject] != coverageWindows[subject]) {
 			return fmt.Errorf("platform tenant statement: compact lines do not match minute coverage")
 		}
 	}
-	if len(lineUnitsBySubject) != len(coverageUnitsBySubject) {
+	for subject, units := range coverageUnitsBySubject {
+		if lineUnitsBySubject[subject] != units {
+			return fmt.Errorf("platform tenant statement: compact lines do not match minute coverage")
+		}
+	}
+	if !in.Repriced && len(lineUnitsBySubject) != len(coverageUnitsBySubject) {
 		return fmt.Errorf("platform tenant statement: compact lines do not match minute coverage")
 	}
 	return nil
+}
+
+// addsWithin reports whether total + delta stays within the statement's
+// int64 bounds; re-priced lines (ADR-975) may subtract.
+func addsWithin(total, delta int64) bool {
+	if delta >= 0 {
+		return total <= maxAPIConsumerUsageStatementInt64-delta
+	}
+	return total >= -maxAPIConsumerUsageStatementInt64-delta
 }
 
 func normalizePlatformTenantStatementInput(in PlatformTenantStatementInput) PlatformTenantStatementInput {

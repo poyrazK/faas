@@ -14,9 +14,9 @@ const maxInt64 = int64(1<<63 - 1)
 var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate cards use multiple currencies")
 
 // ErrAPIConsumerAllowanceInTenantStatement rejects a cross-app statement that
-// would fall back to an app rate card with a monthly allowance (ADR-844), a
-// graduated ladder (ADR-845), route weights (ADR-846), or that belong to a
-// consumer plan (ADR-847).
+// would fall back to an app rate card with a monthly allowance (ADR-971), a
+// graduated ladder (ADR-972), route weights (ADR-973), or that belong to a
+// consumer plan (ADR-974).
 var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, or consumer plans cannot price platform tenant statements")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
@@ -29,10 +29,10 @@ type APIConsumerUsageChargeBucket struct {
 	Currency                 string
 	PriceMillicentsPerUnit   int64
 	// ChargedUnits is how many units are billed at the price; the rest were
-	// covered by the card's monthly allowance (ADR-844).
+	// covered by the card's monthly allowance (ADR-971).
 	ChargedUnits int64
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-845); nil for flat and allowance cards.
+	// (ADR-972); nil for flat and allowance cards.
 	TierUnits        []int64
 	AmountMillicents int64
 }
@@ -42,14 +42,10 @@ type APIConsumerUsageChargeBucket struct {
 // falls back to the app-level price. The output records which pricing source
 // determined each immutable statement line.
 func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
-	for _, card := range appCards {
-		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
-			// Allowances, tiers, weights, and plans are per consumer; a cross-app statement mixes sources
-			// and prices only usage deltas, so it cannot apply them correctly.
-			return APIConsumerUsageQuote{}, ErrAPIConsumerAllowanceInTenantStatement
-		}
-	}
 	if len(tenantCards) == 0 {
+		if err := requireFlatAppCards(appCards); err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
 		return QuoteAPIConsumerUsage(appCards, usage)
 	}
 	orderedTenantCards := append([]state.PlatformTenantRateCard(nil), tenantCards...)
@@ -100,6 +96,11 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	var fallbackQuote APIConsumerUsageQuote
 	var err error
 	if len(fallbackUsage) > 0 {
+		// Only minutes no tenant card prices fall back to app cards, so an
+		// app card's allowance, tiers, weights, or plan matter only then.
+		if err := requireFlatAppCards(appCards); err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
 		fallbackQuote, err = QuoteAPIConsumerUsage(appCards, fallbackUsage)
 		if err != nil {
 			return APIConsumerUsageQuote{}, err
@@ -148,6 +149,18 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	return quote, nil
 }
 
+// requireFlatAppCards rejects app cards a cross-app statement cannot apply:
+// allowances, tiers, weights, and plans are per consumer, while a tenant
+// statement mixes sources and prices only usage deltas.
+func requireFlatAppCards(cards []state.APIConsumerRateCard) error {
+	for _, card := range cards {
+		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
+			return ErrAPIConsumerAllowanceInTenantStatement
+		}
+	}
+	return nil
+}
+
 // APIConsumerUsageQuote is a deterministic estimate, not an invoice or a
 // payment authorization. UnpricedUnits makes a missing rate card explicit
 // instead of silently presenting a zero charge as free usage.
@@ -163,7 +176,7 @@ type APIConsumerUsageQuote struct {
 // QuoteAPIConsumerUsageFrom applies the latest rate card effective at each
 // UTC usage minute. Rate cards are append-only and callers may pass them in
 // any order; the function sorts a copy and never mutates caller-owned slices.
-// usage must be ascending by minute. A card's monthly allowance (ADR-844) is
+// usage must be ascending by minute. A card's monthly allowance (ADR-971) is
 // consumed in minute order from the first bucket of each UTC calendar month,
 // so callers pass usage from the start of from's month; buckets before from
 // only consume allowance and are not reported.
@@ -244,8 +257,8 @@ func QuoteAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIC
 }
 
 // priceMinute prices one minute's units given the units the consumer's month
-// already used. A tiered card (ADR-845) splits them across its ladder by
-// position; other cards charge the units beyond the allowance (ADR-844) at
+// already used. A tiered card (ADR-972) splits them across its ladder by
+// position; other cards charge the units beyond the allowance (ADR-971) at
 // the flat price.
 func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBucket, usedBefore int64) (APIConsumerUsageChargeBucket, error) {
 	bucket.RateCardID, bucket.Currency = card.ID, card.Currency
@@ -283,7 +296,7 @@ func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBu
 }
 
 // TieredCardEffectiveIn reports whether a tiered card prices any minute of
-// [start, end). Such periods must be whole UTC months (ADR-845).
+// [start, end). Such periods must be whole UTC months (ADR-972).
 func TieredCardEffectiveIn(cards []state.APIConsumerRateCard, start, end time.Time) bool {
 	ordered := append([]state.APIConsumerRateCard(nil), cards...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
@@ -321,7 +334,7 @@ func (q *APIConsumerUsageQuote) add(bucket APIConsumerUsageChargeBucket) error {
 		}
 		q.UnpricedUnits += bucket.BillableUnits
 	} else {
-		// A re-rated tiered adjustment bucket may be negative (ADR-845).
+		// A re-rated tiered adjustment bucket may be negative (ADR-972).
 		if (bucket.AmountMillicents > 0 && q.AmountMillicents > maxInt64-bucket.AmountMillicents) ||
 			(bucket.AmountMillicents < 0 && q.AmountMillicents < -maxInt64-bucket.AmountMillicents) {
 			return fmt.Errorf("billing: API consumer charge total overflow")

@@ -2368,7 +2368,7 @@ var cliCommands = []cliCommand{
 			"gregale consumers completeness my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001",
-			"gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000",
+			"gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000 --alert-at 80,100",
 			"gregale consumers set-plan my-api CONSUMER_ID --plan free",
 		},
 		Subcommands: []cliSub{
@@ -2425,17 +2425,20 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "plan name (lowercase letters, digits, hyphens)", Value: "NAME", Req: true},
 				{Name: "max-requests-per-minute", Short: "requests per consumer per minute; 0 is unlimited", Value: "N"},
 				{Name: "max-units-per-month", Short: "weighted units per consumer per UTC month; 0 is unlimited", Value: "N"},
+				{Name: "alert-at", Short: "percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears", Value: "80,100"},
 			}},
 			{Name: "plan-update", Short: "Change a plan's limits (applied within 15 seconds)", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "plan", Short: "plan name", Value: "NAME", Req: true},
 				{Name: "max-requests-per-minute", Short: "requests per consumer per minute; 0 is unlimited", Value: "N"},
 				{Name: "max-units-per-month", Short: "weighted units per consumer per UTC month; 0 is unlimited", Value: "N"},
+				{Name: "alert-at", Short: "percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears", Value: "80,100"},
 			}},
 			{Name: "set-plan", Short: "Move a consumer onto a plan from a minute", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "plan", Short: "plan name; use default for the app default plan", Value: "NAME", Req: true},
 				{Name: "effective-from", Short: "UTC minute the plan takes effect (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "plan-history", Short: "List a consumer's plan assignments", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "usage-alerts", Short: "List the plan usage alerts a consumer crossed", Positionals: []string{"<slug>", "<consumer-id>"}},
 		},
 	},
 	{
@@ -2499,6 +2502,8 @@ var cliCommands = []cliCommand{
 				platformTenantIDFlag,
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
 				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "included-units", Short: "free requests per tenant per UTC calendar month across all apps", Value: "N"},
+				{Name: "tier", Short: "graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{

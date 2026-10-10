@@ -1736,12 +1736,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
-	// ADR-847: named consumer plans and minute-effective plan assignments.
+	// ADR-974: named consumer plans and minute-effective plan assignments.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlans))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumer-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerPlan)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlanAssignments))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.assignAPIConsumerPlan)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageCompleteness))))
 	// Durable API consumer usage statements snapshot the quote for an explicit

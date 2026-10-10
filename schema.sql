@@ -13665,6 +13665,8 @@ CREATE TABLE public.api_consumer_plans (
     max_units_per_month bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
 );
@@ -13675,6 +13677,13 @@ CREATE TABLE public.api_consumer_plans (
 --
 
 COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).';
+
+
+--
+-- Name: COLUMN api_consumer_plans.alert_thresholds_percent; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
 
 
 --
@@ -13756,6 +13765,34 @@ CREATE TABLE public.api_consumer_route_usage_minutes (
 --
 
 COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
+
+
+--
+-- Name: api_consumer_usage_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_usage_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    threshold_percent integer NOT NULL,
+    limit_units bigint NOT NULL,
+    used_units bigint NOT NULL,
+    crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_usage_alerts_month_chk CHECK ((month_start = (date_trunc('month'::text, (month_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_usage_alerts_threshold_chk CHECK (((threshold_percent >= 1) AND (threshold_percent <= 100))),
+    CONSTRAINT api_consumer_usage_alerts_units_chk CHECK (((limit_units > 0) AND (used_units >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_usage_alerts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_usage_alerts IS 'One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.';
 
 
 --
@@ -23347,11 +23384,29 @@ CREATE TABLE public.platform_tenant_rate_cards (
     price_millicents_per_unit bigint NOT NULL,
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
     CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
 );
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.included_units_per_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.included_units_per_month IS 'Free request units per tenant per UTC calendar month across all attributed apps, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.';
 
 
 --
@@ -28144,6 +28199,22 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_once_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_once_uniq UNIQUE (consumer_id, month_start, threshold_percent);
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_pkey PRIMARY KEY (id);
 
 
 --
@@ -34352,6 +34423,13 @@ CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api
 --
 
 CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
+
+
+--
+-- Name: api_consumer_usage_alerts_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_usage_alerts_lookup_idx ON public.api_consumer_usage_alerts USING btree (account_id, app_id, consumer_id, crossed_at DESC);
 
 
 --
@@ -44584,6 +44662,38 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
 
 
 --

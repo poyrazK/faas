@@ -33,7 +33,7 @@ func finalizedFrom(q APIConsumerUsageQuote) state.APIConsumerUsageStatement {
 	return out
 }
 
-// adr: 845
+// adr: 972
 func TestQuoteSplitsUnitsAcrossGraduatedTiers(t *testing.T) {
 	cards := []state.APIConsumerRateCard{volumeLadder(allowanceStart)}
 	quote, err := QuoteAPIConsumerUsage(cards, []state.APIConsumerUsageBucket{

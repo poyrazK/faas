@@ -9,7 +9,7 @@ type billingRouteKey struct{}
 
 // withBillingRoute stores the bounded route label of a consumer-attributed
 // request. apid keeps that consumer's billable units per label so rate
-// cards can weight routes (ADR-846). The overflow label is kept too and is
+// cards can weight routes (ADR-973). The overflow label is kept too and is
 // discarded by apid, so its requests count at weight 1.
 func withBillingRoute(r *http.Request, route string) *http.Request {
 	if r == nil || route == "" {
