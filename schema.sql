@@ -20667,6 +20667,31 @@ CREATE TABLE public.node_join_jobs (
 
 
 --
+-- Name: notification_channels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.notification_channels (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    target_sealed bytea,
+    target_hint text DEFAULT ''::text NOT NULL,
+    pagerduty_region text,
+    email text,
+    last_delivered_at timestamp with time zone,
+    last_error text,
+    last_error_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT notification_channels_error_chk CHECK (((last_error IS NULL) OR (char_length(last_error) <= 256))),
+    CONSTRAINT notification_channels_hint_chk CHECK ((char_length(target_hint) <= 64)),
+    CONSTRAINT notification_channels_kind_chk CHECK ((((kind = 'slack'::text) AND (target_sealed IS NOT NULL) AND (pagerduty_region IS NULL) AND (email IS NULL)) OR ((kind = 'pagerduty'::text) AND (target_sealed IS NOT NULL) AND (pagerduty_region = ANY (ARRAY['us'::text, 'eu'::text])) AND (email IS NULL)) OR ((kind = 'email'::text) AND (target_sealed IS NULL) AND (pagerduty_region IS NULL) AND (email IS NOT NULL) AND (char_length(email) <= 254)))),
+    CONSTRAINT notification_channels_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text))
+);
+
+
+--
 -- Name: notification_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30027,6 +30052,22 @@ ALTER TABLE ONLY public.node_join_jobs
 
 ALTER TABLE ONLY public.node_join_jobs
     ADD CONSTRAINT node_join_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: notification_channels notification_channels_account_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_channels
+    ADD CONSTRAINT notification_channels_account_name_uniq UNIQUE (account_id, name);
+
+
+--
+-- Name: notification_channels notification_channels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_channels
+    ADD CONSTRAINT notification_channels_pkey PRIMARY KEY (id);
 
 
 --
@@ -47195,6 +47236,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_slot_leases
     ADD CONSTRAINT mirror_slot_leases_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: notification_channels notification_channels_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_channels
+    ADD CONSTRAINT notification_channels_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

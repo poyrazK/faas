@@ -4603,6 +4603,22 @@ type NodeJoinJob struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type NotificationChannel struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	LastDeliveredAt pgtype.Timestamptz
+	LastError       pgtype.Text
+	LastErrorAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type NotificationOutbox struct {
 	ID          int64
 	Channel     string

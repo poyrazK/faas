@@ -7,15 +7,135 @@ import type { AlertPresetResponse } from '../models/AlertPresetResponse.js';
 import type { AlertRollback } from '../models/AlertRollback.js';
 import type { AlertRuleResponse } from '../models/AlertRuleResponse.js';
 import type { CreateAlertRuleRequest } from '../models/CreateAlertRuleRequest.js';
+import type { CreateNotificationChannelRequest } from '../models/CreateNotificationChannelRequest.js';
 import type { EnableAlertPresetRequest } from '../models/EnableAlertPresetRequest.js';
+import type { NotificationChannelResponse } from '../models/NotificationChannelResponse.js';
 import type { RotateAlertRuleSecretRequest } from '../models/RotateAlertRuleSecretRequest.js';
 import type { RotateAlertRuleSecretResponse } from '../models/RotateAlertRuleSecretResponse.js';
 import type { TestAlertPresetResponse } from '../models/TestAlertPresetResponse.js';
+import type { TestNotificationChannelResponse } from '../models/TestNotificationChannelResponse.js';
 import type { UpdateAlertRuleRequest } from '../models/UpdateAlertRuleRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AlertRulesService {
+  /**
+   * List the account's alert notification channels (ADR-749)
+   * Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only.
+   * @returns NotificationChannelResponse The account's channels.
+   * @throws ApiError
+   */
+  public static listNotificationChannels(): CancelablePromise<Array<NotificationChannelResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/notification-channels',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+      },
+    });
+  }
+  /**
+   * Add an alert notification channel (ADR-749)
+   * Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key and region; email may only address the account's own email. Secret destinations are sealed at rest and never returned.
+   * @returns NotificationChannelResponse The channel was created.
+   * @throws ApiError
+   */
+  public static createNotificationChannel({
+    requestBody,
+  }: {
+    requestBody: CreateNotificationChannelRequest,
+  }): CancelablePromise<NotificationChannelResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/notification-channels',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        409: `The account already has a channel with this name.`,
+        422: `The account is at its channel cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one notification channel (ADR-749)
+   * Returns one channel with its last delivery outcome.
+   * @returns NotificationChannelResponse The channel.
+   * @throws ApiError
+   */
+  public static getNotificationChannel({
+    id,
+  }: {
+    /**
+     * Notification channel identifier returned when the channel was created.
+     */
+    id: string,
+  }): CancelablePromise<NotificationChannelResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/notification-channels/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a notification channel (ADR-749)
+   * Removes the channel; alert rules stop delivering to it.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteNotificationChannel({
+    id,
+  }: {
+    /**
+     * Notification channel identifier returned when the channel was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/notification-channels/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Send a test notification through a channel (ADR-749)
+   * Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or not the destination accepted it; delivered and error say which.
+   * @returns TestNotificationChannelResponse The test outcome.
+   * @throws ApiError
+   */
+  public static testNotificationChannel({
+    id,
+  }: {
+    /**
+     * Identifier of the channel to send the test notification through.
+     */
+    id: string,
+  }): CancelablePromise<TestNotificationChannelResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/notification-channels/{id}/test',
+      path: {
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
   /**
    * List recent automatic canary rollbacks.
    * Read-only, bounded to the 32 most recently updated production alert rollback actions for this owned app. Alert fires pin the exact active canary and serving predecessor. Binding blockers retry fresh evidence after APID restarts; deployment changes fail without retargeting.

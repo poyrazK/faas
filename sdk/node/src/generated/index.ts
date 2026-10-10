@@ -305,6 +305,7 @@ export type { CreateManagedPostgresBindingRequest } from './models/CreateManaged
 export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManagedPostgresDatabaseRequest.js';
 export type { CreateManagedRealtimeEndpointRequest } from './models/CreateManagedRealtimeEndpointRequest.js';
 export type { CreateMirrorRuleRequest } from './models/CreateMirrorRuleRequest.js';
+export type { CreateNotificationChannelRequest } from './models/CreateNotificationChannelRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './models/CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './models/CreateObjectS3CredentialRequest.js';
 export type { CreateObjectStorageComputeBindingRequest } from './models/CreateObjectStorageComputeBindingRequest.js';
@@ -913,6 +914,7 @@ export type { MirrorReplayRequestItem } from './models/MirrorReplayRequestItem.j
 export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
+export type { NotificationChannelResponse } from './models/NotificationChannelResponse.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
 export type { OAuthTokenExchangeError } from './models/OAuthTokenExchangeError.js';
 export type { OAuthTokenExchangeRequest } from './models/OAuthTokenExchangeRequest.js';
@@ -1686,6 +1688,7 @@ export type { TenantHostnameResponse } from './models/TenantHostnameResponse.js'
 export type { TenantSurfaceResponse } from './models/TenantSurfaceResponse.js';
 export type { TenantWorkflowScheduleResponse } from './models/TenantWorkflowScheduleResponse.js';
 export type { TestAlertPresetResponse } from './models/TestAlertPresetResponse.js';
+export type { TestNotificationChannelResponse } from './models/TestNotificationChannelResponse.js';
 export type { ThrottlePreviewRow } from './models/ThrottlePreviewRow.js';
 export type { ThrottleSuggestionRow } from './models/ThrottleSuggestionRow.js';
 export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsResponse.js';

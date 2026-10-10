@@ -9618,3 +9618,9 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// Alert notification channels (ADR-749).
+const (
+	MaxNotificationChannelsPerAccount = 20
+	MaxChannelsPerAlertRule           = 5
+)

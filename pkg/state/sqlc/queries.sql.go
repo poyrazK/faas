@@ -9741,6 +9741,23 @@ func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db D
 	return err
 }
 
+const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
+DELETE FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteNotificationChannel, arg.AccountID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -17104,6 +17121,36 @@ func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const getNotificationChannel = `-- name: GetNotificationChannel :one
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type GetNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, getNotificationChannel, arg.AccountID, arg.ID)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -20739,6 +20786,58 @@ func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertNotificationChannel = `-- name: InsertNotificationChannel :one
+
+INSERT INTO notification_channels (account_id, name, kind, target_sealed, target_hint, pagerduty_region, email)
+SELECT $1::uuid, $2::text, $3::text, $4::bytea,
+ $5::text, $6::text, $7::text
+WHERE (SELECT count(*) FROM notification_channels WHERE account_id = $1::uuid) < $8::integer
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type InsertNotificationChannelParams struct {
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	MaxPerAccount   int32
+}
+
+// ADR-749: alert notification channels (apid writes definitions).
+// The per-account cap is enforced inside the insert.
+func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg InsertNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, insertNotificationChannel,
+		arg.AccountID,
+		arg.Name,
+		arg.Kind,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.Email,
+		arg.MaxPerAccount,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -31377,6 +31476,44 @@ func (q *Queries) ListMatchingEventWorkflows(ctx context.Context, db DBTX, arg L
 			return nil, err
 		}
 		items = append(items, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotificationChannels = `-- name: ListNotificationChannels :many
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listNotificationChannels, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -59025,6 +59162,26 @@ func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordNotificationChannelDelivery = `-- name: RecordNotificationChannelDelivery :exec
+UPDATE notification_channels SET
+ last_delivered_at = CASE WHEN $1::text IS NULL THEN $2::timestamptz ELSE last_delivered_at END,
+ last_error = CASE WHEN $1::text IS NULL THEN last_error ELSE left($1::text, 256) END,
+ last_error_at = CASE WHEN $1::text IS NULL THEN last_error_at ELSE $2::timestamptz END
+WHERE id = $3::uuid
+`
+
+type RecordNotificationChannelDeliveryParams struct {
+	Err pgtype.Text
+	At  pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+// meterd and apid's test send record the latest outcome; err NULL = success.
+func (q *Queries) RecordNotificationChannelDelivery(ctx context.Context, db DBTX, arg RecordNotificationChannelDeliveryParams) error {
+	_, err := db.Exec(ctx, recordNotificationChannelDelivery, arg.Err, arg.At, arg.ID)
+	return err
 }
 
 const recordProjectEnvironmentClonePostgresArchive = `-- name: RecordProjectEnvironmentClonePostgresArchive :one

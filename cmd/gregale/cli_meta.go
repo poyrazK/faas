@@ -136,7 +136,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -746,6 +746,23 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Positionals: []string{"<uuid>", "<cents>"},
+	},
+	{
+		Name:    "channels",
+		DocSlug: "channels",
+		Short:   "Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List channels with their last delivery"},
+			{Name: "add", Short: "Add a channel; Slack URLs and PagerDuty keys are read from stdin", Flags: []cliFlag{
+				{Name: "name", Short: "channel name, unique per account", Req: true, Value: "NAME"},
+				{Name: "kind", Short: "destination type", Req: true, Value: "KIND", ClosedSet: []string{"slack", "pagerduty", "email"}},
+				{Name: "secret-stdin", Short: "read the Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
+				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
+			}},
+			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+		},
 	},
 	{
 		Name:    "alerts",

@@ -831,11 +831,17 @@ var methodRouteMap = map[string]string{
 	// The other 5 entries exist because the SDK names them after the
 	// resource noun (AlertRule) rather than the path placeholder
 	// concatenation (AppsSlugAlerts) — same convention as crons.
-	"GET /v1/apps/{slug}/alerts":                     "ListAlertRules",
-	"POST /v1/apps/{slug}/alerts":                    "CreateAlertRule",
-	"GET /v1/apps/{slug}/alerts/{id}":                "GetAlertRule",
-	"PATCH /v1/apps/{slug}/alerts/{id}":              "UpdateAlertRule",
-	"DELETE /v1/apps/{slug}/alerts/{id}":             "DeleteAlertRule",
+	"GET /v1/apps/{slug}/alerts":         "ListAlertRules",
+	"POST /v1/apps/{slug}/alerts":        "CreateAlertRule",
+	"GET /v1/apps/{slug}/alerts/{id}":    "GetAlertRule",
+	"PATCH /v1/apps/{slug}/alerts/{id}":  "UpdateAlertRule",
+	"DELETE /v1/apps/{slug}/alerts/{id}": "DeleteAlertRule",
+	// ADR-749 notification channels (hyphenated resource).
+	"GET /v1/notification-channels":                  "ListNotificationChannels",
+	"POST /v1/notification-channels":                 "CreateNotificationChannel",
+	"GET /v1/notification-channels/{id}":             "GetNotificationChannel",
+	"DELETE /v1/notification-channels/{id}":          "DeleteNotificationChannel",
+	"POST /v1/notification-channels/{id}/test":       "TestNotificationChannel",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest

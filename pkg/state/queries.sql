@@ -17427,3 +17427,30 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 -- name: PruneRouteProbeRounds :exec
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
 
+
+-- ADR-749: alert notification channels (apid writes definitions).
+
+-- name: InsertNotificationChannel :one
+-- The per-account cap is enforced inside the insert.
+INSERT INTO notification_channels (account_id, name, kind, target_sealed, target_hint, pagerduty_region, email)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(name)::text, sqlc.arg(kind)::text, sqlc.narg(target_sealed)::bytea,
+ sqlc.arg(target_hint)::text, sqlc.narg(pagerduty_region)::text, sqlc.narg(email)::text
+WHERE (SELECT count(*) FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid) < sqlc.arg(max_per_account)::integer
+RETURNING *;
+
+-- name: ListNotificationChannels :many
+SELECT * FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid ORDER BY name;
+
+-- name: GetNotificationChannel :one
+SELECT * FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: DeleteNotificationChannel :execrows
+DELETE FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: RecordNotificationChannelDelivery :exec
+-- meterd and apid's test send record the latest outcome; err NULL = success.
+UPDATE notification_channels SET
+ last_delivered_at = CASE WHEN sqlc.narg(err)::text IS NULL THEN sqlc.arg(at)::timestamptz ELSE last_delivered_at END,
+ last_error = CASE WHEN sqlc.narg(err)::text IS NULL THEN last_error ELSE left(sqlc.narg(err)::text, 256) END,
+ last_error_at = CASE WHEN sqlc.narg(err)::text IS NULL THEN last_error_at ELSE sqlc.arg(at)::timestamptz END
+WHERE id = sqlc.arg(id)::uuid;

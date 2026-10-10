@@ -11038,6 +11038,99 @@ paths:
         '204':
           description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/notification-channels:
+    get:
+      operationId: listNotificationChannels
+      summary: List the account's alert notification channels (ADR-749)
+      description: "Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The account's channels.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+    post:
+      operationId: createNotificationChannel
+      summary: Add an alert notification channel (ADR-749)
+      description: "Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key and region; email may only address the account's own email. Secret destinations are sealed at rest and never returned."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNotificationChannelRequest' }
+      responses:
+        '201':
+          description: The channel was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '409':
+          description: The account already has a channel with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The account is at its channel cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/notification-channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: "Notification channel identifier returned when the channel was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getNotificationChannel
+      summary: Get one notification channel (ADR-749)
+      description: "Returns one channel with its last delivery outcome."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNotificationChannel
+      summary: Delete a notification channel (ADR-749)
+      description: "Removes the channel; alert rules stop delivering to it."
+      tags: [alert_rules]
+      responses:
+        '204':
+          description: The channel was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/notification-channels/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: "Identifier of the channel to send the test notification through."
+        schema: { type: string, format: uuid }
+    post:
+      operationId: testNotificationChannel
+      summary: Send a test notification through a channel (ADR-749)
+      description: "Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or not the destination accepted it; delivered and error say which."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The test outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestNotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -49601,6 +49694,57 @@ components:
           type: number
           minimum: 0
           example: 1284
+    CreateNotificationChannelRequest:
+      description: 'Adds a Slack, PagerDuty or email alert channel (ADR-749). Set only the fields for the chosen kind.'
+      type: object
+      required: [name, kind]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per account.'
+          example: ops-slack
+        kind: { type: string, enum: [slack, pagerduty, email], description: 'Destination type.' }
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'Slack incoming webhook, https://hooks.slack.com/services/… (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          default: us
+          description: 'PagerDuty service region (kind pagerduty).'
+        email:
+          type: string
+          format: email
+          description: "The account's own email address (kind email)."
+    NotificationChannelResponse:
+      description: 'One alert notification channel (ADR-749).'
+      type: object
+      required: [id, name, kind, target, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: ops-slack }
+        kind: { type: string, enum: [slack, pagerduty, email] }
+        target:
+          type: string
+          description: 'Non-secret hint: Slack workspace and hook ids, the routing key last four characters, or the email address.'
+        pagerduty_region: { type: string, enum: [us, eu], description: 'Region of a PagerDuty channel.' }
+        last_delivered_at: { type: string, format: date-time, description: 'Last successful delivery or test.' }
+        last_error: { type: string, description: 'Most recent delivery error, if any.' }
+        last_error_at: { type: string, format: date-time, description: 'When last_error occurred.' }
+        created_at: { type: string, format: date-time }
+    TestNotificationChannelResponse:
+      description: 'Outcome of a test notification.'
+      type: object
+      required: [delivered]
+      properties:
+        delivered: { type: boolean, description: 'Whether the destination accepted the test.' }
+        error: { type: string, description: 'Why delivery failed, when it did.' }
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object

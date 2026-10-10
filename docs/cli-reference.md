@@ -13,6 +13,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
+| [`channels`](#channels) | Alert notification channels: Slack, PagerDuty, email (channels list\|add\|test\|rm) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1341,6 +1342,43 @@ gregale bindings smoke public-api billing --caller-deployment v12 --target-deplo
 Show feature maturity and plan availability
 
 `gregale capabilities`
+
+
+## channels
+
+Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)
+
+`gregale channels [<subcommand>]`
+
+### channels list
+
+List channels with their last delivery
+
+### channels add
+
+Add a channel; Slack URLs and PagerDuty keys are read from stdin
+
+`gregale channels add --name <NAME> --kind <KIND> [--secret-stdin] [--pagerduty-region <REGION>] [--email <EMAIL>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | channel name, unique per account | required |
+| `--kind <KIND>` | destination type | required; one of `slack` · `pagerduty` · `email` |
+| `--secret-stdin` | read the Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
+| `--email <EMAIL>` | your account email (kind email) |  |
+
+### channels test
+
+Send a marked test notification
+
+`gregale channels test <channel-id>`
+
+### channels rm
+
+Delete a channel
+
+`gregale channels rm <channel-id>`
 
 
 ## alerts

@@ -2571,6 +2571,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks/{fire}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRollback))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRules))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAlertRule)))))
+	// ADR-749: account-level alert notification channels. Writes carry the
+	// same MFA requirement as alert rules: both hold sealed destinations.
+	mux.HandleFunc("GET /v1/notification-channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listNotificationChannels))))
+	mux.HandleFunc("POST /v1/notification-channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createNotificationChannel)))))
+	mux.HandleFunc("GET /v1/notification-channels/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getNotificationChannel))))
+	mux.HandleFunc("DELETE /v1/notification-channels/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteNotificationChannel))))
+	mux.HandleFunc("POST /v1/notification-channels/{id}/test", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.testNotificationChannel))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRule))))
 	// ADR-123 PR-D: listAlertRuleDeliveries — operator pane for
 	// recent alert_deliveries rows. ?include_test=true toggles the

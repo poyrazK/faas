@@ -223,6 +223,7 @@ type MemStore struct {
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
+	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectWriteFences           map[string]ObjectBucketWriteFence
