@@ -2214,6 +2214,7 @@ func (s *server) handler() http.Handler {
 	// lives in cmd/apid/handlers_rollouts.go.
 	mux.HandleFunc("POST /v1/apps/{slug}/rollouts/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverRollout)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/park/conditional", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkAppIfDeployment))))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.wakeApp))))
 	// Scheduled/predicted demand-window capacity restore. The intent is
 	// durable, so schedd can claim it after a restart and the API never has to
@@ -2637,6 +2638,18 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRule))))
 	mux.HandleFunc("PATCH /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateEdgeRule))))
 	mux.HandleFunc("DELETE /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteEdgeRule))))
+	// ADR-961 §2: rule-set versions and rollback.
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleStats))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleEvents))))
+	// ADR-963 reusable edge-rule lists (account scope).
+	mux.HandleFunc("GET /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleLists))))
+	mux.HandleFunc("POST /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createEdgeRuleList)))))
+	mux.HandleFunc("GET /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleList))))
+	mux.HandleFunc("PATCH /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateEdgeRuleList))))
+	mux.HandleFunc("DELETE /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteEdgeRuleList))))
+	mux.HandleFunc("POST /v1/apps/{slug}/edge-rules/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackEdgeRules)))))
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Six routes
 	// under /v1/apps/{slug}/mirrors. The path is slug-scoped (not
@@ -3820,6 +3833,8 @@ func (s *server) handler() http.Handler {
 	// named CSRF envelope as the other edge-rule forms.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/trace", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTraceEdgeRules))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleEdgeRule))))
+	// ADR-960: switch a rule between log and enforce mode.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeRuleMode))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
 	// G7 / issue #1397 — queue dead-letter replay. The handler verifies

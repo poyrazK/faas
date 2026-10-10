@@ -727,9 +727,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped capability registry returned by
 // GET /v1/capabilities.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives

@@ -17,6 +17,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -80,10 +82,11 @@ func (a *edgeJWKSAdapter) Verify(ctx context.Context, rawToken string, rule *gat
 	if rule == nil {
 		return nil, edgejwks.ErrJWKSNotRegistered
 	}
-	if _, ok, _ := a.cache.Get(ctx, rule.JWKSURL, ""); !ok {
-		if err := a.cache.Register(rule.JWKSURL); err != nil {
-			return nil, err
-		}
+	// Register is an idempotent map insert. A Get probe here would take the
+	// URL's fetch gate a second time per request and could start its own
+	// network fetch before the verifier's kid-aware one.
+	if err := a.cache.Register(rule.JWKSURL); err != nil {
+		return nil, err
 	}
 	src, err := a.v.Verify(ctx, rawToken, edgejwks.VerifierRule{
 		JWKSURL:        rule.JWKSURL,
@@ -92,7 +95,11 @@ func (a *edgeJWKSAdapter) Verify(ctx context.Context, rawToken string, rule *gat
 		Algorithms:     rule.Algorithms,
 		RequiredClaims: rule.RequiredClaims,
 		ExtractClaims:  rule.ExtractClaims,
+		RequireExpiry:  rule.RequireExp,
 	})
+	if errors.Is(err, edgejwks.ErrJWKSUnavailable) {
+		return nil, fmt.Errorf("%w: %w", gateway.ErrJWTKeysUnavailable, err)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -45,3 +45,23 @@ func TestGetCapabilitiesPreservesAvailabilityReasonsAndOlderResponses(t *testing
 		})
 	}
 }
+
+func TestGetCapabilitiesConditionalParking(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		want  bool
+	}{{field: ""}, {field: `,"conditional_parking":false`}, {field: `,"conditional_parking":true`, want: true}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `{"registry_version":1,"plan":"pro","capabilities":[]%s}`, tc.field)
+		}))
+		client, err := NewClient(server.URL, "fixture-token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.GetCapabilities(t.Context())
+		server.Close()
+		if err != nil || response.ConditionalParking != tc.want {
+			t.Fatalf("response=%+v err=%v", response, err)
+		}
+	}
+}

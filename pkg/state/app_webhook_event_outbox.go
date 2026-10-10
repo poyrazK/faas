@@ -117,3 +117,10 @@ func appWokenWebhookPayload(app App, instanceID, wakeID string, occurredAt time.
 		"instance_id": instanceID, "wake_id": wakeID, "occurred_at": occurredAt.UTC(),
 	})
 }
+
+// ConditionalAppParkTransitionStore compares the latest deployment under the
+// same app lock as deployment creation, before committing a park transition.
+type ConditionalAppParkTransitionStore interface {
+	AppParkTransitionStore
+	BeginAppParkTransitionIfDeployment(context.Context, string, AppStatus, string) (AppParkTransition, bool, error)
+}

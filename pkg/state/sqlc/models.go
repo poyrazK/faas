@@ -2252,6 +2252,11 @@ type EdgeRule struct {
 	CorsPresetID pgtype.UUID
 	MatchHeaders []byte
 	ManifestKey  pgtype.Text
+	Name         pgtype.Text
+	Description  pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
+	MatchExpr    []byte
+	Mode         string
 }
 
 type EdgeRuleChangeLog struct {
@@ -2261,6 +2266,50 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+}
+
+type EdgeRuleEvent struct {
+	ID         int64
+	RuleID     pgtype.UUID
+	AppID      pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	Outcome    string
+	RequestID  string
+	Method     string
+	Host       string
+	Path       string
+	ClientIp   *netip.Addr
+	Country    string
+	UserAgent  string
+}
+
+type EdgeRuleHitCount struct {
+	RuleID      pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	Outcome     string
+	Hits        int64
+}
+
+type EdgeRuleList struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	Name        string
+	Kind        string
+	Description string
+	Items       []string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type EdgeRuleSetVersion struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+	RuleCount   int32
+	CreatedAt   pgtype.Timestamptz
 }
 
 type EgressFlowLog struct {
