@@ -81,6 +81,9 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		"FAAS_APID_METRICS_ADDR="+operator,
 		"FAAS_APID_INTERNAL_BASE_URL=http://"+operator,
 		"FAAS_PROMETHEUS_URL="+prom.URL(),
+		// The breaker's 5xx/latency signals and the first-wake 5xx rollback
+		// read request telemetry, which the harness disables by default.
+		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 	)
 	prom.setTargets(h.ScheddMetricsURL, h.GatewayControlURL+"/metrics")
 	t.Cleanup(func() {
