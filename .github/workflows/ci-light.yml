@@ -341,10 +341,10 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Leave room for bounded cold compilation, both sequential 12m state
-    # batches and container setup/cleanup. Test execution uses Go defaults
-    # rather than inheriting the compilation phase's memory/GC bounds.
-    timeout-minutes: 30
+    # Match the mega PostgreSQL shard's budget for cold APID compilation and
+    # its complete race suite. State batches keep their own 12m timeouts and
+    # default runtime settings, on the separate PostgreSQL service.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -440,10 +440,11 @@ jobs:
       #
       # Two phases. The race build of cmd/apid can exhaust hosted-runner
       # memory, so test binaries are compiled first under the mega pg shard 1
-      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Those bounds must not reach the
-      # tests themselves: inherited by the test binaries, GOGC=10 on two cores
-      # pushed a third of pkg/state past the shard's 15-minute timeout. The
-      # run phase reuses the compiled binaries from the build cache.
+      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Ordinary-package tests retain
+      # those proven bounds: two unbounded APID runs lost their hosted runner
+      # after compilation. State tests use default runtime settings because
+      # GOGC=10 on two cores previously exhausted their execution budget.
+      # The run phase reuses the compiled binaries from the build cache.
       - name: race tests (changed packages and invariants)
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
@@ -464,7 +465,7 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS &
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS &
             pids+=("$!")
           fi
           # Preserve each job's third of the tests as two sequential sixths.
