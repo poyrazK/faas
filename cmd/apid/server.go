@@ -110,7 +110,7 @@ type server struct {
 	// companion declarations. Values are immutable OCI digest references.
 	companionImages map[string]string
 	// cliAuthURLBase is the public web origin used by the CLI device-code
-	// response. The public edge at this origin forwards /cli-auth to apid.
+	// response and as the default GitHub App OAuth callback base.
 	cliAuthURLBase string
 	notif          Notifier
 	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
@@ -714,8 +714,8 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	return s
 }
 
-// WithCLIAuthURLBase attaches the public web origin used in browser URLs
-// returned by the CLI device-code endpoint. The setter keeps existing
+// WithCLIAuthURLBase attaches the public web origin used by the CLI device-code
+// endpoint and the default GitHub App OAuth callback. The setter keeps existing
 // positional server constructors source-compatible while allowing production
 // config to supply a provider-specific console hostname.
 func (s *server) WithCLIAuthURLBase(base string) *server {

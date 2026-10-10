@@ -13,8 +13,10 @@
 # Default: gregale.dev
 # apps_domain = "gregale.dev"
 
-# cli_auth_url_base: public console origin for the browser half of CLI login.
-# The public edge forwards /cli-auth from this origin to apid.
+# cli_auth_url_base: public console origin for CLI login and the default GitHub App callback.
+# The public edge forwards /cli-auth and /oauth/code-callback from this origin to apid.
+# FAAS_CLI_AUTH_URL_BASE overrides this setting; FAAS_GITHUB_APP_REDIRECT_URI
+# overrides the GitHub App callback only. Register the callback URL with the App.
 # A bare hostname is normalized to https://<hostname>.
 # Default: https://gregale.dev
 # cli_auth_url_base = "https://gregale.dev"

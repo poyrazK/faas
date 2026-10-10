@@ -167,12 +167,9 @@ func (s *server) redirectToGitHubAuthorization(w http.ResponseWriter, r *http.Re
 	}
 	redirectURI := os.Getenv("FAAS_GITHUB_APP_REDIRECT_URI")
 	if redirectURI == "" {
-		host := r.Host
-		scheme := schemeHTTP
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-			scheme = schemeHTTPS
-		}
-		redirectURI = scheme + "://" + host + oauthCodeCallbackPath
+		// The API listener may be reached through a separate console proxy.
+		// Use its configured public URL rather than the upstream request host.
+		redirectURI = normalizeCLIAuthURLBase(s.cliAuthURLBase) + oauthCodeCallbackPath
 	}
 	u := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
 		"&redirect_uri=" + url.QueryEscape(redirectURI) +
