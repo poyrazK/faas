@@ -1,12 +1,15 @@
 -- +goose Up
--- Three opt-in, notification-only security presets fed by per-app edge
--- signals: pre-auth source-limit pressure, kind=validate mismatches, and
--- rejections by the other edge gates (gateway_edge_rejections_total).
--- Both metrics can be driven by external traffic, so like the login-target
--- metrics they may only send webhooks and never change a deployment.
+-- Opt-in, notification-only edge security presets: pre-auth source-limit
+-- pressure, kind=validate mismatches, rejections by the other edge gates,
+-- and kind=waf detections (ADR-831; Pro and above). External traffic
+-- drives all four metrics, so their alerts may only send webhooks and never
+-- change a deployment.
+-- One migration states the full metric lists so a replay is idempotent:
+-- split, re-running the first half re-added a check without
+-- edge_waf_detections while the WAF preset row already existed.
 -- Restates alert_rules_metric_chk and alert_presets_metric_chk, so it must
--- sort after every other migration that restates them (renumbered after
--- 20261010071621984_automation_failure_alert on merging main).
+-- sort after every other migration that restates them (after
+-- 20261010071621984_automation_failure_alert).
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'error_rate_pct',
@@ -67,12 +70,13 @@ ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'workflow_due_age_seconds',
     'pre_auth_pressure',
     'edge_validation_failures',
-    'edge_rejections'
+    'edge_rejections',
+    'edge_waf_detections'
 ));
 
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_edge_security_notification_chk;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_edge_security_notification_chk
-    CHECK (metric NOT IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections') OR action = 'webhook');
+    CHECK (metric NOT IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections', 'edge_waf_detections') OR action = 'webhook');
 
 ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
 ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric IN (
@@ -98,7 +102,8 @@ ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric 
     'workflow_failures',
     'pre_auth_pressure',
     'edge_validation_failures',
-    'edge_rejections'
+    'edge_rejections',
+    'edge_waf_detections'
 ));
 
 INSERT INTO alert_presets (
@@ -121,9 +126,20 @@ INSERT INTO alert_presets (
     'security', 'edge_rejections', 'gt', 200, '15m', 60, true, 'hobby'
 ) ON CONFLICT (name) DO NOTHING;
 
+INSERT INTO alert_presets (
+    name, display_name, description, category, metric, comparison, threshold,
+    window_spec, default_cooldown_minutes, enabled_in_catalog, minimum_plan
+) VALUES (
+    'edge_waf_detections',
+    'Edge WAF detections',
+    'Alerts when kind=waf edge rules detect more than 25 likely attacks in 15 minutes, whether observed, warned or blocked. Notification only.',
+    'security', 'edge_waf_detections', 'gt', 25, '15m', 60, true, 'pro'
+) ON CONFLICT (name) DO NOTHING;
+
+
 -- +goose Down
-DELETE FROM alert_presets WHERE name IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejection_pressure');
-DELETE FROM alert_rules WHERE metric IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections');
+DELETE FROM alert_presets WHERE name IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejection_pressure', 'edge_waf_detections');
+DELETE FROM alert_rules WHERE metric IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections', 'edge_waf_detections');
 
 ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
 ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric IN (
