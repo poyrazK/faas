@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 970 | [Developer watch mode for apps with a build step](970-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |
 | 741 | [Remote debugger attach for developer environments](741-developer-debugger-attach.md) | proposed | `gregale dev --debug` over a leased edge WebSocket to vmmd `ForwardTCPStream`; developer sessions only |
 | 740 | [Developer live source patches](740-developer-live-source-patch.md) | proposed | ~1 s interpreted-source edits via a guest long-poll on the runtime-config vsock; the build still converges |
