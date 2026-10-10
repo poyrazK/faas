@@ -1408,6 +1408,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // than silently shipping a no-op deploy.
 type Manifest struct {
 	Profiling *api.ProfilingConfig `yaml:"profiling,omitempty"`
+	Tracing   *api.TracingConfig   `yaml:"tracing,omitempty"`
 	// SchemaVersion is optional for backward compatibility. New manifests may
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
@@ -1576,6 +1577,7 @@ type FunctionConfig struct {
 // The API remains authoritative for plan gates and workload compatibility.
 type LifecycleConfig struct {
 	Profiling        *api.ProfilingConfig      `yaml:"profiling,omitempty"`
+	Tracing          *api.TracingConfig        `yaml:"tracing,omitempty"`
 	ExecutionMode    *string                   `yaml:"execution_mode,omitempty"`
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
@@ -1599,6 +1601,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
 		Profiling:        c.Profiling,
+		Tracing:          c.Tracing,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
@@ -1610,7 +1613,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1621,7 +1624,7 @@ func (c *LifecycleConfig) Validate() error {
 	if c == nil || c.Empty() {
 		return nil
 	}
-	m := api.AppManifest{Profiling: c.Profiling}
+	m := api.AppManifest{Profiling: c.Profiling, Tracing: c.Tracing}
 	if c.ExecutionMode != nil {
 		m.ExecutionMode = *c.ExecutionMode
 	}
@@ -1956,6 +1959,7 @@ func editDistance(a, b string) int {
 
 type tomlManifest struct {
 	Profiling           *api.ProfilingConfig       `toml:"profiling"`
+	Tracing             *api.TracingConfig         `toml:"tracing"`
 	Operations          []Operation                `toml:"operations"`
 	SchemaVersion       int                        `toml:"schema_version"`
 	Triggers            tomlTriggers               `toml:"triggers"`
@@ -1988,6 +1992,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		SchemaVersion:       raw.SchemaVersion,
 		EventTriggers:       raw.Triggers.Event,
 		Profiling:           raw.Profiling,
+		Tracing:             raw.Tracing,
 		WorkPolicies:        raw.WorkPolicies,
 		ExclusiveOperations: raw.ExclusiveOperations,
 		Companions:          raw.Companions,
@@ -2035,6 +2040,18 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
 		}
 		m.Lifecycle.Profiling = m.Profiling
+	}
+	if m.Tracing != nil {
+		if err := m.Tracing.Validate(plan); err != nil {
+			return err
+		}
+		if m.Lifecycle == nil {
+			m.Lifecycle = &LifecycleConfig{}
+		}
+		if m.Lifecycle.Tracing != nil && *m.Lifecycle.Tracing != *m.Tracing {
+			return fmt.Errorf("declare tracing once, at top level or in lifecycle")
+		}
+		m.Lifecycle.Tracing = m.Tracing
 	}
 	if err := m.validateOperations(plan); err != nil {
 		return err

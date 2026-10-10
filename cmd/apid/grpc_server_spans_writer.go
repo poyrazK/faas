@@ -50,6 +50,8 @@ const (
 	swOutcomeRateLimited     = "rate_limited"
 	swOutcomeValidationError = "validation_error"
 	swOutcomeDBError         = "db_error"
+	// swOutcomeNoRow: the request_telemetry row is not written yet.
+	swOutcomeNoRow = "no_row"
 )
 
 // traceIDPattern is the W3C trace-id regex — 32 lowercase hex
@@ -90,6 +92,8 @@ type spansWriterReceiver struct {
 	ops     spansWriterMonitor
 	limiter *peraccount.Limiter
 	enabled bool
+	// guest is the ADR-934 in-guest export ingester; nil disables it.
+	guest *guestSpansIngester
 }
 
 // spansWriterMonitor is the metric surface the receiver uses.
@@ -187,6 +191,12 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 		// db_error so an operator chasing a Postgres
 		// failover drill doesn't get misled by client-side
 		// shape drift.
+		// ADR-934: spans that arrive before their request row are
+		// retryable, not delivered; producers keep them for the next flush.
+		if errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+			r.observe(swOutcomeNoRow)
+			return &apidpb.WriteSpansSummaryResponse{Outcome: swOutcomeNoRow}, nil
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
 			r.observe(swOutcomeValidationError)
@@ -213,8 +223,10 @@ func (r *spansWriterReceiver) observe(outcome string) {
 
 // registerSpansWriterReceiver binds the SpansWriterServer onto
 // a gRPC server. Called from runSpansWriterServer in main.go.
-func registerSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool) {
-	apidpb.RegisterSpansWriterServer(s, newSpansWriterReceiver(store, ops, limiter, enabled))
+func registerSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool, guest *guestSpansIngester) {
+	receiver := newSpansWriterReceiver(store, ops, limiter, enabled)
+	receiver.guest = guest
+	apidpb.RegisterSpansWriterServer(s, receiver)
 }
 
 // Compile-time guards. The bytes import is preserved for the

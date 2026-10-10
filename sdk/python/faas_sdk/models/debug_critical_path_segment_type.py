@@ -1,10 +1,11 @@
 from typing import Literal
 
 DebugCriticalPathSegmentType = Literal[
-    "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
+    "app_dependency", "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
 ]
 
 DEBUG_CRITICAL_PATH_SEGMENT_TYPE_VALUES: set[DebugCriticalPathSegmentType] = {
+    "app_dependency",
     "application",
     "guest_transport",
     "managed_binding",

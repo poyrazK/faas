@@ -1,0 +1,4 @@
+hosting:
+  start: python server.py
+  port: 8080
+  health: /healthz

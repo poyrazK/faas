@@ -8,7 +8,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2001,6 +2003,52 @@ func TestTemplates_ExistsAndTarGz(t *testing.T) {
 	}
 }
 
+func TestMCPGoTarGzContainsMaterializedSourcesAndModule(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "mcp-go.tar.gz")
+	if err := templates.TarGz("mcp-go", archivePath); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gzipReader.Close()
+
+	want := map[string]bool{
+		"mcp-go/main.go":      false,
+		"mcp-go/auth.go":      false,
+		"mcp-go/tasks.go":     false,
+		"mcp-go/main_test.go": false,
+		"mcp-go/go.mod":       false,
+		"mcp-go/go.sum":       false,
+	}
+	reader := tar.NewReader(gzipReader)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(header.Name, ".go.tmpl") {
+			t.Errorf("archive retained template-only Go source %q", header.Name)
+		}
+		if _, ok := want[header.Name]; ok {
+			want[header.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("archive missing %q", name)
+		}
+	}
+}
+
 func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 	cases := map[string][]string{
 		"hello-node":         {"handler.js", "package.json", "README.md"},
@@ -2012,6 +2060,8 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 		"function-go":        {"handler.go", "README.md"},
 		"function-node24":    {"handler.js", "package.json", "README.md"},
 		"function-python313": {"handler.py", "requirements.txt", "README.md"},
+		"mcp-go":             {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-python":         {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
 		"secret-reload-node": {"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
 	}
 	for name, want := range cases {

@@ -11,9 +11,11 @@ T = TypeVar("T", bound="CreateAPIConsumerRateCardRequestRouteWeights")
 
 @_attrs_define
 class CreateAPIConsumerRateCardRequestRouteWeights:
-    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes);
-    unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's
-    declared or discovered route templates."""
+    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes); unlisted
+    routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or
+    discovered route templates.
+
+    """
 
     additional_properties: dict[str, int] = _attrs_field(init=False, factory=dict)
 

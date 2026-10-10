@@ -1145,12 +1145,25 @@ func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs
 
 func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED")
+	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED\tSUSPECTED")
 	for _, r := range resp.Regressions {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
-			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt, formatSuspectedDependency(r.SuspectedDependency))
 	}
 	_ = tw.Flush()
+}
+
+// formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`,
+// or "-" when the detector named no dependency.
+func formatSuspectedDependency(suspect *api.DebugSuspectedDependency) string {
+	if suspect == nil {
+		return "-"
+	}
+	kind := suspect.Kind
+	if kind == "" {
+		kind = suspect.Type
+	}
+	return fmt.Sprintf("%s %q %d→%dms", kind, suspect.Name, suspect.P95BaseMS, suspect.P95MS)
 }
 
 func renderDebugCompareTable(w io.Writer, resp api.DebugCompareResponse) {

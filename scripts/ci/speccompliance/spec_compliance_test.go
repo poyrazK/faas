@@ -209,6 +209,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           true, // HTML form, edge-rule enforce/log switch (ADR-960)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
@@ -322,12 +323,17 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"EventRetentionQuery": true, // client-only retention query options; route parameters are the wire contract
+	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
+	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
+	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
+	"EdgeRuleEventsQuery": true,
 	// Workflow list options encode URL query parameters, not JSON request bodies.
-	"OperationWorkflowAttentionOptions":        true,
-	"OperationWorkflowAttentionSummaryOptions": true,
-	"OperationWorkflowOutcomeOptions":          true,
-	"OperationWorkflowOutcomeSummaryOptions":   true,
+	"OperationWorkflowAttentionOptions":           true,
+	"OperationWorkflowAttentionSummaryOptions":    true,
+	"OperationWorkflowOutcomeOptions":             true,
+	"OperationWorkflowOutcomeSummaryOptions":      true,
+	"OperationWorkflowPerformanceOptions":         true,
+	"OperationWorkflowPerformanceInstanceOptions": true,
 
 	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
@@ -567,6 +573,7 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"EdgeRuleMatchExpr":      true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
 	"DevBridgeSession":       true,
 	"DevBridgeActivity":      true, // ADR-379 wire observer types live in pkg/devbridge
@@ -1061,6 +1068,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_versions.go"),
 		filepath.Join(root, "pkg", "api", "durable_entities.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_inspection.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_recovery.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_export.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_backups.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_validator_deployment.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
@@ -1164,6 +1176,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
+		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-934 — zero-config guest tracing manifest DTO
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
@@ -1200,6 +1213,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_business_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_action_preview.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),

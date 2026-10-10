@@ -121,8 +121,8 @@ func TestRealEnvironmentGitOpsAdoptionAndEnforcement(t *testing.T) {
 			t.Fatalf("config: %+v %v", config, err)
 		}
 		current, err := store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, "production")
-		if err != nil || current.AppliedRevisionID != current.ApprovedRevisionID {
-			t.Fatalf("no verified convergence: %+v %v", current, err)
+		if err != nil || current.AppliedRevisionID != "" {
+			t.Fatalf("intent-only backend advanced an unverified revision: %+v %v", current, err)
 		}
 		for _, transition := range [][2]state.AppStatus{{state.AppActive, state.AppEvictedCold}, {state.AppEvictedCold, state.AppActive}} {
 			if changed, err := store.CompareAndSetAppStatus(t.Context(), app.ID, transition[0], transition[1]); err != nil || !changed {
@@ -137,8 +137,8 @@ func TestRealEnvironmentGitOpsAdoptionAndEnforcement(t *testing.T) {
 			t.Fatalf("runtime transitions or rejected deletion changed intent: %+v %v", afterLifecycle, err)
 		}
 		runs, err := store.ListEnvironmentGitOpsRuns(t.Context(), source.AccountID, source.ID, 10)
-		if err != nil || len(runs) != 1 || runs[0].Status != "converged" {
-			t.Fatalf("runs: %+v %v", runs, err)
+		if err != nil || len(runs) != 1 || runs[0].Status != "partial" || runs[0].ErrorCode != "environment_runtime_unacknowledged" {
+			t.Fatalf("intent-only run claimed runtime convergence: %+v %v", runs, err)
 		}
 	})
 }

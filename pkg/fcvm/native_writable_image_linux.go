@@ -25,17 +25,21 @@ func (b linuxNativeImageSources) PrepareWritable(ctx context.Context, owner nati
 	if owner.Authorized || owner.Revoked || owner.ResourcesRemoved || owner.Lease.IsBuilder || name != layerImageName {
 		return nil, errors.New("native image source: private clone requires an original prepared app drive")
 	}
+	if err := b.requireAnonymousStagingFilesystem(filepath.Dir(source)); err != nil {
+		return nil, err
+	}
 	input, err := b.Prepare(owner, root, source, name, false)
 	if err != nil {
 		return nil, err
 	}
 	p := input.(*linuxNativeImagePreparation)
+	p.diskRoot = b.diskStagingRoot
 	defer func() {
 		if prepared == nil {
 			err = errors.Join(err, p.Close())
 		}
 	}()
-	clone, err := cloneNativeImage(ctx, p.source, filepath.Dir(source))
+	clone, err := cloneNativeStagedImage(ctx, p.source, filepath.Dir(source))
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +63,16 @@ func nativeCloneFilesystemSupported(kind int64) bool {
 }
 
 func cloneNativeImage(ctx context.Context, source *os.File, directory string) (output *os.File, err error) {
+	return cloneNativeImageWithFlags(ctx, source, directory, unix.O_EXCL)
+}
+
+// Only durable staging may link its anonymous output after epoch publication.
+// Frozen publication outputs retain O_EXCL and can never acquire a name.
+func cloneNativeStagedImage(ctx context.Context, source *os.File, directory string) (output *os.File, err error) {
+	return cloneNativeImageWithFlags(ctx, source, directory, 0)
+}
+
+func cloneNativeImageWithFlags(ctx context.Context, source *os.File, directory string, flags int) (output *os.File, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -100,7 +114,7 @@ func cloneNativeImage(ctx context.Context, source *os.File, directory string) (o
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_TMPFILE|unix.O_EXCL|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
+	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_TMPFILE|flags|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("native image source: anonymous clone creation: %w", err)
 	}

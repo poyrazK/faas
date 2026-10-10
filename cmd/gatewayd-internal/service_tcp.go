@@ -64,13 +64,28 @@ func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetReso
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return gateway.ServiceTCPTarget{}, false, fmt.Errorf("service TCP: live deployments: %w", err)
 		}
-		return gateway.ServiceTCPTarget{
+		result := gateway.ServiceTCPTarget{
 			AppID:       app.ID,
 			AccountID:   app.AccountID,
 			Plan:        resolved.Plan,
 			TCPPorts:    serviceTCPPorts(app, live),
 			IdleTimeout: serviceTCPIdleTimeout(resolved),
-		}, true, nil
+		}
+		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
+			member, memberErr := store.ScenarioTestMemberByApp(ctx, caller.ID)
+			if memberErr != nil && !errors.Is(memberErr, state.ErrNotFound) {
+				return gateway.ServiceTCPTarget{}, false, memberErr
+			}
+			if memberErr == nil {
+				targetMember, targetErr := store.ScenarioTestMemberByApp(ctx, app.ID)
+				if targetErr != nil || targetMember.RunID != member.RunID || targetMember.AccountID != member.AccountID {
+					return gateway.ServiceTCPTarget{}, false, gateway.ErrServiceProxyDenied
+				}
+				result.ScenarioTestRunID = member.RunID
+				result.ScenarioWorkload = targetMember.Workload
+			}
+		}
+		return result, true, nil
 	}
 }
 
@@ -155,8 +170,9 @@ func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, servic
 	metrics := tcpmetrics.New(deps.metrics.Registry(), "gatewayd_internal_service")
 	forwarder := gateway.TCPForwarder{Nodes: deps.nodeCache.cache, Metrics: metrics}
 	proxy, err := gateway.NewServiceTCPProxy(gateway.ServiceTCPProxyConfig{
-		Services: services,
-		Resolve:  newServiceTCPTargetResolver(store),
+		Services:     services,
+		ResolveChaos: newServiceTCPChaosResolver(store),
+		Resolve:      newServiceTCPTargetResolver(store),
 		Forward: func(ctx context.Context, conn net.Conn, target gateway.Target, idle time.Duration) error {
 			session := forwarder
 			session.IdleTimeout = idle

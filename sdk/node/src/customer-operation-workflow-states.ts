@@ -1,14 +1,14 @@
 // ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
-import { OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
+import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import { customerOperationRequestDigest } from './customer-operation-transactions.js';
 import type { OperationPool, OperationTransaction } from './operation-receipt.js';
 import type { OperationMilestoneReport } from './customer-operations.js';
 
-export interface OperationWorkflowBlockerResolution { code: string; operation: string; description: string; blocker_operation_id: string; blocker_report_id: string; blocker_revision: number }
+export interface OperationWorkflowBlockerResolution { verification_milestone_id?: string; verification_milestone_name?: string; verification_operation_id?: string; verification_owner?: string; resolved_by?: string; code: string; operation: string; description: string; blocker_operation_id: string; blocker_report_id: string; blocker_revision: number }
 
-export interface OperationWorkflowBlocker { first_observed_at?: string; code: string; description: string; operation: string }
+export interface OperationWorkflowBlocker { priority?: 'low' | 'normal' | 'high' | 'urgent'; business_impact?: string; acknowledged_at?: string; acknowledged_by?: string; follow_up_at?: string; owner?: string; next_action?: string; first_observed_at?: string; code: string; description: string; operation: string }
 
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 
@@ -145,6 +145,7 @@ export async function saveCustomerWorkflowStates(
         else if (!prior && !b.first_observed_at) b.first_observed_at = value.occurred_at;
       }
       if (b.first_observed_at && new Date(b.first_observed_at).getTime() > new Date(value.occurred_at).getTime()) throw new TypeError('Blocker first observation exceeds report time');
+      if (b.acknowledged_at && (Date.parse(b.acknowledged_at) > Date.parse(value.occurred_at) || b.first_observed_at && Date.parse(b.acknowledged_at) < Date.parse(b.first_observed_at))) throw new TypeError('Blocker acknowledgement is outside observation/report interval');
       return b;
     });
     await tx.query(
@@ -231,19 +232,44 @@ export async function publishCustomerWorkflowStates(
   finally { connection?.release(); }
 }
 
+function canonicalBlockerText(value: unknown, maxBytes: number): string | undefined {
+ if (value === undefined || value === '') return undefined;
+ if (typeof value !== 'string' || Buffer.byteLength(value) > maxBytes || /[\uD800-\uDFFF]/u.test(value) || /[\x00-\x1f\x7f]/.test(value)) throw new TypeError('Invalid public blocker assignment or attribution');
+ return value;
+}
+
 export function canonicalWorkflowBlockers(value: unknown): OperationWorkflowBlocker[] {
  if (!Array.isArray(value) || value.length > 16) throw new TypeError('Workflow blockers must be an array of at most 16 public reasons');
  const seen = new Set<string>();
  const result = value.map((item: unknown) => {
   if (!item || typeof item !== 'object') throw new TypeError('Invalid workflow blocker');
   const {code, description, operation, first_observed_at} = item as Record<string, unknown>;
+  const priority = (item as Record<string, unknown>).priority;
+  if (priority !== undefined && priority !== '' && !['low','normal','high','urgent'].includes(priority as string)) throw new TypeError('Invalid blocker priority');
+  const business_impact = canonicalBlockerText((item as Record<string, unknown>).business_impact, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES);
+  const owner = canonicalBlockerText((item as Record<string, unknown>).owner, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES);
+  const next_action = canonicalBlockerText((item as Record<string, unknown>).next_action, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES);
   if (typeof code !== 'string' || !STATE.test(code) || typeof operation !== 'string' || !STATE.test(operation)
       || typeof description !== 'string' || !description || Buffer.byteLength(description) > 512 || /[\uD800-\uDFFF]/u.test(description) || /[\x00-\x1f\x7f]/.test(description)) throw new TypeError('Invalid workflow blocker public fields');
   const key = operation + ':' + code;
   if (seen.has(key)) throw new TypeError('Duplicate workflow blocker target/code');
   seen.add(key);
   if (first_observed_at !== undefined && (typeof first_observed_at !== 'string' || !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(first_observed_at) || !Number.isFinite(Date.parse(first_observed_at)) || new Date(first_observed_at).getUTCFullYear()<1)) throw new TypeError('Invalid blocker observation time');
-  return first_observed_at === undefined ? {code,description,operation} : {code,description,operation,first_observed_at: canonicalBlockerTimestamp(first_observed_at as string)};
+  const blocker: OperationWorkflowBlocker = {code,description,operation};
+  if (first_observed_at !== undefined) blocker.first_observed_at = canonicalBlockerTimestamp(first_observed_at as string);
+  if (priority) blocker.priority = priority as OperationWorkflowBlocker['priority'];
+  if (business_impact) blocker.business_impact = business_impact;
+  if (owner) blocker.owner = owner;
+  if (next_action) blocker.next_action = next_action;
+  const fields = item as Record<string, unknown>;
+  const actor = canonicalBlockerText(fields.acknowledged_by, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES);
+  const ack = fields.acknowledged_at === undefined || fields.acknowledged_at === '' ? undefined : canonicalBlockerTimestamp(fields.acknowledged_at as string);
+  const due = fields.follow_up_at === undefined || fields.follow_up_at === '' ? undefined : canonicalBlockerTimestamp(fields.follow_up_at as string);
+  if (Boolean(ack) !== Boolean(actor) || due && !ack || ack && blocker.first_observed_at && Date.parse(ack) < Date.parse(blocker.first_observed_at) || due && Date.parse(due) < Date.parse(ack!)) throw new TypeError('Invalid blocker acknowledgement or follow-up');
+  if (ack) blocker.acknowledged_at = ack;
+  if (actor) blocker.acknowledged_by = actor;
+  if (due) blocker.follow_up_at = due;
+  return blocker;
  });
  return result.sort((a,b) => a.operation < b.operation ? -1 : a.operation > b.operation ? 1 : a.code < b.code ? -1 : a.code > b.code ? 1 : 0);
 }
@@ -260,7 +286,19 @@ export function canonicalWorkflowResolutions(value: unknown, blockers: Operation
     || typeof v.blocker_report_id !== 'string' || !uuid.test(v.blocker_report_id) || v.blocker_report_id === nil
     || typeof v.blocker_revision !== 'number' || !Number.isSafeInteger(v.blocker_revision) || v.blocker_revision < 1
     || active.has(String(v.operation) + ':' + String(v.code))) throw new TypeError('Resolution requires a prior report identity/revision and cleared target/code');
+  const verification_owner = canonicalBlockerText(v.verification_owner, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES);
+  const verification_milestone_id = v.verification_milestone_id === '' ? undefined : v.verification_milestone_id;
+  const verification_milestone_name = v.verification_milestone_name === '' ? undefined : v.verification_milestone_name;
+  const verification_operation_id = v.verification_operation_id === '' ? undefined : v.verification_operation_id;
+  if ((verification_milestone_id === undefined) !== (verification_milestone_name === undefined) || verification_milestone_id === undefined && (verification_owner !== undefined || verification_operation_id !== undefined)) throw new TypeError('Invalid resolution verification requirement');
+  if (verification_milestone_id !== undefined && (typeof verification_milestone_id !== 'string' || !uuid.test(verification_milestone_id) || verification_milestone_id === nil || typeof verification_milestone_name !== 'string' || !STATE.test(verification_milestone_name))) throw new TypeError('Invalid resolution verification milestone');
+  if (verification_operation_id !== undefined && (typeof verification_operation_id !== 'string' || !uuid.test(verification_operation_id) || verification_operation_id === nil)) throw new TypeError('Invalid resolution verification Operation');
+  const resolved_by = canonicalBlockerText(v.resolved_by, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES);
   return {code: v.code as string, operation: v.operation as string, description: v.description as string,
+   ...(resolved_by ? {resolved_by} : {}),
+   ...(verification_milestone_id ? {verification_milestone_id: verification_milestone_id as string, verification_milestone_name: verification_milestone_name as string} : {}),
+   ...(verification_operation_id ? {verification_operation_id: verification_operation_id as string} : {}),
+   ...(verification_owner ? {verification_owner} : {}),
    blocker_operation_id: v.blocker_operation_id, blocker_report_id: v.blocker_report_id, blocker_revision: v.blocker_revision};
  });
  canonicalWorkflowBlockers(result);

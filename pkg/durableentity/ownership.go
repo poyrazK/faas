@@ -12,14 +12,21 @@ import (
 // OwnerID gets a new epoch and token after release or expiry. On ErrUncertain,
 // the returned claim can be confirmed by Renew; it is not yet usable authority.
 func (m *Manager) Acquire(ctx context.Context, id ID, ownerID string) (Claim, error) {
+	return m.acquire(ctx, id, ownerID, false)
+}
+
+func (m *Manager) acquire(ctx context.Context, id ID, ownerID string, existingOnly bool) (Claim, error) {
 	if !id.valid() || !validIdentity(ownerID) {
 		return Claim{}, ErrInvalid
 	}
 	value, etag, err := m.readManifest(ctx, id)
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) && !existingOnly {
 		value = manifest{Schema: 1, ID: id}
 	} else if err != nil {
 		return Claim{}, err
+	}
+	if existingOnly && value.Version == 0 {
+		return Claim{}, ErrNotFound
 	}
 	now := m.now().UTC()
 	if value.OwnerID != "" && now.Before(value.ExpiresAt) {

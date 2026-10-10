@@ -515,6 +515,9 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 			page = projectOperationWorkflowInstance(page, opts.Workflow, opts.WorkflowInstanceID, declarations, workflowInstanceState, retainedFacts)
 		}
 	}
+	if err := s.projectResolutionVerifications(ctx, &page, account, tenant, opts, now.Time); err != nil {
+		return api.OperationMilestonesResponse{}, err
+	}
 	if err := s.projectRelatedWorkflows(ctx, &page, account, tenant, opts, operator, now.Time); err != nil {
 		return api.OperationMilestonesResponse{}, err
 	}

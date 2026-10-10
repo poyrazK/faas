@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../app.js';
 import { createPostgresMcpTaskStore } from '../task-store.js';
-import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from '../tasks.js';
+import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers, RetryableMcpTaskError, validateMcpTaskRetryPolicy } from '../tasks.js';
 
 function owner(authInfo, authMode) {
   if (authMode === 'open') return 'public';
@@ -305,7 +305,9 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   let claimOrder = 0;
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
+    if (sql.includes("AS trusted")) return { rows: [{ trusted: true }] };
     if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
+    if (sql.includes('INSERT INTO gregale_mcp_task_crypto_keys')) return { rows: [{ key_fingerprint: params[2] }] };
     if (sql.includes('INSERT INTO gregale_mcp_tasks')) {
       const row = {
         task_id: params[1], tool_name: params[3], handler_version: params[4], status: 'queued',
@@ -350,7 +352,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
     return { rows: [] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'app-123', ownerKey: 'x'.repeat(48), ttlMs: 3_600_000 });
-  await store.initialize();
+  await store.migrate();
   const authInfo = { resource: new URL('https://mcp.example/mcp'), extra: { subject: 'alice' }, clientId: 'client-a' };
   const record = await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo, authMode: 'external-oauth' });
   const insert = calls.find(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'));
@@ -382,13 +384,13 @@ test('queue metrics count only unexpired queued and running rows in the task nam
   let captured;
   const pool = { async query(sql, params) {
     captured = { sql, params };
-    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25' }] };
+    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1', failed_tasks: '2', retry_waiting_tasks: '1', active_workers: '2', draining_workers: '0', unsupported_handler_tasks: '1' }] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25 });
-  assert.deepEqual(captured.params, ['mcp-worker-prod']);
-  assert.match(captured.sql, /status IN \('queued', 'running'\)/);
-  assert.match(captured.sql, /expires_at > clock_timestamp\(\)/);
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1, activeWorkers: 2, drainingWorkers: 0, unsupportedHandlerTasks: 1 });
+  assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
+  assert.match(captured.sql, /status IN \('queued', 'running', 'failed'\)/);
+  assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);
 });
 
@@ -584,4 +586,90 @@ test('MCP Tasks are advertised and the modern wire methods round-trip through th
   assert.equal(synchronous.result.resultType, 'complete', synchronous.text);
   assert.equal(synchronous.result.content[0].text, 'Report sync is ready after 1 steps.');
   assert.equal(store.rows.size, rowCount, 'clients without Tasks support do not create task records');
+});
+
+
+test('retry policy rejects invalid attempt and delay bounds', () => {
+  assert.deepEqual(validateMcpTaskRetryPolicy(), { maxAttempts: 3, retryBaseDelayMs: 1000, retryMaxDelayMs: 60000 });
+  for (const policy of [{ maxAttempts: 0 }, { maxAttempts: 11 }, { maxAttempts: 1.5 }, { retryBaseDelayMs: 99 }, { retryMaxDelayMs: 999 }, { retryMaxDelayMs: 86400001 }]) {
+    assert.throws(() => validateMcpTaskRetryPolicy(policy), /MCP task/);
+  }
+});
+
+test('runtime passes explicit retry classification and bounded jitter to the store', async () => {
+  const store = new MemoryTaskStore();
+  let observed;
+  const originalFail = store.fail.bind(store);
+  store.fail = async (id, token, error, options) => {
+    observed = { error, options };
+    return originalFail(id, token, error);
+  };
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, maxAttempts: 2, retryBaseDelayMs: 100, retryMaxDelayMs: 100, handlers: {
+    work: { version: '1', async execute() { throw new RetryableMcpTaskError('private secret'); } },
+  } });
+  await runtime.start();
+  try {
+    await runtime.create('work', {}, undefined, 'open');
+    await eventually(() => observed, 'retry options were not recorded');
+    assert.deepEqual(observed.error, { code: -32603, message: 'Task execution failed' });
+    assert.equal(observed.options.retryable, true);
+    assert.equal(observed.options.maxAttempts, 2);
+    assert.ok(observed.options.retryDelayMs >= 50 && observed.options.retryDelayMs <= 100);
+  } finally { await runtime.stop(); }
+});
+
+test('drain finishes active handlers and concurrent stop calls share completion', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
+  const completion = new Promise(resolve => { finish = resolve; });
+  const events = [];
+  store.workerHeartbeat = async () => { events.push('available'); };
+  store.workerDraining = async () => { events.push('draining'); };
+  store.workerStopped = async () => { events.push('stopped'); };
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, handlers: { build_report: { version: '1', async execute() { began(); return completion; } } } });
+  await runtime.start();
+  await started;
+  const first = runtime.stop();
+  assert.equal(runtime.stop(), first);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(events.includes('draining'));
+  assert.equal(events.includes('stopped'), false);
+  finish({ content: [] });
+  assert.deepEqual(await first, { timedOut: false });
+  assert.equal(store.rows.get(task.task_id).status, 'completed');
+  assert.equal(events.at(-1), 'stopped');
+});
+
+test('drain deadline aborts handlers and suppresses late terminal writes', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let signal;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 1000, handlers: { build_report: { version: '1', async execute(_, context) { signal = context.signal; return completion; } } } });
+  await runtime.start();
+  assert.deepEqual(await runtime.stop(), { timedOut: true });
+  assert.equal(signal.aborted, true);
+  finish({ content: [] });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(store.rows.get(task.task_id).status, 'running');
+});
+
+test('active handlers keep renewing their lease while draining', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let renewed;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const renewal = new Promise(resolve => { renewed = resolve; });
+  const originalHeartbeat = store.heartbeat.bind(store);
+  store.heartbeat = async (...args) => { const state = await originalHeartbeat(...args); renewed(); return state; };
+  await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 10000, handlers: { build_report: { version: '1', async execute() { return completion; } } } });
+  await runtime.start();
+  const stopping = runtime.stop();
+  try { await renewal; } finally { finish({ content: [] }); }
+  assert.deepEqual(await stopping, { timedOut: false });
 });

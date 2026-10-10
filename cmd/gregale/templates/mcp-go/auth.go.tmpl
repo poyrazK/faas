@@ -1,0 +1,667 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/yosida95/uritemplate/v3"
+)
+
+const maxMCPBodyBytes = 1 << 20
+
+var (
+	validScope    = regexp.MustCompile(`^[\x21\x23-\x5b\x5d-\x7e]+$`)
+	validEndpoint = regexp.MustCompile(`^/(?:[A-Za-z0-9._~-]+/?)*$`)
+	uriVariable   = regexp.MustCompile(`\{[^{}]+\}`)
+)
+
+type authConfig struct {
+	Mode           string          `json:"mode"`
+	Issuer         string          `json:"issuer,omitempty"`
+	JWKSURL        string          `json:"jwks_url,omitempty"`
+	Resource       string          `json:"resource,omitempty"`
+	Scopes         []string        `json:"-"`
+	ScopesRaw      json.RawMessage `json:"scopes"`
+	ToolScopes     json.RawMessage `json:"tool_scopes"`
+	ResourceScopes json.RawMessage `json:"resource_scopes"`
+	PromptScopes   json.RawMessage `json:"prompt_scopes"`
+}
+
+type authPrincipal struct {
+	scopes   map[string]struct{}
+	subject  string
+	clientID string
+	expires  int64
+}
+
+type authContextKey struct{}
+
+func principalFromContext(ctx context.Context) *authPrincipal {
+	principal, _ := ctx.Value(authContextKey{}).(*authPrincipal)
+	return principal
+}
+
+type scopeRule struct {
+	pattern  string
+	template *uritemplate.Template
+}
+
+type scopePolicy struct {
+	configured bool
+	resource   bool
+	rules      map[string][]string
+	templates  []scopeRule
+}
+
+func newScopePolicy(raw json.RawMessage, field string, resource bool, mode string) (*scopePolicy, error) {
+	policy := &scopePolicy{configured: raw != nil, resource: resource, rules: map[string][]string{}}
+	if raw == nil {
+		return policy, nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, fmt.Errorf("auth.%s must be an object", field)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+		return nil, fmt.Errorf("auth.%s must be an object", field)
+	}
+	for name, encodedScopes := range values {
+		if name == "" || strings.ContainsAny(name, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\v\f\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x7f") {
+			return nil, fmt.Errorf("auth.%s keys must be nonempty and contain no ASCII whitespace or controls", field)
+		}
+		if resource {
+			if err := validateResourcePolicyKey(name); err != nil {
+				return nil, fmt.Errorf("auth.%s: %w", field, err)
+			}
+		}
+		if bytes.Equal(bytes.TrimSpace(encodedScopes), []byte("null")) {
+			return nil, fmt.Errorf("auth.%s[%q] must be an array of scopes", field, name)
+		}
+		var scopes []string
+		if err := json.Unmarshal(encodedScopes, &scopes); err != nil || scopes == nil {
+			return nil, fmt.Errorf("auth.%s[%q] must be an array of scopes", field, name)
+		}
+		for _, scope := range scopes {
+			if !validScope.MatchString(scope) {
+				return nil, fmt.Errorf("auth.%s[%q] contains an invalid scope", field, name)
+			}
+		}
+		if mode == "open" && len(scopes) != 0 {
+			return nil, fmt.Errorf("scoped %s entries require external-oauth", field)
+		}
+		policy.rules[name] = dedupe(scopes)
+		if resource && strings.ContainsAny(name, "{}") {
+			template, err := uritemplate.New(name)
+			if err != nil {
+				return nil, fmt.Errorf("auth.%s contains an invalid URI template", field)
+			}
+			policy.templates = append(policy.templates, scopeRule{pattern: name, template: template})
+		}
+	}
+	return policy, nil
+}
+
+func validateResourcePolicyKey(value string) error {
+	if value == "" || strings.ContainsAny(value, "\\\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\v\f\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x7f") {
+		return errors.New("resource policy keys must be absolute URIs or URI templates without whitespace or controls")
+	}
+	if strings.ContainsAny(value, "{}") {
+		if _, err := uritemplate.New(value); err != nil {
+			return errors.New("resource policy keys must be valid URI templates")
+		}
+	}
+	expanded := uriVariable.ReplaceAllString(value, "placeholder")
+	parsed, err := url.Parse(expanded)
+	if err != nil || parsed.Scheme == "" || parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("resource policy keys must be absolute URIs or valid URI templates")
+	}
+	return nil
+}
+
+func (p *scopePolicy) required(identifier string) ([]string, bool) {
+	if !p.configured {
+		return nil, true
+	}
+	if scopes, ok := p.rules[identifier]; ok {
+		return scopes, true
+	}
+	if !p.resource {
+		return nil, false
+	}
+	found := false
+	set := map[string]struct{}{}
+	for _, rule := range p.templates {
+		if rule.template.Match(identifier) == nil {
+			continue
+		}
+		found = true
+		for _, scope := range p.rules[rule.pattern] {
+			set[scope] = struct{}{}
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	result := make([]string, 0, len(set))
+	for scope := range set {
+		result = append(result, scope)
+	}
+	slices.Sort(result)
+	return result, true
+}
+
+func (p *scopePolicy) allScopes() []string {
+	var result []string
+	for _, scopes := range p.rules {
+		result = append(result, scopes...)
+	}
+	return dedupe(result)
+}
+
+func dedupe(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+type authorization struct {
+	endpoint     string
+	auth         authConfig
+	tools        *scopePolicy
+	resources    *scopePolicy
+	prompts      *scopePolicy
+	metadataPath string
+	metadataURL  string
+	keys         *remoteJWKS
+}
+
+func newAuthorization(cfg config) (*authorization, error) {
+	a := &authorization{endpoint: cfg.Endpoint, auth: cfg.Auth}
+	if a.auth.ScopesRaw != nil {
+		if bytes.Equal(bytes.TrimSpace(a.auth.ScopesRaw), []byte("null")) {
+			return nil, errors.New("auth.scopes must be an array of scope tokens")
+		}
+		if err := json.Unmarshal(a.auth.ScopesRaw, &a.auth.Scopes); err != nil || a.auth.Scopes == nil {
+			return nil, errors.New("auth.scopes must be an array of scope tokens")
+		}
+	}
+	if a.auth.Mode != "open" && a.auth.Mode != "external-oauth" {
+		return nil, errors.New("set auth.mode to open or external-oauth")
+	}
+	var err error
+	if a.tools, err = newScopePolicy(a.auth.ToolScopes, "tool_scopes", false, a.auth.Mode); err != nil {
+		return nil, err
+	}
+	if a.resources, err = newScopePolicy(a.auth.ResourceScopes, "resource_scopes", true, a.auth.Mode); err != nil {
+		return nil, err
+	}
+	if a.prompts, err = newScopePolicy(a.auth.PromptScopes, "prompt_scopes", false, a.auth.Mode); err != nil {
+		return nil, err
+	}
+	for _, scope := range a.auth.Scopes {
+		if !validScope.MatchString(scope) {
+			return nil, errors.New("auth.scopes must contain nonempty ASCII scope tokens")
+		}
+	}
+	a.auth.Scopes = dedupe(a.auth.Scopes)
+	if a.auth.Mode == "open" {
+		if a.auth.Issuer != "" || a.auth.JWKSURL != "" || a.auth.Resource != "" || len(a.auth.Scopes) != 0 {
+			return nil, errors.New("open auth must not contain OAuth settings")
+		}
+		return a, nil
+	}
+	if len(a.auth.Scopes) == 0 {
+		return nil, errors.New("set nonempty OAuth scopes")
+	}
+	for field, value := range map[string]string{"issuer": a.auth.Issuer, "jwks_url": a.auth.JWKSURL, "resource": a.auth.Resource} {
+		if err := validateHTTPSURL(value); err != nil {
+			return nil, fmt.Errorf("auth.%s must be HTTPS without credentials, query or fragment", field)
+		}
+	}
+	resourceURL, _ := url.Parse(a.auth.Resource)
+	if resourceURL.Path != cfg.Endpoint {
+		return nil, errors.New("auth.resource must identify the MCP endpoint")
+	}
+	a.metadataPath = "/.well-known/oauth-protected-resource" + cfg.Endpoint
+	resourceURL.Path = a.metadataPath
+	resourceURL.RawPath = ""
+	a.metadataURL = resourceURL.String()
+	a.keys = newRemoteJWKS(a.auth.JWKSURL)
+	return a, nil
+}
+
+func validateHTTPSURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("invalid HTTPS URL")
+	}
+	return nil
+}
+
+func (a *authorization) scopesSupported() []string {
+	all := append([]string(nil), a.auth.Scopes...)
+	all = append(all, a.tools.allScopes()...)
+	all = append(all, a.resources.allScopes()...)
+	all = append(all, a.prompts.allScopes()...)
+	all = dedupe(all)
+	// Keep the wire metadata stable for clients and snapshots.
+	slices.Sort(all)
+	return all
+}
+
+func (a *authorization) protectedResourceMetadata(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"resource":                 a.auth.Resource,
+		"authorization_servers":    []string{a.auth.Issuer},
+		"scopes_supported":         a.scopesSupported(),
+		"bearer_methods_supported": []string{"header"},
+	})
+}
+
+func (a *authorization) bearerChallenge(scopes []string, errorCode string) string {
+	challenge := fmt.Sprintf(`Bearer resource_metadata=%q, scope=%q`, a.metadataURL, strings.Join(scopes, " "))
+	if errorCode != "" && errorCode != "authentication_required" {
+		challenge += fmt.Sprintf(`, error=%q`, errorCode)
+	}
+	return challenge
+}
+
+func (a *authorization) reject(w http.ResponseWriter, status int, errorCode string, scopes []string) {
+	w.Header().Set("Cache-Control", "no-store")
+	if a.auth.Mode == "external-oauth" && (errorCode == "authentication_required" || errorCode == "invalid_token" || errorCode == "insufficient_scope") {
+		if len(scopes) == 0 {
+			scopes = a.auth.Scopes
+		}
+		w.Header().Set("WWW-Authenticate", a.bearerChallenge(scopes, errorCode))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": errorCode})
+}
+
+func (a *authorization) authenticate(ctx context.Context, header string) (*authPrincipal, int, string, []string) {
+	if a.auth.Mode == "open" {
+		return nil, 0, "", nil
+	}
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return nil, http.StatusUnauthorized, "authentication_required", a.auth.Scopes
+	}
+	claims := jwt.MapClaims{}
+	parsed, err := jwt.ParseWithClaims(parts[1], claims, func(token *jwt.Token) (any, error) {
+		alg, _ := token.Header["alg"].(string)
+		kid, _ := token.Header["kid"].(string)
+		if alg != "RS256" && alg != "ES256" {
+			return nil, errors.New("unsupported JWT algorithm")
+		}
+		return a.keys.key(ctx, kid, alg)
+	}, jwt.WithValidMethods([]string{"RS256", "ES256"}), jwt.WithIssuer(a.auth.Issuer), jwt.WithAudience(a.auth.Resource), jwt.WithExpirationRequired())
+	if err != nil || parsed == nil || !parsed.Valid {
+		return nil, http.StatusUnauthorized, "invalid_token", a.auth.Scopes
+	}
+	subject, ok := claims["sub"].(string)
+	if !ok || subject == "" {
+		return nil, http.StatusUnauthorized, "invalid_token", a.auth.Scopes
+	}
+	expires, ok := claims["exp"].(float64)
+	if !ok {
+		return nil, http.StatusUnauthorized, "invalid_token", a.auth.Scopes
+	}
+	principal := &authPrincipal{scopes: map[string]struct{}{}, subject: subject, expires: int64(expires)}
+	principal.clientID, _ = claims["client_id"].(string)
+	if claim, ok := claims["scope"].(string); ok {
+		for _, scope := range strings.Split(claim, " ") {
+			if scope != "" {
+				principal.scopes[scope] = struct{}{}
+			}
+		}
+	}
+	missing := missingScopes(a.auth.Scopes, principal)
+	if len(missing) != 0 {
+		return nil, http.StatusForbidden, "insufficient_scope", a.auth.Scopes
+	}
+	return principal, 0, "", nil
+}
+
+func missingScopes(required []string, principal *authPrincipal) []string {
+	var missing []string
+	for _, scope := range required {
+		if _, ok := principal.scopes[scope]; !ok {
+			missing = append(missing, scope)
+		}
+	}
+	return missing
+}
+
+func (a *authorization) canAccess(policy *scopePolicy, identifier string, principal *authPrincipal) bool {
+	required, listed := policy.required(identifier)
+	if !listed {
+		return false
+	}
+	if a.auth.Mode == "open" {
+		return true
+	}
+	if principal == nil {
+		return false
+	}
+	return len(missingScopes(append(append([]string(nil), a.auth.Scopes...), required...), principal)) == 0
+}
+
+type callDecision struct {
+	status int
+	error  string
+	scopes []string
+}
+
+func (a *authorization) authorizeCall(method string, params map[string]json.RawMessage, principal *authPrincipal) *callDecision {
+	var policy *scopePolicy
+	var identifier, kind string
+	switch method {
+	case "tools/call":
+		policy, kind = a.tools, "tool"
+		if encoded := params["name"]; encoded == nil || json.Unmarshal(encoded, &identifier) != nil {
+			return nil // The MCP SDK reports malformed method parameters.
+		}
+	case "resources/read":
+		policy, kind = a.resources, "resource"
+		if encoded := params["uri"]; encoded == nil || json.Unmarshal(encoded, &identifier) != nil {
+			return nil // The MCP SDK reports malformed method parameters.
+		}
+	case "prompts/get":
+		policy, kind = a.prompts, "prompt"
+		if encoded := params["name"]; encoded == nil || json.Unmarshal(encoded, &identifier) != nil {
+			return nil // The MCP SDK reports malformed method parameters.
+		}
+	case "completion/complete":
+		var ref struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+			URI  string `json:"uri"`
+		}
+		if encoded := params["ref"]; encoded == nil || json.Unmarshal(encoded, &ref) != nil {
+			return nil // The MCP SDK reports malformed completion parameters.
+		}
+		switch ref.Type {
+		case "ref/prompt":
+			policy, kind, identifier = a.prompts, "prompt", ref.Name
+		case "ref/resource":
+			policy, kind, identifier = a.resources, "resource", ref.URI
+		default:
+			return nil // The MCP SDK reports an unsupported reference type.
+		}
+	default:
+		return nil
+	}
+	if identifier == "" {
+		return nil // The MCP SDK reports malformed method parameters.
+	}
+	required, listed := policy.required(identifier)
+	if !listed {
+		return &callDecision{status: http.StatusForbidden, error: kind + "_access_denied"}
+	}
+	if a.auth.Mode == "open" {
+		return nil
+	}
+	allRequired := dedupe(append(append([]string(nil), a.auth.Scopes...), required...))
+	if principal == nil || len(missingScopes(allRequired, principal)) != 0 {
+		return &callDecision{status: http.StatusForbidden, error: "insufficient_scope", scopes: allRequired}
+	}
+	return nil
+}
+
+func (a *authorization) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, status, errorCode, scopes := a.authenticate(r.Context(), r.Header.Get("Authorization"))
+		if status != 0 {
+			a.reject(w, status, errorCode, scopes)
+			return
+		}
+		if r.Method == http.MethodPost {
+			body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBodyBytes+1))
+			if err != nil {
+				a.reject(w, http.StatusBadRequest, "invalid_request", nil)
+				return
+			}
+			if len(body) > maxMCPBodyBytes {
+				a.reject(w, http.StatusRequestEntityTooLarge, "request_body_too_large", nil)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var messages []json.RawMessage
+			if json.Unmarshal(body, &messages) == nil {
+				for _, message := range messages {
+					if decision := a.authorizeRawMessage(message, principal); decision != nil {
+						a.reject(w, decision.status, decision.error, decision.scopes)
+						return
+					}
+				}
+			} else if len(body) > 0 {
+				if decision := a.authorizeRawMessage(body, principal); decision != nil {
+					a.reject(w, decision.status, decision.error, decision.scopes)
+					return
+				}
+			}
+		}
+		r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, principal))
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *authorization) authorizeRawMessage(data []byte, principal *authPrincipal) *callDecision {
+	var message struct {
+		Method string                     `json:"method"`
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	if json.Unmarshal(data, &message) != nil {
+		return nil
+	}
+	return a.authorizeCall(message.Method, message.Params, principal)
+}
+
+type remoteJWKS struct {
+	url       string
+	client    *http.Client
+	mu        sync.RWMutex
+	keys      map[string]map[string]crypto.PublicKey
+	expiresAt time.Time
+	fetchedAt time.Time
+}
+
+func newRemoteJWKS(endpoint string) *remoteJWKS {
+	return &remoteJWKS{url: endpoint, client: &http.Client{Timeout: 5 * time.Second}}
+}
+
+func (j *remoteJWKS) key(ctx context.Context, kid, alg string) (crypto.PublicKey, error) {
+	j.mu.RLock()
+	if j.keys != nil && time.Now().Before(j.expiresAt) {
+		if key := j.find(kid, alg); key != nil {
+			j.mu.RUnlock()
+			return key, nil
+		}
+		if time.Since(j.fetchedAt) < 30*time.Second {
+			j.mu.RUnlock()
+			return nil, errors.New("signing key not found")
+		}
+	}
+	j.mu.RUnlock()
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if time.Now().After(j.expiresAt) || j.keys == nil {
+		if err := j.refresh(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if key := j.find(kid, alg); key != nil {
+		return key, nil
+	}
+	if time.Since(j.fetchedAt) >= 30*time.Second {
+		if err := j.refresh(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if key := j.find(kid, alg); key != nil {
+		return key, nil
+	}
+	return nil, errors.New("signing key not found")
+}
+
+func (j *remoteJWKS) find(kid, alg string) crypto.PublicKey {
+	if kid != "" {
+		return j.keys[kid][alg]
+	}
+	var found crypto.PublicKey
+	for _, algorithms := range j.keys {
+		if key := algorithms[alg]; key != nil {
+			if found != nil {
+				return nil
+			}
+			found = key
+		}
+	}
+	return found
+}
+
+func (j *remoteJWKS) refresh(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, j.url, nil)
+	if err != nil {
+		return err
+	}
+	response, err := j.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("JWKS endpoint returned HTTP %d", response.StatusCode)
+	}
+	var document struct {
+		Keys []struct {
+			KID string `json:"kid"`
+			KTY string `json:"kty"`
+			ALG string `json:"alg"`
+			USE string `json:"use"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+			CRV string `json:"crv"`
+			X   string `json:"x"`
+			Y   string `json:"y"`
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&document); err != nil {
+		return err
+	}
+	keys := map[string]map[string]crypto.PublicKey{}
+	for _, jwk := range document.Keys {
+		if jwk.USE != "" && jwk.USE != "sig" {
+			continue
+		}
+		key, alg, err := publicKeyFromJWK(jwk.KTY, jwk.ALG, jwk.N, jwk.E, jwk.CRV, jwk.X, jwk.Y)
+		if err != nil {
+			continue
+		}
+		if jwk.KID == "" {
+			// A key without kid is selectable only when it is the sole key for its algorithm.
+			jwk.KID = ""
+		}
+		if keys[jwk.KID] == nil {
+			keys[jwk.KID] = map[string]crypto.PublicKey{}
+		}
+		if keys[jwk.KID][alg] != nil {
+			return errors.New("JWKS contains duplicate key identifiers")
+		}
+		keys[jwk.KID][alg] = key
+	}
+	if len(keys) == 0 {
+		return errors.New("JWKS contains no supported signing keys")
+	}
+	j.keys = keys
+	j.fetchedAt = time.Now()
+	ttl := 5 * time.Minute
+	for _, directive := range strings.Split(response.Header.Get("Cache-Control"), ",") {
+		name, value, ok := strings.Cut(strings.TrimSpace(directive), "=")
+		if !ok || !strings.EqualFold(name, "max-age") {
+			continue
+		}
+		if seconds, err := time.ParseDuration(value + "s"); err == nil {
+			ttl = min(max(seconds, time.Second), time.Hour)
+		}
+	}
+	j.expiresAt = j.fetchedAt.Add(ttl)
+	return nil
+}
+
+func publicKeyFromJWK(kty, declaredAlg, modulus, exponent, curve, xValue, yValue string) (crypto.PublicKey, string, error) {
+	switch kty {
+	case "RSA":
+		if declaredAlg != "" && declaredAlg != "RS256" {
+			return nil, "", errors.New("unsupported RSA algorithm")
+		}
+		n, err := base64.RawURLEncoding.DecodeString(modulus)
+		if err != nil {
+			return nil, "", err
+		}
+		e, err := base64.RawURLEncoding.DecodeString(exponent)
+		if err != nil || len(e) == 0 || len(e) > 4 {
+			return nil, "", errors.New("invalid RSA exponent")
+		}
+		exponentInt := 0
+		for _, b := range e {
+			exponentInt = (exponentInt << 8) | int(b)
+		}
+		publicKey := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: exponentInt}
+		if publicKey.N.BitLen() < 2048 || publicKey.E < 3 || publicKey.E%2 == 0 {
+			return nil, "", errors.New("weak RSA key")
+		}
+		return publicKey, "RS256", nil
+	case "EC":
+		if (declaredAlg != "" && declaredAlg != "ES256") || curve != "P-256" {
+			return nil, "", errors.New("unsupported EC key")
+		}
+		x, err := base64.RawURLEncoding.DecodeString(xValue)
+		if err != nil {
+			return nil, "", err
+		}
+		y, err := base64.RawURLEncoding.DecodeString(yValue)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(x) != 32 || len(y) != 32 {
+			return nil, "", errors.New("invalid P-256 coordinates")
+		}
+		curve := elliptic.P256()
+		xInt, yInt := new(big.Int).SetBytes(x), new(big.Int).SetBytes(y)
+		if !curve.IsOnCurve(xInt, yInt) {
+			return nil, "", errors.New("invalid P-256 point")
+		}
+		return &ecdsa.PublicKey{Curve: curve, X: xInt, Y: yInt}, "ES256", nil
+	default:
+		return nil, "", errors.New("unsupported JWK key type")
+	}
+}

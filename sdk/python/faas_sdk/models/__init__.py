@@ -565,9 +565,12 @@ from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequest
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
 from .create_dev_bridge_request import CreateDevBridgeRequest
 from .create_dev_bridge_response import CreateDevBridgeResponse
+from .create_edge_rule_list_request import CreateEdgeRuleListRequest
+from .create_edge_rule_list_request_kind import CreateEdgeRuleListRequestKind
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
+from .create_edge_rule_request_mode import CreateEdgeRuleRequestMode
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
@@ -710,6 +713,7 @@ from .debug_critical_path_segment import DebugCriticalPathSegment
 from .debug_critical_path_segment_type import DebugCriticalPathSegmentType
 from .debug_critical_path_span import DebugCriticalPathSpan
 from .debug_critical_path_span_dependency_type import DebugCriticalPathSpanDependencyType
+from .debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
 from .debug_dependency_impact_edge import DebugDependencyImpactEdge
 from .debug_dependency_impact_exemplar import DebugDependencyImpactExemplar
 from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExemplarWindow
@@ -754,6 +758,8 @@ from .debug_running_flow_summary import DebugRunningFlowSummary
 from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
+from .debug_suspected_dependency import DebugSuspectedDependency
+from .debug_suspected_dependency_type import DebugSuspectedDependencyType
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -891,8 +897,33 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_alarm_inspection import DurableEntityAlarmInspection
+from .durable_entity_backup import DurableEntityBackup
+from .durable_entity_backup_info import DurableEntityBackupInfo
+from .durable_entity_backup_page import DurableEntityBackupPage
+from .durable_entity_head_delivery import DurableEntityHeadDelivery
+from .durable_entity_head_delivery_status import DurableEntityHeadDeliveryStatus
+from .durable_entity_inspect_response import DurableEntityInspectResponse
 from .durable_entity_invoke_request import DurableEntityInvokeRequest
 from .durable_entity_invoke_response import DurableEntityInvokeResponse
+from .durable_entity_outbox_inspection import DurableEntityOutboxInspection
+from .durable_entity_restore_preview import DurableEntityRestorePreview
+from .durable_entity_restore_preview_compatibility import DurableEntityRestorePreviewCompatibility
+from .durable_entity_restore_preview_schema_relation import DurableEntityRestorePreviewSchemaRelation
+from .durable_entity_restore_request import DurableEntityRestoreRequest
+from .durable_entity_restore_response import DurableEntityRestoreResponse
+from .durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
+from .durable_entity_restore_validation_response_isolation import DurableEntityRestoreValidationResponseIsolation
+from .durable_entity_retry_request import DurableEntityRetryRequest
+from .durable_entity_retry_request_target import DurableEntityRetryRequestTarget
+from .durable_entity_retry_response import DurableEntityRetryResponse
+from .durable_entity_retry_response_target import DurableEntityRetryResponseTarget
+from .durable_entity_scope import DurableEntityScope
+from .durable_entity_state_export import DurableEntityStateExport
+from .durable_entity_state_export_format import DurableEntityStateExportFormat
+from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
+from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
+from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -901,16 +932,24 @@ from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
 from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
+from .edge_rule_event_response import EdgeRuleEventResponse
+from .edge_rule_event_response_outcome import EdgeRuleEventResponseOutcome
+from .edge_rule_events_response import EdgeRuleEventsResponse
 from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
 from .edge_rule_header_op_action import EdgeRuleHeaderOpAction
 from .edge_rule_headers_action import EdgeRuleHeadersAction
+from .edge_rule_hit_stats_response import EdgeRuleHitStatsResponse
 from .edge_rule_ip_action import EdgeRuleIPAction
 from .edge_rule_jwt_action import EdgeRuleJWTAction
 from .edge_rule_jwt_action_algorithms_item import EdgeRuleJWTActionAlgorithmsItem
 from .edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
 from .edge_rule_limit_action import EdgeRuleLimitAction
+from .edge_rule_list_response import EdgeRuleListResponse
+from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+from .edge_rule_match_expr import EdgeRuleMatchExpr
+from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
@@ -918,10 +957,14 @@ from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
+from .edge_rule_response_mode import EdgeRuleResponseMode
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
+from .edge_rule_set_version_response import EdgeRuleSetVersionResponse
+from .edge_rule_stats_response import EdgeRuleStatsResponse
+from .edge_rule_stats_response_window import EdgeRuleStatsResponseWindow
 from .edge_rule_suggestion import EdgeRuleSuggestion
 from .edge_rule_suggestion_action import EdgeRuleSuggestionAction
 from .edge_rule_suggestion_kind import EdgeRuleSuggestionKind
@@ -970,20 +1013,27 @@ from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpe
 from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
 from .environment_git_source_update import EnvironmentGitSourceUpdate
 from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
+from .environment_job_schedule import EnvironmentJobSchedule
+from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
+from .environment_queue_smoke import EnvironmentQueueSmoke
+from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
+from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
+from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
@@ -1346,6 +1396,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
@@ -1512,7 +1563,11 @@ from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerReq
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
 from .list_account_operations_state import ListAccountOperationsState
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
+from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
 from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
+from .list_account_workflow_attention_sort import ListAccountWorkflowAttentionSort
+from .list_account_workflow_performance_instances_cohort import ListAccountWorkflowPerformanceInstancesCohort
+from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1525,6 +1580,8 @@ from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
+from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
+from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
@@ -1550,7 +1607,15 @@ from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOp
 from .list_platform_tenant_self_workflow_attention_dependency_status import (
     ListPlatformTenantSelfWorkflowAttentionDependencyStatus,
 )
+from .list_platform_tenant_self_workflow_attention_priority import ListPlatformTenantSelfWorkflowAttentionPriority
 from .list_platform_tenant_self_workflow_attention_reason import ListPlatformTenantSelfWorkflowAttentionReason
+from .list_platform_tenant_self_workflow_attention_sort import ListPlatformTenantSelfWorkflowAttentionSort
+from .list_platform_tenant_self_workflow_performance_instances_cohort import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
+)
+from .list_platform_tenant_self_workflow_performance_instances_dimension import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+)
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
 from .list_profile_investigations_response import ListProfileInvestigationsResponse
@@ -2030,7 +2095,14 @@ from .operation_workflow_attention_stats import OperationWorkflowAttentionStats
 from .operation_workflow_attention_summary import OperationWorkflowAttentionSummary
 from .operation_workflow_attention_summary_group_by import OperationWorkflowAttentionSummaryGroupBy
 from .operation_workflow_blocker import OperationWorkflowBlocker
+from .operation_workflow_blocker_duration import OperationWorkflowBlockerDuration
+from .operation_workflow_blocker_escalation import OperationWorkflowBlockerEscalation
+from .operation_workflow_blocker_escalation_policy import OperationWorkflowBlockerEscalationPolicy
+from .operation_workflow_blocker_performance import OperationWorkflowBlockerPerformance
+from .operation_workflow_blocker_priority import OperationWorkflowBlockerPriority
 from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
+from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
@@ -2047,6 +2119,7 @@ from .operation_workflow_dependency_trace_limits_reached_item import OperationWo
 from .operation_workflow_dependency_trace_workflow_limit import OperationWorkflowDependencyTraceWorkflowLimit
 from .operation_workflow_dependent_instance import OperationWorkflowDependentInstance
 from .operation_workflow_dependent_instance_dependency_status import OperationWorkflowDependentInstanceDependencyStatus
+from .operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
 from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
@@ -2059,6 +2132,17 @@ from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
 from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
 from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
 from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+from .operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
+from .operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
+from .operation_workflow_performance_coverage_reason_reason import OperationWorkflowPerformanceCoverageReasonReason
+from .operation_workflow_performance_group import OperationWorkflowPerformanceGroup
+from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
+from .operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
+from .operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
+from .operation_workflow_performance_instances_response_cohort import (
+    OperationWorkflowPerformanceInstancesResponseCohort,
+)
+from .operation_workflow_performance_summary import OperationWorkflowPerformanceSummary
 from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
@@ -2072,14 +2156,23 @@ from .operation_workflow_reconciliation_payload_kind import OperationWorkflowRec
 from .operation_workflow_reconciliation_status import OperationWorkflowReconciliationStatus
 from .operation_workflow_related_instance import OperationWorkflowRelatedInstance
 from .operation_workflow_related_instance_status import OperationWorkflowRelatedInstanceStatus
+from .operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+from .operation_workflow_resolution_verification_status import OperationWorkflowResolutionVerificationStatus
 from .operation_workflow_state import OperationWorkflowState
+from .operation_workflow_state_duration import OperationWorkflowStateDuration
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
+from .operation_workflow_state_performance import OperationWorkflowStatePerformance
 from .operation_workflow_state_report import OperationWorkflowStateReport
 from .operation_workflow_state_report_deadline_at_type_1 import OperationWorkflowStateReportDeadlineAtType1
 from .operation_workflow_state_report_response import OperationWorkflowStateReportResponse
+from .operation_workflow_state_sla import OperationWorkflowStateSLA
+from .operation_workflow_state_sla_status import OperationWorkflowStateSLAStatus
 from .operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
 from .operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
 from .operation_workflow_step import OperationWorkflowStep
+from .operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
+from .operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
+from .operation_workflow_step_state_sla_warning_percent import OperationWorkflowStepStateSlaWarningPercent
 from .operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
 from .operation_workflow_transition import OperationWorkflowTransition
 from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
@@ -2089,6 +2182,8 @@ from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
 from .operation_workflow_unmet_effect_reason import OperationWorkflowUnmetEffectReason
 from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
+from .operation_workflow_verification_duration import OperationWorkflowVerificationDuration
+from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -2137,6 +2232,8 @@ from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
 from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
 from .outbound_request_policy import OutboundRequestPolicy
+from .park_app_body import ParkAppBody
+from .park_app_if_deployment_body import ParkAppIfDeploymentBody
 from .parked_deployment_ref import ParkedDeploymentRef
 from .parked_deployment_ref_parked_reason import ParkedDeploymentRefParkedReason
 from .password_forgot_response_200 import PasswordForgotResponse200
@@ -2712,6 +2809,7 @@ from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import 
 )
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
@@ -2982,7 +3080,10 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_match import ScenarioTestChaosMatch
+from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesResponse
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
@@ -3129,7 +3230,9 @@ from .stream_app_logs_level import StreamAppLogsLevel
 from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .summarize_account_workflow_attention_dependency_status import SummarizeAccountWorkflowAttentionDependencyStatus
 from .summarize_account_workflow_attention_group_by import SummarizeAccountWorkflowAttentionGroupBy
+from .summarize_account_workflow_attention_priority import SummarizeAccountWorkflowAttentionPriority
 from .summarize_account_workflow_attention_reason import SummarizeAccountWorkflowAttentionReason
+from .summarize_account_workflow_attention_sort import SummarizeAccountWorkflowAttentionSort
 from .summarize_account_workflow_outcomes_group_by import SummarizeAccountWorkflowOutcomesGroupBy
 from .summarize_platform_tenant_self_workflow_attention_dependency_status import (
     SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus,
@@ -3137,7 +3240,11 @@ from .summarize_platform_tenant_self_workflow_attention_dependency_status import
 from .summarize_platform_tenant_self_workflow_attention_group_by import (
     SummarizePlatformTenantSelfWorkflowAttentionGroupBy,
 )
+from .summarize_platform_tenant_self_workflow_attention_priority import (
+    SummarizePlatformTenantSelfWorkflowAttentionPriority,
+)
 from .summarize_platform_tenant_self_workflow_attention_reason import SummarizePlatformTenantSelfWorkflowAttentionReason
+from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePlatformTenantSelfWorkflowAttentionSort
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
@@ -3169,6 +3276,7 @@ from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
+from .tracing_config import TracingConfig
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
@@ -3248,8 +3356,10 @@ from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpe
 from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
+from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
+from .update_edge_rule_request_mode import UpdateEdgeRuleRequestMode
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
@@ -3987,9 +4097,12 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreateEdgeRuleListRequest",
+    "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
+    "CreateEdgeRuleRequestMode",
     "CreateEdgeRuleRequestValidateMode",
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
@@ -4118,6 +4231,7 @@ __all__ = (
     "DebugCriticalPathSegmentType",
     "DebugCriticalPathSpan",
     "DebugCriticalPathSpanDependencyType",
+    "DebugDependencyDeploymentComparison",
     "DebugDependencyImpactEdge",
     "DebugDependencyImpactExemplar",
     "DebugDependencyImpactExemplarWindow",
@@ -4162,6 +4276,8 @@ __all__ = (
     "DebugRunningObservation",
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
+    "DebugSuspectedDependency",
+    "DebugSuspectedDependencyType",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
@@ -4297,8 +4413,33 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityAlarmInspection",
+    "DurableEntityBackup",
+    "DurableEntityBackupInfo",
+    "DurableEntityBackupPage",
+    "DurableEntityHeadDelivery",
+    "DurableEntityHeadDeliveryStatus",
+    "DurableEntityInspectResponse",
     "DurableEntityInvokeRequest",
     "DurableEntityInvokeResponse",
+    "DurableEntityOutboxInspection",
+    "DurableEntityRestorePreview",
+    "DurableEntityRestorePreviewCompatibility",
+    "DurableEntityRestorePreviewSchemaRelation",
+    "DurableEntityRestoreRequest",
+    "DurableEntityRestoreResponse",
+    "DurableEntityRestoreValidationResponse",
+    "DurableEntityRestoreValidationResponseIsolation",
+    "DurableEntityRetryRequest",
+    "DurableEntityRetryRequestTarget",
+    "DurableEntityRetryResponse",
+    "DurableEntityRetryResponseTarget",
+    "DurableEntityScope",
+    "DurableEntityStateExport",
+    "DurableEntityStateExportFormat",
+    "DurableEntityValidatorDeploymentInfo",
+    "DurableEntityValidatorDeploymentInfoSource",
+    "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -4307,16 +4448,24 @@ __all__ = (
     "EdgeRuleCacheActionVaryOnItem",
     "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
+    "EdgeRuleEventResponse",
+    "EdgeRuleEventResponseOutcome",
+    "EdgeRuleEventsResponse",
     "EdgeRuleGeoAction",
     "EdgeRuleHeaderOp",
     "EdgeRuleHeaderOpAction",
     "EdgeRuleHeadersAction",
+    "EdgeRuleHitStatsResponse",
     "EdgeRuleIPAction",
     "EdgeRuleJWTAction",
     "EdgeRuleJWTActionAlgorithmsItem",
     "EdgeRuleJWTActionRequiredClaims",
     "EdgeRuleLimitAction",
+    "EdgeRuleListResponse",
+    "EdgeRuleListResponseKind",
     "EdgeRuleMaintenanceAction",
+    "EdgeRuleMatchExpr",
+    "EdgeRuleMatchExprOp",
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
@@ -4324,10 +4473,14 @@ __all__ = (
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseMatchHeaders",
+    "EdgeRuleResponseMode",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
+    "EdgeRuleSetVersionResponse",
+    "EdgeRuleStatsResponse",
+    "EdgeRuleStatsResponseWindow",
     "EdgeRuleSuggestion",
     "EdgeRuleSuggestionAction",
     "EdgeRuleSuggestionKind",
@@ -4376,20 +4529,27 @@ __all__ = (
     "EnvironmentGitSourceSpecMode",
     "EnvironmentGitSourceUpdate",
     "EnvironmentGitSourceUpdateMode",
+    "EnvironmentJobSchedule",
+    "EnvironmentJobSmoke",
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
+    "EnvironmentQueueSmoke",
+    "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
+    "EnvironmentWorkloadActivationEvidence",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
+    "EnvironmentWorkloadQueueSmoke",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
     "EnvironmentWorkloadSourceKind",
+    "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
@@ -4740,6 +4900,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetEdgeRuleStatsWindow",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
     "GetEventBacklogOrigin",
@@ -4904,7 +5065,11 @@ __all__ = (
     "LinkPlatformTenantSurfaceRequest",
     "ListAccountOperationsState",
     "ListAccountWorkflowAttentionDependencyStatus",
+    "ListAccountWorkflowAttentionPriority",
     "ListAccountWorkflowAttentionReason",
+    "ListAccountWorkflowAttentionSort",
+    "ListAccountWorkflowPerformanceInstancesCohort",
+    "ListAccountWorkflowPerformanceInstancesDimension",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -4917,6 +5082,8 @@ __all__ = (
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
+    "ListEdgeRuleEventsOutcome",
+    "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
@@ -4940,7 +5107,11 @@ __all__ = (
     "ListOrgAPIKeysResponse",
     "ListPlatformTenantSelfOperationsState",
     "ListPlatformTenantSelfWorkflowAttentionDependencyStatus",
+    "ListPlatformTenantSelfWorkflowAttentionPriority",
     "ListPlatformTenantSelfWorkflowAttentionReason",
+    "ListPlatformTenantSelfWorkflowAttentionSort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesCohort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -5400,7 +5571,14 @@ __all__ = (
     "OperationWorkflowAttentionSummary",
     "OperationWorkflowAttentionSummaryGroupBy",
     "OperationWorkflowBlocker",
+    "OperationWorkflowBlockerDuration",
+    "OperationWorkflowBlockerEscalation",
+    "OperationWorkflowBlockerEscalationPolicy",
+    "OperationWorkflowBlockerPerformance",
+    "OperationWorkflowBlockerPriority",
     "OperationWorkflowBlockerResolution",
+    "OperationWorkflowBottlenecks",
+    "OperationWorkflowBottlenecksIncompleteReasonsItem",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionReason",
@@ -5417,6 +5595,7 @@ __all__ = (
     "OperationWorkflowDependencyTraceWorkflowLimit",
     "OperationWorkflowDependentInstance",
     "OperationWorkflowDependentInstanceDependencyStatus",
+    "OperationWorkflowDurationDistribution",
     "OperationWorkflowEffectRequirement",
     "OperationWorkflowEvidenceMilestone",
     "OperationWorkflowInstanceMilestoneRef",
@@ -5429,6 +5608,15 @@ __all__ = (
     "OperationWorkflowOutcomesResponse",
     "OperationWorkflowOutcomeSummary",
     "OperationWorkflowOutcomeSummaryGroupBy",
+    "OperationWorkflowPerformanceCohort",
+    "OperationWorkflowPerformanceCoverageReason",
+    "OperationWorkflowPerformanceCoverageReasonReason",
+    "OperationWorkflowPerformanceGroup",
+    "OperationWorkflowPerformanceGroupDimension",
+    "OperationWorkflowPerformanceInstance",
+    "OperationWorkflowPerformanceInstancesResponse",
+    "OperationWorkflowPerformanceInstancesResponseCohort",
+    "OperationWorkflowPerformanceSummary",
     "OperationWorkflowPlannedDecision",
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
@@ -5442,14 +5630,23 @@ __all__ = (
     "OperationWorkflowReconciliationStatus",
     "OperationWorkflowRelatedInstance",
     "OperationWorkflowRelatedInstanceStatus",
+    "OperationWorkflowResolutionVerification",
+    "OperationWorkflowResolutionVerificationStatus",
     "OperationWorkflowState",
+    "OperationWorkflowStateDuration",
     "OperationWorkflowStateHistoryEntry",
+    "OperationWorkflowStatePerformance",
     "OperationWorkflowStateReport",
     "OperationWorkflowStateReportDeadlineAtType1",
     "OperationWorkflowStateReportResponse",
+    "OperationWorkflowStateSLA",
+    "OperationWorkflowStateSLAStatus",
     "OperationWorkflowStateValidationRequest",
     "OperationWorkflowStateValidationResponse",
     "OperationWorkflowStep",
+    "OperationWorkflowStepBlockerEscalations",
+    "OperationWorkflowStepStateSlaBudgetSeconds",
+    "OperationWorkflowStepStateSlaWarningPercent",
     "OperationWorkflowStepStateStaleAfterSeconds",
     "OperationWorkflowTransition",
     "OperationWorkflowTransitionReadiness",
@@ -5459,6 +5656,8 @@ __all__ = (
     "OperationWorkflowUnmetEffectReason",
     "OperationWorkflowUnmetInvariant",
     "OperationWorkflowUnmetInvariantReason",
+    "OperationWorkflowVerificationDuration",
+    "OperationWorkflowVerificationPerformance",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -5507,6 +5706,8 @@ __all__ = (
     "OutboundIntegrationOfferOwnerKind",
     "OutboundIntegrationUsageResponse",
     "OutboundRequestPolicy",
+    "ParkAppBody",
+    "ParkAppIfDeploymentBody",
     "ParkedDeploymentRef",
     "ParkedDeploymentRefParkedReason",
     "PasswordForgotResponse200",
@@ -6030,6 +6231,7 @@ __all__ = (
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",
@@ -6298,7 +6500,10 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosMatch",
+    "ScenarioTestChaosMatchesResponse",
     "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
@@ -6437,11 +6642,15 @@ __all__ = (
     "StreamDeploymentLogsFollow",
     "SummarizeAccountWorkflowAttentionDependencyStatus",
     "SummarizeAccountWorkflowAttentionGroupBy",
+    "SummarizeAccountWorkflowAttentionPriority",
     "SummarizeAccountWorkflowAttentionReason",
+    "SummarizeAccountWorkflowAttentionSort",
     "SummarizeAccountWorkflowOutcomesGroupBy",
     "SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus",
     "SummarizePlatformTenantSelfWorkflowAttentionGroupBy",
+    "SummarizePlatformTenantSelfWorkflowAttentionPriority",
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
+    "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
@@ -6471,6 +6680,7 @@ __all__ = (
     "TraceSpan",
     "TraceSpanAttributes",
     "TraceSpanStatus",
+    "TracingConfig",
     "TransferOwnershipRequest",
     "Trigger",
     "TriggerBrokerPoisonStrategy",
@@ -6546,8 +6756,10 @@ __all__ = (
     "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
+    "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
+    "UpdateEdgeRuleRequestMode",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",

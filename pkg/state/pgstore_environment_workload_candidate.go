@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -29,12 +30,37 @@ func (s *PgStore) environmentCandidateInputsTx(ctx context.Context, tx pgx.Tx, l
 		return nil, gitOpsIntentSnapshot{}, revision, err
 	}
 	plan, err := environmentGitOpsPlan(source, revision, desired, observed, false)
-	if err != nil || plan.Hash != reviewed.Hash {
-		return nil, gitOpsIntentSnapshot{}, revision, ErrConflict
-	}
-	inputs, err := workloadCandidateInputs(source, revision, desired, snapshot, plan)
 	if err != nil {
 		return nil, gitOpsIntentSnapshot{}, revision, err
+	}
+	if plan.Hash != reviewed.Hash {
+		return nil, gitOpsIntentSnapshot{}, revision, fmt.Errorf("%w: candidate plan no longer matches the current intent", ErrConflict)
+	}
+	rows, err := tx.Query(ctx, `SELECT steps FROM environment_gitops_runs WHERE source_id=$1::uuid AND revision_id=$2::uuid AND generation=$3`,
+		mustPgUUID(source.ID), mustPgUUID(revision.ID), source.Generation)
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, revision, mapErr(err)
+	}
+	var appliedSteps []EnvironmentGitOpsStep
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return nil, gitOpsIntentSnapshot{}, revision, mapErr(err)
+		}
+		var steps []EnvironmentGitOpsStep
+		if json.Unmarshal(raw, &steps) == nil {
+			appliedSteps = append(appliedSteps, steps...)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, gitOpsIntentSnapshot{}, revision, mapErr(err)
+	}
+	rows.Close()
+	inputs, err := workloadCandidateInputs(source, revision, desired, snapshot, plan, appliedSteps)
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, revision, fmt.Errorf("environment workload candidate inputs: %w", err)
 	}
 	return inputs, snapshot, revision, nil
 }
@@ -53,6 +79,9 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 	inputs, snapshot, revision, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {
 		return nil, err
+	}
+	if len(inputs) == 0 {
+		return []EnvironmentWorkloadCandidate{}, nil
 	}
 	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 		return nil, mapErr(err)
@@ -85,6 +114,13 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 		dep, err := q.EnvironmentGitOpsImageCandidate(ctx, tx, id)
 		if err != nil {
 			return nil, err
+		}
+		var storedRuntime []byte
+		if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
+			return nil, mapErr(err)
+		}
+		if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+			return nil, fmt.Errorf("%w: stored candidate inputs differ from the reviewed intent", ErrConflict)
 		}
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), BuildID: dep.BuildID, AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
 			Status: DeploymentStatus(dep.Status), HasRootfs: dep.RootfsPath != "" || dep.RootfsKey != ""})
@@ -124,9 +160,16 @@ func (s *PgStore) EnvironmentGitOpsSourceRequests(ctx context.Context, lease Env
 			continue
 		}
 		frozen := candidateFrozenInputs(input)
-		_, err := sqlc.New().EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
+		id, err := sqlc.New().EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
 			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: reviewed.Hash})
 		if err == nil {
+			var storedRuntime []byte
+			if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
+				return nil, mapErr(err)
+			}
+			if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+				return nil, ErrConflict
+			}
 			continue
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {

@@ -30,8 +30,8 @@ func (s *PgStore) summarizeWorkflowAttention(ctx context.Context, account, tenan
 	accountID, _ := operationUUID(account)
 	appID, _ := operationUUID(opts.AppID)
 	raw, err := sqlc.New().SummarizeCustomerOperationWorkflowAttention(ctx, s.pool, sqlc.SummarizeCustomerOperationWorkflowAttentionParams{
-		AccountID: accountID, AppID: appID, Scope: opts.Scope, TenantID: tenant, WorkflowName: opts.Workflow, BlockerCode: opts.BlockerCode, DependencyStatus: opts.DependencyStatus, RequiredOutcomeCode: opts.RequiredOutcomeCode, TargetOperation: opts.TargetOperation, Reason: opts.Reason,
-		GroupBy: opts.GroupBy, AfterGroup: c.After, PageLimit: int32(opts.Limit + 1), EvaluatedAt: pgtype.Timestamptz{Time: c.EvaluatedAt, Valid: true}, Now: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		SlaHistoryLimit: int32(api.OperationWorkflowBottleneckHistoryMax + 1), AccountID: accountID, AppID: appID, Scope: opts.Scope, TenantID: tenant, WorkflowName: opts.Workflow, BlockerCode: opts.BlockerCode, Priority: opts.Priority, Owner: opts.Owner, Unassigned: opts.Unassigned, DependencyStatus: opts.DependencyStatus, RequiredOutcomeCode: opts.RequiredOutcomeCode, TargetOperation: opts.TargetOperation, Reason: opts.Reason,
+		GroupBy: opts.GroupBy, AfterGroup: c.After, HasAfter: c.HasAfter, PageLimit: int32(opts.Limit + 1), EvaluatedAt: pgtype.Timestamptz{Time: c.EvaluatedAt, Valid: true}, Now: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
 	})
 	if err != nil {
 		return api.OperationWorkflowAttentionSummary{}, mapErr(err)

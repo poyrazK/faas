@@ -59,7 +59,7 @@ func productionMonitorTraffic(t *testing.T, pool *pgxpool.Pool, a state.Account,
 		if spans {
 			span := debugger.StoredSpan{TraceID: trace, SpanID: "db", Name: "secret db destination", DBStatement: "SELECT private_customer", StartTimeUnixNano: uint64(w.Start.UnixNano()), EndTimeUnixNano: uint64(w.Start.Add(200 * time.Millisecond).UnixNano()), DurationNanos: uint64(200 * time.Millisecond), Attributes: map[string]string{"gregale.dependency.type": "managed_binding", "gregale.dependency.kind": "postgres"}}
 			body, _ := json.Marshal([]debugger.StoredSpan{span})
-			if err := q.UpdateSpansSummary(t.Context(), pool, sqlc.UpdateSpansSummaryParams{TraceID: pgtype.Text{String: trace, Valid: true}, Column2: body, Column3: mustPgUUID(t, a.ID)}); err != nil {
+			if _, err := q.UpdateSpansSummary(t.Context(), pool, sqlc.UpdateSpansSummaryParams{TraceID: pgtype.Text{String: trace, Valid: true}, Column2: body, Column3: mustPgUUID(t, a.ID)}); err != nil {
 				t.Fatal(err)
 			}
 		}

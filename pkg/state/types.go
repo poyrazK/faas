@@ -1875,6 +1875,7 @@ type AppManifest struct {
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *api.TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                       `json:"max_retries,omitempty"`
 	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
@@ -1938,7 +1939,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -2293,16 +2294,21 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
-	// GitOps candidate. It is internal metadata, never an activation receipt.
+	// GitOps candidate. It remains attached after activation so serving runtime
+	// configuration is preserved; it is internal metadata, never a receipt.
 	EnvironmentWorkloadRuntime string `json:"-"`
-	ID                         string
-	AppID                      string
-	BuildID                    string // empty when an image deploy has no build pipeline
-	ImageDigest                string
-	Kind                       DeploymentKind
-	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes                int64
-	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadHeldValue is nil only for legacy in-memory values, in
+	// which case the presence of frozen workload inputs retains the old held
+	// behavior. Persistent rows always carry the explicit flag.
+	EnvironmentWorkloadHeldValue *bool `json:"-"`
+	ID                           string
+	AppID                        string
+	BuildID                      string // empty when an image deploy has no build pipeline
+	ImageDigest                  string
+	Kind                         DeploymentKind
+	SourcePath                   string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                  int64
+	SourceRoot                   string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -4243,11 +4249,12 @@ type Invocation struct {
 	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
-	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
-	InstanceID       string           `json:"instance_id,omitempty"`
-	Source           InvocationSource `json:"source"`
-	// EnvironmentID is authenticated operational ownership, never request
-	// intent. Production remains NULL; stage admission persists the UUID.
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	InstanceID       string `json:"instance_id,omitempty"`
+	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	ResolvedDeploymentID string           `json:"-"`
+	Source               InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request intent.
 	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
@@ -7726,6 +7733,7 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
+	RequireExp                     bool                   `json:"require_exp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =
@@ -7955,6 +7963,9 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// ADR-965: composite keys and response-status counting.
+	KeyFields     []string `json:"key_fields,omitempty"`
+	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
 
 // EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
@@ -8124,8 +8135,34 @@ type EdgeRule struct {
 	// release per ADR-128 §D2 so legacy JSONB-only rows
 	// preserve the customer's intended mode.
 	ValidateMode string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Name and Description are operator-facing labels ("" = unset).
+	Name        string
+	Description string
+	// ExpiresAt, when set, is the instant after which the gateway stops
+	// applying the rule. Expired rows are kept for the listing.
+	ExpiresAt *time.Time
+	// Match (ADR-962) is the optional structured condition ANDed with the
+	// fixed selectors; nil applies the rule to every selected request.
+	Match *api.EdgeRuleMatchExpr
+	// MatchLists holds the account lists Match references (ADR-963),
+	// resolved by gatewayd when it loads a host. Never persisted.
+	MatchLists api.EdgeRuleLists
+	// Mode (ADR-960) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// rule is matched and counted but never acts.
+	Mode      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// EdgeRuleExpired reports whether the rule's expiry has passed at now.
+func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
+	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -8266,6 +8303,11 @@ type CreateEdgeRuleParams struct {
 	// re-validates via MergeCorsPresetIntoRule).
 	CorsPresetID *string
 	ValidateMode string
+	Name         string
+	Description  string
+	ExpiresAt    *time.Time
+	Match        *api.EdgeRuleMatchExpr
+	Mode         string // "" = enforce
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8289,6 +8331,15 @@ type UpdateEdgeRuleParams struct {
 	Action       *EdgeRuleAction
 	CorsPresetID **string
 	ValidateMode *string
+	// Name / Description: non-nil sets the value ("" clears it).
+	Name        *string
+	Description *string
+	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
+	ExpiresAt **time.Time
+	// Match: non-nil replaces the condition; ClearMatch removes it.
+	Match      *api.EdgeRuleMatchExpr
+	ClearMatch bool
+	Mode       *string
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

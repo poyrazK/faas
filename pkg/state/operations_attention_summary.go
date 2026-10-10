@@ -21,6 +21,7 @@ type operationAttentionSummaryCursor struct {
 	Query       string    `json:"q"`
 	GroupBy     string    `json:"by"`
 	EvaluatedAt time.Time `json:"at"`
+	HasAfter    bool      `json:"-"`
 	After       string    `json:"after"`
 }
 
@@ -37,7 +38,7 @@ func prepareOperationAttentionSummary(account, tenant string, opts api.Operation
 		return opts, c, err
 	}
 	switch opts.GroupBy {
-	case "workflow", "blocker_code", "target_operation", "dependency_status", "required_outcome_code":
+	case "owner", "workflow", "blocker_code", "target_operation", "dependency_status", "required_outcome_code":
 	case "customer":
 		if !operator {
 			return opts, c, ErrInvalidArgument
@@ -58,13 +59,14 @@ func prepareOperationAttentionSummary(account, tenant string, opts api.Operation
 	var parsed operationAttentionSummaryCursor
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&parsed) != nil || parsed.Version != 1 || parsed.Query != c.Query || parsed.GroupBy != c.GroupBy || parsed.EvaluatedAt.IsZero() || parsed.EvaluatedAt.After(c.EvaluatedAt.Add(5*time.Second)) || parsed.After == "" || len(parsed.After) > 64 {
+	if d.Decode(&parsed) != nil || parsed.Version != 1 || parsed.Query != c.Query || parsed.GroupBy != c.GroupBy || parsed.EvaluatedAt.IsZero() || parsed.EvaluatedAt.After(c.EvaluatedAt.Add(5*time.Second)) || parsed.After == "" && opts.GroupBy != "owner" || len(parsed.After) > api.OperationWorkflowBlockerActorMaxBytes || opts.GroupBy != "owner" && len(parsed.After) > api.OperationNameMaxBytes {
 		return opts, c, ErrInvalidArgument
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
 		return opts, c, ErrInvalidArgument
 	}
+	parsed.HasAfter = true
 	return opts, parsed, nil
 }
 func finishOperationAttentionSummary(out api.OperationWorkflowAttentionSummary, limit int, c operationAttentionSummaryCursor) api.OperationWorkflowAttentionSummary {
@@ -81,6 +83,15 @@ func finishOperationAttentionSummary(out api.OperationWorkflowAttentionSummary, 
 }
 func addOperationAttentionStats(stats *api.OperationWorkflowAttentionStats, state api.OperationWorkflowState, blockers []api.OperationWorkflowBlocker, at time.Time) {
 	stats.WorkflowCount++
+	if workflowSLAAtRisk(state) {
+		stats.SLAAtRiskWorkflowCount++
+	}
+	if workflowSLABreached(state) {
+		stats.SLABreachedWorkflowCount++
+	}
+	if state.SLA != nil && state.SLA.Status == "unknown" {
+		stats.SLAUnknownWorkflowCount++
+	}
 	if len(blockers) > 0 {
 		stats.BlockedWorkflowCount++
 	}
@@ -139,10 +150,30 @@ func (m *MemStore) summarizeWorkflowAttention(_ context.Context, account, tenant
 	groups := map[string]*api.OperationWorkflowAttentionStats{}
 	for _, row := range rows {
 		state := row.Entry.State
-		addOperationAttentionStats(&out.Totals, state, state.Blockers, c.EvaluatedAt)
+		pending := selectedVerifications(row.Verifications, opts.OperationWorkflowAttentionOptions)
+		addResolutionVerificationStats(&out.Totals, pending)
+		blockersForSummary := operationAttentionSummaryBlockers(state.Blockers, opts, row.Entry.Escalations, c.EvaluatedAt)
+		addOperationAttentionStats(&out.Totals, state, blockersForSummary, c.EvaluatedAt)
+		addWorkflowEscalationStats(&out.Totals, blockersForSummary, row.Entry.Escalations)
+		addWorkflowFollowUpStats(&out.Totals, blockersForSummary, c.EvaluatedAt)
+		addWorkflowPriorityStats(&out.Totals, blockersForSummary)
 		addOperationDependencyStats(&out.Totals, row.Entry.DependencyAttention)
 		values := map[string]bool{}
+		for _, v := range pending {
+			switch opts.GroupBy {
+			case "owner":
+				values[v.Resolution.VerificationOwner] = true
+			case "blocker_code":
+				values[v.Resolution.Code] = true
+			case "target_operation":
+				values[v.Resolution.Operation] = true
+			}
+		}
 		switch opts.GroupBy {
+		case "owner":
+			for _, b := range blockersForSummary {
+				values[b.Owner] = true
+			}
 		case "dependency_status", "required_outcome_code":
 			for _, r := range row.Entry.DependencyAttention {
 				if !operationAttentionDependencyMatches([]api.OperationWorkflowRelatedInstance{r}, opts.OperationWorkflowAttentionOptions) {
@@ -161,13 +192,20 @@ func (m *MemStore) summarizeWorkflowAttention(_ context.Context, account, tenant
 		case "customer":
 			values[row.Entry.PlatformTenantID] = true
 		case "blocker_code":
-			for _, b := range state.Blockers {
+			for _, b := range blockersForSummary {
 				if opts.BlockerCode == "" || opts.BlockerCode == b.Code {
 					values[b.Code] = true
 				}
 			}
 		case "target_operation":
-			for _, target := range row.Targets {
+			targets := row.Targets
+			if opts.Owner != "" || opts.Unassigned || opts.Priority != "" || (opts.Reason == "escalated" || opts.Reason == "unacknowledged" || opts.Reason == "follow_up_overdue" || opts.Reason == "awaiting_verification") {
+				targets = nil
+				for _, b := range blockersForSummary {
+					targets = append(targets, b.Operation)
+				}
+			}
+			for _, target := range targets {
 				if opts.TargetOperation == "" || opts.TargetOperation == target {
 					values[target] = true
 				}
@@ -179,16 +217,29 @@ func (m *MemStore) summarizeWorkflowAttention(_ context.Context, account, tenant
 				stats = &api.OperationWorkflowAttentionStats{}
 				groups[value] = stats
 			}
-			blockers := state.Blockers
-			if opts.GroupBy == "blocker_code" || opts.GroupBy == "target_operation" {
+			blockers := blockersForSummary
+			if opts.GroupBy == "blocker_code" || opts.GroupBy == "target_operation" || opts.GroupBy == "owner" {
 				blockers = nil
-				for _, b := range state.Blockers {
-					if opts.GroupBy == "blocker_code" && b.Code == value || opts.GroupBy == "target_operation" && b.Operation == value {
+				for _, b := range blockersForSummary {
+					if opts.GroupBy == "blocker_code" && b.Code == value || opts.GroupBy == "target_operation" && b.Operation == value || opts.GroupBy == "owner" && b.Owner == value {
 						blockers = append(blockers, b)
 					}
 				}
 			}
+			groupPending := pending
+			if opts.GroupBy == "owner" || opts.GroupBy == "blocker_code" || opts.GroupBy == "target_operation" {
+				groupPending = nil
+				for _, v := range pending {
+					if opts.GroupBy == "owner" && v.Resolution.VerificationOwner == value || opts.GroupBy == "blocker_code" && v.Resolution.Code == value || opts.GroupBy == "target_operation" && v.Resolution.Operation == value {
+						groupPending = append(groupPending, v)
+					}
+				}
+			}
+			addResolutionVerificationStats(stats, groupPending)
 			addOperationAttentionStats(stats, state, blockers, c.EvaluatedAt)
+			addWorkflowEscalationStats(stats, blockers, row.Entry.Escalations)
+			addWorkflowFollowUpStats(stats, blockers, c.EvaluatedAt)
+			addWorkflowPriorityStats(stats, blockers)
 			dependencies := row.Entry.DependencyAttention
 			if opts.GroupBy == "dependency_status" || opts.GroupBy == "required_outcome_code" {
 				dependencies = nil
@@ -202,7 +253,7 @@ func (m *MemStore) summarizeWorkflowAttention(_ context.Context, account, tenant
 		}
 	}
 	for value, stats := range groups {
-		if value > c.After {
+		if !c.HasAfter || value > c.After {
 			out.Groups = append(out.Groups, api.OperationWorkflowAttentionGroup{Value: value, Stats: *stats})
 		}
 	}
