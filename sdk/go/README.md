@@ -772,3 +772,5 @@ have separate coverage semantics; see the Commit documentation.
 Delivery report rows now separate original `status` from latest retained replay
 `recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
 help identify remaining failures; missing evidence does not prove no replay occurred.
+
+Use `PlanCommitRecovery(ctx, savedReport, pages)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.

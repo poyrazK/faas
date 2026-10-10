@@ -793,3 +793,5 @@ and changes describe new evidence. Omit resume and selection/filter arguments.
 Delivery report rows now separate original `status` from latest retained replay
 `recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
 help identify remaining failures; missing evidence does not prove no replay occurred.
+
+Use `aplan_commit_recovery(client, source, saved_report, recipient_pages=5)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.

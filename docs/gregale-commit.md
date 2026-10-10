@@ -834,3 +834,64 @@ recovery. Use refresh to inspect completed coverage again.
 Go exposes `CommitDeliveryReportSubscriber` and `CommitDeliveryReportRecovery`;
 Node exports the corresponding interfaces. Python reports expose the same JSON
 fields. CLI JSON includes these fields with the existing delivery-report modes.
+
+
+### Read-only recovery planning
+
+```sh
+gregale commit recovery-plan SOURCE --report report.json \
+  --recipient-pages 5 --timeout 2m > recovery-plan.json
+```
+
+This rereads the saved publication selection and subscriber filter from the
+first recipient pages, using the original acceptance guards and current source
+ownership checks. It does not trust saved recovery actions, request replay,
+follow action URLs, or fetch replay history. The same 200-publication,
+1..20 recipient-page and 64 MiB CLI input bounds apply.
+
+Output includes the fresh `report`, subscriber `items`, eligibility `counts`,
+and `publication_issues` keyed by publication event UUID. Publication issues
+report partial coverage, unavailable/pruned evidence, changed acceptance,
+not-read publications, or read errors using report evidence statuses. Missing
+subscribers on incomplete pages are unknown, not implicitly eligible or safe to
+skip. Counts cover sampled subscriber items only. An empty plan is not proof
+that every delivery completed.
+
+Each item is `eligible` with one current server-offered action, or `skipped`
+with a reason: `completed`, `delivery_active`, `not_targeted`,
+`evidence_unavailable`, `cancelled`, `no_recovery_action`,
+`unsupported_recipient`, `unsupported_action`, or `action_identity_mismatch`.
+The latest retained replay takes precedence when checking completed/active
+execution; the original outcome remains in the report. Workflow recipients
+remain unsupported.
+
+Known routing, handler, keyed-handler and dead-letter replay actions must use
+POST and match the current consumer/application or execution identity.
+Routing bodies must match the guarded publication and selected subscriber;
+explicit expiry overrides are not planned. Multiple, unknown, mismatched or
+unexpected-method actions are skipped. Dead-letter IDs come from the current
+server offer, with the application-scoped URL checked.
+
+Eligibility is a live observation, not an executable authorization or a frozen
+snapshot. State can change immediately after reading, and any later apply
+implementation must reread and revalidate authorization and eligibility.
+Timeout/read failures return partial plans through the Go return value,
+`CommitRecoveryPlanError.plan` in Node/Python, and CLI JSON with a nonzero exit.
+SDK option-validation errors and cancellation follow the existing report helper
+behavior. Saved input reports are copied.
+
+```go
+plan, err := client.PlanCommitRecovery(ctx, savedReport, 5)
+```
+
+```ts
+const plan = await planCommitRecovery(source, savedReport, {
+  recipientPages: 5, timeoutMs: 120000,
+});
+```
+
+```python
+plan = await aplan_commit_recovery(
+    client, source, saved_report, recipient_pages=5, timeout=120,
+)
+```

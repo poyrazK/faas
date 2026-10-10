@@ -288,3 +288,6 @@ __all__ += ("await_commit_subscriber",)
 
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
 __all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
+
+from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
+__all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")

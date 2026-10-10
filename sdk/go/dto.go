@@ -388,3 +388,8 @@ type CommitDeliveryReportChange = api.CommitDeliveryReportChange
 // Commit delivery report recovery evidence aliases.
 type CommitDeliveryReportSubscriber = api.CommitDeliveryReportSubscriber
 type CommitDeliveryReportRecovery = api.CommitDeliveryReportRecovery
+
+// CommitRecoveryPlan describes current read-only recovery eligibility.
+type CommitRecoveryPlan = api.CommitRecoveryPlan
+type CommitRecoveryPlanItem = api.CommitRecoveryPlanItem
+type CommitRecoveryPlanAction = api.CommitRecoveryPlanAction

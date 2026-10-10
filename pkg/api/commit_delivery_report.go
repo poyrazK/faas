@@ -117,11 +117,11 @@ type CommitDeliveryReportChange struct {
 func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
 	raw, err := json.Marshal(saved)
 	if err != nil {
-		return saved, err
+		return CommitDeliveryReport{}, err
 	}
 	var out CommitDeliveryReport
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return saved, err
+		return CommitDeliveryReport{}, err
 	}
 	var baseline CommitDeliveryReport
 	if err := json.Unmarshal(raw, &baseline); err != nil {
