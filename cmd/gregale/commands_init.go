@@ -441,6 +441,8 @@ func nextStepsFor(tpl string) []string {
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
 	case "data-api-starter":
 		return []string{
+			"With Node.js 22+, npm and local Docker, run the starter scenarios:",
+			"  cd <dest> && gregale data-api dev --port 0 --once --replay data-api.requests.json",
 			"Read README.md to reserve the migration app and attach its managed migration binding.",
 			"Pin the paired CLI and SDK with node tools/artifacts.mjs pin /path/to/bundle/data-api-bundle.json.",
 			"Create the Data API with your application JWT issuer, then automate changes:",

@@ -89,9 +89,8 @@ necessary.
 
 ## Application CI
 
-The initialized starter includes CI workflows. For pull-request client checks,
-commit the authorized SDK tarball at `client/vendor/gregale-data.tgz`, or configure
-an immutable HTTPS artifact directory while pinning:
+The initialized starter includes CI workflows. For pull-request client checks and local scenario replay,
+configure an immutable, publicly readable HTTPS artifact directory while pinning:
 
 ```sh
 node tools/artifacts.mjs pin /path/to/data-api-bundle/data-api-bundle.json \
@@ -104,8 +103,11 @@ have no user info, query or fragment. Downloads use curl's normal proxy/CA
 configuration, a timeout and pinned size bound, and refuse redirects. Errors
 do not include response bodies, download URLs or bearer values.
 
-Automatic client CI restores/verifies only the SDK without credentials. Vendor
-it for private artifact locations. Manual preview CI, on protected main, also
+Automatic client CI restores and verifies the SDK and matching CLI without
+credentials, then runs the shipped CRUD, RLS and RPC scenarios against disposable
+loopback services. Include a `linux/amd64` CLI target and a build supporting
+`data-api dev --replay` and version 2 scenarios. Vendoring only the SDK does not
+supply the CLI needed for replay. Manual preview CI, on protected main, also
 restores the matching CLI. Its optional `GREGALE_ARTIFACT_TOKEN` is passed only
 to artifact restoration, through curl stdin. Management credentials and
 application JWTs are passed only to their separate drift/authorization steps.
@@ -125,7 +127,9 @@ The packaging gate builds twice, compares all checksums and metadata, runs the
 packaged CLI's `init`, and installs the packaged SDK into that fresh starter.
 It then simulates a new CI checkout with another empty npm cache, restores the
 pin, and runs locked dependency installation, migration unit checks, client type
-assertions and client request tests. It uses no staging or management credentials.
+assertions and client request tests, then replays the shipped scenarios with
+the restored CLI. Docker with a running local daemon is required for this final
+check. It uses no staging or management credentials.
 The Data API acceptance workflow runs this gate and saves its tested files as a
 GitHub Actions artifact; it does not upload a public release or publish to npm.
 

@@ -5767,6 +5767,10 @@ const (
 	MaxPreparedNetworkCacheSize            = 16
 	PreparedNetworkCacheTTLSeconds         = 60
 	PreparedNetworkOperationTimeoutSeconds = 2
+	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill
+	// until the wake's publish and first proxied byte have left the host;
+	// netns/TAP/nft creation contends with them on small nodes.
+	PreparedNetworkRefillDelayMillis = 750
 
 	// ConntrackCap is the spec §7 per-instance conntrack cap value.
 	// Use ConntrackCapProbe() at runtime to get the effective value,

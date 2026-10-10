@@ -696,6 +696,15 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.DisableRestorePrefetch = !enabled
 	}
+	// A shared acceptance host runs several vmmd builds over time; each test
+	// run points its own vmmd at a private journal so a record written by a
+	// newer build cannot stop an older one from starting.
+	if v := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_DIR"); v != "" {
+		if !filepath.IsAbs(v) {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_DIR must be absolute (got %q)", v)
+		}
+		c.ResourceJournalDir = v
+	}
 	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
 		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
 	}
