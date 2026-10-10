@@ -150,6 +150,27 @@ func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, true, 8080)
 }
 
+// FailingRootImageAboveBase is HelloImageAboveBase whose / answers 500 while
+// /healthz stays healthy: a release that passes its startup gate and then
+// fails real requests. The safe-release drill deploys it as a bad canary.
+func FailingRootImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root")
+}
+
+// HelloImageAboveBaseWithArgs is HelloImageAboveBase with extra hello-server
+// arguments. Distinct arguments give a distinct image digest, which lets a
+// test deploy a second healthy revision of the same app.
+func HelloImageAboveBaseWithArgs(repo, helloBody string, args ...string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, append([]string{"/hello-server"}, args...))
+}
+
+// FailingLivenessImageAboveBase is HelloImageAboveBase whose /livez answers
+// 500 while / and /healthz stay healthy, so a liveness probe on /livez keeps
+// restarting it. The safe-release drill deploys it as a crash-looping canary.
+func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-livez")
+}
+
 // CPUBoundImage returns a single-layer image whose entrypoint is hello-server
 // in -spin mode: it serves as usual and burns one CPU in a goroutine. Used by the cpu-fairness e2e
 // (cmd/e2e/cpu_fairness_test.go, issue #301 / ADR-044) to drive a

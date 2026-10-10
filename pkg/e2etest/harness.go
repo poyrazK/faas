@@ -110,6 +110,9 @@ type Harness struct {
 	GatewayControlURL       string // /metrics + /healthz, loopback only
 	GatewayPublicURL        string
 	GatewayPublicControlURL string
+	// ScheddMetricsURL is schedd's loopback /metrics endpoint. The canary
+	// circuit breaker reads its liveness and OOM counters (ADR-911).
+	ScheddMetricsURL string
 	// gatewayPublicAddr and gatewayControlAddr are reserved before schedd
 	// starts so its RPS scale-up scraper can be pointed at the real
 	// gatewayd-internal control listener. Keeping the addresses on the
@@ -930,14 +933,17 @@ func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) 
 	if h.gatewayControlAddr != "" {
 		metricsURL = "http://" + h.gatewayControlAddr + "/metrics/gateway-requests"
 	}
+	scheddMetricsAddr := metricsAddrFor(t, "schedd")
+	h.ScheddMetricsURL = "http://" + scheddMetricsAddr + "/metrics"
 	cfg := fmt.Sprintf(
 		`socket_path = %q
 owner_user = %q
 vmmd_socket = %q
 gateway_synth_socket = %q
 gateway_metrics_url = %q
+metrics_addr = %q
 `,
-		sockPath, "root", vmmdSock, gatewaySynth, metricsURL,
+		sockPath, "root", vmmdSock, gatewaySynth, metricsURL, scheddMetricsAddr,
 	)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatalf("e2etest: write schedd.toml: %v", err)
@@ -1663,28 +1669,39 @@ func (h *Harness) ScheddEnvValue(key string) string {
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
 func (h *Harness) KillSchedd() error {
+	return h.killChild("schedd")
+}
+
+// KillMeterd terminates and reaps meterd, the canary progression worker.
+// The safe-release drill uses it to prove a defaulted canary falls back to
+// an immediate cutover once the worker lease expires (ADR-911).
+func (h *Harness) KillMeterd() error {
+	return h.killChild("meterd")
+}
+
+func (h *Harness) killChild(name string) error {
 	if h == nil {
 		return fmt.Errorf("e2etest: nil harness")
 	}
 	for _, proc := range h.procs {
-		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != "schedd" {
+		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != name {
 			continue
 		}
 		if proc.ProcessState == nil {
 			if err := proc.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return fmt.Errorf("e2etest: kill schedd: %w", err)
+				return fmt.Errorf("e2etest: kill %s: %w", name, err)
 			}
 			if err := proc.Wait(); err != nil {
 				// A signal exit is the expected result of this fault injection.
 				var exitErr *exec.ExitError
 				if !errors.As(err, &exitErr) {
-					return fmt.Errorf("e2etest: reap schedd: %w", err)
+					return fmt.Errorf("e2etest: reap %s: %w", name, err)
 				}
 			}
 		}
 		return nil
 	}
-	return fmt.Errorf("e2etest: schedd process not found")
+	return fmt.Errorf("e2etest: %s process not found", name)
 }
 
 // RestartSchedd launches a fresh schedd with the retained config and env.
