@@ -235,8 +235,8 @@ export class QueuesService {
     });
   }
   /**
-   * Bind an internal PostgreSQL outbox source to managed Operations.
-   * @returns CommitSourceResponse Commit source created with its immutable application and policy binding.
+   * Bind an internal PostgreSQL outbox source to Operations or event publication.
+   * @returns CommitSourceResponse Commit source created with its immutable application, destination and contract binding.
    * @throws ApiError
    */
   public static createCommitSource({

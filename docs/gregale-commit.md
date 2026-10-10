@@ -464,3 +464,96 @@ can target only explicitly subscribed receivers for that same authenticated
 customer, with an active linked app surface. See
 [managed operation effects](managed-operation-effects.md) for handler examples,
 receiver configuration, delivery status, and upgrade requirements.
+
+## Version 3 application-event publication (ADR-935)
+
+This destination remains under Commit's existing operator qualification gates.
+Bind a **new** source to an account-scoped publisher application:
+
+```sh
+gregale commit add invoices --name invoice-publications \
+  --destination event --contract-version 3
+```
+
+The API accepts `destination: "event"`, `contract_version: 3`, and a source name.
+Omit `operation_policy` and `allow_tenant_selection`. The source is immutable;
+reusing a name with a different destination or app conflicts. The bound app does
+not need a request-serving deployment because it publishes rather than receives
+an invocation. Tenant-required publisher applications and per-row routing are
+unsupported. Existing version 1/2 sources continue invoking managed Operations.
+
+Install the fresh `pkg/commit/schema.sql`, or explicitly run
+`pkg/commit/schema_publications_upgrade.sql` as the database owner against an
+existing managed outbox. Older invocation-only outboxes first need their existing
+managed-Operations upgrade. Bind `public.gregale_commit_binding` to the new source
+UUID, seal its connection using `gregale commit connection`, and configure the
+existing scheduler relay as described above. The relay never installs DDL.
+Version 3 schema qualification requires `schema_version` and
+`publication_acceptance_id` checkpoint columns.
+
+Inside the business transaction—or the transactional consumer callback—insert
+an ordinary Commit event with its stable UUID, type and JSON data. All three SDKs
+support an optional registered schema version:
+
+```go
+id, err := faas.InsertCommitEventInTransaction(ctx, tx, faas.CommitEventRequest{
+    Type: "invoice.paid", Data: json.RawMessage(`{"invoice_id":"123"}`),
+    SchemaVersion: "v1", // omit for schema-free event types
+})
+```
+
+```js
+const id = await insertCommitEvent(tx, {
+  type: 'invoice.paid', data: { invoice_id: '123' }, schema_version: 'v1'
+});
+```
+
+```python
+id = insert_commit_event(cursor, "invoice.paid", {"invoice_id": "123"}, schema_version="v1")
+# Async callbacks use: await ainsert_commit_event(cursor, ..., schema_version="v1")
+```
+
+Omit schema version for schema-free types. Register versioned schemas against
+`app.<publisher app UUID>` before acceptance. Missing/unknown versions and invalid
+data become `event_schema_rejected` blocked rows; fix the unaccepted row or source
+configuration, then request the existing explicit replay. Accepted identity is
+immutable: changed type, schema version or semantic JSON data conflicts. Retrying
+accepted rows skips current schema, pause and event-capacity admission checks.
+The event-publication body is bounded by the existing 1 MiB application publication
+limit; storage accounting includes the captured subscriber snapshot.
+
+Subscriptions match source `app.<publisher app UUID>`. The emitted event ID is
+`commit.<source UUID>.<outbox event UUID>`, so distinct Commit sources do not share
+producer identity. This differs from the hashed IDs used by direct application
+producer-key publication. It uses the same subscription filters, acceptance-time
+snapshot, per-consumer ordering, delivery recovery and event retention rules.
+Schema version appears as the CloudEvents `schemaversion` extension.
+
+`gregale commit receipt SOURCE EVENT` returns `publication` instead of an
+`operation_id` or `invocation_id`. It contains `acceptance_id`, event `source` and
+`id`, exact `accepted_at`, and a guarded `receipt_url`. Read that URL for the
+original acceptance's paginated subscriber routing/execution/recovery evidence;
+follow `next_after` while preserving source, ID and `expected_accepted_at`. A
+replacement acceptance returns 409 rather than evidence for the wrong event.
+Node/Python generated event receipt clients support this guard; Go's
+`GetCommitPublicationReceipt` takes the publication descriptor and page options
+(the standalone SDK preserves subscriber rows as lossless JSON).
+
+`gregale commit inspect SOURCE EVENT` includes the first bounded subscriber page.
+`gregale commit wait SOURCE EVENT --until accepted` waits for publication
+acceptance. There is no single managed Operation completion for a publication;
+inspect each subscriber independently. Event receipt pruning returns unavailable
+delivery evidence, while the retained Commit receipt still proves original
+acceptance. Even then, a late relay retry returns that same receipt without
+recreating fanout work. Customer cleanup removes accepted outbox rows under the
+existing policy and never expires the platform's Commit identity.
+
+Business writes and outbox insert commit together in the customer database;
+event acceptance, captured recipients and Commit receipt commit together in the
+platform database. Those two transactions are separate. The relay may publish
+before the incoming consumer HTTP response arrives. Publication acceptance does
+not imply subscriber success, and at-least-once consumers still require durable
+idempotency. No cross-subscriber execution order is introduced. Relay claims can accept rows
+in a different order from business transaction commits; version 3 does not impose
+a producer commit-time order. Configure existing subscription ordering keys for
+the required per-consumer delivery lanes.

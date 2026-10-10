@@ -745,3 +745,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
 
 - [ADR-934: Transactional event consumer SDK](934-transactional-event-consumer-sdk.md)
+
+- [ADR-935: Commit application event publication](935-commit-application-event-publication.md)

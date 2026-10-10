@@ -254,6 +254,7 @@ export type { ClaimAPIConsumerUsageStatementRequest } from './models/ClaimAPICon
 export type { ClearObsoleteReport } from './models/ClearObsoleteReport.js';
 export type { CommitBlockedEventResponse } from './models/CommitBlockedEventResponse.js';
 export type { CommitBlockedEventsResponse } from './models/CommitBlockedEventsResponse.js';
+export type { CommitEventPublication } from './models/CommitEventPublication.js';
 export type { CommitEventRequest } from './models/CommitEventRequest.js';
 export type { CommitOperationResponse } from './models/CommitOperationResponse.js';
 export type { CommitReceiptResponse } from './models/CommitReceiptResponse.js';

@@ -364,6 +364,7 @@ type (
 	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
 	InvokeWork                 = api.InvokeWork
 )
+type CommitEventPublication = api.CommitEventPublication
 type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse
 type CommitOperationResponse = api.CommitOperationResponse

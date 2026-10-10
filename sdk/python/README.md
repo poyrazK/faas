@@ -768,3 +768,5 @@ Do not control transaction lifecycle or perform external effects in the callback
 See [synchronous and asynchronous examples](../../docs/event-consumer-transactions.md).
 
 Enqueue follow-up Commit work inside the event-consumer callback with `insert_commit_event(cursor, ...)` or awaited `ainsert_commit_event(cursor, ...)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
+
+For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).

@@ -11,6 +11,7 @@ export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
@@ -248,6 +249,7 @@ export type { ClaimAPIConsumerUsageStatementRequest } from './ClaimAPIConsumerUs
 export type { ClearObsoleteReport } from './ClearObsoleteReport.js';
 export type { CommitBlockedEventResponse } from './CommitBlockedEventResponse.js';
 export type { CommitBlockedEventsResponse } from './CommitBlockedEventsResponse.js';
+export type { CommitEventPublication } from './CommitEventPublication.js';
 export type { CommitEventRequest } from './CommitEventRequest.js';
 export type { CommitOperationResponse } from './CommitOperationResponse.js';
 export type { CommitReceiptResponse } from './CommitReceiptResponse.js';

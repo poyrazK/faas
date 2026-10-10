@@ -276,3 +276,10 @@ its atomic enqueue, not execution success. Keep application receipts across all
 relevant replay paths; deleting one can allow another enqueue. Follow-up consumers
 still need idempotent business effects, and external calls must not happen inside
 this database callback.
+
+To emit an event to independent subscribers instead of a fixed Operation target,
+bind the outbox to a [version 3 event-publication source](gregale-commit.md#version-3-application-event-publication-adr-935).
+The same callback inserts compose; the source destination determines whether
+Gregale accepts a managed Operation or an application-event fanout. Install the
+publication checkpoint upgrade explicitly and retain consumer receipts across
+all relevant replay paths.

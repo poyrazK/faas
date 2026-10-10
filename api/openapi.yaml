@@ -4080,6 +4080,11 @@ paths:
         outcomes may change between requests.
       security: [{ bearerAuth: [] }]
       parameters:
+        - name: expected_accepted_at
+          in: query
+          required: false
+          description: Optional original acceptance time. Returns 409 if the retained event belongs to a replacement acceptance.
+          schema: { type: string, format: date-time }
         - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: id, in: query, required: true, description: Published event ID paired with the required source for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: after, in: query, description: 'Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.', schema: { type: string, maxLength: 8192 } }
@@ -4094,6 +4099,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
 
@@ -28260,7 +28266,7 @@ paths:
     post:
       tags: [queues]
       operationId: createCommitSource
-      summary: Bind an internal PostgreSQL outbox source to managed Operations.
+      summary: Bind an internal PostgreSQL outbox source to Operations or event publication.
       parameters:
         - $ref: '#/components/parameters/Slug'
       requestBody:
@@ -28270,7 +28276,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateCommitSourceRequest' }
       responses:
         '201':
-          description: Commit source created with its immutable application and policy binding.
+          description: Commit source created with its immutable application, destination and contract binding.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitSourceResponse' }
@@ -43169,14 +43175,15 @@ components:
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
     CreateCommitSourceRequest:
-      description: Register an immutable database source bound to a managed app operation policy and routing contract.
+      description: Register an immutable database source bound to managed Operations or application-event publication. Event destinations require version 3, no operation policy and no customer selection.
       type: object
-      required: [name, operation_policy]
+      required: [name]
       properties:
         name: { type: string, minLength: 1, maxLength: 128 }
-        operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active queue policy containing this application. Scope must be account or platform_tenant according to allow_tenant_selection. Environment-scoped policies are unsupported. }
-        contract_version: { type: integer, enum: [1, 2], default: 1, description: Immutable contract. Version 1 uses one source lane; version 2 requires explicit event routing and a business key. }
+        operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Required for operation destinations and forbidden for event destinations. Active queue policy containing this application. Scope must be account or platform_tenant according to allow_tenant_selection. Environment-scoped policies are unsupported. }
+        contract_version: { type: integer, enum: [1, 2, 3], default: 1, description: Immutable contract. Version 1 uses one source lane; version 2 requires explicit operation routing; version 3 requires an event destination. }
         allow_tenant_selection: { type: boolean, default: false, description: Immutable owner grant authorizing this trusted database to select active customers linked to the fixed target application. Requires contract version 2 and a platform_tenant queue policy. }
+        destination: { type: string, enum: [operation, event], default: operation, description: Immutable destination. Event publishes under the bound application source instead of invoking that application. }
     CommitSourceResponse:
       type: object
       description: Commit source destination, enabled state and latest bounded relay health observation.
@@ -43186,14 +43193,15 @@ components:
         app_id: { type: string, format: uuid }
         name: { type: string }
         enabled: { type: boolean }
-        operation_policy: { type: string, description: Immutable managed Operations policy. Absent only for legacy internal sources. }
-        contract_version: { type: integer, enum: [1, 2] }
+        operation_policy: { type: string, description: Immutable managed Operations policy. Absent for legacy internal sources and event destinations. }
+        contract_version: { type: integer, enum: [1, 2, 3] }
         allow_tenant_selection: { type: boolean }
         relay_status: { type: string }
         last_checked_at: { type: string, format: date-time }
         pending_events: { type: integer, format: int64 }
         blocked_events: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
+        destination: { type: string, enum: [operation, event], default: operation }
     CommitBlockedEventsResponse:
       type: object
       description: Bounded snapshot of blocked source events, with the observation time and snapshot limit.
@@ -43219,12 +43227,13 @@ components:
       type: object
       additionalProperties: false
       required: [id, type, data]
-      description: At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt; changed type, data or routing conflicts.
+      description: At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt; changed type, schema version, data or routing conflicts.
       properties:
         id: { type: string, format: uuid }
         type: { type: string, minLength: 1, maxLength: 256 }
         data: {}
         routing: { $ref: '#/components/schemas/CommitRouting' }
+        schema_version: { type: string, minLength: 1, maxLength: 64, description: Optional registered application event schema version. Only event destinations support this field. }
     CommitRouting:
       type: object
       additionalProperties: false
@@ -43240,16 +43249,27 @@ components:
             - { type: boolean }
     CommitReceiptResponse:
       type: object
-      required: [receipt_id, source_id, event_id, accepted_at, operation_url]
-      description: Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return invocation_id instead. Exactly one work identity is present.
+      required: [receipt_id, source_id, event_id, accepted_at]
+      description: Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return invocation_id instead. Event destinations instead return publication. Exactly one invocation, operation or publication identity is present. The publication receipt survives event retention and does not imply subscriber success.
       properties:
         receipt_id: { type: string, format: uuid }
         source_id: { type: string, format: uuid }
         event_id: { type: string, format: uuid }
+        operation_url: { type: string, description: Present for operation or legacy invocation destinations. }
         invocation_id: { type: string, format: uuid }
         operation_id: { type: string, format: uuid }
         accepted_at: { type: string, format: date-time }
-        operation_url: { type: string }
+        publication: { $ref: '#/components/schemas/CommitEventPublication' }
+    CommitEventPublication:
+      description: Retained event-publication acceptance and a guarded URL for subscriber delivery evidence.
+      type: object
+      required: [acceptance_id, source, id, accepted_at, receipt_url]
+      properties:
+        acceptance_id: { type: integer, format: int64, minimum: 1 }
+        source: { type: string }
+        id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        receipt_url: { type: string, description: Read-only event receipt with an acceptance-time guard; exposes paginated subscriber delivery evidence while retained. }
     CommitOperationResponse:
       type: object
       description: Retained Commit acceptance and execution facts after managed Operation cleanup.

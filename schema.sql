@@ -14577,8 +14577,14 @@ CREATE TABLE public.commit_receipts (
     accepted_at timestamp with time zone DEFAULT now() NOT NULL,
     operation_id uuid,
     routing jsonb,
-    CONSTRAINT commit_receipt_one_operation CHECK (((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) = 1)),
+    publication_acceptance_id bigint,
+    publication_source text,
+    publication_event_id text,
+    schema_version text DEFAULT ''::text NOT NULL,
+    CONSTRAINT commit_receipt_one_operation CHECK ((((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) + ((publication_acceptance_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT commit_receipt_publication_identity CHECK ((((publication_acceptance_id IS NULL) AND (publication_source IS NULL) AND (publication_event_id IS NULL)) OR ((publication_acceptance_id IS NOT NULL) AND (publication_source IS NOT NULL) AND (publication_event_id IS NOT NULL) AND (routing IS NULL) AND (length(publication_source) > 0) AND (length(publication_event_id) > 0)))),
     CONSTRAINT commit_receipts_operation_state_check CHECK ((operation_state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'cancelled'::text, 'failed'::text, 'unknown'::text]))),
+    CONSTRAINT commit_receipts_publication_acceptance_id_check CHECK ((publication_acceptance_id > 0)),
     CONSTRAINT commit_receipts_routing_check CHECK (((routing IS NULL) OR COALESCE(((jsonb_typeof(routing) = 'object'::text) AND ((routing -> 'version'::text) = '2'::jsonb) AND (jsonb_typeof((routing -> 'key'::text)) = ANY (ARRAY['string'::text, 'number'::text, 'boolean'::text]))), false)))
 );
 
@@ -14619,8 +14625,10 @@ CREATE TABLE public.commit_sources (
     operation_policy text,
     contract_version integer DEFAULT 1 NOT NULL,
     allow_tenant_selection boolean DEFAULT false NOT NULL,
+    destination text DEFAULT 'operation'::text NOT NULL,
     CONSTRAINT commit_source_operation_policy_name CHECK (((operation_policy IS NULL) OR (operation_policy ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
-    CONSTRAINT commit_sources_contract_version_check CHECK (((contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2)))),
+    CONSTRAINT commit_sources_contract_version_check CHECK ((((destination = 'operation'::text) AND (contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2))) OR ((destination = 'event'::text) AND (contract_version = 3) AND (NOT allow_tenant_selection) AND (operation_policy IS NULL)))),
+    CONSTRAINT commit_sources_destination_check CHECK ((destination = ANY (ARRAY['operation'::text, 'event'::text]))),
     CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
     CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );

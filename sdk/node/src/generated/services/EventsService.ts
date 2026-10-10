@@ -751,6 +751,7 @@ export class EventsService {
   public static getEventReceipt({
     source,
     id,
+    expectedAcceptedAt,
     after,
     limit = 100,
   }: {
@@ -762,6 +763,10 @@ export class EventsService {
      * Published event ID paired with the required source for this receipt lookup.
      */
     id: string,
+    /**
+     * Optional original acceptance time. Returns 409 if the retained event belongs to a replacement acceptance.
+     */
+    expectedAcceptedAt?: string,
     /**
      * Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.
      */
@@ -775,6 +780,7 @@ export class EventsService {
       method: 'GET',
       url: '/v1/events/receipt',
       query: {
+        'expected_accepted_at': expectedAcceptedAt,
         'source': source,
         'id': id,
         'after': after,
@@ -785,6 +791,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

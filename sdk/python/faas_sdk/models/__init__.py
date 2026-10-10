@@ -483,6 +483,7 @@ from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_publication import CommitEventPublication
 from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
@@ -491,6 +492,7 @@ from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .commit_source_response_destination import CommitSourceResponseDestination
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -543,6 +545,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
+from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -3904,6 +3907,7 @@ __all__ = (
     "ClearObsoleteReport",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
+    "CommitEventPublication",
     "CommitEventRequest",
     "CommitOperationResponse",
     "CommitOperationResponseState",
@@ -3912,6 +3916,7 @@ __all__ = (
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "CommitSourceResponseDestination",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -3962,6 +3967,7 @@ __all__ = (
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
+    "CreateCommitSourceRequestDestination",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",

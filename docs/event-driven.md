@@ -3050,3 +3050,13 @@ new acceptance header cannot use the helper.
 See [transactional event consumers](event-consumer-transactions.md) for setup,
 identity framing, replay behavior, application-owned retention, and the limits
 of the database transaction guarantee, including Node and Python handler examples.
+
+### Publish application events from a business transaction
+
+A [version 3 Commit event destination](gregale-commit.md#version-3-application-event-publication-adr-935)
+observes an application-owned transactional outbox and publishes under its bound
+application's event source. Gregale atomically records publication acceptance,
+the subscriber snapshot and the retained Commit receipt. Each subscriber recovers
+independently. Relay retries after event retention return the original Commit
+receipt rather than publishing again. This destination remains under the existing
+Commit qualification gates.

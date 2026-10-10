@@ -40,7 +40,18 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrValidation("source name must contain 1-128 bytes"))
 		return
 	}
-	if strings.TrimSpace(req.OperationPolicy) == "" {
+	if req.Destination == "" {
+		req.Destination = "operation"
+	}
+	if req.Destination == "event" {
+		if req.ContractVersion != 3 || req.OperationPolicy != "" || req.AllowTenantSelection || app.PlatformTenantRequired {
+			api.WriteProblem(w, api.ErrValidation("event destination requires contract_version 3, no operation policy or customer grant, and an account-scoped publisher app"))
+			return
+		}
+	} else if req.Destination != "operation" {
+		api.WriteProblem(w, api.ErrValidation("invalid destination"))
+		return
+	} else if strings.TrimSpace(req.OperationPolicy) == "" {
 		api.WriteProblem(w, api.ErrValidation("operation_policy is required; use a compatible queue policy containing this application"))
 		return
 	}
@@ -49,13 +60,13 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
 		return
 	}
-	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, OperationPolicy: req.OperationPolicy, ContractVersion: req.ContractVersion, AllowTenantSelection: req.AllowTenantSelection})
+	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, Destination: req.Destination, OperationPolicy: req.OperationPolicy, ContractVersion: req.ContractVersion, AllowTenantSelection: req.AllowTenantSelection})
 	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application, operation policy, contract version or routing authority"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application, destination, operation policy, contract version or routing authority"))
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrValidation("source contract and selection grant require a compatible active queue policy containing this application"))
+		api.WriteProblem(w, api.ErrValidation("source destination, contract and routing authority must be compatible with this application"))
 		return
 	}
 	if err != nil {
@@ -93,6 +104,14 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 	}
 	if err := event.Validate(); err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if src.Destination == "event" {
+		s.acceptCommitPublication(w, r, acct, source, event)
+		return
+	}
+	if event.SchemaVersion != "" {
+		api.WriteProblem(w, api.ErrValidation("schema_version requires an event publication source"))
 		return
 	}
 	// Replay must survive release expiry, destination changes, and a full queue.

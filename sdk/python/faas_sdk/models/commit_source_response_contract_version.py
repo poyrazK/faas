@@ -1,10 +1,11 @@
 from typing import Literal
 
-CommitSourceResponseContractVersion = Literal[1, 2]
+CommitSourceResponseContractVersion = Literal[1, 2, 3]
 
 COMMIT_SOURCE_RESPONSE_CONTRACT_VERSION_VALUES: set[CommitSourceResponseContractVersion] = {
     1,
     2,
+    3,
 }
 
 

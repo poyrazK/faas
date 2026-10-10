@@ -57,6 +57,11 @@ func encodeEventReceiptCursor(accountID string, receipt state.EventReceipt) stri
 
 // getEventReceipt reads a repeatable snapshot; it neither claims nor replays work.
 func (s *server) getEventReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	guard, guardErr := api.ParseAppEventAcceptanceGuard(r.URL.Query().Get("expected_accepted_at"))
+	if guardErr != nil {
+		api.WriteProblem(w, api.ErrValidation(guardErr.Error()))
+		return
+	}
 	source, id := strings.TrimSpace(r.URL.Query().Get("source")), strings.TrimSpace(r.URL.Query().Get("id"))
 	if source == "" || id == "" || len(source) > events.EnvelopeStringMax || len(id) > events.EnvelopeStringMax {
 		api.WriteProblem(w, api.ErrValidation("source and id are required and must be at most 256 bytes"))
@@ -83,6 +88,10 @@ func (s *server) getEventReceipt(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if guard.ExpectedAcceptedAt != nil && !receipt.AcceptedAt.Equal(*guard.ExpectedAcceptedAt) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_acceptance_replaced", "Event acceptance replaced", "the retained receipt belongs to a different acceptance"))
+		return
+	}
 	writeJSON(w, http.StatusOK, eventReceiptResponse(acct.ID, receipt))
 }
 

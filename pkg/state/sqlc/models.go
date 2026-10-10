@@ -1291,18 +1291,22 @@ type CommitBlockedEvent struct {
 }
 
 type CommitReceipt struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	SourceID       pgtype.UUID
-	EventID        pgtype.UUID
-	EventType      string
-	Payload        []byte
-	InvocationID   pgtype.UUID
-	OperationState string
-	CompletedAt    pgtype.Timestamptz
-	AcceptedAt     pgtype.Timestamptz
-	OperationID    pgtype.UUID
-	Routing        []byte
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	SourceID                pgtype.UUID
+	EventID                 pgtype.UUID
+	EventType               string
+	Payload                 []byte
+	InvocationID            pgtype.UUID
+	OperationState          string
+	CompletedAt             pgtype.Timestamptz
+	AcceptedAt              pgtype.Timestamptz
+	OperationID             pgtype.UUID
+	Routing                 []byte
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+	SchemaVersion           string
 }
 
 type CommitReplayRequest struct {
@@ -1331,6 +1335,7 @@ type CommitSource struct {
 	OperationPolicy      pgtype.Text
 	ContractVersion      int32
 	AllowTenantSelection bool
+	Destination          string
 }
 
 type ComputeNode struct {

@@ -12002,7 +12002,7 @@ UPDATE deployments d SET status='building',build_id=queued.id FROM queued
 WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending';
 -- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
- c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
+ c.contract_version, c.allow_tenant_selection, c.destination, a.platform_tenant_required
 FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.id=sqlc.arg(source_id)::text::uuid
 FOR UPDATE OF c FOR SHARE OF a;
@@ -12015,6 +12015,7 @@ FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_
 ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
 WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
  AND commit_sources.contract_version=excluded.contract_version AND commit_sources.allow_tenant_selection=excluded.allow_tenant_selection
+ AND commit_sources.destination='operation'
 RETURNING id::text, enabled;
 
 -- name: CommitManagedReceiptReplay :one
@@ -12036,7 +12037,10 @@ RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at
 -- name: CommitReceiptIdentity :one
 SELECT id::text,source_id::text,event_id::text,
  COALESCE(invocation_id::text,'')::text AS invocation_id,
- COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at,
+ COALESCE(publication_acceptance_id,0)::bigint AS publication_acceptance_id,
+ COALESCE(publication_source,'')::text AS publication_source,
+ COALESCE(publication_event_id,'')::text AS publication_event_id
 FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND source_id=sqlc.arg(source_id)::text::uuid AND event_id=sqlc.arg(event_id)::text::uuid;
 
@@ -12048,7 +12052,7 @@ FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
 
 -- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
 FROM commit_sources WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: SetCommitSourceEnabled :exec
@@ -17427,3 +17431,38 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 -- name: PruneRouteProbeRounds :exec
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
 
+
+-- name: CommitPublicationSource :one
+INSERT INTO commit_sources(account_id,app_id,name,destination,contract_version)
+SELECT sqlc.arg(account_id)::text::uuid,id,sqlc.arg(name)::text,'event',3
+FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND status<>'deleted' AND NOT platform_tenant_required
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.destination='event'
+ AND commit_sources.contract_version=3 AND NOT commit_sources.allow_tenant_selection AND commit_sources.operation_policy IS NULL
+RETURNING id::text,enabled;
+
+-- name: CommitPublicationReplay :one
+SELECT id::text,accepted_at,publication_acceptance_id,
+ publication_source,publication_event_id,
+ event_type=sqlc.arg(event_type)::text AND payload=sqlc.arg(payload)::jsonb
+ AND schema_version=sqlc.arg(schema_version)::text AND routing IS NULL AS matches
+FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND source_id=sqlc.arg(source_id)::text::uuid AND event_id=sqlc.arg(event_id)::text::uuid;
+
+-- name: CommitPublicationAcceptance :one
+SELECT id,created_at FROM event_fanout_outbox
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text;
+
+-- name: CommitPublicationReceipt :exec
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,schema_version,
+ publication_acceptance_id,publication_source,publication_event_id,accepted_at)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(source_id)::text::uuid,
+ sqlc.arg(event_id)::text::uuid,sqlc.arg(event_type)::text,sqlc.arg(payload)::jsonb,sqlc.arg(schema_version)::text,
+ sqlc.arg(acceptance_id)::bigint,sqlc.arg(publication_source)::text,sqlc.arg(publication_event_id)::text,sqlc.arg(accepted_at)::timestamptz);
+
+-- name: CommitPublicationSchema :one
+SELECT EXISTS(SELECT 1 FROM event_schemas WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND source=sqlc.arg(source)::text AND event_type=sqlc.arg(event_type)::text) AS required,
+ (SELECT schema FROM event_schemas WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND source=sqlc.arg(source)::text AND event_type=sqlc.arg(event_type)::text AND version=sqlc.arg(version)::text) AS schema;
