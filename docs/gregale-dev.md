@@ -230,6 +230,15 @@ delivers the edit. With `--json`, the watcher emits a
 (`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
 `developer_sync` receipt includes the same `patch` phase.
 
+When a sync cannot be live-patched, the terminal says why and what would make
+the app patchable, for example
+`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. ...`
+or that a dependency or lockfile changed. A reason is printed when it first
+appears and again only after a sync with a different outcome, so an app with a
+build step hears it once per session. Expected cases (the first sync, a running
+version from before live patches) stay quiet. With `--json`, the reason is the
+`dev_patch.reason` field of the `developer_sync` receipt.
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also
