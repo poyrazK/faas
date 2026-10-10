@@ -156,6 +156,9 @@ WRAPPER_MODULES = (
     "operations_runtime.py",
     "job_operations_runtime.py",
     "operations.py",
+    "event_consumer_transactions.py",
+    "_event_consumer_contract.py",
+    "event_consumer_schema.sql",
     "_operation_contract.py",
     "customer_operation_schema.sql",
     "operation_schema.sql",
@@ -925,6 +928,24 @@ __all__ += ("OperationWorkflowDependency",)
 
 from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
 __all__ += ("OperationWorkflowRelatedInstance",)
+
+from .event_consumer_transactions import (
+    EventConsumerCommitUnknownError,
+    EventConsumerConflictError,
+    EventConsumerRequest,
+    EventConsumerTransactionResult,
+    awith_event_consumer_transaction,
+    event_consumer_receipt_schema,
+    event_consumer_request_from_headers,
+    new_event_consumer_request,
+    with_event_consumer_transaction,
+)
+
+__all__ += (
+    "EventConsumerCommitUnknownError", "EventConsumerConflictError", "EventConsumerRequest",
+    "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
+    "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
+)
 '''
 
 

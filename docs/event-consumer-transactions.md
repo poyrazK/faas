@@ -1,14 +1,13 @@
 # Transactional event consumers
 
-The Go SDK can commit an event-consumer receipt and application PostgreSQL writes
-in one transaction. If the application commits and loses its HTTP response, a
+The Go, Node and Python SDKs can commit an event-consumer receipt and application
+PostgreSQL writes in one transaction. If the application commits and loses its HTTP response, a
 retry returns the saved JSON result without executing the business callback again.
 Concurrent duplicates serialize before reading the receipt.
 
-This first integration covers application subscriptions to published internal
+This integration covers application subscriptions to published internal
 CloudEvents. It does not cover direct application inbox messages, workflow steps,
-object-notification adapters, or webhook receivers. Node and Python transaction
-helpers are not yet available.
+object-notification adapters, or webhook receivers.
 
 ## Identity and delivery context
 
@@ -27,7 +26,7 @@ ID. An execution replay of an existing acceptance returns its saved application
 result; it does not intentionally repeat committed business effects. Use a new
 business event when another mutation is intended.
 
-`EventConsumerRequestFromHTTP` reads the four event-context headers and takes
+The Go `EventConsumerRequestFromHTTP` factory reads the four event-context headers and takes
 account/application IDs from owner configuration. Authenticate and authorize the
 handler before calling it. Direct public Gregale HTTP traffic strips
 `X-Gregale-Event-*` headers; the constructor itself is not authentication for
@@ -91,7 +90,7 @@ propagated; they never trigger the callback as though the receipt were missing.
 ## Shared PostgreSQL contract
 
 The canonical application-owned DDL is `pkg/eventinbox/schema.sql`; the existing
-inbox-schema generator packages it as `sdk/go/event_consumer_schema.sql`.
+inbox-schema generator packages identical DDL and limits for all three SDKs.
 
 The identity digest is SHA-256 of the following UTF-8 bytes, with no final newline:
 
@@ -126,3 +125,78 @@ transaction. Callback code can execute again after a rollback. Use business
 constraints and row locks for invariants beyond READ COMMITTED isolation. External
 APIs require their own idempotency keys. Gregale completion and application
 PostgreSQL remain separate transactions; delivery remains at least once.
+
+## Node handler
+
+Install `eventConsumerReceiptSchema` explicitly as the database owner. Supply a
+`pg.Pool` to the wrapper; it leases and releases a dedicated connection. Acceptance
+IDs are decimal **strings**, including in `newEventConsumerRequest`, so values
+above JavaScript's safe-integer range remain exact. After authentication and
+business authorization, with the original body captured as a `Buffer`:
+
+```js
+import { eventConsumerRequestFromHeaders, withEventConsumerTransaction }
+  from '@gregale/sdk-node';
+
+const input = eventConsumerRequestFromHeaders(req.headers, rawBody, accountId, appId);
+const result = await withEventConsumerTransaction(pool, input, async tx => {
+  await tx.query('UPDATE invoices SET paid=true WHERE id=$1', [invoiceId]);
+  return JSON.stringify({ applied: true });
+});
+res.type('application/json').send(result.body);
+```
+
+The callback returns JSON **text**, not an arbitrary object. The wrapper validates
+it and stores exact text. It exposes queries without connection release; do not
+issue transaction-control SQL or make external effects. Connection/statement
+timeouts remain configured on the pg pool. `EventConsumerConflictError` rejects
+changed content. `EventConsumerCommitUnknownError` means retry the same immutable
+request; connections with an uncertain commit or failed rollback are discarded.
+
+## Python synchronous handler
+
+Install `event_consumer_receipt_schema` explicitly. Lease an idle psycopg connection
+with `autocommit=True` exclusively for the whole wrapper call. Do not share it
+between threads/tasks, enter an outer transaction, or change transaction settings
+inside the callback. After authenticating and authorizing the input:
+
+```python
+import json
+from faas_sdk import event_consumer_request_from_headers, with_event_consumer_transaction
+
+input = event_consumer_request_from_headers(headers, raw_body, account_id, app_id)
+
+def apply(cursor):
+    cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (invoice_id,))
+    return json.dumps({"applied": True}).encode("utf-8")
+
+with pool.connection() as connection:  # pool configured with autocommit=True
+    result = with_event_consumer_transaction(connection, input, apply)
+# Send result.body unchanged as application/json only after success.
+```
+
+## Python asynchronous handler
+
+```python
+from faas_sdk import awith_event_consumer_transaction
+
+async def apply(cursor):
+    await cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (invoice_id,))
+    return b'{"applied":true}'
+
+async with pool.connection() as connection:  # AsyncConnectionPool, autocommit=True
+    result = await awith_event_consumer_transaction(connection, input, apply)
+# Only now acknowledge with result.body unchanged as application/json.
+```
+
+Python callbacks return UTF-8 JSON bytes or text. Acceptance IDs are exact positive
+int64 Python integers; header factories require canonical decimal strings. Internal
+receipt cursors use tuple rows without changing the business cursor's configured
+row factory. Configure PostgreSQL statement/lock timeouts for bounded waits.
+Errors before completion roll back; cancellation or an exception during commit
+can raise `EventConsumerCommitUnknownError`. Retry the same identity and bytes.
+`EventConsumerConflictError` prevents the callback from running for changed input.
+
+All adapters use the same table, SHA-256 framing and advisory lock namespace. A
+receipt written by one SDK can be read by another without repeating committed
+writes, provided the original request bytes, scope and acceptance are preserved.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package operation receipt schemas and the Go event-consumer contract."""
+"""Package operation receipt schemas and event-consumer contracts."""
 import argparse
 import json
 import re
@@ -56,6 +56,11 @@ def outputs():
         "sdk/go/testdata/operation-request.json": (ROOT / "sdk/operation-tests/request-fixture.json").read_text(),
         "sdk/go/operation_schema.sql": schema,
         "sdk/go/event_consumer_schema.sql": event_schema,
+        "sdk/python/faas_sdk/event_consumer_schema.sql": event_schema,
+        "sdk/python/faas_sdk/_event_consumer_contract.py": f"# {header}\n"
+        + "".join(f"{re.sub(r'(?<!^)(?=[A-Z])', '_', name).upper()} = {value}\n" for name, value in event_values.items()),
+        "sdk/node/src/event-consumer-contract.ts": f"// {header}\nexport const eventConsumerReceiptSchema = {json.dumps(event_schema)};\n"
+        + "".join(f"export const {name[0].lower() + name[1:]} = {value};\n" for name, value in event_values.items()),
         "sdk/go/event_consumer_limits.go": f"// {header}\npackage faas\n\nconst (\n"
         + "".join(f"\t{name[0].lower() + name[1:]} = {value}\n" for name, value in event_values.items())
         + ")\n",

@@ -20,8 +20,8 @@ original CloudEvents body bytes, excluding volatile invocation-attempt headers.
 Strip event-context headers from direct public HTTP requests. Constructors are
 not authentication; apps authenticate deliveries and authorize business inputs.
 
-The Go wrapper owns a fresh READ COMMITTED transaction. Lock the identity before
-a separate receipt read. Execute the callback only when the receipt is missing;
+The Go, Node and Python wrappers own a fresh READ COMMITTED transaction. Lock the
+identity before a separate receipt read. Execute the callback only when the receipt is missing;
 insert its receipt and commit with business writes. Replays return exact saved
 JSON bytes. Scope/content conflicts and database errors fail without invoking the
 callback. Commit acknowledgement errors remain outcome unknown and are reconciled
@@ -29,9 +29,11 @@ with the same identity. No incomplete receipt or processing lease is committed.
 
 The canonical application-owned schema and framing are documented in
 [transactional event consumers](../event-consumer-transactions.md). The existing
-inbox generator packages the schema and centrally defined limits for the Go SDK.
-No control-plane migration or new daemon is needed. Node and Python wrappers are
-follow-ups using this same contract.
+inbox generator packages the schema and centrally defined limits for all three SDKs.
+No control-plane migration or new daemon is needed. Node uses a dedicated pg pool
+connection. Python supports synchronous and asynchronous psycopg connections and
+requires an exclusively leased idle autocommit connection so completion cannot
+return before an outer transaction commits.
 
 ## Consequences
 

@@ -750,3 +750,19 @@ ID and source URI; replay that declaration after a lost acknowledgement.
 Preparation does not publish the file. Host-confirmed success with the typed
 result or explicit account success recovery publishes it. An approved Job
 retry clears old receipts; reconcile uncertain uploads before writing again.
+
+### Transactional event consumers
+
+After authenticating an internal subscription delivery, construct input with
+`event_consumer_request_from_headers(headers, raw_body, account_id, app_id)`.
+`with_event_consumer_transaction(connection, input, handler)` owns the synchronous
+psycopg transaction; `awith_event_consumer_transaction` supports async connections
+and callbacks. Exclusively lease an idle `autocommit=True` connection. Callbacks
+use only their supplied cursor and return UTF-8 JSON bytes/text. Acknowledge only
+after success using the returned `body`; `replayed` identifies saved results.
+
+Install exported `event_consumer_receipt_schema` explicitly and retain receipts
+across retries/replay. Changed content raises `EventConsumerConflictError` without
+running the callback. On `EventConsumerCommitUnknownError`, retry the same input.
+Do not control transaction lifecycle or perform external effects in the callback.
+See [synchronous and asynchronous examples](../../docs/event-consumer-transactions.md).

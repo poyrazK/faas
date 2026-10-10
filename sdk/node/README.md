@@ -2334,3 +2334,19 @@ Effect helpers record pending, failed, or confirmed business facts with a refere
 ### Compensation workflows
 
 Compensation helpers record required, pending, failed, or confirmed reversal observations linked to a retained confirmed effect. Source ownership/app/environment are checked before commit and publication. Applications execute reversals and report workflow state explicitly. See [compensation usage](../../docs/operations.md#compensation-workflows).
+
+### Transactional event consumers
+
+Use `eventConsumerRequestFromHeaders(headers, rawBody, accountId, appId)` after
+authenticating an internal subscription delivery, then
+`withEventConsumerTransaction(pgPool, input, async tx => JSONText)`. The callback
+uses only `tx.query` for business writes and returns JSON text. The receipt and
+writes commit together. Duplicates return saved `body` with `replayed=true`;
+changed content raises `EventConsumerConflictError`. An uncertain commit raises
+`EventConsumerCommitUnknownError`; retry the same identity and original bytes.
+
+Install exported `eventConsumerReceiptSchema` explicitly in application PostgreSQL.
+Acceptance IDs are canonical decimal strings, preserving values above 2^53. Retain
+receipts across all relevant retries/replays. Do not control transaction lifecycle
+or make external effects in the callback. Acknowledge only after success.
+See [handler examples and the shared contract](../../docs/event-consumer-transactions.md).

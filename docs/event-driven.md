@@ -3038,7 +3038,7 @@ Content/routing `status` remains separate. A response can contain `status=match`
 Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-932](adr/932-app-publication-acceptance-guards.md).
 
 
-## Transactional event consumer writes (Go SDK)
+## Transactional event consumer writes (Go, Node and Python SDKs)
 
 Application subscription consumers can commit a deduplication receipt and their
 PostgreSQL business writes together with `WithEventConsumerTransaction`. A lost
@@ -3049,4 +3049,4 @@ new acceptance header cannot use the helper.
 
 See [transactional event consumers](event-consumer-transactions.md) for setup,
 identity framing, replay behavior, application-owned retention, and the limits
-of the database transaction guarantee. Node and Python helpers are a follow-up.
+of the database transaction guarantee, including Node and Python handler examples.

@@ -290,3 +290,8 @@ export type { OperationWorkflowPlannedEffect } from './generated/models/Operatio
 export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
+
+export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
+  withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
+  type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
+  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
