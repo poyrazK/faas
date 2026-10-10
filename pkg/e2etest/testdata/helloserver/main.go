@@ -18,6 +18,8 @@
 //	-no-listen     never bind the port, so liveness sees conn_refused
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
+//
+// GET /work burns CPU and retains heap for profile captures (ADR-967).
 package main
 
 import (
@@ -99,6 +101,7 @@ func main() {
 		return
 	}
 
+	startProfiling()
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -158,6 +161,7 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	mux.HandleFunc("/work", serveWork)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)
