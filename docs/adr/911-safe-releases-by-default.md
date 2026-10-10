@@ -94,6 +94,26 @@ advance is exported as
 The bound applies to every canary, explicit or defaulted: holding a
 zero-traffic stage longer produces no evidence.
 
+### Crash-loop gate
+
+A release that keeps failing its liveness probe may serve almost no traffic,
+so it would pass the sample-size checks above. The breaker therefore also
+reads `liveness_restarts_total` (liveness-driven destroy and cold boot) for
+the candidate and its predecessor over the rollout window:
+
+- an unexported metric family (no always-present sentinel series) holds the
+  stage with `hold_signal_unavailable`, the same as a missing OOM signal;
+- at least `CircuitBreakerMinCrashLoopRestarts` (2) candidate restarts that
+  also exceed twice the predecessor's restarts abort with
+  `abort_crash_loop`, without waiting for request samples;
+- the bounded low-traffic advance additionally requires zero candidate
+  restarts and a readable signal.
+
+The factor keeps a predecessor that already flaps from turning every release
+into an abort. Readiness-probe withdrawals do not restart the VM and stay
+out of this gate: the instance is withdrawn from routing, which the 5xx and
+latency signals already observe.
+
 After the final stage the release keeps its ADR-625 first-wake 5xx window,
 which opens when the release first sees traffic. A low-traffic app is
 therefore still protected when its traffic does arrive.

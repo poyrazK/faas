@@ -283,6 +283,7 @@ func TestProgressionOnce_CircuitBreakerAbortsExactCandidate(t *testing.T) {
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -327,6 +328,7 @@ func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing
 			StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -379,6 +381,7 @@ func TestProgressionOnce_CircuitBreakerBoundsLowTrafficHold(t *testing.T) {
 					StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
 					HasStable:                 true,
 					OOMSignalAvailable:        true,
+					LivenessSignalAvailable:   true,
 					DependencySignalAvailable: true,
 				},
 			}
@@ -454,6 +457,7 @@ func TestProgressionOnce_CircuitBreakerColdBootAbortHasSpecificReason(t *testing
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -495,6 +499,7 @@ func TestProgressionOnce_CircuitBreakerCPUPerRequestAbortHasSpecificReason(t *te
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			CPURequestSignalAvailable: true,
 			DependencySignalAvailable: true,
 		},
@@ -537,6 +542,7 @@ func TestProgressionOnce_CircuitBreakerDependencyErrorAbortHasSpecificReason(t *
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			CPURequestSignalAvailable: true,
 			DependencySignalAvailable: true,
 		},

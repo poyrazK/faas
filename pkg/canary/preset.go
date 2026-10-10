@@ -504,6 +504,8 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: CPU per request regression; restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "dependency error regression"):
 		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "crash loop"):
+		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
 	if _, err := recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key); err != nil {
@@ -536,7 +538,9 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		"stable_dependency_calls", observation.Stable.DependencyCalls,
 		"candidate_dependency_errors", observation.Candidate.DependencyErrors,
 		"stable_dependency_errors", observation.Stable.DependencyErrors,
-		"oom_kills", observation.OOMKills)
+		"oom_kills", observation.OOMKills,
+		"candidate_liveness_restarts", observation.CandidateLivenessRestarts,
+		"stable_liveness_restarts", observation.StableLivenessRestarts)
 	stats.Aborted++
 	stats.CircuitBreakerAborted++
 	p.recordCircuitBreakerEvent(circuitBreakerAbortEvent(decision.Reason))
@@ -557,6 +561,8 @@ func circuitBreakerAbortEvent(reason string) string {
 		return "abort_dependency_errors"
 	case strings.HasPrefix(reason, "workload OOM"):
 		return "abort_oom"
+	case strings.HasPrefix(reason, "crash loop"):
+		return "abort_crash_loop"
 	default:
 		return "hold_recovery_failed"
 	}
@@ -567,6 +573,8 @@ func circuitBreakerHoldEvent(reason string) string {
 	case strings.HasPrefix(reason, "insufficient request samples"):
 		return "hold_insufficient_samples"
 	case strings.HasPrefix(reason, "workload OOM signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "liveness restart signal unavailable"):
 		return "hold_signal_unavailable"
 	case strings.HasPrefix(reason, "CPU/request signal unavailable"):
 		return "hold_signal_unavailable"

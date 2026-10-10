@@ -136,6 +136,13 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
   increases. Send a single candidate 5xx in a fresh rollout and confirm it
   keeps holding instead.
+- **Crash loop (ADR-911):** deploy a candidate whose liveness endpoint fails
+  after startup, on an app with almost no traffic. Confirm the rollout aborts
+  after two liveness restarts without waiting for request samples, the exact
+  predecessor returns to 100%, and
+  `canary_progression_circuit_breaker_total{event="abort_crash_loop"}`
+  increases. With the `liveness_restarts_total` family missing, confirm the
+  stage holds with `hold_signal_unavailable` instead.
 - **Default policy fallback (ADR-911):** with meterd stopped and its lease
   expired, deploy a flag-free release of a live app. Confirm the deploy
   succeeds with an immediate cutover and `rollback_on_5xx=true`, and apid

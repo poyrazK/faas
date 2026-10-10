@@ -7,6 +7,7 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 		HasStable:                 true,
 		StableDeploymentID:        "stable-1",
 		OOMSignalAvailable:        true,
+		LivenessSignalAvailable:   true,
 		CPURequestSignalAvailable: true,
 		DependencySignalAvailable: true,
 		Candidate:                 HealthWindow{Requests: 100, ServerErrors: 1, P95LatencyMS: 120, ColdBootRequests: 10, ColdBootP95LatencyMS: 900, CPURequests: 100, CPUUsec: 10_000_000},
@@ -21,6 +22,16 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 		{name: "first deployment has no rollback comparison", mutate: func(o *CircuitBreakerObservation) { o.HasStable = false }, want: CircuitBreakerAdvance},
 		{name: "oom aborts immediately", mutate: func(o *CircuitBreakerObservation) { o.OOMKills = 1 }, want: CircuitBreakerAbort},
 		{name: "missing oom signal holds", mutate: func(o *CircuitBreakerObservation) { o.OOMSignalAvailable = false }, want: CircuitBreakerHold},
+		{name: "missing liveness signal holds", mutate: func(o *CircuitBreakerObservation) { o.LivenessSignalAvailable = false }, want: CircuitBreakerHold},
+		{name: "crash loop aborts without request samples", mutate: func(o *CircuitBreakerObservation) {
+			o.CandidateLivenessRestarts = CircuitBreakerMinCrashLoopRestarts
+			o.Candidate.Requests = 0
+		}, want: CircuitBreakerAbort},
+		{name: "single restart is not a crash loop", mutate: func(o *CircuitBreakerObservation) { o.CandidateLivenessRestarts = 1 }, want: CircuitBreakerAdvance},
+		{name: "restarts matching a flapping predecessor do not abort", mutate: func(o *CircuitBreakerObservation) {
+			o.CandidateLivenessRestarts = 4
+			o.StableLivenessRestarts = 2
+		}, want: CircuitBreakerAdvance},
 		{name: "missing cpu per request signal holds", mutate: func(o *CircuitBreakerObservation) { o.CPURequestSignalAvailable = false }, want: CircuitBreakerHold},
 		{name: "missing dependency error signal holds", mutate: func(o *CircuitBreakerObservation) { o.DependencySignalAvailable = false }, want: CircuitBreakerHold},
 		{name: "insufficient cpu request samples hold", mutate: func(o *CircuitBreakerObservation) {
@@ -97,7 +108,7 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 }
 
 func TestLowTrafficAdvanceAllowed(t *testing.T) {
-	clean := CircuitBreakerObservation{HasStable: true, OOMSignalAvailable: true, Candidate: HealthWindow{Requests: 2}}
+	clean := CircuitBreakerObservation{HasStable: true, OOMSignalAvailable: true, LivenessSignalAvailable: true, Candidate: HealthWindow{Requests: 2}}
 	sampleHold := CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "insufficient request samples (candidate=2 stable=3; need 20 each)"}
 	tests := []struct {
 		name   string
@@ -110,6 +121,8 @@ func TestLowTrafficAdvanceAllowed(t *testing.T) {
 		{name: "candidate 5xx", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.Candidate.ServerErrors = 1 }},
 		{name: "oom signal unavailable", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMSignalAvailable = false }},
 		{name: "oom kill", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMKills = 1 }},
+		{name: "liveness restart", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.CandidateLivenessRestarts = 1 }},
+		{name: "liveness signal unavailable", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.LivenessSignalAvailable = false }},
 		{name: "signal unavailable hold", d: CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "dependency error signal unavailable"}},
 		{name: "abort", d: CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: "insufficient request samples"}},
 	}

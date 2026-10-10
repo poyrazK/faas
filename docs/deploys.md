@@ -168,8 +168,13 @@ follow the rollout. Use `--safe` to wait for 100% instead.
 A quiet app may not send enough requests to compare the two revisions. If a
 stage's only problem is too few samples, Gregale waits up to 5 minutes past
 the stage duration and then advances, provided the new revision returned no
-5xx responses and no OOM kills. The first-wake 5xx rollback still protects
-the release once real traffic arrives.
+5xx responses, had no OOM kills, and was never restarted by its liveness
+probe. The first-wake 5xx rollback still protects the release once real
+traffic arrives.
+
+A new revision that its liveness probe restarts twice (and more than twice as
+often as the release it replaces) is treated as crash-looping: the rollout is
+aborted and traffic returns to the previous revision, even with no traffic.
 
 Opt out when you need an immediate cutover:
 

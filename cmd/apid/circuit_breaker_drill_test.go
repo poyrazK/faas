@@ -130,6 +130,21 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			wantEvent:  "hold_insufficient_samples",
 		},
 		{
+			name: "crash loop aborts exact candidate",
+			mutate: func(o *canary.CircuitBreakerObservation) {
+				o.CandidateLivenessRestarts = 3
+			},
+			wantAction: canary.CircuitBreakerAbort,
+			wantEvent:  "abort_crash_loop",
+			wantReason: "crash loop",
+		},
+		{
+			name:       "missing liveness signal holds candidate",
+			mutate:     func(o *canary.CircuitBreakerObservation) { o.LivenessSignalAvailable = false },
+			wantAction: canary.CircuitBreakerHold,
+			wantEvent:  "hold_signal_unavailable",
+		},
+		{
 			name:       "missing OOM signal holds candidate",
 			mutate:     func(o *canary.CircuitBreakerObservation) { o.OOMSignalAvailable = false },
 			wantAction: canary.CircuitBreakerHold,
@@ -222,6 +237,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				StableDeploymentID:        stable.ID,
 				HasStable:                 true,
 				OOMSignalAvailable:        true,
+				LivenessSignalAvailable:   true,
 				CPURequestSignalAvailable: true,
 				DependencySignalAvailable: true,
 			}
