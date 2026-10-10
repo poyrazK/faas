@@ -1,7 +1,8 @@
 -- +goose Up
--- ADR-831 step 1: an opt-in, notification-only preset on kind=waf detections.
--- The WAF is observe-only, so detections never reach
--- gateway_edge_rejections_total and edge_rejection_pressure cannot see them.
+-- ADR-831: an opt-in, notification-only preset on kind=waf detections.
+-- Sampled and warn detections are not rejections, so
+-- edge_rejection_pressure cannot see them; block rules' 403s are counted by
+-- both presets.
 -- Like the other edge security metrics, external traffic drives this one, so
 -- it may only send webhooks. Pro and above, matching kind=waf availability.
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
@@ -44,7 +45,7 @@ INSERT INTO alert_presets (
 ) VALUES (
     'edge_waf_detections',
     'Edge WAF detections',
-    'Alerts when kind=waf edge rules detect more than 25 likely attacks in 15 minutes. The WAF observes only; nothing is blocked. Notification only.',
+    'Alerts when kind=waf edge rules detect more than 25 likely attacks in 15 minutes, whether observed, warned or blocked. Notification only.',
     'security', 'edge_waf_detections', 'gt', 25, '15m', 60, true, 'pro'
 ) ON CONFLICT (name) DO NOTHING;
 

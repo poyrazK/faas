@@ -122,6 +122,19 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
+			fmt.Sprintf(`sum by (outcome) (increase(gateway_waf_inline_checks_total{app=%q,outcome=~"warned|blocked|skipped"}[%s]))`, appID, rng),
+			func(labels map[string]string, count int64) {
+				switch labels["outcome"] {
+				case "warned":
+					resp.WAF.Warned += count
+				case "blocked":
+					resp.WAF.Blocked += count
+				case "skipped":
+					resp.WAF.InlineSkipped += count
+				}
+			},
+		},
+		{
 			fmt.Sprintf(`sum by (category) (increase(gateway_waf_detections_total{app=%q}[%s]))`, appID, rng),
 			func(labels map[string]string, count int64) {
 				resp.WAF.Categories = append(resp.WAF.Categories, api.EdgeProtectionCount{Name: labels["category"], Count: count})

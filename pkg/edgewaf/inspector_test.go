@@ -182,7 +182,7 @@ func TestBudgetSettlesToMeasuredTime(t *testing.T) {
 	big := estimateMs(1, 65536)
 	j.admit("app-1", big)
 	j.settle(job{sample: gatewaySample("app-1"), estimateMs: big}, 0)
-	if b := j.budgets["app-1"].balance; b != api.EdgeWAFWorkerMsPerAppBurst {
+	if b := j.budgets.m["app-1"].balance; b != api.EdgeWAFWorkerMsPerAppBurst {
 		t.Errorf("balance after a free sample = %.1f, want the full burst back", b)
 	}
 }
@@ -200,7 +200,7 @@ func TestDroppedSampleIsRefunded(t *testing.T) {
 	if got := obs.count(OutcomeDropped); got != 1 {
 		t.Fatalf("dropped = %d, want 1", got)
 	}
-	if b := i.budgets["app-1"].balance; b != api.EdgeWAFWorkerMsPerAppBurst {
+	if b := i.budgets.m["app-1"].balance; b != api.EdgeWAFWorkerMsPerAppBurst {
 		t.Errorf("balance after a dropped sample = %.1f, want the full burst", b)
 	}
 }

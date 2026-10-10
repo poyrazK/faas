@@ -18,8 +18,8 @@ type EdgeProtectionResponse struct {
 	// Rejections counts requests the other edge gates answered, by gate
 	// (Name) and response status.
 	Rejections []EdgeProtectionRejection `json:"rejections"`
-	// WAF counts kind=waf inspections. Step 1 of ADR-831 is observe-only,
-	// so detections are reported here and never appear in Rejections.
+	// WAF counts kind=waf inspections. Requests a block rule answered with
+	// 403 also appear in Rejections under gate "waf".
 	WAF EdgeProtectionWAF `json:"waf"`
 }
 
@@ -30,13 +30,19 @@ type EdgeProtectionResponse struct {
 // inspection budget, behind a full queue, or failed. Categories counts
 // detections by CRS attack category (one detection may count several);
 // TopRules lists the CRS rule IDs that scored most, largest first, for
-// tuning exclude_rule_ids.
+// tuning exclude_rule_ids. Warned, Blocked and InlineSkipped count the
+// in-path header/URI checks of warn and block rules (ADR-831 amendment 4);
+// InlineSkipped requests passed unchecked because the app's inline budget or
+// the node's check slots were exhausted.
 type EdgeProtectionWAF struct {
-	Inspected    int64                 `json:"inspected"`
-	Detected     int64                 `json:"detected"`
-	NotInspected int64                 `json:"not_inspected"`
-	Categories   []EdgeProtectionCount `json:"categories"`
-	TopRules     []EdgeProtectionCount `json:"top_rules"`
+	Inspected     int64                 `json:"inspected"`
+	Detected      int64                 `json:"detected"`
+	NotInspected  int64                 `json:"not_inspected"`
+	Warned        int64                 `json:"warned"`
+	Blocked       int64                 `json:"blocked"`
+	InlineSkipped int64                 `json:"inline_skipped"`
+	Categories    []EdgeProtectionCount `json:"categories"`
+	TopRules      []EdgeProtectionCount `json:"top_rules"`
 }
 
 // EdgeProtectionWAFTopRules bounds EdgeProtectionWAF.TopRules.

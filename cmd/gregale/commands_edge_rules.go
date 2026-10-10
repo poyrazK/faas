@@ -445,6 +445,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		CircuitWindowSeconds:              *circuitWindowSeconds,
 		CircuitOpenSeconds:                *circuitOpenSeconds,
 		CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+		WAFMode:                           *wafFlags.mode,
 		WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
 		WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 		WAFExcludeRules:                   *wafFlags.excludeRules,
@@ -824,6 +825,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CircuitWindowSeconds:              *circuitWindowSeconds,
 			CircuitOpenSeconds:                *circuitOpenSeconds,
 			CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+			WAFMode:                           *wafFlags.mode,
 			WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
 			WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 			WAFExcludeRules:                   *wafFlags.excludeRules,
@@ -923,6 +925,7 @@ type edgeRuleActionInputs struct {
 	AsyncMaxAgeSeconds             int
 	// waf (ADR-831 step 1). All optional; WAFExcludeRules is the raw
 	// comma-separated flag value, parsed by buildEdgeRuleWAFAction.
+	WAFMode             string
 	WAFParanoiaLevel    int
 	WAFAnomalyThreshold int
 	WAFExcludeRules     string
@@ -1637,7 +1640,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"on-success-webhook", "on-failure-webhook",
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
-		"waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
+		"waf-mode", "waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",

@@ -3,18 +3,23 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Inspects matched requests with the OWASP Core Rule Set (ADR-831 step
- * 1). Observe-only: requests are scored off the request path and never
- * blocked; detections appear in the edge-protection summary and the
- * edge_waf_detections alert preset. Pro and above. Omitted values are
- * stored as their defaults.
+ * Inspects matched requests with the OWASP Core Rule Set (ADR-831).
+ * Every mode samples requests (bodies included) off the request path
+ * and reports detections without blocking them. warn and block also
+ * check headers and URL in-path with a smaller rule set at paranoia
+ * level 1: warn tags a detected request's response with X-WAF-Warning,
+ * block answers it with 403. Request bodies are never blocked. When the
+ * app's in-path budget is exhausted a request passes unchecked (counted
+ * as inline_skipped). Detections appear in the edge-protection summary
+ * and the edge_waf_detections alert preset. Pro and above. Omitted
+ * values are stored as their defaults.
  *
  */
 export type EdgeRuleWAFAction = {
   /**
-   * Only observe is available; blocking modes need a later ADR-831 step.
+   * warn and block require paranoia_level 1.
    */
-  mode?: 'observe';
+  mode?: 'observe' | 'warn' | 'block';
   /**
    * CRS paranoia level. Level 2 detects more and produces more false positives.
    */

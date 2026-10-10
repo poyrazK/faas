@@ -3200,7 +3200,7 @@ const (
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
 	// 401/403/413/429 answers from the other edge gates;
-	// AlertMetricEdgeWAFDetections counts observe-only kind=waf detections
+	// AlertMetricEdgeWAFDetections counts kind=waf detections
 	// (ADR-831 step 1). All are webhook-only.
 	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
 	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"

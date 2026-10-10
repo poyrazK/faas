@@ -37,10 +37,10 @@ func TestRenderEdgeProtection(t *testing.T) {
 
 	buf.Reset()
 	renderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
-		WAF: api.EdgeProtectionWAF{Inspected: 96, Detected: 6, NotInspected: 4,
+		WAF: api.EdgeProtectionWAF{Inspected: 96, Detected: 6, NotInspected: 4, Warned: 2, Blocked: 8, InlineSkipped: 1,
 			Categories: []api.EdgeProtectionCount{{Name: "sqli", Count: 5}},
 			TopRules:   []api.EdgeProtectionCount{{Name: "942100", Count: 5}}}})
-	for _, want := range []string{"96 inspected, 6 detected, 4 not inspected", "sqli 5", "942100 5"} {
+	for _, want := range []string{"96 inspected, 6 detected, 4 not inspected", "8 blocked, 2 warned, 1 passed unchecked", "sqli 5", "942100 5"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("waf output missing %q:\n%s", want, buf.String())
 		}

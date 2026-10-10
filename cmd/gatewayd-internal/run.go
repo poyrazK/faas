@@ -2766,11 +2766,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
-	// ADR-831 step 1 — observe-only kind=waf. The rule set compiles lazily
-	// on the first sample, so a node with no WAF rules pays nothing.
+	// ADR-831 — kind=waf. Rule sets compile lazily on first use, so a node
+	// with no WAF rules pays nothing. FAAS_EDGE_WAF_INLINE_DISABLED=1 is the
+	// operator kill switch for in-path checks: warn and block rules then
+	// behave like observe (amendment 4).
 	wafInspector := edgewaf.New(deps.metrics, log)
 	go wafInspector.Run(ctx)
 	handler.WithWAFInspector(wafInspector)
+	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
+		handler.WithWAFInlineChecker(wafInspector)
+	} else {
+		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev

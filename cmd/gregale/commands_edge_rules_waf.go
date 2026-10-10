@@ -11,8 +11,9 @@ import (
 )
 
 // edgeRuleWAFFlags are the kind=waf flags shared by `edge-rules create` and
-// `edge-rules update` (ADR-831 step 1, observe-only).
+// `edge-rules update` (ADR-831).
 type edgeRuleWAFFlags struct {
+	mode             *string
 	paranoiaLevel    *int
 	anomalyThreshold *int
 	excludeRules     *string
@@ -21,6 +22,8 @@ type edgeRuleWAFFlags struct {
 
 func addEdgeRuleWAFFlags(fs *flag.FlagSet) edgeRuleWAFFlags {
 	return edgeRuleWAFFlags{
+		mode: fs.String("waf-mode", "",
+			"kind=waf: observe (default), warn, or block; warn and block check headers and URL in-path at paranoia level 1"),
 		paranoiaLevel: fs.Int("waf-paranoia-level", 0,
 			fmt.Sprintf("kind=waf: OWASP CRS paranoia level 1..%d (default %d)", api.MaxEdgeWAFParanoiaLevel, api.EdgeWAFDefaultParanoiaLevel)),
 		anomalyThreshold: fs.Int("waf-anomaly-threshold", 0,
@@ -34,6 +37,7 @@ func addEdgeRuleWAFFlags(fs *flag.FlagSet) edgeRuleWAFFlags {
 
 func buildEdgeRuleWAFAction(in edgeRuleActionInputs) (json.RawMessage, error) {
 	a := api.EdgeRuleWAFAction{
+		Mode:             in.WAFMode,
 		ParanoiaLevel:    in.WAFParanoiaLevel,
 		AnomalyThreshold: in.WAFAnomalyThreshold,
 		InspectBodyBytes: in.WAFInspectBodyBytes,

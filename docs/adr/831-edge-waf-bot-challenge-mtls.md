@@ -295,3 +295,39 @@ set catches, at 1.07 ms p95 against 1.63 ms. 920 adds 0.12 ms p95 for one
 protocol warning that scores below the threshold on its own, so it is
 left out. The proposed in-path set is therefore: 901, 913, 921, 930, 931,
 932, 941 and 942 at PL1.
+
+## Amendment 4: warn and block on headers and URI (2026-10-10)
+
+Built on `feat/edge-waf-observe`, still ahead of acceptance; the branch must
+not merge until this ADR is accepted, including this amendment.
+
+- **Modes.** `mode` is `observe` (default), `warn` or `block`. Every mode
+  keeps the off-path sampling of amendment 2 (headers and body, full rule
+  set, rule's paranoia level). `warn` and `block` add an in-path check of
+  headers and URI with the amendment 3 rule set (901, 913, 921, 930, 931,
+  932, 941, 942) at paranoia level 1, with request body access off so the
+  body keeps streaming to the proxy. `warn` and `block` therefore require
+  `paranoia_level` 1.
+- **Verdicts.** `block` answers a detection with 403 (`forbidden` problem
+  naming the edge rule, not the CRS rule, so a caller does not learn which
+  signature fired), counted in `gateway_edge_rejections_total{kind="waf"}`;
+  the app never wakes. `warn` sets `X-WAF-Warning: <edge rule id>` on the
+  response and passes the request. A request detected in-path is not also
+  sampled, so it is not counted twice. Bodies are never blocked.
+- **Fail open.** In-path checks run on the request goroutine, at most
+  `EdgeWAFInlineConcurrency` (2) per node at once, within a per-app budget
+  of 500 worker-ms per second (burst 1000; a check is ~1 ms). A check with
+  no free slot or budget is skipped and the request passes, counted as
+  `outcome="skipped"`. An attacker can therefore exceed roughly 500 checked
+  requests per second per app to push traffic through unchecked; throttle
+  rules and the pre-auth limit are the defence against floods, not the WAF.
+  `FAAS_EDGE_WAF_INLINE_DISABLED=1` on gatewayd-internal turns in-path
+  checks off; warn and block rules then only observe.
+- **Signals.** `gateway_waf_inline_checks_total{app,outcome}` (clean,
+  warned, blocked, skipped, error) and `gateway_waf_inline_seconds`. The
+  edge-protection summary reports `warned`, `blocked` and `inline_skipped`;
+  `edge_waf_detections` counts sampled detections plus warned and blocked.
+- **Before leaving preview:** measure `gateway_waf_inline_seconds` p95 on
+  the reference node under production-like load against the 2 ms gate,
+  and review false positives in `observe` on real traffic before
+  recommending `block`.

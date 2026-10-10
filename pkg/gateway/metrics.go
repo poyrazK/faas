@@ -229,6 +229,8 @@ type Metrics struct {
 	wafInspections        *prometheus.CounterVec
 	wafDetections         *prometheus.CounterVec
 	wafRuleMatches        *prometheus.CounterVec
+	wafInline             *prometheus.CounterVec
+	wafInlineSeconds      prometheus.Histogram
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
@@ -1309,11 +1311,11 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		edgeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rejections_total",
-			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
+			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle|waf) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
 		}, []string{"app", "kind", "status"}),
 		wafInspections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_waf_inspections_total",
-			Help: "kind=waf requests by app and outcome (clean|detected|sampled_out|dropped|error). Observe-only (ADR-831 step 1): no outcome blocks a request.",
+			Help: "kind=waf requests by app and outcome (clean|detected|sampled_out|dropped|error). Off-path samples (ADR-831): no outcome here blocks a request; in-path verdicts are gateway_waf_inline_checks_total.",
 		}, []string{"app", "outcome"}),
 		wafDetections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_waf_detections_total",
@@ -1323,6 +1325,15 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_rule_matches_total",
 			Help: "OWASP CRS rules that scored in a kind=waf detection, by app and rule_id, for tuning exclude_rule_ids. rule_id is bounded to CRS detection rules (911000-948999) in the vendored rule set; excluded rules and clean requests are not counted.",
 		}, []string{"app", "rule_id"}),
+		wafInline: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_inline_checks_total",
+			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
+		}, []string{"app", "outcome"}),
+		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "gateway_waf_inline_seconds",
+			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule; added to that request's latency.",
+			Buckets: []float64{0.00025, 0.0005, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.01, 0.025},
+		}),
 		wafInspectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inspection_seconds",
 			Help:    "Worker CPU-bound time to evaluate one kind=waf sample, off the request path.",
@@ -1937,7 +1948,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -2521,6 +2532,18 @@ func (m *Metrics) ObserveWAFDetection(appID, category string) {
 		return
 	}
 	m.wafDetections.WithLabelValues(appID, category).Inc()
+}
+
+// ObserveWAFInline counts one in-path kind=waf check. seconds is recorded
+// only for checks that ran (seconds > 0).
+func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
+	if m == nil || m.wafInline == nil {
+		return
+	}
+	m.wafInline.WithLabelValues(appID, outcome).Inc()
+	if seconds > 0 {
+		m.wafInlineSeconds.Observe(seconds)
+	}
 }
 
 // ObserveWAFRuleMatch counts one CRS rule that scored in a detection.

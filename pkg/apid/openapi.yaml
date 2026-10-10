@@ -42656,17 +42656,20 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
           type: object
-          description: kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections.
-          required: [inspected, detected, not_inspected, categories, top_rules]
+          description: kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in rejections under gate waf.
+          required: [inspected, detected, not_inspected, warned, blocked, inline_skipped, categories, top_rules]
           properties:
             inspected: { type: integer, format: int64, minimum: 0, description: "Requests scored by the OWASP CRS." }
             detected: { type: integer, format: int64, minimum: 0, description: "Inspected requests at or above the rule's anomaly threshold." }
             not_inspected: { type: integer, format: int64, minimum: 0, description: "Matched requests skipped to protect the node (budget, full queue, or error)." }
+            warned: { type: integer, format: int64, minimum: 0, description: "Requests a warn rule detected in-path and tagged with X-WAF-Warning." }
+            blocked: { type: integer, format: int64, minimum: 0, description: "Requests a block rule detected in-path and answered with 403." }
+            inline_skipped: { type: integer, format: int64, minimum: 0, description: "Requests that passed a warn or block rule unchecked because the in-path budget was exhausted." }
             categories:
               type: array
               description: Detections by CRS attack category, largest first; one detection may count several.
@@ -54055,18 +54058,23 @@ components:
 
     EdgeRuleWAFAction:
       description: |
-        Inspects matched requests with the OWASP Core Rule Set (ADR-831 step
-        1). Observe-only: requests are scored off the request path and never
-        blocked; detections appear in the edge-protection summary and the
-        edge_waf_detections alert preset. Pro and above. Omitted values are
-        stored as their defaults.
+        Inspects matched requests with the OWASP Core Rule Set (ADR-831).
+        Every mode samples requests (bodies included) off the request path
+        and reports detections without blocking them. warn and block also
+        check headers and URL in-path with a smaller rule set at paranoia
+        level 1: warn tags a detected request's response with X-WAF-Warning,
+        block answers it with 403. Request bodies are never blocked. When the
+        app's in-path budget is exhausted a request passes unchecked (counted
+        as inline_skipped). Detections appear in the edge-protection summary
+        and the edge_waf_detections alert preset. Pro and above. Omitted
+        values are stored as their defaults.
       type: object
       properties:
         mode:
           type: string
-          enum: [observe]
+          enum: [observe, warn, block]
           default: observe
-          description: Only observe is available; blocking modes need a later ADR-831 step.
+          description: warn and block require paranoia_level 1.
         paranoia_level:
           type: integer
           minimum: 1

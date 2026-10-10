@@ -81,11 +81,15 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 // renderEdgeProtectionWAF prints the kind=waf section only when a WAF rule
 // saw traffic, so apps without one are not shown an empty row.
 func renderEdgeProtectionWAF(w io.Writer, waf api.EdgeProtectionWAF) {
-	if waf.Inspected == 0 && waf.NotInspected == 0 {
+	if waf.Inspected == 0 && waf.NotInspected == 0 && waf.Warned == 0 && waf.Blocked == 0 && waf.InlineSkipped == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "  %-28s %d inspected, %d detected, %d not inspected (budget or queue)\n",
-		"waf (observe only):", waf.Inspected, waf.Detected, waf.NotInspected)
+		"waf (sampled):", waf.Inspected, waf.Detected, waf.NotInspected)
+	if waf.Warned > 0 || waf.Blocked > 0 || waf.InlineSkipped > 0 {
+		_, _ = fmt.Fprintf(w, "  %-28s %d blocked, %d warned, %d passed unchecked (budget)\n",
+			"waf (in-path, headers/URI):", waf.Blocked, waf.Warned, waf.InlineSkipped)
+	}
 	for _, list := range []struct {
 		label  string
 		counts []api.EdgeProtectionCount

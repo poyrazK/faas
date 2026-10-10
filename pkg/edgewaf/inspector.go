@@ -43,7 +43,12 @@ type Inspector struct {
 	now   func() time.Time
 
 	budgetMu sync.Mutex
-	budgets  map[string]*workerBudget
+	budgets  budgets
+
+	inlineSlots   chan struct{}
+	inlineMu      sync.Mutex
+	inlineBudgets budgets
+	inlineEngine  lazyEngine
 
 	engines [api.MaxEdgeWAFParanoiaLevel + 1]lazyEngine
 }
@@ -70,7 +75,10 @@ func New(obs Observer, log *slog.Logger) *Inspector {
 		log:     log,
 		queue:   make(chan job, api.EdgeWAFQueueDepth),
 		now:     time.Now,
-		budgets: map[string]*workerBudget{},
+		budgets: newBudgets(sampleRate),
+
+		inlineSlots:   make(chan struct{}, api.EdgeWAFInlineConcurrency),
+		inlineBudgets: newBudgets(inlineRate),
 	}
 }
 
@@ -113,27 +121,14 @@ func (i *Inspector) Submit(s gateway.WAFSample) {
 func (i *Inspector) admit(appID string, estimateMs float64) bool {
 	i.budgetMu.Lock()
 	defer i.budgetMu.Unlock()
-	now := i.now()
-	b, ok := i.budgets[appID]
-	if !ok {
-		if len(i.budgets) >= maxTrackedApps {
-			i.budgets = map[string]*workerBudget{}
-		}
-		b = newWorkerBudget(now)
-		i.budgets[appID] = b
-	}
-	return b.admit(now, estimateMs)
+	return i.budgets.admit(appID, i.now(), estimateMs)
 }
 
-// settle trues up an admitted sample's charge to the worker time it used. A
-// budget forgotten by a map reset is not recreated: the overrun is lost, as
-// the reset already granted the app a fresh burst.
+// settle trues up an admitted sample's charge to the worker time it used.
 func (i *Inspector) settle(j job, elapsed time.Duration) {
 	i.budgetMu.Lock()
 	defer i.budgetMu.Unlock()
-	if b, ok := i.budgets[j.sample.AppID]; ok {
-		b.settle(i.now(), j.estimateMs, float64(elapsed)/float64(time.Millisecond))
-	}
+	i.budgets.settle(j.sample.AppID, i.now(), j.estimateMs, elapsed)
 }
 
 func (i *Inspector) engine(paranoiaLevel int) (coraza.WAF, error) {

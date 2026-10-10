@@ -1706,6 +1706,7 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			AnomalyThreshold: action.AnomalyThreshold,
 			ExcludeRuleIDs:   action.ExcludeRuleIDs,
 			InspectBodyBytes: action.InspectBodyBytes,
+			Mode:             action.Mode,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

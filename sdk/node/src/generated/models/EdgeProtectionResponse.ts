@@ -34,12 +34,12 @@ export type EdgeProtectionResponse = {
    * Requests answered by an edge gate, largest count first; zero counts are omitted.
    */
   rejections: Array<{
-    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle';
+    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf';
     status: '401' | '403' | '413' | '429' | '503' | 'other';
     count: number;
   }>;
   /**
-   * kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections.
+   * kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in rejections under gate waf.
    */
   waf: {
     /**
@@ -54,6 +54,18 @@ export type EdgeProtectionResponse = {
      * Matched requests skipped to protect the node (budget, full queue, or error).
      */
     not_inspected: number;
+    /**
+     * Requests a warn rule detected in-path and tagged with X-WAF-Warning.
+     */
+    warned: number;
+    /**
+     * Requests a block rule detected in-path and answered with 403.
+     */
+    blocked: number;
+    /**
+     * Requests that passed a warn or block rule unchecked because the in-path budget was exhausted.
+     */
+    inline_skipped: number;
     /**
      * Detections by CRS attack category, largest first; one detection may count several.
      */

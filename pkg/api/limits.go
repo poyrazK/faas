@@ -4733,6 +4733,17 @@ const (
 	// the budget are not inspected (outcome "sampled_out").
 	EdgeWAFWorkerMsPerAppPerSecond = 400
 	EdgeWAFWorkerMsPerAppBurst     = 2000
+	// EdgeWAFInlineConcurrency bounds in-path header/URI checks for warn
+	// and block rules running at once on a node (ADR-831 amendment 4).
+	// A check that finds no free slot, or whose app has used its inline
+	// budget, is skipped and the request passes (fail open), so the WAF
+	// can never take the gateway down; skips are counted.
+	EdgeWAFInlineConcurrency = 2
+	// EdgeWAFInlineMsPerAppPerSecond and EdgeWAFInlineMsPerAppBurst bound
+	// one app's in-path checks in worker milliseconds. A check costs about
+	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
+	EdgeWAFInlineMsPerAppPerSecond = 500
+	EdgeWAFInlineMsPerAppBurst     = 1000
 	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
 	// OWASP CRS paranoia level a rule may select.
 	EdgeWAFDefaultParanoiaLevel = 1

@@ -283,6 +283,45 @@ Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
 policy keep it until it expires (up to a year after their last visit).
 
+## Web application firewall (preview)
+
+A `kind=waf` edge rule (Pro and above) checks matched requests against the
+OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
+command injection, scanners, and header injection. It works the same on
+`*.gregale.dev` and on your custom domains. The rule's `mode` decides what
+happens to a detection:
+
+| Mode | Headers and URL | Request body |
+|---|---|---|
+| `observe` (default) | sampled and reported | sampled and reported |
+| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported |
+| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported |
+
+Request bodies are never blocked: checking them costs tens to hundreds of
+milliseconds, so they are inspected off the request path, and only a sample
+of them under load. To reject bad bodies, declare their shape with a
+`kind=validate` rule. Checks on headers and the URL add about 1 ms to each
+matched request. If your app sends more traffic than its check budget allows
+(roughly 500 requests per second), the rest pass unchecked and are counted
+as `inline_skipped`; the WAF never slows your app down to keep up.
+
+Start in `observe`, look for false positives, then switch to `block`:
+
+```sh
+gregale edge-rules create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge-rules summary --app my-api --range 24h   # detections, categories, top CRS rule IDs
+gregale edge-rules update <rule-id> --kind waf --waf-exclude-rules 942100   # silence a false positive
+gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
+```
+
+`edge-rules update --kind waf` replaces the whole WAF action, so repeat every
+setting you want to keep (mode, exclusions, thresholds) in each update.
+
+`warn` and `block` run at paranoia level 1. Level 2 detects more and
+produces more false positives; it is available in `observe` only. The
+`edge_waf_detections` alert preset notifies you of bursts, and blocked
+requests also count toward `edge_rejection_pressure`.
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses

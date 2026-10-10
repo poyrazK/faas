@@ -23,6 +23,8 @@ type EdgeRuleWAFResolved struct {
 	AnomalyThreshold int
 	ExcludeRuleIDs   []int
 	InspectBodyBytes int
+	// Mode is observe, warn or block (api.EdgeWAFMode*).
+	Mode string
 }
 
 // PickFirstWAFMatch returns the first priority-ordered WAF rule matching the
@@ -79,19 +81,73 @@ type WAFInspector interface {
 	Submit(WAFSample)
 }
 
-// WithWAFInspector arms observe-only kind=waf inspection.
+// WAF in-path check outcomes (ADR-831 amendment 4).
+const (
+	WAFInlineClean    = "clean"
+	WAFInlineDetected = "detected"
+	WAFInlineSkipped  = "skipped"
+	WAFInlineError    = "error"
+)
+
+// WAFInlineResult is the verdict of an in-path header/URI check.
+type WAFInlineResult struct {
+	Outcome    string
+	RuleIDs    []int
+	Categories []string
+	Seconds    float64
+}
+
+// WAFInlineChecker scores a sample's headers and URI on the request
+// goroutine for warn and block rules. It must return promptly: a check it
+// cannot afford is reported as WAFInlineSkipped and the request passes.
+type WAFInlineChecker interface {
+	CheckInline(WAFSample) WAFInlineResult
+}
+
+// WithWAFInspector arms off-path kind=waf inspection (every mode).
 func (h *Handler) WithWAFInspector(inspector WAFInspector) *Handler {
 	h.wafInspector = inspector
 	return h
 }
 
-// beginEdgeRuleWAF matches a kind=waf rule and, on a hit, records the body
-// prefix while downstream code reads r.Body. The returned func submits the
-// sample and must run once the request is finished (ServeHTTP defers it).
-// Observe-only: this gate never writes a response and never reads the body
-// itself, so it adds no latency to the forwarded request.
-func (h *Handler) beginEdgeRuleWAF(r *http.Request, app App) func() {
-	if h.edgeRules == nil || h.wafInspector == nil {
+// WithWAFInlineChecker arms in-path header/URI checks for warn and block
+// rules. Without it those rules behave like observe.
+func (h *Handler) WithWAFInlineChecker(checker WAFInlineChecker) *Handler {
+	h.wafInline = checker
+	return h
+}
+
+// applyEdgeRuleWAF is the kind=waf gate (ADR-831). Warn and block rules first
+// check headers and URI in-path: a detection under block is answered with
+// 403 here (handled=true); under warn the response is tagged and the request
+// passes. Otherwise, and for observe rules, the body prefix is recorded as
+// later stages read it, and the returned func submits the sample off-path
+// once the request is finished (ServeHTTP defers it). Bodies are never
+// blocked.
+func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (handled bool, submit func()) {
+	rule := h.matchEdgeRuleWAF(r, app)
+	if rule == nil {
+		return false, nil
+	}
+	sample := newWAFSample(r, app, rule)
+	if rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock {
+		if detected := h.checkEdgeRuleWAFInline(rule, sample); detected {
+			if rule.Mode == api.EdgeWAFModeBlock {
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
+					"blocked by edge rule "+rule.ID+" (kind=waf)"))
+				return true, nil
+			}
+			// The header names the edge rule, not the CRS rule, so the
+			// response does not teach a caller which signature fired.
+			rec.installHeaderOps([]EdgeRuleHeaderOp{{Action: "set", Name: "X-WAF-Warning", Value: rule.ID}})
+			return false, nil
+		}
+	}
+	return false, h.sampleEdgeRuleWAF(r, rule, sample)
+}
+
+func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) *EdgeRuleWAFResolved {
+	if h.edgeRules == nil || (h.wafInspector == nil && h.wafInline == nil) {
 		return nil
 	}
 	matcher, ok := h.edgeRules.(WAFEdgeRuleMatcher)
@@ -108,6 +164,10 @@ func (h *Handler) beginEdgeRuleWAF(r *http.Request, app App) func() {
 		return nil
 	}
 	h.metrics.ObserveEdgeRuleMatch("waf", "match")
+	return rule
+}
+
+func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample {
 	sample := WAFSample{
 		AppID: app.ID, AccountID: app.AccountID, RuleID: rule.ID,
 		RequestID:        requestIDFrom(r),
@@ -122,6 +182,39 @@ func (h *Handler) beginEdgeRuleWAF(r *http.Request, app App) func() {
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		sample.ClientIP = ip.String()
+	}
+	return sample
+}
+
+// checkEdgeRuleWAFInline runs the in-path check and reports a detection. A
+// skipped or failed check reports none: the WAF fails open.
+func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSample) bool {
+	if h.wafInline == nil {
+		return false
+	}
+	res := h.wafInline.CheckInline(sample)
+	outcome := res.Outcome
+	if outcome == WAFInlineDetected {
+		outcome = "warned"
+		if rule.Mode == api.EdgeWAFModeBlock {
+			outcome = "blocked"
+		}
+		for _, c := range res.Categories {
+			h.metrics.ObserveWAFDetection(sample.AppID, c)
+		}
+		for _, id := range res.RuleIDs {
+			h.metrics.ObserveWAFRuleMatch(sample.AppID, id)
+		}
+	}
+	h.metrics.ObserveWAFInline(sample.AppID, outcome, res.Seconds)
+	return res.Outcome == WAFInlineDetected
+}
+
+// sampleEdgeRuleWAF wraps r.Body to record the inspected prefix and returns
+// the func that submits the sample off-path.
+func (h *Handler) sampleEdgeRuleWAF(r *http.Request, rule *EdgeRuleWAFResolved, sample WAFSample) func() {
+	if h.wafInspector == nil {
+		return nil
 	}
 	var recorder *wafBodyRecorder
 	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {

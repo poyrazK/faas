@@ -1251,7 +1251,10 @@ type Handler struct {
 	// wafInspector evaluates kind=waf samples off the request path
 	// (ADR-831 step 1). Nil disables WAF inspection.
 	wafInspector WAFInspector
-	operations   OperationRouteEnqueuer
+	// wafInline checks headers and URI in-path for warn and block
+	// kind=waf rules (ADR-831 amendment 4). Nil makes them observe.
+	wafInline  WAFInlineChecker
+	operations OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -6008,12 +6011,17 @@ haveApp:
 		return
 	}
 
-	// ADR-831 step 1 / kind=waf, observe-only. Placed after the cheap
-	// rejections (limit, body cap, throttle) so rejected traffic is never
-	// inspected, and before validate so a schema 422 is still sampled.
-	// It records the body prefix as later stages read it and submits the
-	// sample when ServeHTTP returns; the request is never delayed.
-	if submitWAF := h.beginEdgeRuleWAF(r, app); submitWAF != nil {
+	// ADR-831 / kind=waf. Placed after the cheap rejections (limit, body
+	// cap, throttle) so rejected traffic is never inspected, and before
+	// validate so a schema 422 is still sampled. Warn and block rules check
+	// headers and URI in-path (~1 ms; block answers 403 here). Every rule
+	// records the body prefix as later stages read it and submits the
+	// sample when ServeHTTP returns, so bodies never delay the request.
+	if blocked, submitWAF := h.applyEdgeRuleWAF(w, r, app, rec); blocked {
+		h.metrics.ObserveEdgeRejection(app.ID, "waf", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	} else if submitWAF != nil {
 		defer submitWAF()
 	}
 

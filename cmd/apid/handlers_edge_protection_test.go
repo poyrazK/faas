@@ -34,6 +34,11 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 				{"metric":{"outcome":"detected"},"value":[0,"6"]},
 				{"metric":{"outcome":"sampled_out"},"value":[0,"3"]},
 				{"metric":{"outcome":"dropped"},"value":[0,"1"]}]}}`
+		case strings.Contains(query, "gateway_waf_inline_checks_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"outcome":"warned"},"value":[0,"2"]},
+				{"metric":{"outcome":"blocked"},"value":[0,"8"]},
+				{"metric":{"outcome":"skipped"},"value":[0,"1"]}]}}`
 		case strings.Contains(query, "gateway_waf_detections_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"category":"xss"},"value":[0,"2"]},
@@ -71,6 +76,9 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	}
 	if len(out.Rejections) != 2 || out.Rejections[0].Gate != "throttle" || out.Rejections[0].Count != 9 {
 		t.Fatalf("rejections = %+v, want largest first", out.Rejections)
+	}
+	if out.WAF.Warned != 2 || out.WAF.Blocked != 8 || out.WAF.InlineSkipped != 1 {
+		t.Fatalf("waf in-path = %+v, want 2 warned / 8 blocked / 1 skipped", out.WAF)
 	}
 	if out.WAF.Inspected != 96 || out.WAF.Detected != 6 || out.WAF.NotInspected != 4 {
 		t.Fatalf("waf = %+v, want 96 inspected / 6 detected / 4 not inspected", out.WAF)

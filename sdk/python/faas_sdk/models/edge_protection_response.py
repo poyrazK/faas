@@ -34,7 +34,8 @@ class EdgeProtectionResponse:
     rejections: list[EdgeProtectionResponseRejectionsItem]
     """Requests answered by an edge gate, largest count first; zero counts are omitted."""
     waf: EdgeProtectionResponseWaf
-    """kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections."""
+    """kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in
+    rejections under gate waf."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

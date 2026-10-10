@@ -15,6 +15,9 @@ func TestBuildEdgeRuleActionWAF(t *testing.T) {
 			want: `{"mode":"observe","paranoia_level":2,"anomaly_threshold":10,"exclude_rule_ids":[920350,942100],"inspect_body_bytes":16384}`},
 		{name: "non-numeric exclusion", in: edgeRuleActionInputs{WAFExcludeRules: "942100,sqli"}, wantErr: true},
 		{name: "paranoia level 3", in: edgeRuleActionInputs{WAFParanoiaLevel: 3}, wantErr: true},
+		{name: "block mode", in: edgeRuleActionInputs{WAFMode: "block"},
+			want: `{"mode":"block","paranoia_level":1,"anomaly_threshold":5,"inspect_body_bytes":8192}`},
+		{name: "block at paranoia level 2", in: edgeRuleActionInputs{WAFMode: "block", WAFParanoiaLevel: 2}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := buildEdgeRuleAction("waf", tc.in)

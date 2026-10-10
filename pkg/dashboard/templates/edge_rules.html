@@ -161,8 +161,9 @@
           {{else}}
             <p>No edge gate rejected a request in this window.</p>
           {{end}}
-          {{with .WAF}}{{if or .Inspected .NotInspected}}
-            <p>WAF (observe only, nothing blocked): <strong>{{.Inspected}}</strong> inspected, <strong>{{.Detected}}</strong> detected, <strong>{{.NotInspected}}</strong> not inspected (budget or queue).</p>
+          {{with .WAF}}{{if or .Inspected .NotInspected .Warned .Blocked .InlineSkipped}}
+            <p>WAF samples (bodies included, never blocked): <strong>{{.Inspected}}</strong> inspected, <strong>{{.Detected}}</strong> detected, <strong>{{.NotInspected}}</strong> not inspected (budget or queue).</p>
+            {{if or .Warned .Blocked .InlineSkipped}}<p>WAF in-path checks (headers and URL): <strong>{{.Blocked}}</strong> blocked, <strong>{{.Warned}}</strong> warned, <strong>{{.InlineSkipped}}</strong> passed unchecked (budget).</p>{{end}}
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}

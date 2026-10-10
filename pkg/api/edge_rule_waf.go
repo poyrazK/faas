@@ -5,9 +5,16 @@ import (
 	"slices"
 )
 
-// EdgeWAFModeObserve is the only kind=waf mode in ADR-831 step 1: matched
-// requests are inspected off the request path and reported, never blocked.
-const EdgeWAFModeObserve = "observe"
+// kind=waf modes (ADR-831). Every mode samples requests off the request path
+// with the full rule set and reports detections. Warn and block also check
+// headers and URI in-path with a smaller rule set at paranoia level 1
+// (amendment 4): warn tags a detected request's response with X-WAF-Warning,
+// block answers it with 403. Request bodies are never blocked.
+const (
+	EdgeWAFModeObserve = "observe"
+	EdgeWAFModeWarn    = "warn"
+	EdgeWAFModeBlock   = "block"
+)
 
 // EdgeWAFCRSRuleIDMin and EdgeWAFCRSRuleIDMax bound the OWASP Core Rule Set
 // ID range. Exclusions outside it cannot name a CRS rule.
@@ -20,8 +27,8 @@ const (
 // match host/path/methods select which requests are inspected with the
 // OWASP Core Rule Set; the action tunes how a detection is scored.
 type EdgeRuleWAFAction struct {
-	// Mode is "observe". Blocking modes arrive in a later step once
-	// in-path inspection meets the ADR-831 latency gate.
+	// Mode is observe (default), warn, or block. Warn and block check
+	// headers and URI in-path and require paranoia_level 1.
 	Mode string `json:"mode,omitempty"`
 	// ParanoiaLevel selects CRS paranoia level 1 or 2. Zero applies 1.
 	ParanoiaLevel int `json:"paranoia_level,omitempty"`
@@ -46,10 +53,9 @@ func (a *EdgeRuleWAFAction) Validate() *Problem {
 	if a.Mode == "" {
 		a.Mode = EdgeWAFModeObserve
 	}
-	if a.Mode != EdgeWAFModeObserve {
+	if a.Mode != EdgeWAFModeObserve && a.Mode != EdgeWAFModeWarn && a.Mode != EdgeWAFModeBlock {
 		return ErrValidation(fmt.Sprintf(
-			"waf action: mode must be %q (got %q) — blocking modes are not available yet",
-			EdgeWAFModeObserve, a.Mode))
+			"waf action: mode must be one of observe, warn, block (got %q)", a.Mode))
 	}
 	if a.ParanoiaLevel == 0 {
 		a.ParanoiaLevel = EdgeWAFDefaultParanoiaLevel
@@ -58,6 +64,11 @@ func (a *EdgeRuleWAFAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"waf action: paranoia_level must be in 1..%d (got %d)",
 			MaxEdgeWAFParanoiaLevel, a.ParanoiaLevel))
+	}
+	if a.Mode != EdgeWAFModeObserve && a.ParanoiaLevel != 1 {
+		return ErrValidation(fmt.Sprintf(
+			"waf action: mode %q checks requests in-path at paranoia_level 1 only (got %d); use observe for level 2",
+			a.Mode, a.ParanoiaLevel))
 	}
 	if a.AnomalyThreshold == 0 {
 		a.AnomalyThreshold = EdgeWAFDefaultAnomalyThreshold

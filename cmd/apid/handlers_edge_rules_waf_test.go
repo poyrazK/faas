@@ -45,7 +45,8 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 	}{
 		{name: "free plan", plan: api.PlanFree, action: `{}`, wantCode: api.CodePlanEdgeRuleKindQuotaReached},
 		{name: "hobby plan", plan: api.PlanHobby, action: `{}`, wantCode: api.CodePlanEdgeRuleKindQuotaReached},
-		{name: "block mode", plan: api.PlanPro, action: `{"mode":"block"}`, wantCode: api.CodeValidation},
+		{name: "block at paranoia level 2", plan: api.PlanPro, action: `{"mode":"block","paranoia_level":2}`, wantCode: api.CodeValidation},
+		{name: "unknown mode", plan: api.PlanPro, action: `{"mode":"deny"}`, wantCode: api.CodeValidation},
 		{name: "paranoia level 3", plan: api.PlanPro, action: `{"paranoia_level":3}`, wantCode: api.CodeValidation},
 		{name: "non-CRS exclusion", plan: api.PlanPro, action: `{"exclude_rule_ids":[42]}`, wantCode: api.CodeValidation},
 		{name: "body cap too large", plan: api.PlanPro, action: `{"inspect_body_bytes":65537}`, wantCode: api.CodeValidation},
@@ -58,5 +59,22 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 				t.Fatalf("status = %d, body = %s; want code %s", rec.Code, rec.Body.String(), tc.wantCode)
 			}
 		})
+	}
+}
+
+func TestCreateEdgeRuleWAFBlockMode(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	slug := mustSeedEdgeRuleApp(t, e, "waf-block")
+	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"mode":"block"}`), nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	var response api.EdgeRuleResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := `{"kind":"waf","waf":{"mode":"block","paranoia_level":1,"anomaly_threshold":5,"inspect_body_bytes":8192}}`
+	if string(response.Action) != want {
+		t.Errorf("action = %s, want %s", response.Action, want)
 	}
 }

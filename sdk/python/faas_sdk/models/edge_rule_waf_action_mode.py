@@ -1,9 +1,11 @@
 from typing import Literal
 
-EdgeRuleWAFActionMode = Literal["observe"]
+EdgeRuleWAFActionMode = Literal["block", "observe", "warn"]
 
 EDGE_RULE_WAF_ACTION_MODE_VALUES: set[EdgeRuleWAFActionMode] = {
+    "block",
     "observe",
+    "warn",
 }
 
 

@@ -1,7 +1,7 @@
 from typing import Literal
 
 EdgeProtectionResponseRejectionsItemGate = Literal[
-    "body_limit", "geo", "internal_only", "ip", "ip_allowlist", "jwt", "limit", "throttle"
+    "body_limit", "geo", "internal_only", "ip", "ip_allowlist", "jwt", "limit", "throttle", "waf"
 ]
 
 EDGE_PROTECTION_RESPONSE_REJECTIONS_ITEM_GATE_VALUES: set[EdgeProtectionResponseRejectionsItemGate] = {
@@ -13,6 +13,7 @@ EDGE_PROTECTION_RESPONSE_REJECTIONS_ITEM_GATE_VALUES: set[EdgeProtectionResponse
     "jwt",
     "limit",
     "throttle",
+    "waf",
 }
 
 
