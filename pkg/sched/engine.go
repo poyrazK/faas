@@ -4884,6 +4884,11 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		// engine's per-app method is the per-tick path.
 		return nil
 	}
+	// Serialize the parked-only ownership transfer with this owner's wake,
+	// prime and park admission windows. A boot running outside the lock has
+	// already inserted a resident row, so the inventory check below sees it.
+	release := e.lockApp(appID)
+	defer release()
 
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -4904,6 +4909,22 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
 		e.observePressure("no_eligibility")
 		return nil
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	if err != nil {
+		return fmt.Errorf("sched: pressure rebalance: list instances: %w", err)
+	}
+	for _, ins := range instances {
+		// Check the whole app, including VMs placed on peers. Without a
+		// live handoff the old ledger retains their reservations while the
+		// new owner becomes responsible for parking and releasing them.
+		switch state.State(ins.State) {
+		case state.StateParked, state.StateStopped, state.StateFailed:
+			continue
+		default:
+			e.observePressure("no_eligibility")
+			return nil
+		}
 	}
 	// Cooldown filter — apps.reassigned_at is the authoritative
 	// source. The pressure-rebalancer's per-apps cooldown is the
