@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 )
 
 func TestBackupAndPreviewSDKSelectors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/counter/entities/restore/preview" {
 			var request faas.DurableEntityRestoreRequest
@@ -40,14 +43,14 @@ func TestBackupAndPreviewSDKSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	selectors := faas.DurableEntityInspectRequest{Namespace: "documents", Key: "doc/?雪"}
-	if page, err := client.ListDurableEntityBackups(t.Context(), "counter", selectors, "opaque+/="); err != nil || len(page.Items) != 1 {
+	if page, err := client.ListDurableEntityBackups(ctx, "counter", selectors, "opaque+/="); err != nil || len(page.Items) != 1 {
 		t.Fatal(page, err)
 	}
-	backup, err := client.GetDurableEntityBackup(t.Context(), "counter", selectors, "20261009T120000Z")
+	backup, err := client.GetDurableEntityBackup(ctx, "counter", selectors, "20261009T120000Z")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview, err := client.PreviewDurableEntityRestore(t.Context(), "counter", faas.DurableEntityRestoreRequest{Namespace: selectors.Namespace, Key: selectors.Key, ExpectedVersion: ^uint64(0), Export: backup.Export}); err != nil || preview.CurrentVersion != ^uint64(0) {
+	if preview, err := client.PreviewDurableEntityRestore(ctx, "counter", faas.DurableEntityRestoreRequest{Namespace: selectors.Namespace, Key: selectors.Key, ExpectedVersion: ^uint64(0), Export: backup.Export}); err != nil || preview.CurrentVersion != ^uint64(0) {
 		t.Fatal(preview, err)
 	}
 }

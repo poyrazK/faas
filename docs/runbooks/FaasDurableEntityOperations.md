@@ -6,14 +6,21 @@ does not import it into a running service. See [ADR-945](../adr/945-durable-enti
 for metric boundaries and [the qualification handoff](FaasDurableEntityQualification.md)
 for evidence requirements.
 
+## Identify latency and contention
+
 The dashboard compares engine p95 latency with private-storage p95. Sustained
 storage latency suggests provider/network/permission investigation. High engine
 latency with healthy storage suggests guest queue, app execution, contention or
 validation costs. Histogram quantiles need sufficient samples; missing series or
 no traffic means unknown. Operations overlap: validation is part of restore.
 
+## Check the affected entity
+
 Busy/conflict outcomes are normal under contention. Inspect the exact entity using
 known application selectors; check pending work and owner status before retrying.
+
+## Recover uncertain outcomes
+
 For uncertain outcomes, retry the identical stable request and payload. A timeout
 is not proof that a write failed. Never change the request identity to bypass an
 uncertain restore. Corruption is distinct from missing state; never replace a

@@ -3,6 +3,8 @@
 This is a local, unqualified operator preview. Tests/builds/provider checks are
 pending; do not treat source implementation as recovery evidence.
 
+## Check capture and retention
+
 Enable `FAAS_DURABLE_ENTITY_BACKUPS_ENABLED=1` only with the private entity bucket,
 existing invocation preview and explicit app allowlist. The provider must support
 strongly consistent conditional writes, ordered listing and deletion. Startup
@@ -20,6 +22,8 @@ Configure lifecycle expiry restricted to `gregale/durable-entity-backups/v1/` fo
 orphaned/disabled app backups; account-erasure procedures must delete backups too.
 Do not apply that lifecycle policy to live entity or receipt prefixes. This work
 does not apply a bucket lifecycle policy or enable a production worker.
+
+## Recover from an exact backup
 
 To inspect recovery options:
 
