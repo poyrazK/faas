@@ -499,6 +499,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int
 	appWebhookReceiverCooldowns     map[string]time.Time

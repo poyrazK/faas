@@ -33,10 +33,16 @@ import (
 )
 
 // This opt-in boots a real native-owned Firecracker VM, captures through the
-// internal producer and restores receipt-verified bytes through an isolated
-// ordinary lifecycle fixture and a separate native restore target. It does not
-// grant scoped binding, object cleanup or graph activation evidence, and never
-// opens the production qualification dispatch/capture gates.
+// Manager's qualification API and restores receipt-verified bytes through an
+// isolated ordinary lifecycle fixture and a separate native restore target.
+// It does not grant scoped binding, object cleanup or graph activation evidence,
+// and never opens the production qualification dispatch/capture gates.
+type nativeCaptureAcceptanceVMM struct{ *JailerVMM }
+
+// Only the metal test can supply this wrapper. The production JailerVMM keeps
+// its support gate closed until the complete native and serving gates pass.
+func (*nativeCaptureAcceptanceVMM) checkEnvironmentQualificationSnapshotSupport() error { return nil }
+
 func TestMetalNativeCaptureVM(t *testing.T) {
 	if os.Getenv("FAAS_NATIVE_CAPTURE_VM") != "1" {
 		t.Skip("set FAAS_NATIVE_CAPTURE_VM=1 on the authorized isolated KVM node")
@@ -130,7 +136,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	r := v.nativeRecovery
 	_, frame, _ := nativeQualificationFixture(t)
 	frame.RAMMB = 128
-	m := NewManager(runner, v, Paths{Kernel: kernel}, version, nil, nil).WithNativeQualificationNodeID(frame.NodeID)
+	m := NewManager(runner, &nativeCaptureAcceptanceVMM{JailerVMM: v}, Paths{Kernel: kernel}, version, nil, nil).WithNativeQualificationNodeID(frame.NodeID)
 	m.WithStorage(canonical)
 	m.alloc.free = []int{MaxSlots - 1}
 	if err := v.RegisterGuestVsockStreamHandler(VsockGuestEventHostPort, func(instance string, conn net.Conn) (string, error) {
@@ -228,9 +234,27 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if beforeLimit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
 		t.Fatal("original native VM fence differs from policy", beforeLimit)
 	}
-	info, incoming, err := nativeMetalCaptureVMProducer(ctx, m, v, frame.InstanceID, frame.NodeID, version)
-	if err != nil || info.MemBytes != int64(frame.RAMMB)<<20 || info.VMStateBytes <= 0 || info.StoredBytes <= 0 {
-		t.Fatal("real native capture failed:", info, err)
+	proof, captureErr := m.CaptureEnvironmentQualification(ctx, frame)
+	if captureErr != nil {
+		t.Fatal("real Manager qualification capture failed:", captureErr)
+	}
+	q := r.journal.qualifications(frame.NodeID)
+	incoming, err := q.read(frame.InstanceID)
+	if err != nil {
+		t.Fatal("real Manager capture lost original journal:", err)
+	}
+	completed, err := q.readCapture(incoming)
+	if err != nil {
+		t.Fatal("real Manager capture completion missing:", err)
+	}
+	wantProof := qualificationSnapshotProof(incoming, completed.Info)
+	wantProof.FCVersion = version
+	if completed.CompletedAt.IsZero() || proof != wantProof {
+		t.Fatal("real Manager capture lacks exact completed proof:", proof, completed)
+	}
+	info := completed.Info
+	if info.MemBytes != int64(frame.RAMMB)<<20 || info.VMStateBytes <= 0 || info.StoredBytes <= 0 {
+		t.Fatal("real native capture has incomplete artifact accounting:", info)
 	}
 	if stored := nativeMetalPublicationReceiptBytes(t, ctx, v, incoming); stored != info.StoredBytes {
 		t.Fatal("capture accounting differs from original allocation receipts", stored, info.StoredBytes)
@@ -271,10 +295,6 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	restoredManager = NewManager(runner, restoreVMM, Paths{Kernel: kernel}, version, nil, nil)
 	restoredManager.WithStorage(canonical)
 	restoredManager.alloc.free = []int{MaxSlots - 1}
-	completed, err := r.journal.qualifications(frame.NodeID).readCapture(incoming)
-	if err != nil {
-		t.Fatal("original capture completion missing:", err)
-	}
 	nativeMetalCaptureVMRestoreBackings(t, ctx, m, v, incoming, completed, [2]string{kernel, base}, disk, originalUUID, version)
 	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
 		// Only this disposable acceptance fixture names the verified copies.
@@ -678,43 +698,6 @@ func nativeMetalRestoreMetadataProbe(t *testing.T, ctx context.Context, lease Le
 	if err != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"RESTORE_TARGET":"`+target+`"`) {
 		t.Fatal("restored guest did not receive target-scoped fixture metadata:", response.StatusCode, string(body), err)
 	}
-}
-
-// Invoke the internal original producer without overriding the public support
-// gate or writing Manager capture completion before artifact receipts exist.
-func nativeMetalCaptureVMProducer(ctx context.Context, m *Manager, v *JailerVMM, instance, node, version string) (info SnapshotInfo, incoming nativeQualificationRecord, err error) {
-	q := v.nativeRecovery.journal.qualifications(node)
-	lock, err := q.lock(ctx, instance)
-	if err != nil {
-		return info, incoming, err
-	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-	incoming, err = q.read(instance)
-	if err != nil {
-		return info, incoming, err
-	}
-	physical, err := q.snapshotPhysical(ctx, incoming)
-	if err != nil {
-		return info, incoming, err
-	}
-	backing, err := m.qualificationSnapshotBacking(instance)
-	if err != nil {
-		return info, incoming, err
-	}
-	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: instance, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: version, StartedAt: q.clock().UTC()}
-	if err := q.writeCapture(incoming, capture); err != nil {
-		return info, incoming, err
-	}
-	info, err = v.captureEnvironmentQualificationSnapshot(nativeSnapshotCaptureContext(ctx, incoming, capture, physical), incoming.NativeLease, backing)
-	if err != nil {
-		return info, incoming, err
-	}
-	if err := q.requireSnapshotPhysical(ctx, incoming); err != nil {
-		return SnapshotInfo{}, incoming, err
-	}
-	capture.Info, capture.Backing, capture.CompletedAt = info, backing, q.clock().UTC()
-	return info, incoming, errors.Join(q.writeCapture(incoming, capture), ctx.Err())
 }
 
 func nativeCaptureVMMemoryLimit(t *testing.T, scope string) uint64 {

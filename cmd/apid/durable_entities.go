@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -40,10 +41,12 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
+	started := time.Now()
 	result, err := s.durableEntities.Invoke(ctx, id, s.durableEntityOwner, durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.invokeDurableEntityHandler(ctx, acct, app, scope, id, request, view)
 	})
 	s.durableEntityMetrics.observeResult("invoke", result, err)
+	s.durableEntityMetrics.observeDuration("invoke", started)
 	if err != nil {
 		writeDurableEntityProblem(w, err)
 		return
@@ -52,6 +55,12 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 }
 
 func (s *server) durableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest) (durableentity.ID, string, *api.Problem) {
+	return s.resolveDurableEntityIdentity(r, acct, app, request, false)
+}
+
+// Owner inspection can diagnose held tenant work without granting execution to
+// a suspended tenant or requiring its current plan to permit new invocations.
+func (s *server) resolveDurableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest, inspect bool) (durableentity.ID, string, *api.Problem) {
 	id := durableentity.ID{AccountID: acct.ID, AppID: app.ID, Namespace: request.Namespace, Key: request.Key}
 	scope, env, problem := s.resolveQueueEnvironment(r.Context(), acct, app, request.Environment)
 	if problem != nil {
@@ -67,7 +76,7 @@ func (s *server) durableEntityIdentity(r *http.Request, acct state.Account, app 
 		id.EnvironmentID = env.ID
 	}
 	if request.PlatformTenantID != "" {
-		if acct.Plan.ConsumerKeysPerApp() <= 0 {
+		if !inspect && acct.Plan.ConsumerKeysPerApp() <= 0 {
 			return id, scope, api.ErrPlanFeatureGated("platform_tenants", acct.Plan)
 		}
 		store, ok := s.store.(state.PlatformTenantStore)
@@ -82,7 +91,7 @@ func (s *server) durableEntityIdentity(r *http.Request, acct state.Account, app 
 		if err != nil {
 			return id, scope, api.ErrCapacity("load entity customer")
 		}
-		if tenant.Status != state.PlatformTenantActive {
+		if !inspect && tenant.Status != state.PlatformTenantActive {
 			return id, scope, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Customer suspended", "resume the customer before invoking entities")
 		}
 		id.TenantID = tenant.ID

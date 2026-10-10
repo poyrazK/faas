@@ -141,12 +141,29 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_DURABLE_ENTITIES_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 operator invocation preview; explicit 1 requires an app allowlist and private conditional-state backend; off pending native and live-provider qualification |
 | `FAAS_DURABLE_ENTITY_ALARMS_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in alarm delivery; requires the invocation preview and private delimiter listing |
-| `FAAS_DURABLE_ENTITY_APPS` | apid | `default` |  |  | `` | ADR-712 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_APPS` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-712 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
 | `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-712 configured private conditional-state backend ID; required only when the invocation preview is enabled; S3 ETags or native GCS generations |
 | `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-712 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BACKUPS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-712 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
+| `FAAS_DURABLE_ENTITY_HEALTH_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
 | `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-712 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
+| `FAAS_DURABLE_ENTITY_OUTBOX_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE` | apid | `default` |  |  | `` | Legacy startup validator registry; unused with shared artifact storage. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ACCESS_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ARTIFACTS_ENABLED` | apid, builderd, imaged, schedd, shared | `default` |  | 0 | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_BUCKET` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_ENDPOINT` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_GCS_IMPERSONATE_SERVICE_ACCOUNT` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_PROVIDER` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_REGION` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_SECRET_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
+| `FAAS_DURABLE_ENTITY_VALIDATOR_SESSION_TOKEN` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |

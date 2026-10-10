@@ -417,8 +417,7 @@ func TestPreviewCustomersMigrationReviewLoadsAndWritesJoinedReport(t *testing.T)
 	firstPath := filepath.Join(base, "snapshot-1.json")
 	secondPath := filepath.Join(base, "snapshot-2.json")
 	outputPath := filepath.Join(base, "cutover-review.json")
-	// The command reads the wall clock for snapshot staleness, so the
-	// snapshots must be anchored to it rather than a fixed date.
+	// The CLI evaluates freshness against wall time; keep its evidence recent.
 	now := time.Now().UTC()
 	snapshots := cutoverProgressFixtures(t, now)
 	contractBody, err := json.Marshal(cutoverContractFixture("no_supported_breaks"))

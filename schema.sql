@@ -53241,3 +53241,15 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+
+--
+-- Name: entity_outbox_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_outbox_acceptances (
+    message_id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
