@@ -494,7 +494,9 @@ The sampling/quota shapes are in `cmd/meterd` and
 `guest/runners/{node22,node24,python312,python313,go124}` (handler
 contract per spec §4.9; `go124` apps deploy with a static binary
 emitted by Railpack's go plan, functions reuse the per-request
-subprocess model. `node24` and `python313` are the Tier 1 runtime
+subprocess model. Functions without an explicit `idle_timeout_s` park
+after 30 s on every plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps
+keep the plan default. `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
 `/app/handler.py` respectively. See `docs/runtimes/{node24,

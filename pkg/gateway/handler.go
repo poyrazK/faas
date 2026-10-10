@@ -8865,7 +8865,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			idleSeconds = limits.IdleTimeoutS
+			idleSeconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if idleSeconds <= 0 || target.InstanceID == "" {

@@ -91,6 +91,20 @@ You can detect the wake tier on every routed response:
   traffic, `⟳ waking` while the instance restores,
   `● running` once it's serving. The page refreshes every 10 s.
 
+## When an instance parks
+
+An instance parks once it has had no requests for its idle timeout. Apps use
+their plan's default (see [plans](plans.md)). Functions default to 30 seconds
+on every plan, because a function's restore is cheap and most of the time
+after a request is otherwise paid, unused residency. The idle reaper runs
+every 10 seconds, so parking happens shortly after the timeout passes.
+
+Set your own value from 10 seconds up to twice the plan default:
+
+```bash
+gregale app my-fn --idle 300   # keep this function warm for 5 minutes
+```
+
 ## Opting out: keep N instances warm (Pro, Scale)
 
 On the Pro and Scale plans you can pin a number of instances

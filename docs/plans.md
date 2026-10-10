@@ -20,7 +20,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
 - **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.
-- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).
+- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
 
 ## Developer environments
 

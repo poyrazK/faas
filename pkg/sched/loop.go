@@ -2552,6 +2552,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				LastRequest:  lastRequest,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
+				AppType:      string(a.Type),
 				NodeID:       ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           a.EffectiveMinInstances(),

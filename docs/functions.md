@@ -12,5 +12,9 @@ The current profiles include Node 22/24, Python 312/313, and Go 124. Handlers
 must return a bounded response. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
+An idle function parks after 30 seconds by default on every plan; set
+`gregale app APP --idle SECONDS` to keep it warm longer (see
+[scale-to-zero](cold-wake.md#when-an-instance-parks)).
+
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).

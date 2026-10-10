@@ -5080,6 +5080,11 @@ const (
 	// no higher than plan default × this multiplier.
 	IdleTimeoutFloorSeconds = 10
 	IdleTimeoutMaxMultiple  = 2
+	// FunctionIdleTimeoutDefaultSeconds is the default idle timeout for
+	// type=function apps on every plan (ADR-974). Parking a function whose
+	// init snapshot already exists only destroys the VM, so functions park
+	// sooner than apps; an explicit idle_timeout_s still applies.
+	FunctionIdleTimeoutDefaultSeconds = 30
 
 	// Liveness probe (issue #554 / ADR-078). The host (cmd/vmmd) polls
 	// the guest's vsock 1028 STREAM on every Period; after N
@@ -8294,6 +8299,17 @@ const MeterCatchUpMinutesPerTick = 15
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
 	return IdleTimeoutFloorSeconds, l.IdleTimeoutS * IdleTimeoutMaxMultiple
+}
+
+// DefaultIdleTimeoutS is the idle timeout an app gets when it has not
+// configured one: the plan default for apps, and at most
+// FunctionIdleTimeoutDefaultSeconds for functions (ADR-974). The configurable
+// bounds stay those of IdleTimeoutBounds for both types.
+func (l Limits) DefaultIdleTimeoutS(appType string) int {
+	if appType == "function" {
+		return min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
+	}
+	return l.IdleTimeoutS
 }
 
 // Obs admin pagination (issue #777 / ADR-091). The operator surface

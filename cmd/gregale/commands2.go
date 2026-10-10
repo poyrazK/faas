@@ -752,9 +752,12 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		// An unset idle timeout is stored as NULL and the plan default
-		// applies (600 s on Scale); printing "0s" read as "parks at once".
-		if a.IdleTimeoutS == 0 {
+		// An unset idle timeout is stored as NULL and the type default
+		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
+		// printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 && a.Type == "function" {
+			fmt.Printf("%-30s %s\n", "idle timeout:", fmt.Sprintf("function default (%ds)", api.FunctionIdleTimeoutDefaultSeconds))
+		} else if a.IdleTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
 		} else {
 			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)

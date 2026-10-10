@@ -1034,6 +1034,27 @@ func TestIdleTimeoutBounds(t *testing.T) {
 	}
 }
 
+// ADR-974: functions default to 30 s on every plan; apps and untyped legacy
+// rows keep the plan default.
+func TestDefaultIdleTimeoutS(t *testing.T) {
+	for _, p := range Plans {
+		l := MustLimitsFor(p)
+		if got := l.DefaultIdleTimeoutS("app"); got != l.IdleTimeoutS {
+			t.Errorf("%s app default = %d, want plan default %d", p, got, l.IdleTimeoutS)
+		}
+		if got := l.DefaultIdleTimeoutS(""); got != l.IdleTimeoutS {
+			t.Errorf("%s untyped default = %d, want plan default %d", p, got, l.IdleTimeoutS)
+		}
+		want := min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
+		if got := l.DefaultIdleTimeoutS("function"); got != want {
+			t.Errorf("%s function default = %d, want %d", p, got, want)
+		}
+		if floor, _ := l.IdleTimeoutBounds(); want < floor {
+			t.Errorf("%s function default %d is below the configurable floor %d", p, want, floor)
+		}
+	}
+}
+
 func TestPlanValidity(t *testing.T) {
 	for _, p := range Plans {
 		if !p.Valid() {
