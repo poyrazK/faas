@@ -330,8 +330,16 @@ The sampling/quota shapes are in `cmd/meterd` and
 + 8 MB per running second is in `pkg/meter`. Functions:
 `guest/runners/{node22,node24,python312,python313,go124}` (handler
 contract per spec §4.9; `go124` apps deploy with a static binary
-emitted by Railpack's go plan, functions reuse the per-request
-subprocess model. `node24` and `python313` are the Tier 1 runtime
+emitted by Railpack's go plan; Go functions that speak the
+persistent protocol — the `function-go` template and
+`sdk/go/function.Serve` — are prewarmed into the init snapshot and
+reused, others keep the per-request subprocess model). Evidence
+2026-10-10 on `gregale-internal-test-1` (`TestWakePlatformBenchMetal`,
+real go124 runner in the guest, 4 interleaved runs × 15 wakes per
+variant): boot-completed→first-byte p50 93 → 54 ms and gateway
+proxy→first-byte p50 66 → 42 ms. Whole-wake latency on that node is
+dominated by ext4 drive staging (p50 ~400 ms) and did not separate.
+`node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
 `/app/handler.py` respectively. See `docs/runtimes/{node24,
