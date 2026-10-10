@@ -8235,8 +8235,15 @@ func BillableRAMMB(ramMB int) int {
 // SnapshotMemoryMaxMB returns the temporary per-instance memory.max used for
 // a full Firecracker snapshot. Callers must restore BillableRAMMB(ramMB) as
 // soon as the snapshot request and export path finish.
+//
+// Firecracker writes the whole guest RAM into the jail tmpfs, and those pages
+// are charged to the VM's cgroup on top of the guest pages already resident,
+// exactly as for builders (BuilderSnapshotMemoryMaxMB). Without the second
+// ramMB, any guest whose resident set exceeded SnapshotVMOverheadMB was
+// OOM-killed mid-capture and never parked as a snapshot (production
+// compute-2, 2026-10-06..08: three kills at ~265 MB resident, 1 GiB plans).
 func SnapshotMemoryMaxMB(ramMB int) int {
-	return ramMB + PerVMOverheadMB + SnapshotVMOverheadMB
+	return ramMB + PerVMOverheadMB + SnapshotVMOverheadMB + ramMB
 }
 
 // BuilderMemoryMaxMB returns the creation-time cgroup fence for a builder VM.

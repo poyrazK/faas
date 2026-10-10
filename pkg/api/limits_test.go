@@ -1176,6 +1176,20 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 	}
 }
 
+// A full snapshot charges the resident guest plus the whole memory file in
+// the jail tmpfs; the fence must cover both for every plan.
+func TestSnapshotMemoryMaxCoversResidentGuestAndMemoryFile(t *testing.T) {
+	for _, ramMB := range []int{128, 256, 512, 1024} {
+		got := SnapshotMemoryMaxMB(ramMB)
+		if want := 2*ramMB + PerVMOverheadMB + SnapshotVMOverheadMB; got != want {
+			t.Errorf("SnapshotMemoryMaxMB(%d) = %d, want %d", ramMB, got, want)
+		}
+		if got < BillableRAMMB(ramMB)+ramMB {
+			t.Errorf("SnapshotMemoryMaxMB(%d) = %d cannot hold the guest and its memory file", ramMB, got)
+		}
+	}
+}
+
 func TestBuilderSnapshotMemoryBudgetFitsControlPlaneSlices(t *testing.T) {
 	if got, want := BuilderSnapshotMemoryMaxMB(BuildVMRAMMB), 4_864; got != want {
 		t.Fatalf("BuilderSnapshotMemoryMaxMB(%d) = %d, want %d", BuildVMRAMMB, got, want)
