@@ -41,7 +41,10 @@ async function main() {
     run('npm', ['run', 'build:browser'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
     run('npm', ['run', 'typecheck'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
     run('npm', ['test'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
-    console.log('Packaged CLI/SDK fresh starter and clean CI installation passed.')
+    // Exercise the same local replay command as the starter's client CI using
+    // the restored binary, fresh dependencies, and its own embedded runtime.
+    run(join(app, '.gregale-tools/gregale'), ['data-api', 'dev', '--port', '0', '--once', '--replay', 'data-api.requests.json'], { cwd: app, env, timeout: 420000, stdio: 'inherit' })
+    console.log('Packaged CLI/SDK fresh starter, clean CI installation and scenario replay passed.')
   } finally { await rm(work, { recursive: true, force: true }) }
 }
 

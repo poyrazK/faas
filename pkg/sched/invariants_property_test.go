@@ -128,6 +128,13 @@ func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 		t.Errorf("Wake error = %v; want *api.Problem{Code:CodePlanLimitConcur} or nil", err)
 	}
 
+	vmm.mu.Lock()
+	boots := vmm.coldBoots + vmm.restores
+	vmm.mu.Unlock()
+	if boots != maxConc {
+		t.Errorf("boots through the held vmmd path = %d, want %d", boots, maxConc)
+	}
+
 	if ok != maxConc {
 		t.Errorf("ok = %d, want %d (cap)", ok, maxConc)
 	}
