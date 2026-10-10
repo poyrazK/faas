@@ -934,6 +934,16 @@
     "kind": "operational"
   },
   {
+    "table": "app_service_wake_ahead",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_tasks",
     "columns": [
       "account_id",

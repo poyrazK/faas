@@ -944,6 +944,13 @@ type AppServiceAddressCursor struct {
 	LastIndex int32
 }
 
+type AppServiceWakeAhead struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

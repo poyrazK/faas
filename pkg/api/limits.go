@@ -9215,6 +9215,32 @@ const (
 	RouteHealthProbeUnauthenticatedShare = 0.5
 )
 
+// ServiceWakeAhead bounds opt-in wake-ahead along measured service edges
+// (ADR-946). A cold wake of a caller app opens a follow window; a service call
+// from that caller inside it is a hit for the edge. A target is woken ahead
+// only after ServiceWakeAheadMinWakes observed caller wakes, when at least
+// ServiceWakeAheadMinCallShare of them called it and at least
+// ServiceWakeAheadMinColdShare of those calls found it parked (or warm only
+// because of a wake-ahead). Wake-ahead never starts while fleet residency is
+// at or above ServiceWakeAheadMaxResidentPercent of the admission ceiling.
+const (
+	ServiceWakeAheadFollowWindow       = 10 * time.Second
+	ServiceWakeAheadMinWakes           = 20
+	ServiceWakeAheadMinCallShare       = 0.5
+	ServiceWakeAheadMinColdShare       = 0.5
+	ServiceWakeAheadMaxTargets         = 3
+	ServiceWakeAheadMaxDepth           = 2
+	ServiceWakeAheadMaxResidentPercent = 60
+	ServiceWakeAheadMaxApps            = 4096
+	ServiceWakeAheadMaxEdgesPerApp     = 16
+	// Edge statistics halve once a caller has this many observed wakes, so
+	// the prediction follows changes in the call pattern.
+	ServiceWakeAheadDecayWakes  = 200
+	ServiceWakeAheadWakeTimeout = 30 * time.Second
+	// The opt-in setting and fleet residency are cached this long.
+	ServiceWakeAheadCacheTTL = 30 * time.Second
+)
+
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
 // (ADR-944): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.

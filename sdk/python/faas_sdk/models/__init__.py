@@ -3152,6 +3152,7 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_response import ServiceWakeAheadResponse
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -3189,6 +3190,7 @@ from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestC
 from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
+from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -6570,6 +6572,7 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadResponse",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -6605,6 +6608,7 @@ __all__ = (
     "SetRouteMonitorRequestOnViolation",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
+    "SetServiceWakeAheadRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

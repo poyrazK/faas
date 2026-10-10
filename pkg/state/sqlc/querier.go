@@ -1068,6 +1068,9 @@ type Querier interface {
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	// Service wake-ahead (ADR-946). apid owns the setting; gatewayd-internal reads
+	// it and the fleet residency that guards every wake-ahead.
+	GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServiceWakeAheadParams) (GetServiceWakeAheadRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -3245,6 +3248,9 @@ type Querier interface {
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
 	ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error)
 	ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error)
+	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	// Billable RAM of live instances against the active nodes' admission ceilings.
+	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg SetAppSecretRuntimeProcessParams) (int64, error)
 	// Runtime-base generation identity (ADR-736).
@@ -3288,6 +3294,7 @@ type Querier interface {
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
+	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)

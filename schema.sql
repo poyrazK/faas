@@ -14693,6 +14693,19 @@ CREATE TABLE public.app_service_address_cursors (
 
 
 --
+-- Name: app_service_wake_ahead; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_wake_ahead (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: app_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28555,6 +28568,14 @@ ALTER TABLE ONLY public.app_service_address_cursors
 
 
 --
+-- Name: app_service_wake_ahead app_service_wake_ahead_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_tasks app_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34702,6 +34723,13 @@ CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx ON public.app_secre
 --
 
 CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_service_wake_ahead_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
 
 
 --
@@ -45312,6 +45340,22 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -717,6 +717,9 @@ type Metrics struct {
 	// speculative wake-ahead along depends_on edges "until measured evidence";
 	// this histogram is that evidence.
 	serviceWakeLatency prometheus.Histogram
+	// serviceWakeAhead (ADR-946) counts speculative wake-ahead decisions by
+	// outcome. used/unused close the loop on whether a prediction helped.
+	serviceWakeAhead *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
 	// app into a production service because no same-PR sibling was available.
 	// This is the fleet-wide signal that preview traffic is exercising live
@@ -1543,6 +1546,12 @@ func NewMetrics() *Metrics {
 		// lifecycle TTL). The middle of the range is where the platform wake
 		// budget lives (§6.3, p95 < 350 ms on the reference node), so the
 		// resolution is deliberately densest there.
+		serviceWakeAhead: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_total",
+				Help: "Opt-in service wake-ahead decisions (ADR-946) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
+			}, []string{"outcome"},
+		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_wake_latency_seconds",
@@ -1912,6 +1921,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
+	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -3525,6 +3535,14 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
+// IncServiceWakeAhead counts one wake-ahead outcome (ADR-946).
+func (m *Metrics) IncServiceWakeAhead(outcome string) {
+	if m == nil || m.serviceWakeAhead == nil {
+		return
+	}
+	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
+}
+
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
 	if m == nil {
 		return

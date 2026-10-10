@@ -106,4 +106,10 @@ const (
 	// reading the wake timeline can tell internal fan-out apart from customer
 	// traffic when attributing latency or cold-start cost.
 	TriggerServiceMesh = "service.mesh"
+
+	// TriggerServiceWakeAhead — an opt-in, speculative wake of a service
+	// that a waking caller is measured to call soon after it wakes (ADR-946).
+	// It is distinct from TriggerServiceMesh so the wake timeline shows which
+	// restores were predictions, and it never parks idle instances for room.
+	TriggerServiceWakeAhead = "service.wake_ahead"
 )

@@ -3746,6 +3746,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// the public path (H4-68), tuned per app by kind=circuit_breaker.
 		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
 		handler.WithCircuitBreaker(breaker)
+		// ADR-946: opt-in wake-ahead along service edges measured by this
+		// gateway. A prediction restores through the same wake path as a
+		// call, with its own trigger and below the fleet residency guard.
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		handler.SetWakeAhead(gateway.WakeAheadConfig{
+			Learner:   wakeAheadLearner,
+			Enabled:   pgStore.ServiceWakeAheadEnabled,
+			Residency: pgStore.ServiceWakeAheadFleetResidency,
+			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
@@ -3766,6 +3776,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
