@@ -14489,6 +14489,20 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_priorities (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_priorities_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20))),
+    CONSTRAINT app_route_priorities_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: app_route_removal_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14689,6 +14703,19 @@ CREATE TABLE public.app_service_address_cursors (
     account_id uuid NOT NULL,
     last_index integer NOT NULL,
     CONSTRAINT app_service_address_cursors_last_index_chk CHECK (((last_index >= 0) AND (last_index <= 65534)))
+);
+
+
+--
+-- Name: app_service_wake_ahead; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_wake_ahead (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -28475,6 +28502,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_route_priorities app_route_priorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_route_removal_policies app_route_removal_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28552,6 +28587,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -34621,6 +34664,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 
 
 --
+-- Name: app_route_priorities_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34702,6 +34752,13 @@ CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx ON public.app_secre
 --
 
 CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_service_wake_ahead_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
 
 
 --
@@ -45171,6 +45228,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_route_priorities app_route_priorities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_route_removal_policies app_route_removal_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45312,6 +45385,22 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

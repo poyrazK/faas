@@ -12,7 +12,7 @@ type RouteMonitorRoute struct {
 }
 type RouteMonitorConfig struct {
 	CustomerGroupBy string `json:"customer_group_by,omitempty"`
-	// OnViolation is "report" (default, omitted) or "rollback" (ADR-845).
+	// OnViolation is "report" (default, omitted) or "rollback" (ADR-952).
 	OnViolation string              `json:"on_violation,omitempty"`
 	AppID       string              `json:"app_id"`
 	Enabled     bool                `json:"enabled"`
@@ -50,7 +50,7 @@ type RouteMonitorFinding struct {
 	ErrorStatus   string            `json:"error_status"`
 	LatencyStatus string            `json:"latency_status"`
 	// EvidenceWindow is "pooled" when the verdict comes from PooledWindows
-	// because the one-minute windows lacked requests (ADR-846).
+	// because the one-minute windows lacked requests (ADR-953).
 	EvidenceWindow string               `json:"evidence_window,omitempty"`
 	Windows        []RouteMonitorWindow `json:"windows"`
 	// PooledWindows are two halves of up to the newest 30 minutes, read only
@@ -179,7 +179,7 @@ type RouteMonitorIncident struct {
 	Escalations          []RouteMonitorIncidentEscalation    `json:"escalations,omitempty"`
 	EscalationsTruncated bool                                `json:"escalations_truncated,omitempty"`
 	// Rollback records the single automatic rollback decision for an
-	// incident when on_violation is rollback (ADR-845).
+	// incident when on_violation is rollback (ADR-952).
 	Rollback *RouteMonitorIncidentRollback `json:"rollback,omitempty"`
 }
 

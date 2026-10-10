@@ -134,7 +134,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -2808,6 +2808,17 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps", Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "deployment", Value: "ID", Short: "serving deployment UUID or vN (default: the app's serving deployment)"},
 			{Name: "since", Value: "DURATION", Short: "observed usage window (default 168h; also accepts 7d or RFC3339)"},
+		}}, {Name: "advise", Positionals: []string{"<slug>"}, Short: "Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates", Examples: []string{"gregale routes advise my-api", "gregale routes advise my-api --cache-max-age 300", "gregale routes advise my-api --apply 3f9a1c2b7d4e"}, Flags: []cliFlag{
+			{Name: "since", Value: "DURATION", Short: "traffic window to analyze (default 7d; clamped to telemetry retention)"},
+			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
+			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
+			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
+			{Name: "enable", Short: "with --apply, create the rules enabled"},
+		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
+			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
+			{Name: "clear", Short: "save no priorities, not even the route-health default"},
+			{Name: "reset", Short: "delete saved priorities and use the route-health default"},
 		}}, {Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save version 2 route intent after comparing the current revision", Examples: []string{"gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0"}, Flags: []cliFlag{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},
@@ -4269,6 +4280,13 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "interval between instance status checks (default 250ms)", Value: "DURATION"},
 		},
 		Examples: []string{"gregale wake my-api", "gregale wake --wait --timeout 2m my-api"},
+	},
+	{
+		Name:        "wake-ahead",
+		DocSlug:     "service-wake-ahead",
+		Short:       "Wake the services an app calls while the app itself wakes (opt-in)",
+		Positionals: []string{"<slug>", "[on|off]"},
+		Examples:    []string{"gregale wake-ahead my-api", "gregale wake-ahead my-api on", "gregale wake-ahead my-api off --json"},
 	},
 	{
 		Name:    "traffic",

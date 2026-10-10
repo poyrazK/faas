@@ -50,7 +50,7 @@ func (m *MemStore) SetRouteHealthGate(_ context.Context, accountID, appID string
 		return g, ErrRouteHealthPlan
 	}
 	// The first explicit save records intent even when it matches the default,
-	// so an empty selector list opts out of default seeding (ADR-844).
+	// so an empty selector list opts out of default seeding (ADR-951).
 	if g.Revision > 0 && g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, nil
 	}

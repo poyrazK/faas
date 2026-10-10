@@ -13,7 +13,7 @@ import (
 var _ RouteMonitorRollbackStore = (*PgStore)(nil)
 
 // ClaimRouteMonitorRollback decides the active incident under the same
-// account, app and monitor locks as evaluation (ADR-845). It never writes
+// account, app and monitor locks as evaluation (ADR-952). It never writes
 // deployments; the claim only reserves the incident's single decision.
 func (s *PgStore) ClaimRouteMonitorRollback(ctx context.Context, accountID, appID string) (RouteMonitorRollbackClaim, bool, error) {
 	tx, err := s.pool.Begin(ctx)

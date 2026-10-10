@@ -14,7 +14,7 @@ type RouteHealthRoute struct {
 	// MaxP95MS enables an absolute budget when positive; zero disables it.
 	MaxP95MS int64 `json:"max_p95_ms,omitempty"`
 	// Probe opts a GET/HEAD selector into synthetic probes while a canary is
-	// in flight and organic traffic is too sparse (ADR-847).
+	// in flight and organic traffic is too sparse (ADR-954).
 	Probe *RouteHealthProbe `json:"probe,omitempty"`
 }
 
@@ -45,7 +45,7 @@ type RouteHealthCounts struct {
 	// P95LatencyMS estimates weighted telemetry representatives; nil is unavailable.
 	P95LatencyMS *float64 `json:"p95_latency_ms,omitempty"`
 	// Unauthenticated counts synthetic probe responses rejected by customer
-	// auth gates (401/403); it is zero for organic telemetry (ADR-847).
+	// auth gates (401/403); it is zero for organic telemetry (ADR-954).
 	Unauthenticated int64 `json:"unauthenticated,omitempty"`
 }
 type RouteHealthWindowEvidence struct {
@@ -77,14 +77,14 @@ type RouteHealthFinding struct {
 	LatencyStatus string `json:"latency_status,omitempty"`
 	LatencyReason string `json:"latency_reason,omitempty"`
 	// EvidenceWindow is "pooled" when the verdict comes from PooledWindows
-	// because the one-minute windows lacked requests (ADR-846).
+	// because the one-minute windows lacked requests (ADR-953).
 	EvidenceWindow string                      `json:"evidence_window,omitempty"`
 	Windows        []RouteHealthWindowEvidence `json:"windows"`
 	// PooledWindows are two halves of the stage so far, read only for routes
 	// whose one-minute windows were sparse.
 	PooledWindows []RouteHealthWindowEvidence `json:"pooled_windows,omitempty"`
 	// SyntheticWindows hold probe results over the pooled bounds for opted-in
-	// routes that stay sparse; they settle the 5xx signal only (ADR-847).
+	// routes that stay sparse; they settle the 5xx signal only (ADR-954).
 	SyntheticWindows []RouteHealthWindowEvidence `json:"synthetic_windows,omitempty"`
 }
 

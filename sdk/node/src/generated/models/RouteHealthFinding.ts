@@ -33,7 +33,7 @@ export type RouteHealthFinding = {
   latency_status?: 'healthy' | 'regressed' | 'unknown';
   latency_reason?: string;
   /**
-   * pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are unchanged.
+   * pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-953); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-954). Thresholds are unchanged.
    */
   evidence_window?: 'pooled' | 'synthetic';
   windows: Array<RouteHealthWindowEvidence>;

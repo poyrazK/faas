@@ -11,7 +11,7 @@ func usageRow(method, path string, tenants, consumers, requests int64) api.Route
 	return api.RouteCustomerUsage{Route: method + " " + path, Method: method, Requests: requests, PlatformTenantCount: tenants, ConsumerCount: consumers}
 }
 
-// adr: 844
+// adr: 951
 func TestRankRouteUsageOrdersByReachThenRequests(t *testing.T) {
 	rows := []api.RouteCustomerUsage{
 		usageRow("GET", "/b", 1, 9, 100),
@@ -39,7 +39,7 @@ func TestRankRouteUsageOrdersByReachThenRequests(t *testing.T) {
 	}
 }
 
-// adr: 844
+// adr: 951
 func TestSeedSelectorsBoundsAndValidates(t *testing.T) {
 	if got := SeedSelectors(nil, api.RouteHealthSeedRoutes); got == nil || len(got) != 0 {
 		t.Fatalf("empty usage = %#v, want a non-nil empty slice", got)

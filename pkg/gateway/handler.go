@@ -962,6 +962,11 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
+	// wakeAhead is the opt-in ADR-956 wake-ahead runner; nil disables it.
+	wakeAhead *wakeAheadRunner
+	// routePriorities orders the warm-capacity queue by route (ADR-957);
+	// nil keeps it FIFO.
+	routePriorities *routePriorityCache
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
 	// picker selects a concrete instance. Instance slots and FIFO ordering are
 	// gateway-local; production installs a shared admission backend so the
@@ -5947,7 +5952,7 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
-	// ADR-847: a route probe pins one live deployment and keeps every customer
+	// ADR-954: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
@@ -6876,6 +6881,9 @@ haveApp:
 		return
 	}
 	if !pick.OK {
+		// ADR-956: a cold app starts restoring the services it is measured to
+		// call before its own restore completes. Opt-in; never blocks.
+		h.noteColdWake(r.Context(), app.ID)
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -7087,7 +7095,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -7151,7 +7159,7 @@ haveApp:
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	} else if routeProbe && target.DeploymentID == probeDeploymentID {
 		// The same upstream-only proof lets the prober attribute a response
-		// to the probed deployment (ADR-847).
+		// to the probed deployment (ADR-954).
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
@@ -7803,7 +7811,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	// Route probes (ADR-847) record their own results; they never become
+	// Route probes (ADR-954) record their own results; they never become
 	// customer telemetry or usage.
 	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())
@@ -8829,12 +8837,23 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // not an error: the caller re-reads the endpoint registry and surfaces
 // "no healthy replicas" if the wake genuinely produced nothing.
 func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
+}
+
+// triggerServiceWakeAhead attributes ADR-956 wake-ahead restores.
+const triggerServiceWakeAhead = sched.TriggerServiceWakeAhead
+
+// ensureServiceCapacity is the shared body of service-mesh and wake-ahead
+// restores. A parked target starting to wake may itself wake its measured
+// targets ahead (ADR-956), up to the depth limit.
+func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {
 		limits = api.Limits{}
 	}
+	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
 	return err
 }
 

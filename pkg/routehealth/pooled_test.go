@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 846
+// adr: 953
 func TestPooledWindowsSplitTheStageSoFar(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 20, 45, 0, time.UTC)
 	end := Windows(now)[api.RouteHealthWindows-1].End
@@ -44,7 +44,7 @@ func pooledFinding(windows ...[4]string) api.RouteHealthFinding {
 	return f
 }
 
-// adr: 846
+// adr: 953
 func TestNeedsPooledEvidenceOnlyForSparseRoutes(t *testing.T) {
 	sparse := [4]string{"unknown", "insufficient_requests", "", ""}
 	cases := []struct {
@@ -65,7 +65,7 @@ func TestNeedsPooledEvidenceOnlyForSparseRoutes(t *testing.T) {
 	}
 }
 
-// adr: 846
+// adr: 953
 func TestEvaluateAdoptsPooledVerdictsAndKeepsMinuteWindows(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 20, 45, 0, time.UTC)
 	anchor := now.Add(-12 * time.Minute)

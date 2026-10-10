@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 847
+// adr: 954
 func TestValidateProbe(t *testing.T) {
 	zero := int64(0)
 	gate := func(routes ...api.RouteHealthRoute) error {
@@ -58,7 +58,7 @@ func TestValidateProbe(t *testing.T) {
 	}
 }
 
-// adr: 847
+// adr: 954
 func TestEvaluateAdoptsSyntheticEvidenceOnlyWhenSparse(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 20, 45, 0, time.UTC)
 	anchor := now.Add(-12 * time.Minute)

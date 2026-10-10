@@ -8,7 +8,7 @@ import (
 
 // PooledWindows splits the stage observed so far into two equal, consecutive,
 // minute-aligned windows that end with the newest closed one-minute window
-// (ADR-846). ok is false when the stage is too short to pool.
+// (ADR-953). ok is false when the stage is too short to pool.
 func PooledWindows(anchor *time.Time, now time.Time) ([]api.RouteHealthWindowEvidence, bool) {
 	if anchor == nil {
 		return nil, false

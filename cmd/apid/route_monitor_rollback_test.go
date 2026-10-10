@@ -36,7 +36,7 @@ func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRe
 	return e, app, target, current, incident.ID
 }
 
-// adr: 845
+// adr: 952
 func TestRouteMonitorRollbackRequestsCheckedRollbackOnce(t *testing.T) {
 	e, app, target, current, incidentID := routeMonitorRollbackFixture(t, "rollback", time.Minute)
 	ctx := t.Context()
@@ -63,7 +63,7 @@ func TestRouteMonitorRollbackRequestsCheckedRollbackOnce(t *testing.T) {
 	}
 }
 
-// adr: 845
+// adr: 952
 func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
 	t.Run("incident outside the post-release window", func(t *testing.T) {
 		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "rollback", api.RouteMonitorRollbackWindow+time.Minute)

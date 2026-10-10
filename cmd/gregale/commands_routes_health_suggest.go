@@ -436,7 +436,7 @@ func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug
 			}
 		}
 	}
-	// Validated rows rank identically to apid's default seeding (ADR-844).
+	// Validated rows rank identically to apid's default seeding (ADR-951).
 	candidates := routehealth.RankRouteUsage(usage.Routes, groupBy)
 	if len(candidates) > limit {
 		candidates = candidates[:limit]

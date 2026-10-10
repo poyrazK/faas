@@ -500,6 +500,7 @@ type Querier interface {
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	DeleteProfileInvestigation(ctx context.Context, db DBTX, arg DeleteProfileInvestigationParams) (int64, error)
+	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
 	DeleteUDPListener(ctx context.Context, db DBTX, id string) (int64, error)
 	DeleteWebhookAutomationBinding(ctx context.Context, db DBTX, arg DeleteWebhookAutomationBindingParams) (int64, error)
@@ -1063,11 +1064,16 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	// Route priorities (ADR-957). apid owns the rows; gatewayd-internal reads them.
+	GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error)
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
 	GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error)
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	// Service wake-ahead (ADR-956). apid owns the setting; gatewayd-internal reads
+	// it and the fleet residency that guards every wake-ahead.
+	GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServiceWakeAheadParams) (GetServiceWakeAheadRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -1869,7 +1875,7 @@ type Querier interface {
 	ListRouteCheckHistory(ctx context.Context, db DBTX, arg ListRouteCheckHistoryParams) ([][]byte, error)
 	ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error)
 	ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error)
-	// ADR-847: apps whose route health gate opts a selector into probes and that
+	// ADR-954: apps whose route health gate opts a selector into probes and that
 	// have exactly one in-flight canary candidate in the default scope.
 	ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
@@ -2058,7 +2064,7 @@ type Querier interface {
 	LockRouteHealthRecoveryLease(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LockRouteHealthRecoverySiblings(ctx context.Context, db DBTX, arg LockRouteHealthRecoverySiblingsParams) ([]LockRouteHealthRecoverySiblingsRow, error)
 	LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMonitorParams) (LockRouteMonitorRow, error)
-	// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+	// ADR-952: waits for an in-flight evaluation instead of skipping it, so the
 	// claim reads the incident that evaluation committed.
 	LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error)
 	LockRoutePolicyAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error)
@@ -3174,6 +3180,18 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	// The two busiest identified consumers of each route with their peak minute.
+	// The consumer join validates ownership; it never infers one from today's link.
+	RouteAdviceConsumers(ctx context.Context, db DBTX, arg RouteAdviceConsumersParams) ([]RouteAdviceConsumersRow, error)
+	// Route advisor reads (ADR-955). Retained debugger telemetry only; nothing
+	// here touches the usage ledger. Route labels are "METHOD /template".
+	// The busiest routes of an app across deployments. The cache estimate buckets
+	// anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first
+	// request of a window fills the cache, the rest are hits, and a cold boot
+	// that is not first in its window is a wake the cache would have avoided.
+	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
+	// Requests one consumer sent above a per-minute allowance on one route.
+	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
@@ -3233,6 +3251,9 @@ type Querier interface {
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
 	ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error)
 	ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error)
+	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	// Billable RAM of live instances against the active nodes' admission ceilings.
+	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg SetAppSecretRuntimeProcessParams) (int64, error)
 	// Runtime-base generation identity (ADR-736).
@@ -3275,7 +3296,9 @@ type Querier interface {
 	SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg SetOutboundBindingProbePolicyParams) (pgtype.UUID, error)
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)
+	SetRoutePriorities(ctx context.Context, db DBTX, arg SetRoutePrioritiesParams) (SetRoutePrioritiesRow, error)
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
+	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)

@@ -38,7 +38,7 @@ func ProbeMatchesSelector(selector, path string) bool {
 	return true
 }
 
-// ValidateProbe enforces ADR-847: probes are read-only, concrete and bound to
+// ValidateProbe enforces ADR-954: probes are read-only, concrete and bound to
 // their selector's shape so a probe cannot reach a different route.
 func ValidateProbe(route api.RouteHealthRoute) error {
 	if route.Probe == nil {

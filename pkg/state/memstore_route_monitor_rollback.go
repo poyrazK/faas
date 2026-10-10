@@ -10,7 +10,7 @@ import (
 var _ RouteMonitorRollbackStore = (*MemStore)(nil)
 
 // ClaimRouteMonitorRollback mirrors Postgres for the app's open incident
-// (ADR-845). MemStore does not open incidents from telemetry, so tests seed
+// (ADR-952). MemStore does not open incidents from telemetry, so tests seed
 // them directly.
 func (m *MemStore) ClaimRouteMonitorRollback(_ context.Context, accountID, appID string) (RouteMonitorRollbackClaim, bool, error) {
 	m.mu.Lock()

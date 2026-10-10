@@ -787,6 +787,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_route_priorities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "routes",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_route_removal_policies",
     "columns": [
       "account_id",
@@ -932,6 +942,16 @@
       "last_index"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_service_wake_ahead",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "app_tasks",

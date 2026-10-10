@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 )
 
-// Route probes (ADR-847) are a separate challenge kind from the hosting smoke.
+// Route probes (ADR-954) are a separate challenge kind from the hosting smoke.
 // A probe token pins one live deployment of one app; unlike the smoke it does
 // not bypass customer auth gates, and the request writes no telemetry or usage.
 

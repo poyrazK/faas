@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// adr: 846
+// adr: 953
 // A route with about five candidate requests per minute never fills a
 // one-minute window, but two halves of a 12-minute stage reach a verdict.
 func TestRouteHealthPostgresPoolsSparseStageEvidence(t *testing.T) {
