@@ -1,4 +1,4 @@
-# ADR-960: Managed runtime update windows and runtime family lifecycle
+# ADR-973: Managed runtime update windows and runtime family lifecycle
 
 Status: proposed · 2026-10-10
 
