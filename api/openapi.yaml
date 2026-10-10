@@ -14823,6 +14823,83 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-priorities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRoutePriorities
+      summary: Read the routes served first and last when an app is saturated.
+      description: |
+        Route priorities (ADR-947) order the queue requests wait in while every
+        routable instance of the app is busy. Critical requests are served
+        before normal ones and normal before bulk; within a class the queue
+        stays first in, first out, and the request already at the head is never
+        moved. When the queue is full, a request takes the place of the newest
+        waiting request of a lower class, which receives the usual 503 with
+        Retry-After. Saved rules apply when present (source configured);
+        otherwise the app's route-health selectors are critical (route_health);
+        otherwise there are none. Crawlers and link-preview bots that match no
+        rule are bulk. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's effective route priorities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRoutePriorities
+      summary: Replace an app's saved route priorities.
+      description: |
+        Saves at most 20 rules, matched in order; the first match wins. A path
+        is a route template (/users/{id}) or an edge-rule glob (/exports/*); an
+        omitted method matches every method. An empty list saves "no
+        priorities" and turns off the route-health default. Gateways apply the
+        change within 30 seconds. Requires deploy write access and completed
+        MFA. Body limit is 16 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRoutePrioritiesRequest' }
+      responses:
+        '200':
+          description: The effective route priorities after saving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: resetRoutePriorities
+      summary: Delete an app's saved route priorities.
+      description: "Deletes saved rules so the route-health default applies again. Requires deploy write access and completed MFA."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The effective route priorities after the reset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/route-monitor/report:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42261,6 +42338,36 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RoutePriorityRule:
+      type: object
+      description: "Assigns a priority class to requests matching a method and path (ADR-947)."
+      required: [path, class]
+      additionalProperties: false
+      properties:
+        method: {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "description": "Omitted matches every method."}
+        path: {"type": "string", "maxLength": 240, "description": "Route template such as /users/{id}, or an edge-rule glob such as /exports/*."}
+        class: {"type": "string", "enum": ["critical", "bulk"]}
+    RoutePrioritiesResponse:
+      type: object
+      description: "An app's effective route priorities and where they come from."
+      required: [slug, source, routes]
+      properties:
+        slug: {"type": "string"}
+        source: {"type": "string", "enum": ["configured", "route_health", "none"]}
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
+        updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+    SetRoutePrioritiesRequest:
+      type: object
+      description: "Replaces the saved route priorities; an empty list saves none."
+      required: [routes]
+      additionalProperties: false
+      properties:
+        routes:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."

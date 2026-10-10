@@ -2993,6 +2993,11 @@ from .route_policy_plan_status import RoutePolicyPlanStatus
 from .route_policy_plan_version import RoutePolicyPlanVersion
 from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_priorities_response import RoutePrioritiesResponse
+from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_rule import RoutePriorityRule
+from .route_priority_rule_class import RoutePriorityRuleClass
+from .route_priority_rule_method import RoutePriorityRuleMethod
 from .route_public_exception import RoutePublicException
 from .route_public_exception_method import RoutePublicExceptionMethod
 from .route_removal_approval import RouteRemovalApproval
@@ -3154,6 +3159,7 @@ from .set_route_health_gate_request_on_regression import SetRouteHealthGateReque
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
+from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .severity_counts import SeverityCounts
@@ -6381,6 +6387,11 @@ __all__ = (
     "RoutePolicyPlanVersion",
     "RoutePolicyReceipt",
     "RoutePolicyRuleUsage",
+    "RoutePrioritiesResponse",
+    "RoutePrioritiesResponseSource",
+    "RoutePriorityRule",
+    "RoutePriorityRuleClass",
+    "RoutePriorityRuleMethod",
     "RoutePublicException",
     "RoutePublicExceptionMethod",
     "RouteRemovalApproval",
@@ -6536,6 +6547,7 @@ __all__ = (
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
     "SetRouteMonitorRequestOnViolation",
+    "SetRoutePrioritiesRequest",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
     "SeverityCounts",

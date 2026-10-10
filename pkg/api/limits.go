@@ -9215,6 +9215,15 @@ const (
 	RouteHealthProbeUnauthenticatedShare = 0.5
 )
 
+// RoutePriority bounds per-app route priorities for the warm-capacity queue
+// (ADR-947): at most RoutePriorityMaxRules rules, cached by each gateway for
+// RoutePriorityCacheTTL and read only when a request has to queue.
+const (
+	RoutePriorityMaxRules = 20
+	RoutePriorityCacheTTL = 30 * time.Second
+	RoutePriorityMaxApps  = 4096
+)
+
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
 // (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.

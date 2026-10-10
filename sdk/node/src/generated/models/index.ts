@@ -1602,6 +1602,8 @@ export type { RoutePolicyPlan } from './RoutePolicyPlan.js';
 export type { RoutePolicyPlanRequest } from './RoutePolicyPlanRequest.js';
 export type { RoutePolicyReceipt } from './RoutePolicyReceipt.js';
 export type { RoutePolicyRuleUsage } from './RoutePolicyRuleUsage.js';
+export type { RoutePrioritiesResponse } from './RoutePrioritiesResponse.js';
+export type { RoutePriorityRule } from './RoutePriorityRule.js';
 export type { RoutePublicException } from './RoutePublicException.js';
 export type { RouteRemovalApproval } from './RouteRemovalApproval.js';
 export type { RouteRemovalCheck } from './RouteRemovalCheck.js';
@@ -1685,6 +1687,7 @@ export type { SetPlatformTenantRequestBudgetRequest } from './SetPlatformTenantR
 export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRequest.js';
 export type { SetRouteHealthGateRequest } from './SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './SetRouteMonitorRequest.js';
+export type { SetRoutePrioritiesRequest } from './SetRoutePrioritiesRequest.js';
 export type { SetRouteRemovalPolicyRequest } from './SetRouteRemovalPolicyRequest.js';
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';

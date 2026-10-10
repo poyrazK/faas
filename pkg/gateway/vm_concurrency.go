@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -73,7 +74,36 @@ type concurrencyWaitTicket struct {
 	ready   chan struct{}
 	left    bool
 	leaseID string
+	// class orders the queue (ADR-947). displaced is closed when a
+	// higher-priority request takes this waiter's place.
+	class     routePriority
+	displaced chan struct{}
+	// displacedOther records that this ticket entered by displacing a waiter.
+	displacedOther bool
 }
+
+// routePriority orders warm-capacity waiters (ADR-947); lower is served first.
+type routePriority int
+
+const (
+	routePriorityCritical routePriority = iota
+	routePriorityNormal
+	routePriorityBulk
+)
+
+func (p routePriority) String() string {
+	switch p {
+	case routePriorityCritical:
+		return api.RoutePriorityCritical
+	case routePriorityBulk:
+		return api.RoutePriorityBulk
+	}
+	return "normal"
+}
+
+// errConcurrencyQueueDisplaced reports that a higher-priority request took
+// this waiter's queue place. Callers answer it like a full queue.
+var errConcurrencyQueueDisplaced = errors.New("gateway: displaced from the concurrency queue by a higher-priority request")
 
 type vmConcurrencyGate struct {
 	mu       sync.Mutex
@@ -110,11 +140,20 @@ func (m *vmConcurrencyManager) setQueueAdmission(admission ConcurrencyQueueAdmis
 	m.queueMu.Unlock()
 }
 
-// enterQueue appends one request to the per-app FIFO warm-capacity queue.
-// The returned ticket becomes runnable only when it reaches the head. This
-// avoids the notify-all race in which newer requests can repeatedly beat an
-// older waiter to a released VM slot.
+// enterQueue appends one normal-priority request to the per-app FIFO
+// warm-capacity queue. The returned ticket becomes runnable only when it
+// reaches the head. This avoids the notify-all race in which newer requests
+// can repeatedly beat an older waiter to a released VM slot.
 func (m *vmConcurrencyManager) enterQueue(ctx context.Context, appID, plan string, limit int, maxWait time.Duration) (*concurrencyWaitTicket, int, bool, error) {
+	return m.enterQueueWithPriority(ctx, appID, plan, limit, maxWait, routePriorityNormal)
+}
+
+// enterQueueWithPriority queues a request behind every waiter of its class or
+// higher (ADR-947); the head, which is already acquiring a slot, never moves.
+// When the local queue or the fleet permit budget is full, the newest waiter
+// of a lower class is displaced and its fleet permit passes to this request.
+// Within a class the queue stays FIFO.
+func (m *vmConcurrencyManager) enterQueueWithPriority(ctx context.Context, appID, plan string, limit int, maxWait time.Duration, class routePriority) (*concurrencyWaitTicket, int, bool, error) {
 	if m == nil || appID == "" || limit <= 0 {
 		return nil, 0, false, nil
 	}
@@ -130,8 +169,8 @@ func (m *vmConcurrencyManager) enterQueue(ctx context.Context, appID, plan strin
 		if err != nil {
 			return nil, 0, false, err
 		}
-		if !admitted || leaseID == "" {
-			return nil, globalDepth, false, nil
+		if !admitted {
+			leaseID = ""
 		}
 	}
 	m.queueMu.Lock()
@@ -140,16 +179,33 @@ func (m *vmConcurrencyManager) enterQueue(ctx context.Context, appID, plan strin
 		q = &concurrencyWaitQueue{plan: plan}
 		m.queues[appID] = q
 	}
-	if len(q.tickets) >= limit {
-		depth := len(q.tickets)
-		m.queueMu.Unlock()
-		if admission != nil && leaseID != "" {
-			_ = releaseConcurrencyQueueLease(ctx, admission, appID, leaseID)
+	ticket := &concurrencyWaitTicket{manager: m, appID: appID, ready: make(chan struct{}), leaseID: leaseID, class: class, displaced: make(chan struct{})}
+	if len(q.tickets) >= limit || (admission != nil && leaseID == "") {
+		victim := q.displaceableBelow(class)
+		if victim < 0 {
+			depth := max(len(q.tickets), globalDepth)
+			if len(q.tickets) == 0 {
+				delete(m.queues, appID)
+			}
+			m.queueMu.Unlock()
+			if admission != nil && leaseID != "" {
+				_ = releaseConcurrencyQueueLease(ctx, admission, appID, leaseID)
+			}
+			return nil, depth, false, nil
 		}
-		return nil, depth, false, nil
+		displaced := q.tickets[victim]
+		q.tickets = slices.Delete(q.tickets, victim, victim+1)
+		if ticket.leaseID == "" {
+			ticket.leaseID, displaced.leaseID = displaced.leaseID, ""
+		}
+		close(displaced.displaced)
+		ticket.displacedOther = true
 	}
-	ticket := &concurrencyWaitTicket{manager: m, appID: appID, ready: make(chan struct{}), leaseID: leaseID}
-	q.tickets = append(q.tickets, ticket)
+	position := len(q.tickets)
+	for position > 1 && q.tickets[position-1].class > class {
+		position--
+	}
+	q.tickets = slices.Insert(q.tickets, position, ticket)
 	depth := len(q.tickets)
 	if depth == 1 {
 		close(ticket.ready)
@@ -172,9 +228,23 @@ func (t *concurrencyWaitTicket) wait(ctx context.Context) error {
 	select {
 	case <-t.ready:
 		return nil
+	case <-t.displaced:
+		return errConcurrencyQueueDisplaced
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// displaceableBelow returns the index of the newest waiter of a lower class
+// than class, excluding the head, or -1.
+func (q *concurrencyWaitQueue) displaceableBelow(class routePriority) int {
+	victim := -1
+	for i := len(q.tickets) - 1; i >= 1; i-- {
+		if q.tickets[i].class > class && (victim < 0 || q.tickets[i].class > q.tickets[victim].class) {
+			victim = i
+		}
+	}
+	return victim
 }
 
 func (t *concurrencyWaitTicket) leave(ctx context.Context) error {
@@ -468,12 +538,19 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	if app.ConcurrencyOverflow == api.ConcurrencyOverflowDrop {
 		return pick, nil, true, &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
 	}
-	ticket, depth, ok, queueErr := h.vmConcurrency.enterQueue(ctx, app.ID, string(app.Plan), policy.MaxWaiters, policy.MaxWait)
+	class := h.routePriorityFor(ctx, app)
+	ticket, depth, ok, queueErr := h.vmConcurrency.enterQueueWithPriority(ctx, app.ID, string(app.Plan), policy.MaxWaiters, policy.MaxWait, class)
 	if queueErr != nil {
 		return pick, nil, true, &ConcurrencyQueueAdmissionError{Err: queueErr, RetryAfter: policy.MaxWait}
 	}
 	if !ok {
+		h.metrics.IncRoutePriorityQueue(class.String(), "rejected")
 		return pick, nil, true, &ConcurrencyQueueFullError{Depth: depth, Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
+	}
+	if ticket.displacedOther {
+		h.metrics.IncRoutePriorityQueue(class.String(), "displacing")
+	} else {
+		h.metrics.IncRoutePriorityQueue(class.String(), "queued")
 	}
 	queuedAt := time.Now()
 	defer func() {
@@ -482,6 +559,10 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 		}
 	}()
 	if err := ticket.wait(ctx); err != nil {
+		if errors.Is(err, errConcurrencyQueueDisplaced) {
+			h.metrics.IncRoutePriorityQueue(class.String(), "displaced")
+			return pick, nil, true, &ConcurrencyQueueFullError{Depth: h.vmConcurrency.queueDepth(app.ID), Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return pick, nil, true, &ConcurrencyQueueWaitTimeoutError{Waited: time.Since(queuedAt), RetryAfter: policy.MaxWait}
 		}

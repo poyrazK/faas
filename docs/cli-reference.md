@@ -6916,6 +6916,27 @@ gregale routes status my-api
 gregale routes status my-api --since 24h --json
 ```
 
+### routes priority
+
+Show or set which routes are served first, and turned away last, when every instance is busy
+
+`gregale routes priority [--critical <[METHOD] PATH>] [--bulk <[METHOD] PATH>] [--clear] [--reset] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--critical <[METHOD] PATH>` | route served first when the app is saturated (repeatable) |  |
+| `--bulk <[METHOD] PATH>` | route served last and turned away first (repeatable) |  |
+| `--clear` | save no priorities, not even the route-health default |  |
+| `--reset` | delete saved priorities and use the route-health default |  |
+
+Examples:
+
+```sh
+gregale routes priority my-api
+gregale routes priority my-api --critical "POST /checkout" --bulk "/exports/*"
+gregale routes priority my-api --reset
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app
@@ -10438,13 +10459,6 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
 
 `gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override>`
-
-Definitions may declare `source.kind: function` with a supported `source.runtime`
-and Git directory. Missing workloads can be reserved privately by the internal
-executor; the public preview still supports report mode only. Scoped service
-bindings pin target identities and reserve their environment keys, but execution
-remains gated pending private transport and qualification. See the
-[preparation contract and evidence gates](environment-gitops.md#workload-preparation-contract).
 
 ##### projects environments gitops status
 

@@ -649,6 +649,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
 - [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
 - [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
+- [ADR-947: Route priority for the warm-capacity queue](947-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage

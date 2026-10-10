@@ -2808,6 +2808,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps", Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "deployment", Value: "ID", Short: "serving deployment UUID or vN (default: the app's serving deployment)"},
 			{Name: "since", Value: "DURATION", Short: "observed usage window (default 168h; also accepts 7d or RFC3339)"},
+		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
+			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
+			{Name: "clear", Short: "save no priorities, not even the route-health default"},
+			{Name: "reset", Short: "delete saved priorities and use the route-health default"},
 		}}, {Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save version 2 route intent after comparing the current revision", Examples: []string{"gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0"}, Flags: []cliFlag{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},

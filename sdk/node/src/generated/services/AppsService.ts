@@ -101,6 +101,7 @@ import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyRespons
 import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
 import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
 import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RoutePrioritiesResponse } from '../models/RoutePrioritiesResponse.js';
 import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
 import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
 import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
@@ -115,6 +116,7 @@ import type { SetBindingReleasePolicyRequest } from '../models/SetBindingRelease
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
+import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
@@ -4552,6 +4554,135 @@ export class AppsService {
     });
   }
   /**
+   * Read the routes served first and last when an app is saturated.
+   * Route priorities (ADR-947) order the queue requests wait in while every
+   * routable instance of the app is busy. Critical requests are served
+   * before normal ones and normal before bulk; within a class the queue
+   * stays first in, first out, and the request already at the head is never
+   * moved. When the queue is full, a request takes the place of the newest
+   * waiting request of a lower class, which receives the usual 503 with
+   * Retry-After. Saved rules apply when present (source configured);
+   * otherwise the app's route-health selectors are critical (route_health);
+   * otherwise there are none. Crawlers and link-preview bots that match no
+   * rule are bulk. Requires app read access and completed MFA.
+   *
+   * @returns RoutePrioritiesResponse The app's effective route priorities.
+   * @throws ApiError
+   */
+  public static getRoutePriorities({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an app's saved route priorities.
+   * Saves at most 20 rules, matched in order; the first match wins. A path
+   * is a route template (/users/{id}) or an edge-rule glob (/exports*); an
+   * omitted method matches every method. An empty list saves "no
+   * priorities" and turns off the route-health default. Gateways apply the
+   * change within 30 seconds. Requires deploy write access and completed
+   * MFA. Body limit is 16 KiB.
+   *
+   * @returns RoutePrioritiesResponse The effective route priorities after saving.
+   * @throws ApiError
+   */
+  public static setRoutePriorities({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRoutePrioritiesRequest,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an app's saved route priorities.
+   * Deletes saved rules so the route-health default applies again. Requires deploy write access and completed MFA.
+   * @returns RoutePrioritiesResponse The effective route priorities after the reset.
+   * @throws ApiError
+   */
+  public static resetRoutePriorities({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RoutePrioritiesResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/route-priorities',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Read observed route budgets for the fully serving production deployment.
    * Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. If customer_group_by is configured, the same budgets are evaluated per observed request-time identity and sustained cohort violations can make the overall result violated. Customer identities are redacted by default; customer_details=true explicitly includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic.
    * @returns RouteMonitorReport Current observed production route budget evaluation.
@@ -5411,12 +5542,12 @@ export class AppsService {
      */
     slug: string,
     /**
-     * For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+     * For isolated previews, invalidate snapshots after drain so the next request cold-boots from the artifact. Production apps reject fresh parking.
      */
     fresh?: boolean,
     requestBody?: {
       /**
-       * Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
+       * The deployment UUID to compare atomically before parking. A stale or absent current deployment returns 409 without parking; reuse this UUID on drain retries.
        */
       expected_deployment_id?: string;
     },
@@ -5440,7 +5571,8 @@ export class AppsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable

@@ -827,6 +827,13 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRoutePriority struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Routes    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppRouteRemovalPolicy struct {
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID

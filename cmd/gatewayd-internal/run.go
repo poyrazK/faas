@@ -2740,6 +2740,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	// ADR-947: order the warm-capacity queue by route priority. Rules are
+	// read only for requests that have to queue, through a 30 s cache.
+	if pgStore := deps.pgStore; pgStore != nil {
+		handler.SetRoutePrioritySource(func(ctx context.Context, accountID, appID string) ([]api.RoutePriorityRule, error) {
+			_, setting, err := state.EffectiveRoutePriorities(ctx, pgStore, accountID, appID)
+			return setting.Routes, err
+		})
+	}
 	if plans := newConsumerPlanStore(deps.pgStore); plans != nil {
 		handler.WithConsumerPlanStore(plans)
 	}

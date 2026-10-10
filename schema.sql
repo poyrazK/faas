@@ -14488,6 +14488,20 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_priorities (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_priorities_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20))),
+    CONSTRAINT app_route_priorities_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: app_route_removal_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28472,6 +28486,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_route_priorities app_route_priorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_route_removal_policies app_route_removal_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34615,6 +34637,13 @@ CREATE INDEX app_private_network_attachments_network_idx ON public.app_private_n
 --
 
 CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credentials USING btree (account_id);
+
+
+--
+-- Name: app_route_priorities_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
 
 
 --
@@ -45165,6 +45194,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
