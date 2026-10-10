@@ -111,3 +111,35 @@ func TestRestoreCounterWakesWaiters(t *testing.T) {
 		t.Fatalf("generation = %d, want %d", c.current(), gen+1)
 	}
 }
+
+// A fork whose old stream is never reset still returns promptly once the
+// restore hook runs, instead of waiting out the stream's deadline.
+func TestRequestCrashCapture_RestoreWakesASilentStream(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	dial := func() (net.Conn, error) {
+		guest, host := net.Pipe()
+		go func() {
+			defer func() { _ = host.Close() }()
+			var req crashcapturewire.Request
+			if crashcapturewire.ReadFrame(host, &req) != nil {
+				return
+			}
+			_ = crashcapturewire.WriteFrame(host, crashcapturewire.Response{Status: crashcapturewire.StatusRequested, CaptureID: "c7"})
+			<-release // silent: no reset, no answer
+		}()
+		return guest, nil
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		restoreGeneration.bump()
+	}()
+	start := time.Now()
+	got := requestCrashCapture(crashcapturewire.Request{WaitMs: 20000}, dial)
+	if got.Status != crashcapturewire.StatusCaptured || !got.InFork || got.CaptureID != "c7" {
+		t.Fatalf("got %+v, want captured in the fork", got)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("returned after %v; the restore should wake it at once", took)
+	}
+}

@@ -50,7 +50,17 @@ func requestCrashCapture(req crashcapturewire.Request, dial func() (net.Conn, er
 		return crashcapturewire.Response{Status: crashcapturewire.StatusUnavailable, Code: "host_unreachable"}
 	}
 	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(req.Wait() + 10*time.Second))
+	streamWindow := req.Wait() + 10*time.Second
+	_ = conn.SetDeadline(time.Now().Add(streamWindow))
+	// A restored fork does not always see the old stream reset: wake the
+	// blocked read as soon as the restore hook has run.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		if restoreGeneration.changedSinceOrDone(gen, streamWindow, done) {
+			_ = conn.SetDeadline(time.Now())
+		}
+	}()
 	if err := crashcapturewire.WriteFrame(conn, req); err != nil {
 		return crashcapturewire.Response{Status: crashcapturewire.StatusUnavailable, Code: "host_unreachable"}
 	}

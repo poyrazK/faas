@@ -42,6 +42,11 @@ func (c *restoreCounter) bump() {
 // wait for it to: after a restore the guest's vsock streams are reset before
 // the host's resume hook has run, so the caller sees the reset first.
 func (c *restoreCounter) changedSince(gen uint64, wait time.Duration) bool {
+	return c.changedSinceOrDone(gen, wait, nil)
+}
+
+// changedSinceOrDone is changedSince that also gives up when done closes.
+func (c *restoreCounter) changedSinceOrDone(gen uint64, wait time.Duration, done <-chan struct{}) bool {
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
@@ -54,6 +59,8 @@ func (c *restoreCounter) changedSince(gen uint64, wait time.Duration) bool {
 		select {
 		case <-changed:
 		case <-deadline.C:
+			return false
+		case <-done:
 			return false
 		}
 	}
