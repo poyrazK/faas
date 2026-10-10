@@ -1,5 +1,6 @@
 // adr: 472
 // adr: 478
+// adr: 933
 package fcvm
 
 import (
@@ -33,6 +34,9 @@ type RestartQuarantineReport struct {
 	Slots, Instances, Processes           int
 	JournalRecords, JournalProcessMatches int
 	ReclaimedPreparedRecords              int
+	// ReclaimedDeadRecords counts instance records retired at startup
+	// because their process and kernel resources were gone (ADR-933).
+	ReclaimedDeadRecords int
 }
 
 // RecoverRestartQuarantine inventories surviving Firecracker/jailer processes,
@@ -61,6 +65,10 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	if err != nil {
 		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart prepared reservation retirement: %w", err)
 	}
+	dead, err := inv.reclaimRestartDead(ctx, m.resourceJournal, opts)
+	if err != nil {
+		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart dead record retirement: %w", err)
+	}
 	records, matches, err := inv.reconcileJournal(ctx, m.resourceJournal, opts.procRoot)
 	if err != nil {
 		return RestartQuarantineReport{}, err
@@ -71,7 +79,7 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	m.alloc.quarantine(inv.slots)
 	m.restartQuarantine = inv.instances
 	m.restartInventoryDone = true
-	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed}, nil
+	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed, ReclaimedDeadRecords: dead}, nil
 }
 
 func scanRestartInventory(ctx context.Context, opts restartInventoryOptions) (restartInventory, error) {
