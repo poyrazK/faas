@@ -13,7 +13,7 @@ import (
 // defaultPlanName names the app-wide rate cards (no plan) on the command line.
 const defaultPlanName = "default"
 
-// callConsumerPlans handles the plan verbs of `gregale consumers` (ADR-847);
+// callConsumerPlans handles the plan verbs of `gregale consumers` (ADR-940);
 // handled is false for every other verb.
 func callConsumerPlans(ctx context.Context, client *Client, verb string, args []string, f consumerFlags) (any, bool, error) {
 	slug := args[0]

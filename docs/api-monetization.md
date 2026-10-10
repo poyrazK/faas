@@ -225,9 +225,14 @@ those consumers with app statements.
 - Gregale records the handoff to your billing system but never charges your
   customers.
 
-See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
-[ADR-844](adr/844-api-consumer-monthly-allowances.md),
-[ADR-845](adr/845-api-consumer-graduated-tiers.md),
-[ADR-846](adr/846-api-consumer-route-weights.md),
-[ADR-847](adr/847-api-consumer-plans.md), and
-[ADR-848](adr/848-api-consumer-usage-completeness.md) for the billing rules.
+See [ADR-936](adr/936-app-consumer-statement-revisions-and-platform-failure-billing.md),
+[ADR-937](adr/937-api-consumer-monthly-allowances.md),
+[ADR-938](adr/938-api-consumer-graduated-tiers.md),
+[ADR-939](adr/939-api-consumer-route-weights.md),
+[ADR-940](adr/940-api-consumer-plans.md), and
+[ADR-941](adr/941-api-consumer-usage-completeness.md) for the billing rules.
+
+These decisions were originally numbered ADR-843 through ADR-848. They were
+renumbered to ADR-936 through ADR-941 to resolve collisions with route-health
+decisions. Already merged migrations retain their original comment citations
+so their recorded checksums remain valid.

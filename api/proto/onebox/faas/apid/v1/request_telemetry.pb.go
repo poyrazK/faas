@@ -196,7 +196,7 @@ type ConsumerUsageEvent struct {
 	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,14,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"` // anonymous traffic attributed by this verified JWT rule
 	// Bounded "METHOD /template" label for consumer-attributed traffic. apid
 	// keeps route-level billable minutes so rate cards can weight routes
-	// (ADR-846). Empty for anonymous traffic and from older gateways.
+	// (ADR-939). Empty for anonymous traffic and from older gateways.
 	BillingRoute  string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

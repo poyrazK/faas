@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Completeness statuses (ADR-848).
+// Completeness statuses (ADR-941).
 const (
 	// CompletenessVerified: telemetry independently confirms every billed
 	// successful request in the checked hours, and saw none the ledger lacks.

@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Completeness windows (ADR-848): only hours telemetry has had time to
+// Completeness windows (ADR-941): only hours telemetry has had time to
 // publish, and only hours request telemetry still retains, are checked.
 const (
 	completenessSettleDelay   = 10 * time.Minute

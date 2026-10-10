@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848).
+ * Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-941).
  */
 export type APIConsumerUsageCompletenessResponse = {
   consumer_id: string;

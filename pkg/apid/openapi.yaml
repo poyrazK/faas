@@ -48753,7 +48753,7 @@ components:
         as_of: { type: string, format: date-time }
 
     APIConsumerUsageCompletenessResponse:
-      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-941)."
       type: object
       required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
       properties:

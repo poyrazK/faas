@@ -1,5 +1,9 @@
 package api
 
+// OperationWorkflowStateStaleAfterMaxSeconds bounds app-declared state age
+// thresholds while allowing long-running business workflows.
+const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
+
 // OperationWorkflowSpec is the deployment-resolved projection attached to an
 // Operation definition. It is returned with a fact only when its milestone
 // name matches. Source manifests pin the milestone and instance ID pointer;

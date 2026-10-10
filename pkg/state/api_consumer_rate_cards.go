@@ -20,7 +20,7 @@ type APIConsumerRateCardStore interface {
 	GetAPIConsumerRateCardByID(context.Context, string, string) (APIConsumerRateCard, error)
 	ListAPIConsumerRateCardsForApp(context.Context, string, string) ([]APIConsumerRateCard, error)
 	// CreateAPIConsumerRateCardVersion creates a card with an optional
-	// monthly allowance (ADR-844) or graduated ladder (ADR-845);
+	// monthly allowance (ADR-937) or graduated ladder (ADR-938);
 	// CreateAPIConsumerRateCard creates a single flat price.
 	CreateAPIConsumerRateCardVersion(context.Context, APIConsumerRateCardInput) (APIConsumerRateCard, error)
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 848
+// adr: 941
 func TestCompletenessWindow(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 5, 0, 0, time.UTC)
 	cases := []struct {
@@ -40,7 +40,7 @@ func TestCompletenessWindow(t *testing.T) {
 	}
 }
 
-// adr: 848
+// adr: 941
 func TestAPIConsumerUsageCompletenessEndpoint(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	mustSeedApp(t, e, "consumer-completeness-app")

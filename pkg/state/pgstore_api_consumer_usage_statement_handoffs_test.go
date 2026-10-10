@@ -77,7 +77,7 @@ func TestPgAPIConsumerUsageStatementHandoffIsIdempotentAndUnique(t *testing.T) {
 	}
 }
 
-// adr: 843
+// adr: 936
 func TestPgAPIConsumerUsageStatementRevisionsAndAdjustmentHandoff(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
