@@ -2551,3 +2551,27 @@ For a known current visit, `warning_at` is the observed entry time plus the budg
 Use `reason=sla_at_risk` in the attention API, dashboard or CLI to select known visits that reached their warning threshold and have not yet breached. These visits also enter the default attention queue. Summaries include `sla_at_risk_workflow_count` separately from breached and unknown counts, respecting the existing scope, customer, workflow, owner, code, target-operation and priority filters. SLA risk does not invent blocker ownership or urgency. Cursor pages evaluate warning and due times at the original queue evaluation time; refresh to observe elapsed-time changes.
 
 Selected workflow views and performance contributors expose the warning percentage/time alongside due time and remaining seconds. Historical performance breach counts remain breach counts; early warnings are current-visit observations. Warnings do not enforce readiness, send notifications, or perform application actions.
+
+### Retained prerequisite recovery plans
+
+Missing, expired, and invalidated readiness results include an optional `recovery`
+object derived from the pinned prerequisite selector. It identifies `reason`,
+`operation`, `milestone`, and three ordered steps: `perform_operation`,
+`publish_milestone`, then `recheck_readiness`. Verified evidence omits recovery.
+For invalidation, `after_occurred_at` is the exclusive invalidator occurrence
+threshold; for expiry it is the prior prerequisite occurrence. Any freshness
+limit must still be satisfied when readiness is checked again.
+
+The application authorizes and performs the actual business action, commits its
+milestone with the true occurrence time, and publishes it before rechecking the
+original transition. The new fact must match the existing ownership, subject,
+workflow instance, and contract version. Never backdate or fabricate a fact to
+satisfy a recovery plan. Missing retained evidence does not prove the business
+action never happened: inspect authoritative rows before retrying an action.
+
+Plans are bounded by the existing 16 retained prerequisites per edge, with exactly
+three steps per result. They do not recursively resolve producer dependencies or
+assert that a producer can run from the current state. The application must check
+that operation's own requirements. API previews and overviews return these same
+plans; shared dashboard/CLI guidance and Go, Node, and Python SDK types expose
+them. No new lookup, manifest rule, migration, or execution permission is added.

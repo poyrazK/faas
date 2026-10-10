@@ -305,3 +305,27 @@ Renewal is an application-owned business operation whose transaction publishes a
 new fact. Gregale provides point-in-time readiness, grants no lease, and does not
 extend retention or change business state. Applications still lock and verify
 business rows and authorization before committing.
+
+### Retained prerequisite recovery plans
+
+Missing, expired, and invalidated readiness results include an optional `recovery`
+object derived from the pinned prerequisite selector. It identifies `reason`,
+`operation`, `milestone`, and three ordered steps: `perform_operation`,
+`publish_milestone`, then `recheck_readiness`. Verified evidence omits recovery.
+For invalidation, `after_occurred_at` is the exclusive invalidator occurrence
+threshold; for expiry it is the prior prerequisite occurrence. Any freshness
+limit must still be satisfied when readiness is checked again.
+
+The application authorizes and performs the actual business action, commits its
+milestone with the true occurrence time, and publishes it before rechecking the
+original transition. The new fact must match the existing ownership, subject,
+workflow instance, and contract version. Never backdate or fabricate a fact to
+satisfy a recovery plan. Missing retained evidence does not prove the business
+action never happened: inspect authoritative rows before retrying an action.
+
+Plans are bounded by the existing 16 retained prerequisites per edge, with exactly
+three steps per result. They do not recursively resolve producer dependencies or
+assert that a producer can run from the current state. The application must check
+that operation's own requirements. API previews and overviews return these same
+plans; shared dashboard/CLI guidance and Go, Node, and Python SDK types expose
+them. No new lookup, manifest rule, migration, or execution permission is added.

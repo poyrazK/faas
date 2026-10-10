@@ -16,6 +16,7 @@ type OperationWorkflowRetainedMilestoneRequirement struct {
 // Verified means a matching app-reported fact remains retained in the selected
 // ownership, subject, workflow instance and version. It is not external proof.
 type OperationWorkflowRetainedMilestone struct {
+	Recovery     *OperationWorkflowPrerequisiteRecovery          `json:"recovery,omitempty"`
 	Freshness    *OperationWorkflowRetainedMilestoneFreshness    `json:"freshness,omitempty"`
 	Invalidation *OperationWorkflowRetainedMilestoneInvalidation `json:"invalidation,omitempty"`
 	Requirement  OperationWorkflowRetainedMilestoneRequirement   `json:"requirement"`
@@ -50,6 +51,15 @@ type OperationWorkflowRetainedMilestoneFreshness struct {
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 	AgeSeconds       *int64     `json:"age_seconds,omitempty"`
 	RemainingSeconds *int64     `json:"remaining_seconds,omitempty"`
+}
+
+// OperationWorkflowPrerequisiteRecovery describes application-owned recovery, not executable commands.
+type OperationWorkflowPrerequisiteRecovery struct {
+	Reason          string     `json:"reason"`
+	Operation       string     `json:"operation"`
+	Milestone       string     `json:"milestone"`
+	AfterOccurredAt *time.Time `json:"after_occurred_at,omitempty"`
+	Steps           []string   `json:"steps"`
 }
 
 func CanonicalOperationWorkflowRetainedMilestones(input []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneRequirement, error) {

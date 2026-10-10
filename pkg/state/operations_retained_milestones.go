@@ -177,8 +177,9 @@ func retainedMilestoneAfter(a, b api.OperationWorkflowInstanceMilestoneRef, occu
 	return a.PublishedAt.After(b.PublishedAt) || a.PublishedAt.Equal(b.PublishedAt) && (a.OperationID > b.OperationID || a.OperationID == b.OperationID && a.ID > b.ID)
 }
 
-func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, requirement api.OperationWorkflowRetainedMilestoneRequirement) api.OperationWorkflowRetainedMilestone {
-	result := api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "awaiting_verification"}
+func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, requirement api.OperationWorkflowRetainedMilestoneRequirement) (result api.OperationWorkflowRetainedMilestone) {
+	defer func() { result.Recovery = retainedPrerequisiteRecovery(result) }()
+	result = api.OperationWorkflowRetainedMilestone{Requirement: requirement, Status: "awaiting_verification"}
 	var rules []api.OperationWorkflowRetainedMilestoneInvalidationRule
 	for _, rule := range edge.RetainedMilestoneInvalidations {
 		if rule.Prerequisite == requirement {
@@ -227,4 +228,19 @@ func evaluateRetainedMilestone(instance *api.OperationWorkflowInstanceSnapshot, 
 		}
 	}
 	return result
+}
+
+func retainedPrerequisiteRecovery(result api.OperationWorkflowRetainedMilestone) *api.OperationWorkflowPrerequisiteRecovery {
+	if result.Status != "awaiting_verification" && result.Status != "expired" && result.Status != "invalidated" {
+		return nil
+	}
+	recovery := &api.OperationWorkflowPrerequisiteRecovery{Reason: result.Status, Operation: result.Requirement.Operation, Milestone: result.Requirement.Milestone, Steps: []string{"perform_operation", "publish_milestone", "recheck_readiness"}}
+	if result.Invalidation != nil {
+		at := result.Invalidation.Evidence.OccurredAt
+		recovery.AfterOccurredAt = &at
+	} else if result.Status == "expired" && result.Evidence != nil {
+		at := result.Evidence.OccurredAt
+		recovery.AfterOccurredAt = &at
+	}
+	return recovery
 }

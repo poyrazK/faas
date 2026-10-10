@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowInstanceMilestoneRef } from './OperationWorkflowInstanceMilestoneRef.js';
+import type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
 import type { OperationWorkflowRetainedMilestoneFreshness } from './OperationWorkflowRetainedMilestoneFreshness.js';
 import type { OperationWorkflowRetainedMilestoneInvalidation } from './OperationWorkflowRetainedMilestoneInvalidation.js';
 import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
@@ -10,6 +11,7 @@ import type { OperationWorkflowRetainedMilestoneRequirement } from './OperationW
  * Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject, workflow instance, and contract version. Verified does not attest to an external provider or authorize business writes. Invalidated means an applicable retained fact occurred at or after the prerequisite. Expired means the declared maximum evidence age has been reached at evaluation time. Invalidation takes precedence over expiry. Awaiting verification means no matching eligible fact is currently retained and does not prove it never occurred.
  */
 export type OperationWorkflowRetainedMilestone = {
+  recovery?: OperationWorkflowPrerequisiteRecovery;
   freshness?: OperationWorkflowRetainedMilestoneFreshness;
   /**
    * Source and evidence identity of the latest applicable invalidating fact. Present only for invalidated prerequisites.

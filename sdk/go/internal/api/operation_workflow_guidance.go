@@ -60,6 +60,18 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			out = append(out, fmt.Sprintf("Waiting for retained milestone %s from operation %s in this workflow instance and contract version. No matching fact is currently eligible.", p.Milestone, p.Operation))
 		}
 	}
+	for _, result := range r.RetainedMilestones {
+		if recovery := result.Recovery; recovery != nil {
+			message := fmt.Sprintf("Recover through operation %s: check authoritative business rows and the operation requirements, perform any needed business action, commit and publish milestone %s in this workflow instance and contract version, then recheck this transition's readiness.", recovery.Operation, recovery.Milestone)
+			if recovery.AfterOccurredAt != nil {
+				message += " The new fact must occur strictly after " + recovery.AfterOccurredAt.UTC().Format(time.RFC3339Nano) + "."
+			}
+			if result.Freshness != nil {
+				message += fmt.Sprintf(" The new fact must also be younger than %d seconds at the next readiness check.", result.Freshness.MaxAgeSeconds)
+			}
+			out = append(out, message)
+		}
+	}
 	for _, milestone := range r.MissingMilestones {
 		out = append(out, fmt.Sprintf("Include milestone %s with the proposed transition.", milestone))
 	}

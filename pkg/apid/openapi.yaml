@@ -38693,11 +38693,23 @@ components:
       additionalProperties: false
       required: [requirement, status]
       properties:
+        recovery: {$ref: '#/components/schemas/OperationWorkflowPrerequisiteRecovery'}
         freshness: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneFreshness'}
         invalidation: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneInvalidation', description: 'Source and evidence identity of the latest applicable invalidating fact. Present only for invalidated prerequisites.'}
         requirement: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}
         status: {type: string, enum: [verified, awaiting_verification, invalidated, expired]}
         evidence: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef', description: 'Matching retained prerequisite fact; present for verified, invalidated, and expired results. Edges with invalidation or freshness policies select the latest occurrence at or before evaluation time, with publication and identities breaking ties; other edges retain publication order.'}
+    OperationWorkflowPrerequisiteRecovery:
+      description: Application-owned steps to restore a missing or unusable retained prerequisite. Derived from the pinned selector; absent for verified evidence. This is guidance and does not establish that the producer operation is currently executable. Steps are ordered perform_operation then publish_milestone then recheck_readiness. Publication must use the same ownership boundary and workflow instance and contract version. Freshness limits still apply.
+      type: object
+      additionalProperties: false
+      required: [reason, operation, milestone, steps]
+      properties:
+        reason: {type: string, enum: [awaiting_verification, expired, invalidated]}
+        operation: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        after_occurred_at: {type: string, format: date-time, description: 'Exclusive occurrence threshold from the invalidating fact or expired prerequisite. Never fabricate an occurrence time to satisfy this threshold.'}
+        steps: {type: array, minItems: 3, maxItems: 3, uniqueItems: true, items: {type: string, enum: [perform_operation, publish_milestone, recheck_readiness]}}
     OperationWorkflowRetainedMilestoneFreshnessRule:
       description: Versioned maximum age for one declared retained prerequisite; measured from business occurrence time.
       type: object

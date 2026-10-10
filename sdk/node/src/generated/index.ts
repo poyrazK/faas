@@ -1116,6 +1116,7 @@ export type { OperationWorkflowPlannedDecision } from './models/OperationWorkflo
 export type { OperationWorkflowPlannedEffect } from './models/OperationWorkflowPlannedEffect.js';
 export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkflowPlannedInvariant.js';
 export type { OperationWorkflowPolicyRequirement } from './models/OperationWorkflowPolicyRequirement.js';
+export type { OperationWorkflowPrerequisiteRecovery } from './models/OperationWorkflowPrerequisiteRecovery.js';
 export type { OperationWorkflowReadinessOverview } from './models/OperationWorkflowReadinessOverview.js';
 export type { OperationWorkflowReadinessRequest } from './models/OperationWorkflowReadinessRequest.js';
 export type { OperationWorkflowReadinessResponse } from './models/OperationWorkflowReadinessResponse.js';

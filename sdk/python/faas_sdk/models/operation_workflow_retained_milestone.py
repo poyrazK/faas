@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+    from ..models.operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
     from ..models.operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
     from ..models.operation_workflow_retained_milestone_invalidation import (
         OperationWorkflowRetainedMilestoneInvalidation,
@@ -37,6 +38,12 @@ class OperationWorkflowRetainedMilestone:
     """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
     contract."""
     status: OperationWorkflowRetainedMilestoneStatus
+    recovery: OperationWorkflowPrerequisiteRecovery | Unset = UNSET
+    """Application-owned steps to restore a missing or unusable retained prerequisite. Derived from the pinned
+    selector; absent for verified evidence. This is guidance and does not establish that the producer operation is
+    currently executable. Steps are ordered perform_operation then publish_milestone then recheck_readiness.
+    Publication must use the same ownership boundary and workflow instance and contract version. Freshness limits
+    still apply."""
     freshness: OperationWorkflowRetainedMilestoneFreshness | Unset = UNSET
     """Evidence age evaluated at the shared server timestamp. Expiry is inclusive; missing evidence omits expiry
     and age fields. Remaining seconds round up while eligible and are zero after expiry."""
@@ -51,6 +58,10 @@ class OperationWorkflowRetainedMilestone:
         requirement = self.requirement.to_dict()
 
         status: str = self.status
+
+        recovery: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.recovery, Unset):
+            recovery = self.recovery.to_dict()
 
         freshness: dict[str, Any] | Unset = UNSET
         if not isinstance(self.freshness, Unset):
@@ -72,6 +83,8 @@ class OperationWorkflowRetainedMilestone:
                 "status": status,
             }
         )
+        if recovery is not UNSET:
+            field_dict["recovery"] = recovery
         if freshness is not UNSET:
             field_dict["freshness"] = freshness
         if invalidation is not UNSET:
@@ -84,6 +97,7 @@ class OperationWorkflowRetainedMilestone:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+        from ..models.operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
         from ..models.operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
         from ..models.operation_workflow_retained_milestone_invalidation import (
             OperationWorkflowRetainedMilestoneInvalidation,
@@ -96,6 +110,13 @@ class OperationWorkflowRetainedMilestone:
         requirement = OperationWorkflowRetainedMilestoneRequirement.from_dict(d.pop("requirement"))
 
         status = check_operation_workflow_retained_milestone_status(d.pop("status"))
+
+        _recovery = d.pop("recovery", UNSET)
+        recovery: OperationWorkflowPrerequisiteRecovery | Unset
+        if isinstance(_recovery, Unset):
+            recovery = UNSET
+        else:
+            recovery = OperationWorkflowPrerequisiteRecovery.from_dict(_recovery)
 
         _freshness = d.pop("freshness", UNSET)
         freshness: OperationWorkflowRetainedMilestoneFreshness | Unset
@@ -121,6 +142,7 @@ class OperationWorkflowRetainedMilestone:
         operation_workflow_retained_milestone = cls(
             requirement=requirement,
             status=status,
+            recovery=recovery,
             freshness=freshness,
             invalidation=invalidation,
             evidence=evidence,

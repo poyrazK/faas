@@ -170,3 +170,5 @@ type OperationWorkflowPerformanceInstance = api.OperationWorkflowPerformanceInst
 type OperationWorkflowPerformanceInstancesResponse = api.OperationWorkflowPerformanceInstancesResponse
 
 type OperationWorkflowStateSLA = api.OperationWorkflowStateSLA
+
+type OperationWorkflowPrerequisiteRecovery = api.OperationWorkflowPrerequisiteRecovery

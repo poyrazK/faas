@@ -2091,6 +2091,9 @@ from .operation_workflow_planned_decision import OperationWorkflowPlannedDecisio
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
 from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
+from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
+from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
 from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
 from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
@@ -5510,6 +5513,9 @@ __all__ = (
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
     "OperationWorkflowPolicyRequirement",
+    "OperationWorkflowPrerequisiteRecovery",
+    "OperationWorkflowPrerequisiteRecoveryReason",
+    "OperationWorkflowPrerequisiteRecoveryStepsItem",
     "OperationWorkflowReadinessOverview",
     "OperationWorkflowReadinessRequest",
     "OperationWorkflowReadinessResponse",
