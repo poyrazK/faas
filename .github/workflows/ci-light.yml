@@ -438,6 +438,7 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
+          status=0
           pids=()
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
@@ -445,15 +446,21 @@ jobs:
             go test -race -count=1 -p 4 -timeout=16m $PKGS &
             pids+=("$!")
           fi
+          # The cmd/apid race tests alone peak near 19 GB RSS; alongside a
+          # split package they exhaust the 16 GB runner, which is killed with
+          # exit 143. Finish that package set before starting the split.
+          if [[ " $PKGS " == *" ./cmd/apid "* ]]; then
+            wait "${pids[0]}" || status=1
+            pids=()
+          fi
           # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above.
+          # concurrently with the package set above unless it held cmd/apid.
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
             go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
             pids+=("$!")
           done
-          status=0
           for pid in "${pids[@]}"; do
             wait "$pid" || status=1
           done
