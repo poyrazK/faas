@@ -151,30 +151,31 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 // sendRouteProbes sends RouteHealthProbeRequestsPerMinute probes per route
 // and deployment with bounded concurrency and counts attributed responses.
 func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []routeProbePlan, deployments []string, tokens map[string]string, minute time.Time) []state.RouteProbeObservation {
-	type key struct{ deployment, method, path string }
 	var mu sync.Mutex
-	counts := map[key]*state.RouteProbeObservation{}
+	// Each goroutine gets its observation directly; nothing it touches is
+	// written while probes are in flight.
+	counts := []*state.RouteProbeObservation{}
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
 	for _, plan := range plans {
 		for _, deployment := range deployments {
-			k := key{deployment, plan.selector.Method, plan.selector.Path}
-			counts[k] = &state.RouteProbeObservation{DeploymentID: deployment, Method: plan.selector.Method, Path: plan.selector.Path, WindowStart: minute}
+			c := &state.RouteProbeObservation{DeploymentID: deployment, Method: plan.selector.Method, Path: plan.selector.Path, WindowStart: minute}
+			counts = append(counts, c)
+			token, probePath := tokens[deployment], plan.selector.Probe.Path
 			for range api.RouteHealthProbeRequestsPerMinute {
 				wg.Add(1)
 				sem <- struct{}{}
-				go func(k key, probePath string) {
+				go func() {
 					defer wg.Done()
 					defer func() { <-sem }()
 					requestCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbeRequestTimeout)
 					defer cancel()
-					outcome, err := s.routeProbes.Probe(requestCtx, slug, k.deployment, tokens[k.deployment], k.method, probePath)
+					outcome, err := s.routeProbes.Probe(requestCtx, slug, c.DeploymentID, token, c.Method, probePath)
 					if err != nil || outcome == routeprobe.Unattributed {
 						return
 					}
 					mu.Lock()
 					defer mu.Unlock()
-					c := counts[k]
 					c.Requests++
 					switch outcome {
 					case routeprobe.ServerError:
@@ -182,7 +183,7 @@ func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []route
 					case routeprobe.Unauthenticated:
 						c.Unauthenticated++
 					}
-				}(k, plan.selector.Probe.Path)
+				}()
 			}
 		}
 	}
