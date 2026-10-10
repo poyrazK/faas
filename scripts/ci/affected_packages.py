@@ -55,7 +55,6 @@ SPLIT_PACKAGES = ("cmd/apid", "pkg/state")
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
-    "cmd/apid": 40,
     "cmd/gregale": 8,
     "pkg/e2etest": 6,
     "pkg/sched": 5,

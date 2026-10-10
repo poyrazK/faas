@@ -8377,11 +8377,25 @@
     "kind": "configuration"
   },
   {
+    "table": "scenario_test_chaos_matches",
+    "columns": [
+      "account_id",
+      "caller_app_id",
+      "generation",
+      "matches",
+      "rule_id",
+      "run_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_test_members",
     "columns": [
       "account_id",
       "app_id",
       "chaos_expires_at",
+      "chaos_generation",
       "chaos_rules",
       "run_id",
       "workload_name"

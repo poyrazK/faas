@@ -1,13 +1,14 @@
 from typing import Literal
 
 OperationWorkflowAttentionSummaryGroupBy = Literal[
-    "blocker_code", "customer", "dependency_status", "required_outcome_code", "target_operation", "workflow"
+    "blocker_code", "customer", "dependency_status", "owner", "required_outcome_code", "target_operation", "workflow"
 ]
 
 OPERATION_WORKFLOW_ATTENTION_SUMMARY_GROUP_BY_VALUES: set[OperationWorkflowAttentionSummaryGroupBy] = {
     "blocker_code",
     "customer",
     "dependency_status",
+    "owner",
     "required_outcome_code",
     "target_operation",
     "workflow",

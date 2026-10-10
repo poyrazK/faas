@@ -42,15 +42,18 @@ func (o Operation) specification() api.OperationDefinitionSpec {
 // OperationWorkflow declares a read-only business process assembled from
 // milestone facts reported by one or more customer Operations.
 type OperationWorkflow struct {
-	App             string                              `yaml:"app,omitempty" toml:"app"`
-	Name            string                              `yaml:"name" toml:"name"`
-	Title           string                              `yaml:"title" toml:"title"`
-	Version         int                                 `yaml:"version,omitempty" toml:"version"`
-	States          []string                            `yaml:"states,omitempty" toml:"states"`
-	TerminalStates  []string                            `yaml:"terminal_states,omitempty" toml:"terminal_states"`
-	StateStaleAfter map[string]string                   `yaml:"state_stale_after,omitempty" toml:"state_stale_after"`
-	Transitions     []OperationWorkflowTransitionSource `yaml:"transitions,omitempty" toml:"transitions"`
-	Steps           []OperationWorkflowStepSource       `yaml:"steps" toml:"steps"`
+	BlockerEscalations     map[string]api.OperationWorkflowBlockerEscalationPolicy `yaml:"blocker_escalations,omitempty" toml:"blocker_escalations"`
+	App                    string                                                  `yaml:"app,omitempty" toml:"app"`
+	Name                   string                                                  `yaml:"name" toml:"name"`
+	Title                  string                                                  `yaml:"title" toml:"title"`
+	Version                int                                                     `yaml:"version,omitempty" toml:"version"`
+	States                 []string                                                `yaml:"states,omitempty" toml:"states"`
+	TerminalStates         []string                                                `yaml:"terminal_states,omitempty" toml:"terminal_states"`
+	StateSLAWarningPercent map[string]int64                                        `yaml:"state_sla_warning_percent,omitempty" toml:"state_sla_warning_percent"`
+	StateSLABudgets        map[string]string                                       `yaml:"state_sla_budgets,omitempty" toml:"state_sla_budgets"`
+	StateStaleAfter        map[string]string                                       `yaml:"state_stale_after,omitempty" toml:"state_stale_after"`
+	Transitions            []OperationWorkflowTransitionSource                     `yaml:"transitions,omitempty" toml:"transitions"`
+	Steps                  []OperationWorkflowStepSource                           `yaml:"steps" toml:"steps"`
 }
 
 type OperationWorkflowTransitionSource struct {
@@ -271,6 +274,28 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			terminalSet[state] = true
 		}
 		sort.Strings(terminalStates)
+		if len(workflow.StateSLABudgets) > api.OperationWorkflowStatesMax {
+			return nil, fmt.Errorf("workflow SLA budget list exceeds its limit")
+		}
+		stateSLABudgets := make(map[string]int64, len(workflow.StateSLABudgets))
+		for state, text := range workflow.StateSLABudgets {
+			duration, err := time.ParseDuration(text)
+			seconds := int64(duration / time.Second)
+			if err != nil || !stateSet[state] || terminalSet[state] || duration < time.Second || duration%time.Second != 0 || seconds > api.OperationWorkflowStateSLAMaxSeconds {
+				return nil, fmt.Errorf("workflow SLA budget is invalid or references a terminal or undeclared state")
+			}
+			stateSLABudgets[state] = seconds
+		}
+		if len(workflow.StateSLAWarningPercent) > api.OperationWorkflowStatesMax {
+			return nil, fmt.Errorf("workflow SLA warning list exceeds its limit")
+		}
+		stateSLAWarnings := make(map[string]int64, len(workflow.StateSLAWarningPercent))
+		for state, percent := range workflow.StateSLAWarningPercent {
+			if stateSLABudgets[state] < 1 || percent < api.OperationWorkflowStateSLAWarningMinPercent || percent > api.OperationWorkflowStateSLAWarningMaxPercent {
+				return nil, fmt.Errorf("workflow SLA warning requires a budgeted state and a whole percentage from 1 to 99")
+			}
+			stateSLAWarnings[state] = percent
+		}
 		if len(workflow.StateStaleAfter) > api.OperationWorkflowStatesMax {
 			return nil, fmt.Errorf("operation workflow %q declares too many state staleness thresholds", workflow.Name)
 		}
@@ -372,7 +397,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			}
 			seenNames[step.Name], seenPositions[step.Position], seenBindings[binding] = true, true, true
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
-				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter,
+				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
 				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0, Step: step.Name, Label: step.Label,
 				AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})

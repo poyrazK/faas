@@ -7340,13 +7340,24 @@ type SavedRouteRequirement struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ScenarioTestChaosMatch struct {
+	AccountID   pgtype.UUID
+	RunID       string
+	CallerAppID pgtype.UUID
+	Generation  pgtype.UUID
+	RuleID      string
+	Matches     int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type ScenarioTestMember struct {
-	AccountID      pgtype.UUID
-	RunID          string
-	WorkloadName   string
-	AppID          pgtype.UUID
-	ChaosRules     []byte
-	ChaosExpiresAt pgtype.Timestamptz
+	AccountID       pgtype.UUID
+	RunID           string
+	WorkloadName    string
+	AppID           pgtype.UUID
+	ChaosRules      []byte
+	ChaosExpiresAt  pgtype.Timestamptz
+	ChaosGeneration pgtype.UUID
 }
 
 type ScheduleOccurrence struct {

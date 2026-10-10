@@ -865,7 +865,7 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded request faults on service
+// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
 // calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
@@ -873,20 +873,35 @@ type InjectScenarioTestChaosRequest struct {
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From       string `json:"from,omitempty"`
-	To         string `json:"to"`
-	Kind       string `json:"kind"`
-	Percent    int    `json:"percent"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Seed       uint64 `json:"seed"`
+	From             string `json:"from,omitempty"`
+	To               string `json:"to"`
+	Kind             string `json:"kind"`
+	Percent          int    `json:"percent"`
+	LatencyMS        int64  `json:"latency_ms,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Seed             uint64 `json:"seed"`
+	Port             int    `json:"port,omitempty"`
+	Direction        string `json:"direction,omitempty"`
+	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	RulesInstalled int       `json:"rules_installed"`
+	Generation     string    `json:"generation"`
+}
+
+type ScenarioTestChaosMatchesResponse struct {
+	Generation string                   `json:"generation,omitempty"`
+	Matches    []ScenarioTestChaosMatch `json:"matches"`
+}
+
+type ScenarioTestChaosMatch struct {
+	RuleID string `json:"rule_id"`
+	Count  int64  `json:"count"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
