@@ -1091,7 +1091,7 @@
       {{if .Data.Alerts}}
         {{if .Data.Alerts.Rules}}
           <table>
-            <thead><tr><th>Name</th><th>Metric</th><th>Action</th><th>Threshold</th><th>Window</th><th>State</th><th>Last fired</th></tr></thead>
+            <thead><tr><th>Name</th><th>Metric</th><th>Action</th><th>Threshold</th><th>Window</th><th>State</th><th>Last fired</th><th>Delivers to</th></tr></thead>
             <tbody>
               {{range .Data.Alerts.Rules}}
                 <tr>
@@ -1120,10 +1120,11 @@
                     {{end}}
                   </td>
                   <td>{{.LastFiredAtLabel}}</td>
+                  <td>{{.DeliversTo}}</td>
                 </tr>
                 {{if .RecentDeliveries}}
                   <tr>
-                    <td colspan="7" style="background:#fafafa; padding:0.5em 1em;">
+                    <td colspan="8" style="background:#fafafa; padding:0.5em 1em;">
                       <strong>Recent deliveries:</strong>
                       <table style="margin:0.25em 0 0 0;">
                         <thead><tr><th>Fired at</th><th>Status</th><th>HTTP</th><th>Attempts</th><th>Error</th></tr></thead>
@@ -1153,6 +1154,27 @@
         {{else}}
           <p>No alert rules configured for this app. Create one via the public API at <code>POST /v1/apps/{slug}/alerts</code>.</p>
         {{end}}
+      {{end}}
+
+      {{/* ADR-749: account-level Slack, PagerDuty and email channels with
+           their last delivery, so a revoked webhook is visible before an
+           incident needs it. */}}
+      {{if and .Data.Alerts .Data.Alerts.Channels}}
+        <h3 id="notification-channels">Notification channels</h3>
+        <table>
+          <thead><tr><th>Channel</th><th>Kind</th><th>Destination</th><th>Last delivery</th></tr></thead>
+          <tbody>
+            {{range .Data.Alerts.Channels}}
+              <tr>
+                <td>{{.Name}}</td>
+                <td>{{.Kind}}</td>
+                <td><code>{{.Target}}</code></td>
+                <td><span class="badge {{.LastClass}}">{{.LastResult}}</span></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p><small>Add channels with <code>gregale channels add</code> and point rules at them with <code>--channel</code>.</small></p>
       {{end}}
 
       {{/* Issue #1233 / ADR-123 — alert-preset catalog grid.

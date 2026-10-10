@@ -110,7 +110,9 @@ func cmdAlertPresetEnable(args []string) int {
 	fs := newFlagSet("alerts preset enable", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose and review an alert preset with hidden signing-secret input")
 	slug := fs.String("app", "", "app slug (required)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (https://...); optional with --channel")
+	var channels stringListFlag
+	fs.Var(&channels, "channel", "notification channel id to deliver to (repeatable, up to 5)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
@@ -139,8 +141,8 @@ func cmdAlertPresetEnable(args []string) int {
 		return printErr("Invalid webhook secret input", err)
 	}
 	presetName := fs.Arg(0)
-	if *webhookURL == "" || *webhookSecret == "" {
-		return printErr("Missing flags", fmt.Errorf("--webhook-url and --webhook-secret are required"))
+	if (*webhookURL == "" || *webhookSecret == "") && !(len(channels) > 0 && *webhookURL == "" && *webhookSecret == "") {
+		return printErr("Missing flags", fmt.Errorf("--webhook-url and --webhook-secret are required unless --channel names a notification channel"))
 	}
 	if *cooldown != 0 && (*cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes) {
 		return printErr("Invalid cooldown", fmt.Errorf("--cooldown-minutes %d outside [%d,%d]", *cooldown, api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
@@ -153,6 +155,7 @@ func cmdAlertPresetEnable(args []string) int {
 		WebhookSecret: *webhookSecret,
 		Enabled:       enabled,
 		Action:        ptrIfNonEmpty(*action),
+		ChannelIDs:    channels,
 	}
 	if *cooldown != 0 {
 		req.CooldownMinutes = cooldown

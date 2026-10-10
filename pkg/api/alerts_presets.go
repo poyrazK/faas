@@ -123,6 +123,9 @@ type EnableAlertPresetRequest struct {
 	CooldownMinutes *int    `json:"cooldown_minutes,omitempty"`
 	Enabled         *bool   `json:"enabled,omitempty"`
 	Action          *string `json:"action,omitempty"`
+	// ChannelIDs are ADR-749 notification channels the instantiated rule
+	// delivers to; with at least one, the webhook fields may be omitted.
+	ChannelIDs []string `json:"channel_ids,omitempty"`
 }
 
 // TestAlertPresetResponse is the body returned by POST

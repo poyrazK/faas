@@ -85,9 +85,14 @@ Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
 closes the incident the fire opened, and Slack and email get a "Resolved"
 message. Each channel is delivered to independently, so a broken Slack
 webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+Presets take channels too: `gregale alerts preset enable availability --app
+shop --channel OPS_SLACK_ID`.
+
 Deleting a channel removes it from every rule; a rule left with no webhook
-and no channel stops notifying, so check `gregale alerts info` after
-cleaning up channels.
+and no channel stops notifying. The app dashboard's Alerts panel shows where
+each rule delivers ("Delivers to") and lists every channel with its last
+delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
+visible before an incident.
 
 ## Event consumer routing alerts
 

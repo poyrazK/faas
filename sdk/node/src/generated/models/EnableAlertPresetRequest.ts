@@ -11,8 +11,18 @@
  *
  */
 export type EnableAlertPresetRequest = {
-  webhook_url: string;
-  webhook_secret: string;
+  /**
+   * Signed webhook destination; required with webhook_secret unless channel_ids is set.
+   */
+  webhook_url?: string;
+  /**
+   * HMAC secret for the webhook; required with webhook_url unless channel_ids is set.
+   */
+  webhook_secret?: string;
+  /**
+   * Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may be omitted.
+   */
+  channel_ids?: Array<string>;
   /**
    * Action to run when the instantiated alert fires. Omit to
    * use the default webhook-only behavior. The login_target_pressure

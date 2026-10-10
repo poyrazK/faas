@@ -144,7 +144,7 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
+	writeJSON(w, http.StatusCreated, s.alertRuleResponseWithChannels(r.Context(), row))
 }
 
 // enableAlertPresetFromForm is the shared work for both the JSON
@@ -163,24 +163,40 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 	if prob != nil {
 		return state.AlertRule{}, prob
 	}
-	if req.WebhookURL == "" || req.WebhookSecret == "" {
-		return state.AlertRule{}, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required")
+	channelOnly := req.WebhookURL == "" && req.WebhookSecret == "" && len(req.ChannelIDs) > 0
+	if !channelOnly && (req.WebhookURL == "" || req.WebhookSecret == "") {
+		return state.AlertRule{}, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required unless channel_ids names notification channels")
+	}
+	channelIDs, prob := s.validateRuleChannels(ctx, acct.ID, req.ChannelIDs)
+	if prob != nil {
+		return state.AlertRule{}, prob
 	}
 	if req.Action != nil && !api.AlertRuleActionAllowedForMetric(preset.Metric, *req.Action) {
 		return state.AlertRule{}, api.ErrAlertPresetInvalid("login target alerts support webhook action only")
 	}
-	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
-		return state.AlertRule{}, prob
+	if !channelOnly {
+		if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
+			return state.AlertRule{}, prob
+		}
 	}
 	cooldown, enabled, prob := validateAndDeriveEnablePresetOpts(req, preset.DefaultCooldownMinutes)
 	if prob != nil {
 		return state.AlertRule{}, prob
 	}
-	sealed, prob := sealPresetWebhookSecret(ctx, req.WebhookSecret)
+	sealed := []byte{}
+	if !channelOnly {
+		if sealed, prob = sealPresetWebhookSecret(ctx, req.WebhookSecret); prob != nil {
+			return state.AlertRule{}, prob
+		}
+	}
+	row, prob := s.persistInstantiatedAlertRule(ctx, acct, slug, preset, req, sealed, cooldown, enabled)
 	if prob != nil {
 		return state.AlertRule{}, prob
 	}
-	return s.persistInstantiatedAlertRule(ctx, acct, slug, preset, req, sealed, cooldown, enabled)
+	if prob := s.bindRuleChannels(ctx, row, channelIDs); prob != nil {
+		return state.AlertRule{}, prob
+	}
+	return row, nil
 }
 
 // loadAndGateAlertPreset resolves the catalog row by name and
@@ -407,6 +423,9 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 			return api.TestAlertPresetResponse{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "Preset not enabled", "no alert rule has been instantiated from this preset for this app; enable it first")
 		}
 		return api.TestAlertPresetResponse{}, api.ErrCapacity("could not load alert rule for preset")
+	}
+	if rule.WebhookURL == "" {
+		return api.TestAlertPresetResponse{}, api.ErrAlertPresetInvalid("this preset rule delivers only to notification channels; test them with POST /v1/notification-channels/{id}/test")
 	}
 	plaintext, prob := unsealAlertRuleWebhookSecret(ctx, rule.WebhookSecretSealed)
 	if prob != nil {

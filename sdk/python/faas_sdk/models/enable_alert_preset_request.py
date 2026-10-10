@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -25,8 +26,13 @@ class EnableAlertPresetRequest:
 
     """
 
-    webhook_url: str
-    webhook_secret: str
+    webhook_url: str | Unset = UNSET
+    """Signed webhook destination; required with webhook_secret unless channel_ids is set."""
+    webhook_secret: str | Unset = UNSET
+    """HMAC secret for the webhook; required with webhook_url unless channel_ids is set."""
+    channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may
+    be omitted."""
     action: EnableAlertPresetRequestAction | Unset = "webhook"
     """Action to run when the instantiated alert fires. Omit to
     use the default webhook-only behavior. The login_target_pressure
@@ -47,6 +53,13 @@ class EnableAlertPresetRequest:
 
         webhook_secret = self.webhook_secret
 
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
         action: str | Unset = UNSET
         if not isinstance(self.action, Unset):
             action = self.action
@@ -57,12 +70,13 @@ class EnableAlertPresetRequest:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "webhook_url": webhook_url,
-                "webhook_secret": webhook_secret,
-            }
-        )
+        field_dict.update({})
+        if webhook_url is not UNSET:
+            field_dict["webhook_url"] = webhook_url
+        if webhook_secret is not UNSET:
+            field_dict["webhook_secret"] = webhook_secret
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
         if action is not UNSET:
             field_dict["action"] = action
         if cooldown_minutes is not UNSET:
@@ -75,9 +89,18 @@ class EnableAlertPresetRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        webhook_url = d.pop("webhook_url")
+        webhook_url = d.pop("webhook_url", UNSET)
 
-        webhook_secret = d.pop("webhook_secret")
+        webhook_secret = d.pop("webhook_secret", UNSET)
+
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
 
         _action = d.pop("action", UNSET)
         action: EnableAlertPresetRequestAction | Unset
@@ -93,6 +116,7 @@ class EnableAlertPresetRequest:
         enable_alert_preset_request = cls(
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            channel_ids=channel_ids,
             action=action,
             cooldown_minutes=cooldown_minutes,
             enabled=enabled,

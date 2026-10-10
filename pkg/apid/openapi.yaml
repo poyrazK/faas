@@ -60097,17 +60097,23 @@ components:
         catalog; the caller supplies the delivery-side fields and an
         optional safe-release action.
       type: object
-      required: [webhook_url, webhook_secret]
       properties:
         webhook_url:
           type: string
           format: uri
           maxLength: 2048
           example: "https://hooks.example.com/alerts"
+          description: 'Signed webhook destination; required with webhook_secret unless channel_ids is set.'
         webhook_secret:
           type: string
           maxLength: 256
           example: "shh"
+          description: 'HMAC secret for the webhook; required with webhook_url unless channel_ids is set.'
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may be omitted.'
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
