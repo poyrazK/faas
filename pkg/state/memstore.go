@@ -554,11 +554,14 @@ type MemStore struct {
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
-	routeHealthGates          map[string]api.RouteHealthGate
-	routeHealthHistory        map[string][]routeHealthStoredDecision
-	routeHealthNotifications  map[string]routeHealthNotificationState
-	profilePeriodicMonitors   map[string]*memPeriodicMonitor
-	profileAlertStates        map[string]profileAlertState
+	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
+	routeProbeOnce           sync.Once
+	routeProbeData           *memRouteProbes
+	routeHealthGates         map[string]api.RouteHealthGate
+	routeHealthHistory       map[string][]routeHealthStoredDecision
+	routeHealthNotifications map[string]routeHealthNotificationState
+	profilePeriodicMonitors  map[string]*memPeriodicMonitor
+	profileAlertStates       map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -808,9 +811,18 @@ type MemStore struct {
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
 	// committed gRPC batch after a response loss.
-	apiConsumerUsage       map[string]APIConsumerUsageBucket
-	platformTenantUsage    map[string]APIConsumerUsageBucket
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	apiConsumerUsage      map[string]APIConsumerUsageBucket
+	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	platformTenantUsage   map[string]APIConsumerUsageBucket
+	// Consumer plans (ADR-937): plans by ID, assignments by ID, and admission
+	// counters by consumer ID.
+	apiConsumerPlans           map[string]APIConsumerPlan
+	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
+	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
+	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
+	// no request telemetry of its own (ADR-938).
+	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
+	apiConsumerUsageEvents    map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -1451,7 +1463,11 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
+		apiConsumerPlans:                  map[string]APIConsumerPlan{},
+		apiConsumerPlanAssignments:        map[string]APIConsumerPlanAssignment{},
+		apiConsumerPlanAdmissions:         map[string]planAdmissionCounter{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},
 		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},

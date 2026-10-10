@@ -342,7 +342,7 @@ func TestPgPlatformTenantStatementHandoffExcludesAppClaim(t *testing.T) {
 		t.Fatalf("same-period adjustment handoff: %v, %v", created, err)
 	}
 	appStatement, _, err := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
+		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 		Currency: "EUR", BillableUnits: 2, AmountMillicents: 20, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 2, RateCardID: uuid.NewString(),
 			Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 20}},
@@ -372,7 +372,7 @@ func TestPgPlatformTenantStatementHandoffExcludesAppClaim(t *testing.T) {
 	}
 	thirdStart := start.Add(4 * time.Hour)
 	appFirst, _, err := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, PeriodStart: thirdStart, PeriodEnd: thirdStart.Add(time.Hour),
+		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1, PeriodStart: thirdStart, PeriodEnd: thirdStart.Add(time.Hour),
 		Currency: "EUR", BillableUnits: 2, AmountMillicents: 20, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: thirdStart, BillableUnits: 2, RateCardID: uuid.NewString(),
 			Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 20}},

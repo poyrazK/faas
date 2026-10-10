@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -1741,6 +1742,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	// ADR-847: synthetic route probes stay off unless the public origin the
+	// probes enter through is configured.
+	if origin := strings.TrimSpace(deps.getenv("FAAS_ROUTE_PROBE_URL")); origin != "" {
+		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
+	}
 	go srv.runStatusEvaluator(ctx)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
@@ -2012,6 +2018,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	go srv.runAutomaticRouteCheckWorker(ctx)
 	go srv.runRouteMonitorWorker(ctx)
+	go srv.runRouteProbeWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}

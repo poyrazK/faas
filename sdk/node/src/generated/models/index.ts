@@ -2,10 +2,16 @@
 /* istanbul ignore file */
 
 export type { APIConsumerListResponse } from './APIConsumerListResponse.js';
+export type { APIConsumerPlanAssignmentListResponse } from './APIConsumerPlanAssignmentListResponse.js';
+export type { APIConsumerPlanAssignmentResponse } from './APIConsumerPlanAssignmentResponse.js';
+export type { APIConsumerPlanListResponse } from './APIConsumerPlanListResponse.js';
+export type { APIConsumerPlanResponse } from './APIConsumerPlanResponse.js';
 export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
+export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
@@ -165,6 +171,7 @@ export type { ApproveEnvironmentGitRevisionResponse } from './ApproveEnvironment
 export type { ApproveRouteLifecycleRequest } from './ApproveRouteLifecycleRequest.js';
 export type { ApproveRouteRemovalRequest } from './ApproveRouteRemovalRequest.js';
 export type { AppsMetricsResponse } from './AppsMetricsResponse.js';
+export type { AssignAPIConsumerPlanRequest } from './AssignAPIConsumerPlanRequest.js';
 export type { AsyncInvokeResponse } from './AsyncInvokeResponse.js';
 export type { AuditEventResponse } from './AuditEventResponse.js';
 export type { AuditLogEntry } from './AuditLogEntry.js';
@@ -245,6 +252,7 @@ export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';
+export type { CreateAPIConsumerPlanRequest } from './CreateAPIConsumerPlanRequest.js';
 export type { CreateAPIConsumerRateCardRequest } from './CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './CreateAPIConsumerRequest.js';
 export type { CreateAPIConsumerUsageStatementRequest } from './CreateAPIConsumerUsageStatementRequest.js';
@@ -1502,6 +1510,7 @@ export type { RouteHealthInvestigationSide } from './RouteHealthInvestigationSid
 export type { RouteHealthInvestigationWindow } from './RouteHealthInvestigationWindow.js';
 export type { RouteHealthLatencyDiagnostics } from './RouteHealthLatencyDiagnostics.js';
 export type { RouteHealthLatencySample } from './RouteHealthLatencySample.js';
+export type { RouteHealthProbe } from './RouteHealthProbe.js';
 export type { RouteHealthReport } from './RouteHealthReport.js';
 export type { RouteHealthRoute } from './RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './RouteHealthStatusCounts.js';
@@ -1527,6 +1536,7 @@ export type { RouteMonitorIncident } from './RouteMonitorIncident.js';
 export type { RouteMonitorIncidentEscalation } from './RouteMonitorIncidentEscalation.js';
 export type { RouteMonitorIncidentEscalationSignal } from './RouteMonitorIncidentEscalationSignal.js';
 export type { RouteMonitorIncidentPage } from './RouteMonitorIncidentPage.js';
+export type { RouteMonitorIncidentRollback } from './RouteMonitorIncidentRollback.js';
 export type { RouteMonitorIncidentTimelineEntry } from './RouteMonitorIncidentTimelineEntry.js';
 export type { RouteMonitorIncidentTimelineRoute } from './RouteMonitorIncidentTimelineRoute.js';
 export type { RouteMonitorPreview } from './RouteMonitorPreview.js';
@@ -1672,6 +1682,7 @@ export type { TriggerRoutedTo } from './TriggerRoutedTo.js';
 export type { TriggerWorkBinding } from './TriggerWorkBinding.js';
 export type { TrustedSigner } from './TrustedSigner.js';
 export type { UDPListenerResponse } from './UDPListenerResponse.js';
+export type { UpdateAPIConsumerPlanLimitsRequest } from './UpdateAPIConsumerPlanLimitsRequest.js';
 export type { UpdateAccountBillingInfoRequest } from './UpdateAccountBillingInfoRequest.js';
 export type { UpdateAccountReleaseWebhookRequest } from './UpdateAccountReleaseWebhookRequest.js';
 export type { UpdateAlertRuleRequest } from './UpdateAlertRuleRequest.js';

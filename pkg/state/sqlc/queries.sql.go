@@ -4699,6 +4699,25 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx co
 	return i, err
 }
 
+const claimRouteProbeRound = `-- name: ClaimRouteProbeRound :one
+INSERT INTO route_probe_rounds (app_id, window_start)
+VALUES ($1::text::uuid, $2)
+ON CONFLICT (app_id, window_start) DO NOTHING
+RETURNING app_id::text
+`
+
+type ClaimRouteProbeRoundParams struct {
+	AppID       string
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error) {
+	row := db.QueryRow(ctx, claimRouteProbeRound, arg.AppID, arg.WindowStart)
+	var app_id string
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const claimRuntimeUpgradeOperation = `-- name: ClaimRuntimeUpgradeOperation :one
 WITH due AS (
  SELECT id FROM runtime_upgrade_operations WHERE (phase IN ('prepared','waiting') OR (phase='reserved' AND deadline_at<=clock_timestamp()))
@@ -33216,6 +33235,52 @@ func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRouteProbeTargets = `-- name: ListRouteProbeTargets :many
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
+FROM route_health_gates g
+JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+WHERE jsonb_path_exists(g.routes, '$[*].probe')
+ORDER BY a.id, d.id
+LIMIT $1::int
+`
+
+type ListRouteProbeTargetsRow struct {
+	AppID       string
+	AccountID   string
+	Slug        string
+	CandidateID string
+}
+
+// ADR-847: apps whose route health gate opts a selector into probes and that
+// have exactly one in-flight canary candidate in the default scope.
+func (q *Queries) ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error) {
+	rows, err := db.Query(ctx, listRouteProbeTargets, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRouteProbeTargetsRow{}
+	for rows.Next() {
+		var i ListRouteProbeTargetsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AccountID,
+			&i.Slug,
+			&i.CandidateID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReleases = `-- name: ListRuntimeReleases :many
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
 `
@@ -37517,6 +37582,30 @@ func (q *Queries) LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMo
 		&i.ActiveIncidentID,
 		&i.LastHealthyDeployment,
 	)
+	return i, err
+}
+
+const lockRouteMonitorRollbackIncident = `-- name: LockRouteMonitorRollbackIncident :one
+SELECT coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=$1::text::uuid AND account_id=$2::text::uuid FOR UPDATE
+`
+
+type LockRouteMonitorRollbackIncidentParams struct {
+	AppID     string
+	AccountID string
+}
+
+type LockRouteMonitorRollbackIncidentRow struct {
+	LastDeploymentID string
+	ActiveIncidentID string
+}
+
+// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+// claim reads the incident that evaluation committed.
+func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error) {
+	row := db.QueryRow(ctx, lockRouteMonitorRollbackIncident, arg.AppID, arg.AccountID)
+	var i LockRouteMonitorRollbackIncidentRow
+	err := row.Scan(&i.LastDeploymentID, &i.ActiveIncidentID)
 	return i, err
 }
 
@@ -49529,6 +49618,24 @@ func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg P
 	return err
 }
 
+const pruneRouteProbeObservations = `-- name: PruneRouteProbeObservations :exec
+DELETE FROM route_probe_observations WHERE window_start < $1
+`
+
+func (q *Queries) PruneRouteProbeObservations(ctx context.Context, db DBTX, before pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, pruneRouteProbeObservations, before)
+	return err
+}
+
+const pruneRouteProbeRounds = `-- name: PruneRouteProbeRounds :exec
+DELETE FROM route_probe_rounds WHERE window_start < $1
+`
+
+func (q *Queries) PruneRouteProbeRounds(ctx context.Context, db DBTX, before pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, pruneRouteProbeRounds, before)
+	return err
+}
+
 const pruneRuntimeUpgradeGatewayDrains = `-- name: PruneRuntimeUpgradeGatewayDrains :execrows
 DELETE FROM runtime_upgrade_gateway_drains WHERE (app_id,gateway_session_id) IN
  (SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_drains WHERE expires_at<=statement_timestamp()
@@ -56336,7 +56443,8 @@ func (q *Queries) ReadRouteLifecycleApproval(ctx context.Context, db DBTX, arg R
 const readRouteMonitorConfig = `-- name: ReadRouteMonitorConfig :one
 SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
 	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
- CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END ||
+ CASE WHEN coalesce(m.on_violation,'report')='report' THEN '{}'::jsonb ELSE jsonb_build_object('on_violation',m.on_violation) END)::text AS config
 FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
 WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
 `
@@ -59583,6 +59691,42 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recordRouteProbeObservation = `-- name: RecordRouteProbeObservation :exec
+INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (app_id, deployment_id, method, path, window_start) DO UPDATE SET
+ requests = route_probe_observations.requests + EXCLUDED.requests,
+ server_errors = route_probe_observations.server_errors + EXCLUDED.server_errors,
+ unauthenticated = route_probe_observations.unauthenticated + EXCLUDED.unauthenticated
+`
+
+type RecordRouteProbeObservationParams struct {
+	AppID           string
+	AccountID       string
+	DeploymentID    string
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+func (q *Queries) RecordRouteProbeObservation(ctx context.Context, db DBTX, arg RecordRouteProbeObservationParams) error {
+	_, err := db.Exec(ctx, recordRouteProbeObservation,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.Method,
+		arg.Path,
+		arg.WindowStart,
+		arg.Requests,
+		arg.ServerErrors,
+		arg.Unauthenticated,
+	)
+	return err
 }
 
 const recordRuntimeReleaseQualification = `-- name: RecordRuntimeReleaseQualification :one
@@ -64533,6 +64677,69 @@ func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, a
 			&i.TrafficPercent,
 			&i.CanaryStep,
 			&i.CanaryTotalSteps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const routeProbeObservations = `-- name: RouteProbeObservations :many
+SELECT deployment_id::text AS deployment_id, method, path, window_start, requests, server_errors, unauthenticated
+FROM route_probe_observations
+WHERE app_id = $1::text::uuid AND account_id = $2::text::uuid
+ AND deployment_id IN ($3::text::uuid, $4::text::uuid)
+ AND window_start >= $5 AND window_start < $6
+ORDER BY window_start, method, path
+`
+
+type RouteProbeObservationsParams struct {
+	AppID       string
+	AccountID   string
+	CandidateID string
+	StableID    string
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+}
+
+type RouteProbeObservationsRow struct {
+	DeploymentID    string
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+func (q *Queries) RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error) {
+	rows, err := db.Query(ctx, routeProbeObservations,
+		arg.AppID,
+		arg.AccountID,
+		arg.CandidateID,
+		arg.StableID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteProbeObservationsRow{}
+	for rows.Next() {
+		var i RouteProbeObservationsRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.Method,
+			&i.Path,
+			&i.WindowStart,
+			&i.Requests,
+			&i.ServerErrors,
+			&i.Unauthenticated,
 		); err != nil {
 			return nil, err
 		}
@@ -69768,9 +69975,9 @@ func (q *Queries) WriteRouteHealthNotificationState(ctx context.Context, db DBTX
 }
 
 const writeRouteMonitorConfig = `-- name: WriteRouteMonitorConfig :exec
-INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
-VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text)
-ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by,on_violation)
+VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text,$7::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,on_violation=EXCLUDED.on_violation,
 	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb
 `
 
@@ -69781,6 +69988,7 @@ type WriteRouteMonitorConfigParams struct {
 	Revision        int64
 	Routes          []byte
 	CustomerGroupBy string
+	OnViolation     string
 }
 
 func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg WriteRouteMonitorConfigParams) error {
@@ -69791,6 +69999,7 @@ func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg Writ
 		arg.Revision,
 		arg.Routes,
 		arg.CustomerGroupBy,
+		arg.OnViolation,
 	)
 	return err
 }

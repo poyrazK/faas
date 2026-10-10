@@ -1322,21 +1322,46 @@ type APIConsumerUsageResponse struct {
 // price. If effective_from is omitted, the server starts the card at the next
 // UTC minute so no partial minute is priced under two different cards.
 type CreateAPIConsumerRateCardRequest struct {
-	Currency               string     `json:"currency"`
-	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
-	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+	Currency               string `json:"currency"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-934).
+	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
+	// Tiers is an optional graduated ladder (ADR-935) that replaces the
+	// flat price and allowance; price_millicents_per_unit is then ignored.
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights counts each request on a listed "METHOD /template" route
+	// as that many units (ADR-936); unlisted routes count 1.
+	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	// PlanID adds the version to a consumer plan's price history (ADR-937);
+	// empty prices the app default plan.
+	PlanID        string     `json:"plan_id,omitempty"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder. Units whose
+// position in the consumer's UTC month is below up_to (and at or above the
+// previous step's up_to) cost price_millicents_per_unit; a null up_to is the
+// unbounded last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 }
 
 // APIConsumerRateCardResponse is the owner-facing representation of one
 // immutable app-level request price.
 type APIConsumerRateCardResponse struct {
-	ID                     string    `json:"id"`
-	AppID                  string    `json:"app_id"`
-	Currency               string    `json:"currency"`
-	Unit                   string    `json:"unit"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	EffectiveFrom          time.Time `json:"effective_from"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                     string                    `json:"id"`
+	AppID                  string                    `json:"app_id"`
+	Currency               string                    `json:"currency"`
+	Unit                   string                    `json:"unit"`
+	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
+	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
+	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	PlanID                 string                    `json:"plan_id,omitempty"`
+	EffectiveFrom          time.Time                 `json:"effective_from"`
+	CreatedAt              time.Time                 `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1353,7 +1378,12 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1386,17 +1416,28 @@ type APIConsumerUsageStatementBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance. An adjustment may charge units it
+	// does not add when late usage exhausted the allowance sooner.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps. In an
+	// adjustment, entries and amount_millicents can be negative when late
+	// usage moved billed units into a cheaper step; the revision total
+	// never is.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
 // snapshot that can be exported to a customer's payment system through the
-// usage_statement.finalized webhook.
+// usage_statement.finalized webhook. Revision orders the snapshots of one
+// period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
 	PeriodEnd        time.Time                                 `json:"period_end"`
+	Revision         int                                       `json:"revision"`
 	Status           string                                    `json:"status"`
 	Currency         string                                    `json:"currency,omitempty"`
 	BillableUnits    int64                                     `json:"billable_units"`

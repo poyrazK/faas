@@ -262,6 +262,39 @@ type ApiConsumer struct {
 	PlatformTenantManaged bool
 }
 
+// Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).
+type ApiConsumerPlan struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Name                 string
+	MaxRequestsPerMinute int64
+	MaxUnitsPerMonth     int64
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
+// Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.
+type ApiConsumerPlanAdmission struct {
+	ConsumerID  pgtype.UUID
+	AccountID   pgtype.UUID
+	MinuteStart pgtype.Timestamptz
+	MinuteUsed  int64
+	MonthStart  pgtype.Timestamptz
+	MonthUsed   int64
+}
+
+// Append-only, minute-effective plan assignments; a NULL plan_id returns the consumer to the default plan.
+type ApiConsumerPlanAssignment struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ConsumerID    pgtype.UUID
+	PlanID        pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ApiConsumerRateCard struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -271,6 +304,25 @@ type ApiConsumerRateCard struct {
 	PriceMillicentsPerUnit int64
 	EffectiveFrom          pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
+	// Free request units per consumer per UTC calendar month, consumed in minute order while this card is effective.
+	IncludedUnitsPerMonth int64
+	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.
+	Tiers []byte
+	// Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.
+	RouteWeights []byte
+	// Plan whose price history this card belongs to; NULL is the app default plan.
+	PlanID pgtype.UUID
+}
+
+// Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
+type ApiConsumerRouteUsageMinute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ConsumerKey   string
+	Route         string
+	WindowStart   pgtype.Timestamptz
+	BillableUnits int64
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type ApiConsumerUsageEvent struct {
@@ -317,6 +369,8 @@ type ApiConsumerUsageStatement struct {
 	AsOf             pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
 	FinalizedAt      pgtype.Timestamptz
+	// Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.
+	Revision int32
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -6874,6 +6928,7 @@ type RouteMonitor struct {
 	CustomerGroupBy       string
 	CustomerRecoveryState []byte
 	LastHealthyDeployment []byte
+	OnViolation           string
 }
 
 type RouteMonitorIncident struct {
@@ -6897,6 +6952,24 @@ type RoutePolicyReceipt struct {
 	RequestSha256  string
 	Receipt        []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type RouteProbeObservation struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+type RouteProbeRound struct {
+	AppID       pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	ClaimedAt   pgtype.Timestamptz
 }
 
 type RouteRemovalApproval struct {

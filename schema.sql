@@ -12712,6 +12712,76 @@ CREATE TABLE public.alert_rules (
 
 
 --
+-- Name: api_consumer_plan_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_admissions (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    minute_start timestamp with time zone NOT NULL,
+    minute_used bigint DEFAULT 0 NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    month_used bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT api_consumer_plan_admissions_used_chk CHECK (((minute_used >= 0) AND (month_used >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_admissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_admissions IS 'Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.';
+
+
+--
+-- Name: api_consumer_plan_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    plan_id uuid,
+    effective_from timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_plan_assignments_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_assignments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_assignments IS 'Append-only, minute-effective plan assignments; a NULL plan_id returns the consumer to the default plan.';
+
+
+--
+-- Name: api_consumer_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    max_requests_per_minute bigint DEFAULT 0 NOT NULL,
+    max_units_per_month bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
+    CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: TABLE api_consumer_plans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).';
+
+
+--
 -- Name: api_consumer_rate_cards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12724,11 +12794,72 @@ CREATE TABLE public.api_consumer_rate_cards (
     price_millicents_per_unit bigint NOT NULL,
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    plan_id uuid,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
+    CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
     CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = 'request'::text))
 );
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.included_units_per_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.included_units_per_month IS 'Free request units per consumer per UTC calendar month, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.route_weights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.route_weights IS 'Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.plan_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.plan_id IS 'Plan whose price history this card belongs to; NULL is the app default plan.';
+
+
+--
+-- Name: api_consumer_route_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_route_usage_minutes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_key text NOT NULL,
+    route text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    billable_units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_route_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT api_consumer_route_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_route_usage_minutes_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT api_consumer_route_usage_minutes_units_chk CHECK ((billable_units >= 0))
+);
+
+
+--
+-- Name: TABLE api_consumer_route_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
 
 
 --
@@ -12819,13 +12950,22 @@ CREATE TABLE public.api_consumer_usage_statements (
     as_of timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
+    revision integer DEFAULT 1 NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
-    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = 'draft'::text) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
+    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
-    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text]))),
+    CONSTRAINT api_consumer_usage_statements_revision_chk CHECK ((revision > 0)),
+    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text, 'superseded'::text]))),
     CONSTRAINT api_consumer_usage_statements_totals_chk CHECK (((billable_units >= 0) AND (unpriced_units >= 0) AND (amount_millicents >= 0)))
 );
+
+
+--
+-- Name: COLUMN api_consumer_usage_statements.revision; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_usage_statements.revision IS 'Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.';
 
 
 --
@@ -24555,11 +24695,13 @@ CREATE TABLE public.route_monitors (
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
+    on_violation text DEFAULT 'report'::text NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
     CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT route_monitors_on_violation_check CHECK ((on_violation = ANY (ARRAY['report'::text, 'rollback'::text]))),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
     CONSTRAINT route_monitors_updated_at_check CHECK (isfinite(updated_at))
@@ -24581,6 +24723,43 @@ CREATE TABLE public.route_policy_receipts (
     CONSTRAINT route_policy_receipts_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 200))),
     CONSTRAINT route_policy_receipts_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
     CONSTRAINT route_policy_receipts_request_sha256_check CHECK ((request_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: route_probe_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_observations (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    server_errors bigint DEFAULT 0 NOT NULL,
+    unauthenticated bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT route_probe_observations_check CHECK (((server_errors + unauthenticated) <= requests)),
+    CONSTRAINT route_probe_observations_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT route_probe_observations_path_check CHECK (((octet_length(path) >= 1) AND (octet_length(path) <= 240))),
+    CONSTRAINT route_probe_observations_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT route_probe_observations_server_errors_check CHECK ((server_errors >= 0)),
+    CONSTRAINT route_probe_observations_unauthenticated_check CHECK ((unauthenticated >= 0)),
+    CONSTRAINT route_probe_observations_window_start_check CHECK (isfinite(window_start))
+);
+
+
+--
+-- Name: route_probe_rounds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_rounds (
+    app_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT route_probe_rounds_claimed_at_check CHECK (isfinite(claimed_at)),
+    CONSTRAINT route_probe_rounds_window_start_check CHECK (isfinite(window_start))
 );
 
 
@@ -26622,11 +26801,51 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
--- Name: api_consumer_rate_cards api_consumer_rate_cards_app_effective_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.api_consumer_rate_cards
-    ADD CONSTRAINT api_consumer_rate_cards_app_effective_uniq UNIQUE (app_id, effective_from);
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_consumer_effective_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_consumer_effective_uniq UNIQUE (consumer_id, effective_from);
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_id_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_id_uniq UNIQUE (app_id, id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_pkey PRIMARY KEY (id);
 
 
 --
@@ -26635,6 +26854,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_rate_cards
     ADD CONSTRAINT api_consumer_rate_cards_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
 
 
 --
@@ -26686,11 +26913,11 @@ ALTER TABLE ONLY public.api_consumer_usage_statement_handoffs
 
 
 --
--- Name: api_consumer_usage_statements api_consumer_usage_statements_period_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: api_consumer_usage_statements api_consumer_usage_statements_period_revision_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.api_consumer_usage_statements
-    ADD CONSTRAINT api_consumer_usage_statements_period_uniq UNIQUE (app_id, consumer_id, period_start, period_end);
+    ADD CONSTRAINT api_consumer_usage_statements_period_revision_uniq UNIQUE (app_id, consumer_id, period_start, period_end, revision);
 
 
 --
@@ -31662,6 +31889,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: route_probe_observations route_probe_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_pkey PRIMARY KEY (app_id, deployment_id, method, path, window_start);
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_pkey PRIMARY KEY (app_id, window_start);
+
+
+--
 -- Name: route_removal_approvals route_removal_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32626,10 +32869,31 @@ CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) W
 
 
 --
+-- Name: api_consumer_plan_assignments_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_plan_assignments_lookup_idx ON public.api_consumer_plan_assignments USING btree (account_id, app_id, consumer_id, effective_from DESC);
+
+
+--
 -- Name: api_consumer_rate_cards_account_app_effective_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX api_consumer_rate_cards_account_app_effective_idx ON public.api_consumer_rate_cards USING btree (account_id, app_id, effective_from);
+
+
+--
+-- Name: api_consumer_rate_cards_default_effective_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, effective_from) WHERE (plan_id IS NULL);
+
+
+--
+-- Name: api_consumer_rate_cards_plan_effective_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
 
 
 --
@@ -37995,6 +38259,20 @@ CREATE INDEX route_monitors_due_idx ON public.route_monitors USING btree (next_c
 
 
 --
+-- Name: route_probe_observations_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_observations_window_idx ON public.route_probe_observations USING btree (window_start);
+
+
+--
+-- Name: route_probe_rounds_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_rounds_window_idx ON public.route_probe_rounds USING btree (window_start);
+
+
+--
 -- Name: route_removal_approval_lookup; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -42580,6 +42858,70 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_rate_cards api_consumer_rate_cards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42593,6 +42935,30 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_rate_cards
     ADD CONSTRAINT api_consumer_rate_cards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_rate_cards api_consumer_rate_cards_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_rate_cards
+    ADD CONSTRAINT api_consumer_rate_cards_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -49313,6 +49679,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 ALTER TABLE ONLY public.route_policy_receipts
     ADD CONSTRAINT route_policy_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_observations route_probe_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

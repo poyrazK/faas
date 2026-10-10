@@ -1,0 +1,26 @@
+# ADR-935: Graduated tiers on app consumer rate cards
+
+- **Status:** accepted
+- **Date:** 2026-10-09
+- **Decision:** An app rate card can carry a graduated ladder of 2 to 10 `{up_to, price_millicents_per_unit}` steps.
+  - A consumer's units are counted per UTC calendar month in minute order (ADR-934), and each unit costs the price of the step its monthly position falls in.
+  - The ladder replaces the flat price and the allowance. A free first step expresses "the first N requests are free".
+  - Volume (all-units) pricing is not supported.
+- **Why:** A single price plus an allowance cannot express volume discounts. Graduated tiers are the common shape for API pricing, and they reuse the minute-order counting that allowances introduced.
+- **Ladder shape:**
+  - Bounds increase strictly from a positive value, and only the last step is unbounded.
+  - Prices are non-negative, and only the first step may be free. That keeps a minute's charged units from shrinking as the month's usage grows, so the existing coverage checks still hold.
+  - Like allowances, a card cannot be backdated once any of the app's cards includes units or tiers.
+- **Statement buckets:** a bucket priced by a tiered card records `tier_units`, its units in each step. Its amount is the sum of each step's units times its price. Flat and allowance buckets are unchanged.
+- **Exact re-rating:** late usage early in a month shifts the positions of everything after it. A minute already billed can move into a cheaper step, so a correct adjustment needs a credit on that minute and a charge on the late minute.
+  - An adjustment revision therefore re-rates tiered minutes exactly. Each minute's delta is the difference in each step's units and in amount, and can be negative.
+  - The revision's total is the month's total growth and is never negative. With one ladder in effect, that total depends only on how many units the month has, so it can only grow.
+  - If re-rating would lower the total, which needs a mid-month card change with unusual prices, the request fails with 409 rather than issuing a credit.
+- **Whole-month periods:** statements of any period priced by a tiered card must cover exactly one UTC calendar month. With several statements in a month, re-rating would move charges from one statement to another, which needs credits Gregale does not issue.
+- **Platform tenant statements:** a cross-app statement that would fall back to an app card with tiers returns 422, as for allowances.
+- **Rejected alternatives:**
+  - Volume pricing, where the month's total picks one price for every unit, re-prices the whole month whenever a boundary is crossed, so every late unit would rewrite every line.
+  - Freezing billed positions and appending late units would undercharge free and cheaper steps, granting them twice.
+  - Storing the full per-minute step split as rows multiplies statement size; a short `tier_units` array per bucket keeps statements auditable at a small cost.
+
+Migration headers retain the original billing-branch ADR number 845 to preserve published migration bytes; this decision is now numbered 935.

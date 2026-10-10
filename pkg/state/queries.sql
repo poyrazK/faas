@@ -12759,14 +12759,15 @@ ORDER BY s.start,s.deployment_id,s.position;
 -- name: ReadRouteMonitorConfig :one
 SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
 	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
- CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END ||
+ CASE WHEN coalesce(m.on_violation,'report')='report' THEN '{}'::jsonb ELSE jsonb_build_object('on_violation',m.on_violation) END)::text AS config
 FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
 WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
 
 -- name: WriteRouteMonitorConfig :exec
-INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
-VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text)
-ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by,on_violation)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text,sqlc.arg(on_violation)::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,on_violation=EXCLUDED.on_violation,
 	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb;
 
 -- name: ReadRouteMonitorRecoveryCustomers :one
@@ -12781,6 +12782,12 @@ ORDER BY m.next_check_at,m.app_id LIMIT sqlc.arg(batch_limit)::integer;
 SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
  ,coalesce(last_healthy_deployment,'{}'::jsonb)::text AS last_healthy_deployment
 FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE SKIP LOCKED;
+
+-- name: LockRouteMonitorRollbackIncident :one
+-- ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+-- claim reads the incident that evaluation committed.
+SELECT coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
 
 -- name: WriteRouteMonitorState :exec
 UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_id=nullif(sqlc.arg(deployment_id)::text,'')::uuid,
@@ -17282,3 +17289,43 @@ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
 SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+-- name: ListRouteProbeTargets :many
+-- ADR-847: apps whose route health gate opts a selector into probes and that
+-- have exactly one in-flight canary candidate in the default scope.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
+FROM route_health_gates g
+JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+WHERE jsonb_path_exists(g.routes, '$[*].probe')
+ORDER BY a.id, d.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ClaimRouteProbeRound :one
+INSERT INTO route_probe_rounds (app_id, window_start)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(window_start))
+ON CONFLICT (app_id, window_start) DO NOTHING
+RETURNING app_id::text;
+
+-- name: RecordRouteProbeObservation :exec
+INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(deployment_id)::text::uuid, sqlc.arg(method), sqlc.arg(path), sqlc.arg(window_start), sqlc.arg(requests), sqlc.arg(server_errors), sqlc.arg(unauthenticated))
+ON CONFLICT (app_id, deployment_id, method, path, window_start) DO UPDATE SET
+ requests = route_probe_observations.requests + EXCLUDED.requests,
+ server_errors = route_probe_observations.server_errors + EXCLUDED.server_errors,
+ unauthenticated = route_probe_observations.unauthenticated + EXCLUDED.unauthenticated;
+
+-- name: RouteProbeObservations :many
+SELECT deployment_id::text AS deployment_id, method, path, window_start, requests, server_errors, unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+ORDER BY window_start, method, path;
+
+-- name: PruneRouteProbeObservations :exec
+DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
+
+-- name: PruneRouteProbeRounds :exec
+DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);

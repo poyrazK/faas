@@ -72,6 +72,12 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 933 | [App consumer statement revisions and unbilled platform failures](933-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
+| 934 | [Monthly included units on app consumer rate cards](934-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
+| 935 | [Graduated tiers on app consumer rate cards](935-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
+| 936 | [Route weights on app consumer rate cards](936-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
+| 937 | [Named consumer plans](937-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
+| 938 | [Consumer usage completeness check](938-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
@@ -612,6 +618,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
 - [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
 - [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
+- [ADR-843: pre-promotion API route checks](843-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
 
 ## Route review and release protection
 
@@ -639,6 +646,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
+- [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
+- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -646,6 +656,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
+- [ADR-845: Opt-in automatic rollback for early production route incidents](845-route-monitor-automatic-rollback.md) — request one checked rollback to the saved healthy baseline when an error budget is violated within 30 minutes of release
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
 - [ADR-593: Static Go net/http route impact](593-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence
@@ -705,7 +716,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
-- [ADR-843: GCS conditional PUT capabilities](843-gcs-conditional-put-capabilities.md)
+- [ADR-939: GCS conditional PUT capabilities](939-gcs-conditional-put-capabilities.md)
 - [ADR-911: Bounded batch event publication](911-batch-event-publication.md)
 
 - [ADR-912: Event retention health and expiry warnings](912-event-retention-health.md)
