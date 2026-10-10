@@ -9227,3 +9227,26 @@ This remains an internal protocol with no built-in qualified native adapter.
 Whole-stage final publication and terminal compensation reconciliation remain
 outstanding, and public full-stage admission remains gated. Live R2/OVH
 qualification remains deferred at the user's request.
+
+### Checkpoint compensation reconciliation report
+
+The private store now assembles a non-secret, read-only compensation report under
+the original compensation lease and the capture-retirement clock/operation/app
+locks. It authenticates terminal capture retirement and its complete original
+source compensation, native borrower retirement and catalogue proof chain. Missing,
+nonterminal or corrupted evidence returns no partial report. The report binds the
+operation/revision, exact resource inventory digest, frozen source revision and
+source/capture terminal proof digests; replay dispatches no native IO and changes
+no operation or resource status.
+
+The report exposes unverified workload/configuration scopes from frozen workload
+records even when their resource labels are absent. Unsupported resource kinds,
+foreign data-source identities and target release sets remain explicit blockers.
+A `compensated` resource label cannot clear them. Blockers have deterministic
+ordering and contain no copied settings, secret values or native credentials.
+
+This is evidence assembly for whole-stage reconciliation, not terminal mutation
+authority. Workload runtime/configuration retirement and atomic terminal proof
+persistence remain outstanding. The generic checkpoint compensation transition
+and public full-stage admission remain closed; native provider qualification stays
+deferred at the user's request.
