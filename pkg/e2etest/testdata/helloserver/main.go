@@ -18,6 +18,7 @@
 //	-no-listen     never bind the port, so liveness sees conn_refused
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
+//	-echo-session  interactive app-task fixture: report tty and size, echo lines
 package main
 
 import (
@@ -65,7 +66,12 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	flag.Parse()
+	if *echoSession {
+		runEchoSession()
+		return
+	}
 	if *addr == "" {
 		port := os.Getenv("PORT")
 		if port == "" {
