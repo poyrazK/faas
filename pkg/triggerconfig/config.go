@@ -24,6 +24,13 @@ var (
 const (
 	kafkaSASLPasswordNamespace = "trigger_kafka_sasl_password"
 	kafkaTLSClientKeyNamespace = "trigger_kafka_tls_client_key"
+	redisPasswordNamespace     = "trigger_redis_password"
+	redisTLSClientKeyNamespace = "trigger_redis_tls_client_key"
+	natsPasswordNamespace      = "trigger_nats_password"
+	natsTokenNamespace         = "trigger_nats_token"
+	natsCredentialsNamespace   = "trigger_nats_credentials"
+	natsNKeyNamespace          = "trigger_nats_nkey"
+	natsTLSClientKeyNamespace  = "trigger_nats_tls_client_key"
 )
 
 type rawObject map[string]json.RawMessage
@@ -46,6 +53,53 @@ var kafkaSecretLeaves = []secretLeaf{
 		block: "tls", plain: "client_key", sealed: "client_key_sealed", marker: "client_key_set",
 		namespace: kafkaTLSClientKeyNamespace, maxBytes: api.KafkaTLSClientKeyMaxBytes,
 	},
+}
+
+var redisSecretLeaves = []secretLeaf{
+	{
+		block: "", plain: "password", sealed: "password_sealed", marker: "password_set",
+		namespace: redisPasswordNamespace, maxBytes: api.RedisPasswordMaxBytes,
+	},
+	{
+		block: "tls", plain: "client_key", sealed: "client_key_sealed", marker: "client_key_set",
+		namespace: redisTLSClientKeyNamespace, maxBytes: api.TLSClientKeyMaxBytes,
+	},
+}
+
+var natsSecretLeaves = []secretLeaf{
+	{
+		block: "", plain: "password", sealed: "password_sealed", marker: "password_set",
+		namespace: natsPasswordNamespace, maxBytes: api.NATSPasswordMaxBytes,
+	},
+	{
+		block: "", plain: "token", sealed: "token_sealed", marker: "token_set",
+		namespace: natsTokenNamespace, maxBytes: api.NATSTokenMaxBytes,
+	},
+	{
+		block: "", plain: "credentials", sealed: "credentials_sealed", marker: "credentials_set",
+		namespace: natsCredentialsNamespace, maxBytes: api.NATSCredentialsMaxBytes,
+	},
+	{
+		block: "", plain: "nkey", sealed: "nkey_sealed", marker: "nkey_set",
+		namespace: natsNKeyNamespace, maxBytes: api.NATSNKeyMaxBytes,
+	},
+	{
+		block: "tls", plain: "client_key", sealed: "client_key_sealed", marker: "client_key_set",
+		namespace: natsTLSClientKeyNamespace, maxBytes: api.TLSClientKeyMaxBytes,
+	},
+}
+
+func secretLeavesForKind(kind api.TriggerKind) []secretLeaf {
+	switch kind {
+	case api.TriggerKindKafka:
+		return kafkaSecretLeaves
+	case api.TriggerKindRedisStreams:
+		return redisSecretLeaves
+	case api.TriggerKindNATS:
+		return natsSecretLeaves
+	default:
+		return nil
+	}
 }
 
 func cloneRaw(raw json.RawMessage) json.RawMessage {
@@ -103,21 +157,29 @@ func decodeString(raw json.RawMessage, field string) (string, error) {
 	return value, nil
 }
 
-// Seal replaces plaintext Kafka credential leaves with age ciphertext. A
+// Seal replaces plaintext credential leaves with age ciphertext. A
 // recipient is only required when a plaintext credential is present.
 func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipient) (json.RawMessage, error) {
-	if kind != api.TriggerKindKafka {
+	leaves := secretLeavesForKind(kind)
+	if len(leaves) == 0 {
 		return cloneRaw(raw), nil
 	}
 	top, err := decodeObject(raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode kafka config: %w", err)
+		return nil, fmt.Errorf("decode %s config: %w", kind, err)
 	}
 	changed := false
-	for _, leaf := range kafkaSecretLeaves {
-		block, exists, err := nestedObject(top, leaf.block)
-		if err != nil {
-			return nil, err
+	for _, leaf := range leaves {
+		var block rawObject
+		var exists bool
+		if leaf.block == "" {
+			block = top
+			exists = true
+		} else {
+			block, exists, err = nestedObject(top, leaf.block)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !exists {
 			continue
@@ -132,30 +194,38 @@ func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipi
 				delete(block, leaf.sealed)
 				changed = true
 			}
-			if err := setNestedObject(top, leaf.block, block); err != nil {
-				return nil, err
+			if leaf.block != "" {
+				if err := setNestedObject(top, leaf.block, block); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
 		if recipient == nil {
 			return nil, ErrRecipientUnavailable
 		}
-		plaintext, err := decodeString(plainRaw, leaf.block+"."+leaf.plain)
+		fieldPath := leaf.plain
+		if leaf.block != "" {
+			fieldPath = leaf.block + "." + leaf.plain
+		}
+		plaintext, err := decodeString(plainRaw, fieldPath)
 		if err != nil {
 			return nil, err
 		}
 		ciphertext, err := secretbox.SealBytes(recipient, leaf.namespace, []byte(plaintext), leaf.maxBytes)
 		if err != nil {
-			return nil, fmt.Errorf("seal %s.%s: %w", leaf.block, leaf.plain, err)
+			return nil, fmt.Errorf("seal %s: %w", fieldPath, err)
 		}
 		sealedRaw, err := json.Marshal(ciphertext)
 		if err != nil {
-			return nil, fmt.Errorf("encode %s.%s envelope: %w", leaf.block, leaf.plain, err)
+			return nil, fmt.Errorf("encode %s envelope: %w", fieldPath, err)
 		}
 		delete(block, leaf.plain)
 		block[leaf.sealed] = sealedRaw
-		if err := setNestedObject(top, leaf.block, block); err != nil {
-			return nil, err
+		if leaf.block != "" {
+			if err := setNestedObject(top, leaf.block, block); err != nil {
+				return nil, err
+			}
 		}
 		changed = true
 	}
@@ -165,21 +235,29 @@ func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipi
 	return encodeObject(top)
 }
 
-// Open restores sealed Kafka credentials for runtime use. Legacy plaintext
+// Open restores sealed credentials for runtime use. Legacy plaintext
 // leaves remain supported during the rollout window.
 func Open(kind api.TriggerKind, raw json.RawMessage, identities []*age.X25519Identity) (json.RawMessage, error) {
-	if kind != api.TriggerKindKafka {
+	leaves := secretLeavesForKind(kind)
+	if len(leaves) == 0 {
 		return cloneRaw(raw), nil
 	}
 	top, err := decodeObject(raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode kafka config: %w", err)
+		return nil, fmt.Errorf("decode %s config: %w", kind, err)
 	}
 	changed := false
-	for _, leaf := range kafkaSecretLeaves {
-		block, exists, err := nestedObject(top, leaf.block)
-		if err != nil {
-			return nil, err
+	for _, leaf := range leaves {
+		var block rawObject
+		var exists bool
+		if leaf.block == "" {
+			block = top
+			exists = true
+		} else {
+			block, exists, err = nestedObject(top, leaf.block)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !exists {
 			continue
@@ -195,25 +273,31 @@ func Open(kind api.TriggerKind, raw json.RawMessage, identities []*age.X25519Ide
 		if len(identities) == 0 {
 			return nil, ErrIdentityUnavailable
 		}
+		fieldPath := leaf.plain
+		if leaf.block != "" {
+			fieldPath = leaf.block + "." + leaf.plain
+		}
 		var ciphertext []byte
 		if err := json.Unmarshal(sealedRaw, &ciphertext); err != nil {
-			return nil, fmt.Errorf("decode %s.%s envelope: %w", leaf.block, leaf.plain, err)
+			return nil, fmt.Errorf("decode %s envelope: %w", fieldPath, err)
 		}
 		namespace, plaintext, err := secretbox.OpenBytesMulti(identities, ciphertext)
 		if err != nil {
-			return nil, fmt.Errorf("open %s.%s envelope: %w", leaf.block, leaf.plain, err)
+			return nil, fmt.Errorf("open %s envelope: %w", fieldPath, err)
 		}
 		if namespace != leaf.namespace {
-			return nil, fmt.Errorf("open %s.%s envelope: namespace mismatch", leaf.block, leaf.plain)
+			return nil, fmt.Errorf("open %s envelope: namespace mismatch", fieldPath)
 		}
 		plainRaw, err := json.Marshal(string(plaintext))
 		if err != nil {
-			return nil, fmt.Errorf("encode %s.%s: %w", leaf.block, leaf.plain, err)
+			return nil, fmt.Errorf("encode %s: %w", fieldPath, err)
 		}
 		delete(block, leaf.sealed)
 		block[leaf.plain] = plainRaw
-		if err := setNestedObject(top, leaf.block, block); err != nil {
-			return nil, err
+		if leaf.block != "" {
+			if err := setNestedObject(top, leaf.block, block); err != nil {
+				return nil, err
+			}
 		}
 		changed = true
 	}
@@ -224,22 +308,30 @@ func Open(kind api.TriggerKind, raw json.RawMessage, identities []*age.X25519Ide
 }
 
 // Redact strips plaintext and ciphertext credentials from a customer-facing
-// Kafka config and reports only whether each credential is configured.
+// trigger config and reports only whether each credential is configured.
 func Redact(kind api.TriggerKind, raw json.RawMessage) json.RawMessage {
-	if kind != api.TriggerKindKafka {
+	leaves := secretLeavesForKind(kind)
+	if len(leaves) == 0 {
 		return cloneRaw(raw)
 	}
 	top, err := decodeObject(raw)
 	if err != nil {
 		return json.RawMessage("{}")
 	}
-	for _, leaf := range kafkaSecretLeaves {
-		block, exists, err := nestedObject(top, leaf.block)
-		if err != nil || !exists {
-			if err != nil {
-				return json.RawMessage("{}")
+	for _, leaf := range leaves {
+		var block rawObject
+		var exists bool
+		if leaf.block == "" {
+			block = top
+			exists = true
+		} else {
+			block, exists, err = nestedObject(top, leaf.block)
+			if err != nil || !exists {
+				if err != nil {
+					return json.RawMessage("{}")
+				}
+				continue
 			}
-			continue
 		}
 		_, hasPlain := block[leaf.plain]
 		_, hasSealed := block[leaf.sealed]
@@ -249,8 +341,10 @@ func Redact(kind api.TriggerKind, raw json.RawMessage) json.RawMessage {
 		if hasPlain || hasSealed {
 			block[leaf.marker] = json.RawMessage("true")
 		}
-		if err := setNestedObject(top, leaf.block, block); err != nil {
-			return json.RawMessage("{}")
+		if leaf.block != "" {
+			if err := setNestedObject(top, leaf.block, block); err != nil {
+				return json.RawMessage("{}")
+			}
 		}
 	}
 	redacted, err := encodeObject(top)
@@ -264,35 +358,50 @@ func Redact(kind api.TriggerKind, raw json.RawMessage) json.RawMessage {
 // preserving a stored credential when its containing block is supplied but
 // its plaintext leaf is omitted. Omitting the whole block removes it.
 func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, identities []*age.X25519Identity) (json.RawMessage, error) {
-	if kind != api.TriggerKindKafka {
+	leaves := secretLeavesForKind(kind)
+	if len(leaves) == 0 {
 		return cloneRaw(incoming), nil
 	}
 	openedStored, err := Open(kind, stored, identities)
 	if err != nil {
-		return nil, fmt.Errorf("open stored kafka config: %w", err)
+		return nil, fmt.Errorf("open stored %s config: %w", kind, err)
 	}
 	storedTop, err := decodeObject(openedStored)
 	if err != nil {
-		return nil, fmt.Errorf("decode stored kafka config: %w", err)
+		return nil, fmt.Errorf("decode stored %s config: %w", kind, err)
 	}
 	incomingTop, err := decodeObject(incoming)
 	if err != nil {
-		return nil, fmt.Errorf("decode incoming kafka config: %w", err)
+		return nil, fmt.Errorf("decode incoming %s config: %w", kind, err)
 	}
-	for _, leaf := range kafkaSecretLeaves {
-		incomingBlock, supplied, err := nestedObject(incomingTop, leaf.block)
-		if err != nil {
-			return nil, err
-		}
-		if !supplied {
-			continue
+	for _, leaf := range leaves {
+		var incomingBlock rawObject
+		var supplied bool
+		if leaf.block == "" {
+			incomingBlock = incomingTop
+			supplied = true
+		} else {
+			incomingBlock, supplied, err = nestedObject(incomingTop, leaf.block)
+			if err != nil {
+				return nil, err
+			}
+			if !supplied {
+				continue
+			}
 		}
 		delete(incomingBlock, leaf.marker)
 		delete(incomingBlock, leaf.sealed)
 		if _, hasIncomingSecret := incomingBlock[leaf.plain]; !hasIncomingSecret {
-			storedBlock, exists, err := nestedObject(storedTop, leaf.block)
-			if err != nil {
-				return nil, err
+			var storedBlock rawObject
+			var exists bool
+			if leaf.block == "" {
+				storedBlock = storedTop
+				exists = true
+			} else {
+				storedBlock, exists, err = nestedObject(storedTop, leaf.block)
+				if err != nil {
+					return nil, err
+				}
 			}
 			if exists {
 				if storedSecret, ok := storedBlock[leaf.plain]; ok {
@@ -300,8 +409,10 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, iden
 				}
 			}
 		}
-		if err := setNestedObject(incomingTop, leaf.block, incomingBlock); err != nil {
-			return nil, err
+		if leaf.block != "" {
+			if err := setNestedObject(incomingTop, leaf.block, incomingBlock); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return encodeObject(incomingTop)

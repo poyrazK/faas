@@ -9,10 +9,11 @@ import type { TriggerKind } from './TriggerKind.js';
  * Read shape returned by GET / POST / PATCH on /v1/triggers.
  * The `config` blob is opaque at the wire level — each kind
  * decodes its own per-shape struct lazily. The SDK round-trip
- * preserves unknown fields across client versions. Kafka
- * credentials are never returned: `password_set` and
- * `client_key_set` report their presence without exposing
- * plaintext or the internal sealed envelope.
+ * preserves unknown fields across client versions. Broker
+ * credentials (passwords, tokens, credentials, nkeys, client keys)
+ * are never returned: `password_set`, `token_set`, `credentials_set`,
+ * `nkey_set`, and `client_key_set` report their presence without
+ * exposing plaintext or the internal sealed envelope.
  *
  */
 export type Trigger = {
