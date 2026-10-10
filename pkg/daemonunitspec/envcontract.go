@@ -233,6 +233,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_E2E_HELLO_SERVER_BINARY", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host"},
 	{Name: "FAAS_E2E_SERVICE_TCP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host"},
 	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
+	{Name: "FAAS_EDGE_WAF_INLINE_DISABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-831 amendment 4 operator kill switch; \"1\" turns off in-path kind=waf checks so warn and block rules only observe"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
 	{Name: "FAAS_EGRESS_DNS_GATING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-373 per-node escape hatch; \"off\" disables DNS-gated tenant egress, any other value keeps it on"},
