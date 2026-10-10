@@ -107,10 +107,11 @@ a capture needs a key with both `deploy:write` and `secrets:read`.
 - **It is a copy of production memory**, including your users' data that
   was in memory at the time. Turn crash snapshots on only for apps where
   that is acceptable.
-- **Captures are encrypted at rest.** Within seconds of a capture, Gregale
-  encrypts it with a key of its own and deletes the unencrypted copy. It is
-  decrypted only while a fork of it exists (a new fork waits a few seconds
-  for that), and the decrypted copy is deleted when the fork ends.
+- **Captures are encrypted before they are stored.** Gregale encrypts a
+  capture with a key of its own on the machine that took it, so it is never
+  stored unencrypted. It is decrypted only on the machine running a fork of
+  it, for that fork alone, and the decrypted copy is deleted when the fork
+  ends.
 - **Captures are kept for 7 days** and then deleted, together with their
   key.
 - **A 5xx capture is taken right after the failing response**, not at the

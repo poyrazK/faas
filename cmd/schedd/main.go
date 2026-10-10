@@ -2197,15 +2197,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
-		// runs them one at a time. imaged encrypts them at rest through
-		// the local storage backend; a remote backend refuses them.
-		var runtime sched.CrashCaptureRuntime = engine
-		if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
-			runtime = sched.RefuseCrashCaptures(sched.ErrCrashStorageRemote)
-			log.Warn("schedd: crash snapshots refused on a remote storage backend", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
-		}
-		go sched.NewCrashCaptureCoordinator(store, runtime, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
-		log.Info("schedd: crash snapshots enabled")
+		// runs them one at a time. vmmd seals every capture at the source,
+		// so plaintext never reaches storage (local or remote) or a node's
+		// read-through cache.
+		engine.WithSealedCrashCaptures(true)
+		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
+		log.Info("schedd: crash snapshots enabled", "sealed_at_source", true)
 	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch

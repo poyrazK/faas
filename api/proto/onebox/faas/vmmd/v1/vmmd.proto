@@ -858,6 +858,12 @@ message SnapshotRef {
   // catalog. Ordinary app snapshots leave it false and cannot cross the
   // dedicated execution restore RPC.
   bool networkless = 7;
+  // ADR-733 sealed crash capture: the capture's objects are stored only as
+  // encrypted twins. vmmd opens sealed_key with its fleet identity (bound to
+  // capture_id), decrypts the objects into this instance's staging and
+  // restores from there. Empty for every ordinary snapshot.
+  string capture_id = 8;
+  bytes sealed_key = 9;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -1179,6 +1185,10 @@ message SnapshotResponse {
   // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
   // older vmmd that ignored before_checkpoint on the request.
   bool before_checkpoint_completed = 4;
+  // ADR-733: set by WarmSnapshot when seal_capture_id was requested — the
+  // capture's per-capture key sealed to the fleet recipient. Only encrypted
+  // twins were published.
+  bytes sealed_key = 5;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
@@ -1201,6 +1211,12 @@ message WarmSnapshotRequest {
   // under. Required, mirroring PauseAndSnapshot's vmstate path
   // contract (PRD-025 axis 2 slice 4).
   string vmstate_storage_key = 3;
+  // ADR-733: encrypt this capture at the source. vmmd generates a fresh key,
+  // publishes only encrypted twins (key + ".age") of memory, vmstate,
+  // private drive and backing identity, and returns the key sealed to the
+  // fleet recipient bound to this capture id. A vmmd without a fleet
+  // identity refuses (FailedPrecondition) rather than publish plaintext.
+  string seal_capture_id = 4;
 }
 
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework

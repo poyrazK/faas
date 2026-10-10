@@ -15386,7 +15386,7 @@ WHERE id = (
           SELECT 1 FROM crash_captures c
           WHERE c.id = candidate.crash_capture_id
             AND (c.status IN ('failed', 'expired')
-                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged')))))
+                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged', 'sealed')))))
     ORDER BY candidate.created_at, candidate.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -15575,6 +15575,11 @@ SET status = 'ready',
     mem_bytes = sqlc.arg(mem_bytes)::bigint,
     captured_at = sqlc.arg(now)::timestamptz,
     expires_at = sqlc.arg(expires_at)::timestamptz,
+    -- ADR-733: a capture vmmd sealed at the source is encrypted from the
+    -- start and never has plaintext on storage.
+    sealed_key = sqlc.narg(sealed_key)::bytea,
+    plaintext_state = CASE WHEN sqlc.narg(sealed_key)::bytea IS NULL THEN 'present' ELSE 'sealed' END,
+    encrypted_at = CASE WHEN sqlc.narg(sealed_key)::bytea IS NULL THEN NULL ELSE sqlc.arg(now)::timestamptz END,
     updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
 WHERE id = sqlc.arg(capture_id)::uuid AND status = 'capturing'
 RETURNING *;

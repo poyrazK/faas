@@ -66,7 +66,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	if err != nil {
 		return ForkRestore{}, err
 	}
-	snap, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
+	snap, sealedKey, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
 	if err != nil {
 		return ForkRestore{}, err
 	}
@@ -95,7 +95,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 		e.transitionWithKind(context.WithoutCancel(ctx), ins.ID, app.ID, state.StateFailed, "fork_restore_error", "admission")
 		return ForkRestore{}, err
 	}
-	if err := e.bootFork(ctx, ins, app, dep, acct, placement, choice.snap); err != nil {
+	if err := e.bootFork(ctx, ins, app, dep, acct, placement, choice.snap, sealedKey); err != nil {
 		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
 		e.rollbackAdmittedInstance(ctx, ins.ID, app.ID, "fork_restore_failed")
 		return ForkRestore{}, err
@@ -105,25 +105,29 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 
 // forkSnapshot picks what a fork restores: its ADR-733 crash capture when it
 // is pinned to one (which must still be ready, unexpired and decrypted for
-// the fork), otherwise the deployment's newest compatible snapshot.
-func (e *Engine) forkSnapshot(ctx context.Context, fork state.AppFork, dep state.Deployment, plan string, app state.App) (state.Snapshot, error) {
+// the fork, or sealed at the source — then its sealed key is returned for
+// the restoring vmmd), otherwise the deployment's newest compatible snapshot.
+func (e *Engine) forkSnapshot(ctx context.Context, fork state.AppFork, dep state.Deployment, plan string, app state.App) (state.Snapshot, []byte, error) {
 	if fork.CrashCaptureID != nil {
 		capture, err := e.store.CrashCaptureForRestore(ctx, *fork.CrashCaptureID)
 		if err != nil || capture.AppID != fork.AppID || capture.DeploymentID != dep.ID ||
 			capture.ExpiresAt == nil || !capture.ExpiresAt.After(time.Now()) || !capture.PlaintextReadable() {
-			return state.Snapshot{}, ErrForkNoCapture
+			return state.Snapshot{}, nil, ErrForkNoCapture
 		}
 		snap, ok := capture.Snapshot()
-		if !ok || snap.FCVersion != e.fcVer {
-			return state.Snapshot{}, ErrForkNoCapture
+		if !ok || snap.FCVersion != e.fcVer || (capture.Sealed() && len(capture.SealedKey) == 0) {
+			return state.Snapshot{}, nil, ErrForkNoCapture
 		}
-		return snap, nil
+		if capture.Sealed() {
+			return snap, capture.SealedKey, nil
+		}
+		return snap, nil, nil
 	}
 	choice := e.chooseWakeSnapshot(ctx, dep.ID, plan, app.RAMMB, app.AppProtocol)
 	if !choice.ok || choice.snap.StorageKey == "" {
-		return state.Snapshot{}, ErrForkNoCapture
+		return state.Snapshot{}, nil, ErrForkNoCapture
 	}
-	return choice.snap, nil
+	return choice.snap, nil, nil
 }
 
 // resolveForkTarget loads the fork's app, pinned deployment and account,
@@ -154,7 +158,7 @@ func (e *Engine) resolveForkTarget(ctx context.Context, fork state.AppFork) (sta
 // publishes the runtime identity and moves the row to RUNNING. No sealed
 // secrets are staged; the capture's own memory is the fork's state.
 func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App, dep state.Deployment,
-	acct state.Account, placement Placement, snap state.Snapshot) error {
+	acct state.Account, placement Placement, snap state.Snapshot, sealedKey []byte) error {
 	limits := api.MustLimitsFor(acct.Plan)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
@@ -170,10 +174,17 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 		return errors.New("sched: fork runtime projection is incomplete")
 	}
 	vmstatePath, vmstateKey := e.snapshotStateLocators(placement.NodeID, snap)
-	out, err := e.vmm.CreateFromSnapshot(ctx, placement.NodeID, ins.ID, spec, SnapshotRef{
+	ref := SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
 		VMStatePath: vmstatePath, VMStateStorageKey: vmstateKey,
-	})
+	}
+	if len(sealedKey) > 0 {
+		// A sealed capture lives only as encrypted twins under its storage
+		// keys; vmmd needs the keys themselves (never a host vmstate path).
+		ref.CaptureID, ref.SealedKey = snap.ID, string(sealedKey)
+		ref.VMStatePath, ref.VMStateStorageKey = "", state.SnapshotVMStateKey(snap)
+	}
+	out, err := e.vmm.CreateFromSnapshot(ctx, placement.NodeID, ins.ID, spec, ref)
 	if err != nil {
 		return fmt.Errorf("sched: fork restore: %w", err)
 	}

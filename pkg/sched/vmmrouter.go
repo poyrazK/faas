@@ -650,6 +650,23 @@ func (r *VMMRouter) WarmSnapshot(ctx context.Context, nodeID, instance, storageK
 	return cli.WarmSnapshot(ctx, instance, storageKey, vmstateStorageKey)
 }
 
+// WarmSnapshotSealed forwards an ADR-733 sealed crash capture to the node's
+// vmmd client.
+func (r *VMMRouter) WarmSnapshotSealed(ctx context.Context, nodeID, instance, storageKey, vmstateStorageKey, captureID string) (SnapshotBytes, []byte, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return SnapshotBytes{}, nil, err
+	}
+	sealer, ok := cli.(interface {
+		WarmSnapshotSealed(context.Context, string, string, string, string) (SnapshotBytes, []byte, error)
+	})
+	if !ok {
+		return SnapshotBytes{}, nil, api.NewProblem(501, api.CodeNotImplemented,
+			"Sealed capture unavailable", "vmmd client does not support sealed crash captures")
+	}
+	return sealer.WarmSnapshotSealed(ctx, instance, storageKey, vmstateStorageKey, captureID)
+}
+
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
 // commits the durable WARM -> RUNNING transition separately; this RPC only
 // forwards the vmmd-side Firecracker resume operation.

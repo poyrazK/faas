@@ -417,7 +417,10 @@ type Engine struct {
 	vmm    RoutedVMM
 	notif  Notifier
 	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log    *slog.Logger
+	// sealCrashCaptures seals crash captures at the source (ADR-733,
+	// remote storage backends).
+	sealCrashCaptures bool
+	log               *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit func(context.Context, string)
 	// ops is the per-daemon Prometheus registry (issue #1059 /

@@ -226,10 +226,11 @@ required by Art. 32 GDPR, including:
   state.
 - Customer secrets sealed at rest with the host X25519 key
   (pkg/secretbox, ADR-020). Plaintext VALUES never touch PG.
-- Crash snapshots encrypted at rest (age, a fresh X25519 key per
-  snapshot sealed to the fleet key) within seconds of capture; the
-  unencrypted copy is deleted and exists again only while a fork of
-  the snapshot is open (ADR-733).
+- Crash snapshots encrypted on the capturing host before they are
+  stored (age, a fresh X25519 key per snapshot sealed to the fleet
+  key), so no unencrypted copy is ever written to storage; a decrypted
+  copy exists only on the host running a fork of the snapshot, for that
+  fork, and is deleted with it (ADR-733).
 - Production forks run with all outbound network access blocked and
   are never routed production traffic; opening one requires a key
   with secret-read scope and MFA, and every create, access and delete

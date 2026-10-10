@@ -67,10 +67,26 @@
     purge and expiry run on one imaged goroutine, so they never race.
     Without a host age identity imaged leaves captures `present` and logs
     an error every pass.
-  - **Local storage only.** The encryption runs through the storage
-    backend. On a remote backend (GCS, OCI) a node's read-through cache
-    could keep a plaintext copy imaged cannot purge, so schedd fails every
-    capture there with `storage_unsupported`.
+  - **Sealed at the source (amendment, 2026-10-10).** vmmd now encrypts
+    every new capture on the compute node before publishing it
+    (`WarmSnapshotRequest.seal_capture_id`, `pkg/crashcrypt`): memory,
+    vmstate, private drive and backing identity go through an encrypting
+    storage backend that writes only the encrypted twins, with a fresh
+    per-capture key sealed to the fleet recipient (the first of vmmd's
+    host identities) under the same namespace as above. The row completes
+    as `ready` with `plaintext_state = 'sealed'`, so plaintext never
+    reaches storage — local or remote — or a node's read-through cache,
+    and there is no window before imaged's next pass. imaged never
+    encrypts, purges or stages a sealed capture. A fork of it is claimable
+    at once; `CreateFromSnapshot` carries `capture_id` + `sealed_key`, and
+    the restoring vmmd opens the key with the fleet identity and decrypts
+    memory, vmstate and drive into that instance's tracked staging files
+    (removed when the VM is killed). A sealed restore never falls back to
+    cold boot: a fresh instance would not be the capture. This lifts the
+    earlier local-storage-only restriction (production stores snapshots in
+    GCS). A vmmd that cannot seal fails the capture with
+    `storage_unsupported` rather than publish plaintext. The imaged path
+    above remains for captures written before this change.
   - **Open as a fork.** `POST /v1/apps/{slug}/crash-snapshots/{id}/fork`
     creates an ADR-732 fork pinned to the capture (`app_forks.
     crash_capture_id`). `Engine.RestoreFork` restores that capture instead

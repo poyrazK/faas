@@ -3576,7 +3576,7 @@ WHERE id = (
           SELECT 1 FROM crash_captures c
           WHERE c.id = candidate.crash_capture_id
             AND (c.status IN ('failed', 'expired')
-                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged')))))
+                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged', 'sealed')))))
     ORDER BY candidate.created_at, candidate.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -5563,8 +5563,13 @@ SET status = 'ready',
     mem_bytes = $4::bigint,
     captured_at = $5::timestamptz,
     expires_at = $6::timestamptz,
+    -- ADR-733: a capture vmmd sealed at the source is encrypted from the
+    -- start and never has plaintext on storage.
+    sealed_key = $7::bytea,
+    plaintext_state = CASE WHEN $7::bytea IS NULL THEN 'present' ELSE 'sealed' END,
+    encrypted_at = CASE WHEN $7::bytea IS NULL THEN NULL ELSE $5::timestamptz END,
     updated_at = greatest(updated_at, $5::timestamptz)
-WHERE id = $7::uuid AND status = 'capturing'
+WHERE id = $8::uuid AND status = 'capturing'
 RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
@@ -5575,6 +5580,7 @@ type CompleteCrashCaptureParams struct {
 	MemBytes          int64
 	Now               pgtype.Timestamptz
 	ExpiresAt         pgtype.Timestamptz
+	SealedKey         []byte
 	CaptureID         pgtype.UUID
 }
 
@@ -5586,6 +5592,7 @@ func (q *Queries) CompleteCrashCapture(ctx context.Context, db DBTX, arg Complet
 		arg.MemBytes,
 		arg.Now,
 		arg.ExpiresAt,
+		arg.SealedKey,
 		arg.CaptureID,
 	)
 	var i CrashCapture

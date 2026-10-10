@@ -104,6 +104,7 @@ func TestCrashSnapshotMetal(t *testing.T) {
 	}
 
 	var capture api.CrashCaptureResponse
+	var memFile string // where the capture's plaintext memory would be
 	t.Run("capture-in-place", func(t *testing.T) {
 		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/crash-snapshots", nil)
 		if status != http.StatusAccepted {
@@ -117,14 +118,18 @@ func TestCrashSnapshotMetal(t *testing.T) {
 		if err != nil || ins.State != string(state.StateRunning) {
 			t.Fatalf("serving instance after capture = %+v, %v; want still running", ins, err)
 		}
-		// imaged encrypts the capture and deletes the plaintext.
-		sealed := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextAbsent, 60*time.Second)
+		// vmmd sealed the capture at the source: it is ready and sealed, and
+		// its plaintext never reached storage.
+		sealed := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextSealed, 10*time.Second)
 		if len(sealed.SealedKey) == 0 || sealed.EncryptedAt == nil {
 			t.Fatalf("capture not sealed: %+v", sealed)
 		}
 		mem := captureFile(*sealed.StorageKey)
-		if _, err := os.Stat(mem); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("plaintext memory %s still on disk (err=%v)", mem, err)
+		memFile = mem
+		for _, plain := range []string{mem, captureFile(*sealed.VMStateStorageKey)} {
+			if _, err := os.Stat(plain); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("plaintext %s on disk (err=%v)", plain, err)
+			}
 		}
 		if st, err := os.Stat(mem + ".age"); err != nil || st.Size() >= *sealed.MemBytes {
 			t.Fatalf("encrypted memory: %v (size vs mem_bytes %d)", err, *sealed.MemBytes)
@@ -160,19 +165,18 @@ func TestCrashSnapshotMetal(t *testing.T) {
 		if status != http.StatusOK || strings.TrimSpace(string(body)) != helloBody || headers.Get("X-Gregale-Fork-Served") != "1" {
 			t.Fatalf("request to the crash fork = %d %q", status, body)
 		}
-		if c := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextStaged, 10*time.Second); c.SealedKey == nil {
-			t.Fatalf("staged capture lost its sealed key: %+v", c)
+		// The fork's vmmd decrypted into its own staging: nothing was staged
+		// back onto storage, before or after the fork ends.
+		if c := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextSealed, 5*time.Second); c.SealedKey == nil {
+			t.Fatalf("capture lost its sealed key while forked: %+v", c)
 		}
-
-		// Once the fork ends, the plaintext goes again.
+		if _, err := os.Stat(memFile); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("plaintext memory staged onto storage for the fork (err=%v)", err)
+		}
 		if _, status := doReq(t, h, key, http.MethodDelete, "/v1/apps/hello/forks/"+fork.ID, nil); status != http.StatusAccepted {
 			t.Fatalf("cancel fork = %d", status)
 		}
 		waitForkStatus(ctx, t, h, key, fork.ID, "cancelled", 60*time.Second)
-		purged := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextAbsent, 60*time.Second)
-		if _, err := os.Stat(captureFile(*purged.StorageKey)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("plaintext memory outlived the fork (err=%v)", err)
-		}
 	})
 }
 

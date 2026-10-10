@@ -81,12 +81,21 @@ const (
 	CrashPlaintextStaging CrashCapturePlaintext = "staging"
 	// CrashPlaintextStaged: encrypted; plaintext restored for an active fork.
 	CrashPlaintextStaged CrashCapturePlaintext = "staged"
+	// CrashPlaintextSealed: vmmd encrypted it at capture time (remote
+	// storage); there is never plaintext on storage. The vmmd restoring a
+	// fork decrypts it into that instance's staging. imaged leaves it alone.
+	CrashPlaintextSealed CrashCapturePlaintext = "sealed"
 )
 
-// PlaintextReadable reports whether a fork can restore the capture now.
+// PlaintextReadable reports whether a fork can restore the capture now: its
+// plaintext is on storage, or it is sealed and the restoring vmmd opens it.
 func (c CrashCapture) PlaintextReadable() bool {
-	return c.PlaintextState == CrashPlaintextPresent || c.PlaintextState == CrashPlaintextStaged
+	return c.PlaintextState == CrashPlaintextPresent || c.PlaintextState == CrashPlaintextStaged ||
+		c.PlaintextState == CrashPlaintextSealed
 }
+
+// Sealed reports whether vmmd encrypted the capture at the source.
+func (c CrashCapture) Sealed() bool { return c.PlaintextState == CrashPlaintextSealed }
 
 // CrashSnapshotSettings is an app's opt-in.
 type CrashSnapshotSettings struct {
@@ -105,6 +114,9 @@ type CompleteCrashCaptureParams struct {
 	MemBytes          int64
 	CapturedAt        time.Time
 	ExpiresAt         time.Time
+	// SealedKey is set when vmmd sealed the capture at the source; the row
+	// is then ready with plaintext_state sealed.
+	SealedKey []byte
 }
 
 // ErrCrashCaptureRefused means a capture request was not admitted: the app

@@ -1681,6 +1681,16 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}()
 
 	tMemStateResolveStart := time.Now()
+	// ADR-733 sealed capture: decrypt memory, vmstate and the private drive
+	// into this instance's tracked staging files (removed with the VM) and
+	// restore from those, so plaintext never enters the shared store or the
+	// node's read-through cache.
+	memKey, stateKey, sealedDrive := spec.StorageKey, spec.VMStateStorageKey, ""
+	if spec.Storage != nil {
+		if memKey, stateKey, sealedDrive, err = v.openSealedCapture(ctx, l.Instance, spec); err != nil {
+			return err
+		}
+	}
 	// #96 / ADR-025 axis 2 — materialise the mem blob from the configured
 	// StorageBackend into a vmmd-allocated tmp file. After slice 3 the
 	// staging tmp path is purely internal: no caller-supplied MemPath is
@@ -1688,7 +1698,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// /srv/fc/snap and the resolution is essentially a stat; the OCI
 	// driver streams the bytes over HTTP. Tmp cleanup happens via the
 	// deferred Kill (chroot lives on tmpfs and disappears with it).
-	memSrc, memTiming, err := v.resolveRestoreBlob(ctx, l.Instance, "mem", spec.StorageKey, spec.VMStatePath)
+	memSrc, memTiming, err := v.resolveRestoreBlob(ctx, l.Instance, "mem", memKey, spec.VMStatePath)
 	if err != nil {
 		return err
 	}
@@ -1717,7 +1727,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// backend surfaced no file for this key). It adds only the source and
 	// byte attribution that mem and vmstate previously lacked.
 	stateSrc, stateTiming, gerr := v.resolveRestoreBlob(
-		ctx, l.Instance, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
+		ctx, l.Instance, "vmstate", stateKey, spec.VMStatePath)
 	if gerr != nil {
 		return gerr
 	}
@@ -1759,10 +1769,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
 	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	restoreDriveKey := snapshotDriveKey
+	if sealedDrive != "" {
+		restoreDriveKey = sealedDrive
+	}
 	if len(spec.Workloads) == 0 {
 		mainKey := spec.LayerKey
 		if snapshotDriveKey != "" {
-			mainKey = snapshotDriveKey
+			mainKey = restoreDriveKey
 		}
 		artifacts = append(artifacts, restoreArtifactSpec{
 			artifact: "main", key: mainKey, errorContext: "vmm: stage layer",
@@ -1772,7 +1786,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			artifact := "main"
 			key := workload.StorageKey
 			if i == 0 && snapshotDriveKey != "" {
-				key = snapshotDriveKey
+				key = restoreDriveKey
 			}
 			if i > 0 {
 				artifact = fmt.Sprintf("sidecar:%s", workload.Name)
@@ -2975,11 +2989,24 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// the guest resumes; restoring against the deployment's pristine layer can
 	// otherwise surface filesystem corruption (for example EBADMSG while
 	// reading a CA bundle) after the first scaled/restored instance.
+	// spec.Storage (ADR-733 sealed captures) replaces the shared backend
+	// for this capture's objects and disables every local-path shortcut,
+	// so nothing is published or measured outside it.
+	store := v.storage
+	if spec.Storage != nil {
+		store = spec.Storage
+	}
+	publishedPath := func(key, fallback string) string {
+		if spec.Storage != nil {
+			return fallback
+		}
+		return v.publishedLocalPath(key, fallback)
+	}
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
 	var frozenDrivePath string
 	var driveBytes, driveWritten int64
 	if driveKey != "" {
-		if v.storage == nil {
+		if store == nil {
 			return SnapshotInfo{}, errors.New("vmm: snapshot private drive requires storage backend")
 		}
 		var freezeErr error
@@ -3028,7 +3055,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// publication of a new snapshot. Force the StorageBackend.Put path so
 	// the shared registry receives the blob. Explicit local-prefix routing
 	// still remains functional because Put dispatches the key normally.
-	if spec.StorageKey != "" && v.storage != nil && !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+	if spec.StorageKey != "" && spec.Storage == nil && v.storage != nil && !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
 			if localPath, pathOK, pathErr := resolver.LocalPath(spec.StorageKey); pathErr != nil {
 				return SnapshotInfo{}, fmt.Errorf("vmm: resolve snapshot mem path: %w", pathErr)
@@ -3068,7 +3095,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// vmstate through the legacy path because the key is empty.
 	var stateBytes int64
 	vmstateSrcInChroot := filepath.Join(root, stateName)
-	if spec.VMStateStorageKey != "" && v.storage != nil {
+	if spec.VMStateStorageKey != "" && store != nil {
 		// nolint:forbidigo // vmstateSrcInChroot is the chroot-resident
 		// tmp Firecracker just wrote; not a customer-supplied location,
 		// so the openCustomerFile guard does not apply.
@@ -3076,7 +3103,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot vmstate for publish: %w", oerr)
 		} else {
-			if perr := v.storage.Put(ctx, spec.VMStateStorageKey, f); perr != nil {
+			if perr := store.Put(ctx, spec.VMStateStorageKey, f); perr != nil {
 				_ = f.Close()
 				return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot vmstate: %w", perr)
 			}
@@ -3097,7 +3124,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}
 
-	if spec.StorageKey != "" && v.storage != nil && !memPublishedLocally {
+	if spec.StorageKey != "" && store != nil && !memPublishedLocally {
 		// nolint:forbidigo // memTmpPath is a vmmd-allocated tmp under
 		// os.TempDir(); not a customer-supplied location, so the
 		// openCustomerFile guard does not apply.
@@ -3105,7 +3132,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot mem for publish: %w", oerr)
 		} else {
-			if perr := v.storage.Put(ctx, spec.StorageKey, f); perr != nil {
+			if perr := store.Put(ctx, spec.StorageKey, f); perr != nil {
 				_ = f.Close()
 				return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot mem: %w", perr)
 			}
@@ -3119,7 +3146,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
 		}
-		if perr := v.storage.Put(ctx, driveKey, f); perr != nil {
+		if perr := store.Put(ctx, driveKey, f); perr != nil {
 			_ = f.Close()
 			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
 		}
@@ -3134,16 +3161,16 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// A backend without a local representation falls back to logical bytes,
 	// which is conservative and keeps mixed-version rollouts truthful.
 	if memPublishedPath == "" {
-		memPublishedPath = v.publishedLocalPath(spec.StorageKey, memTmpPath)
+		memPublishedPath = publishedPath(spec.StorageKey, memTmpPath)
 	}
 	statePublishedPath := spec.VMStatePath
 	if spec.VMStateStorageKey != "" {
-		statePublishedPath = v.publishedLocalPath(spec.VMStateStorageKey, vmstateSrcInChroot)
+		statePublishedPath = publishedPath(spec.VMStateStorageKey, vmstateSrcInChroot)
 	}
 	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
 		allocatedBytesOrLogical(statePublishedPath, stateBytes)
 	if driveKey != "" {
-		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
+		storedBytes += snapshotDriveStoredBytes(driveWritten, publishedPath(driveKey, frozenDrivePath), driveBytes)
 	}
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
@@ -7016,6 +7043,55 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	if err := tmp.Close(); err != nil {
 		err = errors.Join(err, v.removeMaterialisedFile(tmpPath))
 		return "", fmt.Errorf("vmm: close tmp for %q: %w", key, err)
+	}
+	return tmpPath, nil
+}
+
+// openSealedCapture decrypts a sealed capture's memory, vmstate and private
+// drive through spec.Storage into tracked staging files and returns their
+// absolute paths, which restore resolution passes through unchanged. The
+// drive is optional: a capture taken without one has no twin.
+func (v *JailerVMM) openSealedCapture(ctx context.Context, instanceID string, spec RestoreSpec) (mem, vmstate, drive string, err error) {
+	if mem, err = v.materializeSealed(ctx, instanceID, spec.Storage, spec.StorageKey); err != nil {
+		return "", "", "", err
+	}
+	if vmstate, err = v.materializeSealed(ctx, instanceID, spec.Storage, spec.VMStateStorageKey); err != nil {
+		return "", "", "", err
+	}
+	if key := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey}); key != "" {
+		drive, err = v.materializeSealed(ctx, instanceID, spec.Storage, key)
+		if storage.IsNotFound(err) {
+			return mem, vmstate, "", nil
+		}
+		if err != nil {
+			return "", "", "", err
+		}
+	}
+	return mem, vmstate, drive, nil
+}
+
+// materializeSealed copies key's plaintext from store into a staging file
+// tracked for instanceID and removed when it is killed.
+func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, store storage.StorageBackend, key string) (string, error) {
+	if key == "" {
+		return "", fmt.Errorf("vmm: sealed capture is missing a storage key")
+	}
+	rc, err := store.Get(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-sealed-*.bin", "materialised")
+	if err != nil {
+		return "", fmt.Errorf("vmm: create tmp for sealed %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := io.Copy(tmp, rc); err != nil {
+		_ = tmp.Close()
+		return "", errors.Join(fmt.Errorf("vmm: decrypt %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
 	}
 	return tmpPath, nil
 }

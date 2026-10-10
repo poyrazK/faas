@@ -30,7 +30,7 @@ func (e *Engine) CaptureCrash(ctx context.Context, capture state.CrashCapture) (
 	memKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, capture.ID)
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: memKey})
 	captureCtx, cancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
-	bytes, err := e.vmm.WarmSnapshot(captureCtx, ins.NodeID, ins.ID, memKey, vmstateKey)
+	bytes, sealedKey, err := e.warmSnapshotCapture(captureCtx, ins, capture.ID, memKey, vmstateKey)
 	cancel()
 	if err != nil {
 		// Same posture as the warm capture path: after a failed
@@ -47,7 +47,33 @@ func (e *Engine) CaptureCrash(ctx context.Context, capture state.CrashCapture) (
 	return state.CompleteCrashCaptureParams{
 		ID: capture.ID, StorageKey: memKey, VMStateStorageKey: vmstateKey, FCVersion: e.fcVer,
 		MemBytes: bytes.MemBytes, CapturedAt: now, ExpiresAt: now.Add(crashCaptureRetention(capture.Trigger)),
+		SealedKey: sealedKey,
 	}, nil
+}
+
+// crashCaptureSealer is the VMM capability behind sealed captures.
+type crashCaptureSealer interface {
+	WarmSnapshotSealed(ctx context.Context, nodeID, instance, storageKey, vmstateStorageKey, captureID string) (SnapshotBytes, []byte, error)
+}
+
+// WithSealedCrashCaptures makes every crash capture sealed at the source
+// (ADR-733): required on a remote storage backend, where a plaintext
+// capture would reach the shared store and nodes' read-through caches.
+func (e *Engine) WithSealedCrashCaptures(sealed bool) *Engine {
+	e.sealCrashCaptures = sealed
+	return e
+}
+
+func (e *Engine) warmSnapshotCapture(ctx context.Context, ins state.Instance, captureID, memKey, vmstateKey string) (SnapshotBytes, []byte, error) {
+	if !e.sealCrashCaptures {
+		bytes, err := e.vmm.WarmSnapshot(ctx, ins.NodeID, ins.ID, memKey, vmstateKey)
+		return bytes, nil, err
+	}
+	sealer, ok := e.vmm.(crashCaptureSealer)
+	if !ok {
+		return SnapshotBytes{}, nil, ErrCrashStorageRemote
+	}
+	return sealer.WarmSnapshotSealed(ctx, ins.NodeID, ins.ID, memKey, vmstateKey, captureID)
 }
 
 // crashCaptureRetention keeps a live fork's capture only as long as a fork
@@ -65,10 +91,10 @@ type CrashCaptureRuntime interface {
 	CaptureCrash(ctx context.Context, capture state.CrashCapture) (state.CompleteCrashCaptureParams, error)
 }
 
-// ErrCrashStorageRemote refuses captures on a remote storage backend
-// (ADR-733): imaged encrypts captures through the backend, but a node's
-// read-through cache could keep a plaintext copy it cannot purge.
-var ErrCrashStorageRemote = errors.New("sched: crash captures need the local storage backend")
+// ErrCrashStorageRemote refuses a capture on a remote storage backend when
+// the node's vmmd cannot seal it at the source (ADR-733): published in
+// plaintext, a node's read-through cache could keep a copy nothing purges.
+var ErrCrashStorageRemote = errors.New("sched: crash captures on remote storage need a vmmd that seals them")
 
 type refusingCrashRuntime struct{ err error }
 

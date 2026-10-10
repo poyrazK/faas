@@ -172,6 +172,9 @@ func (m *MemStore) CompleteCrashCapture(_ context.Context, p CompleteCrashCaptur
 	captured, expires := memTime(p.CapturedAt), memTime(p.ExpiresAt)
 	c.Status, c.StorageKey, c.VMStateStorageKey, c.FCVersion, c.MemBytes = CrashCaptureReady, &storageKey, &vmstateKey, &fcVersion, &memBytes
 	c.CapturedAt, c.ExpiresAt = &captured, &expires
+	if len(p.SealedKey) > 0 {
+		c.SealedKey, c.EncryptedAt, c.PlaintextState = slices.Clone(p.SealedKey), &captured, CrashPlaintextSealed
+	}
 	m.touchCrashLocked(&c, p.CapturedAt)
 	return c, nil
 }
