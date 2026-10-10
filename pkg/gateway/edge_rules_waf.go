@@ -12,6 +12,7 @@ import (
 // EdgeRuleWAFResolved is the compiled kind=waf matcher payload (ADR-831
 // step 1). Scoring values are the effective ones stored by apid.
 type EdgeRuleWAFResolved struct {
+	EdgeRuleCondition
 	ID               string
 	AccountID        string
 	AppID            string
@@ -28,7 +29,9 @@ type EdgeRuleWAFResolved struct {
 }
 
 // PickFirstWAFMatch returns the first priority-ordered WAF rule matching the
-// request path, method, and optional header conditions.
+// request path, method, and optional header conditions. Paths match
+// protectively, like the other gates that can deny a request: a block rule
+// on /admin/* also covers /ADMIN/x and /public/../admin/x.
 func PickFirstWAFMatch(rules []EdgeRuleWAFResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleWAFResolved {
 	for i := range rules {
 		rule := &rules[i]
@@ -39,7 +42,7 @@ func PickFirstWAFMatch(rules []EdgeRuleWAFResolved, requestPath, method string, 
 			continue
 		}
 		if rule.PathGlob != "" {
-			if ok, _ := pathGlobMatch(rule.PathGlob, requestPath); !ok {
+			if ok, _ := protectivePathMatch(rule.PathGlob, requestPath); !ok {
 				continue
 			}
 		}

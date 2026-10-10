@@ -124,6 +124,24 @@ func TestVerify_ValidToken(t *testing.T) {
 	}
 }
 
+// A token without exp is accepted by default (go-jose validates exp only when
+// present) but rejected once the rule sets RequireExpiry.
+func TestVerify_RequireExpiryRejectsTokenWithoutExp(t *testing.T) {
+	t.Parallel()
+	priv, pub := rs256Fixture(t, "k1")
+	url, _ := jwksServer(t, pub, nil)
+	v := newVerifier(t, url, "k1", pub)
+	tok := mintToken(t, priv, "k1", jwt.Claims{Issuer: "https://idp.example.com/", Subject: "alice"}, nil)
+	rule := edgejwks.VerifierRule{JWKSURL: url, Issuer: "https://idp.example.com/", Algorithms: []string{"RS256"}}
+	if _, err := v.Verify(context.Background(), tok, rule); err != nil {
+		t.Fatalf("exp-less token without RequireExpiry: %v", err)
+	}
+	rule.RequireExpiry = true
+	if _, err := v.Verify(context.Background(), tok, rule); !errors.Is(err, edgejwks.ErrJWTMissingClaim) {
+		t.Fatalf("exp-less token with RequireExpiry: err = %v, want ErrJWTMissingClaim", err)
+	}
+}
+
 func TestVerify_ExtractsBoundedScalarCustomClaimsWithoutRequiredClaims(t *testing.T) {
 	t.Parallel()
 	priv, pub := rs256Fixture(t, "k1")

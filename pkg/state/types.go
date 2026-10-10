@@ -7728,6 +7728,7 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
+	RequireExp                     bool                   `json:"require_exp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =
@@ -7960,6 +7961,9 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// ADR-965: composite keys and response-status counting.
+	KeyFields     []string `json:"key_fields,omitempty"`
+	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
 
 // EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
@@ -8141,8 +8145,34 @@ type EdgeRule struct {
 	// release per ADR-128 §D2 so legacy JSONB-only rows
 	// preserve the customer's intended mode.
 	ValidateMode string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Name and Description are operator-facing labels ("" = unset).
+	Name        string
+	Description string
+	// ExpiresAt, when set, is the instant after which the gateway stops
+	// applying the rule. Expired rows are kept for the listing.
+	ExpiresAt *time.Time
+	// Match (ADR-962) is the optional structured condition ANDed with the
+	// fixed selectors; nil applies the rule to every selected request.
+	Match *api.EdgeRuleMatchExpr
+	// MatchLists holds the account lists Match references (ADR-963),
+	// resolved by gatewayd when it loads a host. Never persisted.
+	MatchLists api.EdgeRuleLists
+	// Mode (ADR-960) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// rule is matched and counted but never acts.
+	Mode      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// EdgeRuleExpired reports whether the rule's expiry has passed at now.
+func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
+	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -8283,6 +8313,11 @@ type CreateEdgeRuleParams struct {
 	// re-validates via MergeCorsPresetIntoRule).
 	CorsPresetID *string
 	ValidateMode string
+	Name         string
+	Description  string
+	ExpiresAt    *time.Time
+	Match        *api.EdgeRuleMatchExpr
+	Mode         string // "" = enforce
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8306,6 +8341,15 @@ type UpdateEdgeRuleParams struct {
 	Action       *EdgeRuleAction
 	CorsPresetID **string
 	ValidateMode *string
+	// Name / Description: non-nil sets the value ("" clears it).
+	Name        *string
+	Description *string
+	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
+	ExpiresAt **time.Time
+	// Match: non-nil replaces the condition; ClearMatch removes it.
+	Match      *api.EdgeRuleMatchExpr
+	ClearMatch bool
+	Mode       *string
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

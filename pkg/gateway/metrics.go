@@ -357,7 +357,7 @@ type Metrics struct {
 	// routeConsumerThrottleDecisions (ADR-104, issue #881 Phase 3):
 	// counter of per-consumer throttle decisions, labelled by
 	// {kind, outcome}. `kind` is the KeyBy dimension
-	// (none | api_key | consumer_id | jwt_subject | jwt_claim | country — closed set per
+	// (none | api_key | consumer_id | jwt_subject | jwt_claim | country | ip — closed set per
 	// pkg/api.ThrottleKeyBy* constants). `outcome` is the
 	// decision (admit | throttle | anonymous — the third covers
 	// anonymous traffic on a per-consumer rule, which the limiter
@@ -1044,7 +1044,7 @@ func NewMetrics() *Metrics {
 		ruleLabels: newRuleLabelSet(),
 		// ADR-104 (issue #881 Phase 3) — per-consumer throttle
 		// decisions, distinct from the per-rule edgeRuleApply path.
-		// `kind` ∈ {none, api_key, consumer_id, jwt_subject, jwt_claim, country} tracks the
+		// `kind` ∈ {none, api_key, consumer_id, jwt_subject, jwt_claim, country, ip} tracks the
 		// KeyBy dimension; `outcome` ∈ {admit, throttle, anonymous}
 		// tracks the per-consumer admit/deny split. The anonymous
 		// outcome covers anonymous traffic on a per-consumer rule —

@@ -77,6 +77,7 @@ import "net/http"
 //     0 = use plan default at apply time (resolver
 //     in cmd-side compileThrottleRules).
 type EdgeRuleThrottleResolved struct {
+	EdgeRuleCondition
 	ID                string
 	AccountID         string
 	AppID             string
@@ -93,6 +94,11 @@ type EdgeRuleThrottleResolved struct {
 	// MissingKeyPolicy is "shared" (or empty for back-compat) or
 	// "reject". Reject makes the selected identity dimension mandatory.
 	MissingKeyPolicy string
+	// ADR-965: KeyFields are the composite key's fields (KeyBy ==
+	// "composite"); CountStatuses, when non-nil, charges the bucket only
+	// for responses with one of these statuses.
+	KeyFields     []string
+	CountStatuses map[int]bool
 }
 
 // PickFirstThrottleMatch is the priority-ASC + methods +
@@ -121,7 +127,7 @@ func PickFirstThrottleMatch(rules []EdgeRuleThrottleResolved, requestPath, metho
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, requestPath)
+			ok, _ := protectivePathMatch(r.PathGlob, requestPath)
 			if !ok {
 				continue
 			}

@@ -1757,6 +1757,16 @@ type Limits struct {
 	// slice iterates in priority order at request time, so the per-
 	// request cost is O(rules_per_app) — bounded by this cap).
 	EdgeRulesPerApp int
+	// EdgeRuleListsPerAccount caps how many reusable edge-rule lists
+	// (ADR-963) an account may hold. Zero disables lists on the plan.
+	EdgeRuleListsPerAccount int
+	// EdgeRuleListMaxItems caps the items in one edge-rule list. The
+	// gateway scans IP lists linearly per matched rule, so this bounds
+	// the per-request cost of an in_list condition.
+	EdgeRuleListMaxItems int
+	// EdgeRuleEventsWindowHours is how far back the plan can read sampled
+	// edge-rule security events (ADR-964). Events are stored 7 days.
+	EdgeRuleEventsWindowHours int
 	// EdgeRulesJWTAllowed gates kind='jwt' rules on the plan.
 	// Hobby/Pro/Scale opt in; Free stays off (the apid handler
 	// returns 402 CodePlanEdgeRuleKindNotAllowed before insert).
@@ -2824,9 +2834,12 @@ var planLimits = map[Plan]Limits{
 		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
-		EdgeRulesPerApp:     5,
-		EdgeRulesJWTAllowed: false,
-		EdgeRulesIPAllowed:  false,
+		EdgeRulesPerApp:           5,
+		EdgeRuleListsPerAccount:   0,
+		EdgeRuleListMaxItems:      0,
+		EdgeRuleEventsWindowHours: 24,
+		EdgeRulesJWTAllowed:       false,
+		EdgeRulesIPAllowed:        false,
 		// Per-kind geo quota (ADR-091 D21/D22). Free gets exactly 1
 		// geo rule — the abuse-desk customer ("block everything
 		// except DE") is one rule. The upgrade path raises the cap
@@ -3249,10 +3262,13 @@ var planLimits = map[Plan]Limits{
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
-		EdgeRulesPerApp:     25,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  5,
+		EdgeRulesPerApp:           25,
+		EdgeRuleListsPerAccount:   5,
+		EdgeRuleListMaxItems:      100,
+		EdgeRuleEventsWindowHours: 72,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        5,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 5,
@@ -3653,10 +3669,13 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerAccount:          30,
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
-		EdgeRulesPerApp:     100,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  25,
+		EdgeRulesPerApp:           100,
+		EdgeRuleListsPerAccount:   20,
+		EdgeRuleListMaxItems:      1000,
+		EdgeRuleEventsWindowHours: 168,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        25,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 25,
@@ -4042,10 +4061,13 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerAccount:          100,
 		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
-		EdgeRulesPerApp:     500,
-		EdgeRulesJWTAllowed: true,
-		EdgeRulesIPAllowed:  true,
-		EdgeRulesGeoPerApp:  100,
+		EdgeRulesPerApp:           500,
+		EdgeRuleListsPerAccount:   100,
+		EdgeRuleListMaxItems:      10000,
+		EdgeRuleEventsWindowHours: 168,
+		EdgeRulesJWTAllowed:       true,
+		EdgeRulesIPAllowed:        true,
+		EdgeRulesGeoPerApp:        100,
 		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 100,

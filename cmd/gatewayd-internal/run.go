@@ -173,6 +173,11 @@ var geoipDBPath = envOrGateway("FAAS_GEOIP_DB_PATH", "/var/lib/faas/geoip/dbip-c
 // where the daemon is the canonical source of the DB.
 var geoipAutoRefresh = envOrGateway("FAAS_GEOIP_AUTO_REFRESH", "0")
 
+// geoipASNDBPath is the DB-IP ASN Lite .mmdb file behind the asn match
+// field (ADR-966). A missing file leaves the field absent: conditions on
+// asn then never match, the same posture as an unknown country.
+var geoipASNDBPath = envOrGateway("FAAS_GEOIP_ASN_DB_PATH", "/var/lib/faas/geoip/dbip-asn-lite.mmdb")
+
 // controlAddr is the private control-plane listener — never reachable from
 // the internet; bound to the loopback interface by default so an
 // operator-prometheus scrape is the only thing that can reach it.
@@ -1173,6 +1178,9 @@ type runDeps struct {
 	// not auto-downloaded). Production wires a Watcher with a
 	// 168h (weekly) cadence if FAAS_GEOIP_AUTO_REFRESH=1.
 	geoWatcher *geoip.Watcher
+	// asnReader / asnWatcher back the asn match field (ADR-966).
+	asnReader  *geoip.Reader
+	asnWatcher *geoip.Watcher
 	// publicAuthCache (issue #477 / ADR-079) is the unsealed
 	// basic-auth credential cache shared between the Handler
 	// (enforcePublicAuthBasic reads through it) and the
@@ -2183,7 +2191,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
-	deps.requireAuthnAudit = newGatewaydAuditor(deps.pgStore, log)
+	// Request-path audit rows (authn gates, edge-rule denials and matches)
+	// go through one bounded async writer so attack traffic cannot turn into
+	// synchronous Postgres inserts on the request path.
+	requestPathAudit := newAsyncAuditStore(ctx, deps.pgStore, asyncAuditQueueCapacity, log)
+	deps.requireAuthnAudit = newGatewaydAuditor(requestPathAudit, log)
 	// Build the validate adapter before the edge-rule matcher captures it.
 	// Assigning a nil *edgeValidateAdapter to the validateCompiler interface
 	// produces a non-nil interface whose first CompileSchema call panics.
@@ -2209,7 +2221,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
-	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
+	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
 	// is nil-safe: a missing file logs a WARN and the reader
@@ -2253,6 +2265,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
+	openASNReader(ctx, &deps, log)
 	// Issue #561 / ADR-091 PR 5 — build the per-URL JWKS cache
 	// + JWT verifier that applyEdgeRuleJWT consults. Lazy
 	// registration on first match; the cache uses an HTTP client
@@ -2803,6 +2816,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// no-op and the gate fail-opens.
 	if deps.geoReader != nil {
 		handler.WithGeoReader(deps.geoReader)
+	}
+	if deps.asnReader != nil {
+		handler.WithASNReader(deps.asnReader)
+	}
+	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
+	// a store with the hit-count capability gets a recorder, so test and
+	// legacy wiring keep counting disabled.
+	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
+		hitCounter := newEdgeRuleHitCounter()
+		handler.WithEdgeRuleHitRecorder(hitCounter)
+		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
 	// applyEdgeRuleValidate consults. nil-safe:

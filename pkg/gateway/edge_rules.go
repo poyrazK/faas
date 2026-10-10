@@ -44,9 +44,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"path"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -145,6 +143,7 @@ const reasonOther = "other"
 // PR 4-7's per-kind actions read them out of `state.EdgeRule` again
 // at the kind-specific code path.
 type EdgeRuleResolved struct {
+	EdgeRuleCondition
 	ID            string
 	AccountID     string
 	AppID         string
@@ -161,6 +160,7 @@ type EdgeRuleResolved struct {
 // for trailing-`*` From patterns — applied via stdlib path.Match
 // + string replace at filter time).
 type EdgeRuleRewriteResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -177,6 +177,7 @@ type EdgeRuleRewriteResolved struct {
 // ∈ {301,302,307,308}; the loader defaults to 302 when 0. Headers
 // are stamped on the response via w.Header().Set before the redirect.
 type EdgeRuleRedirectResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -205,6 +206,7 @@ type EdgeRuleHeaderOp struct {
 // Ops apply in declared order (Cloudflare's "first wins" rule for
 // `set`); the order is preserved from the customer's wire input.
 type EdgeRuleHeadersResolved struct {
+	EdgeRuleCondition
 	ID              string
 	AccountID       string
 	AppID           string
@@ -231,6 +233,7 @@ type EdgeRuleHeadersResolved struct {
 // at create-time so the gateway stamper can trust the input
 // shape.
 type EdgeRuleCORSResolved struct {
+	EdgeRuleCondition
 	ID               string
 	AccountID        string
 	AppID            string
@@ -263,6 +266,7 @@ type EdgeRuleCORSResolved struct {
 // per the apid-Validate guard (ADR-091 D10). Algorithms is the
 // closed {RS,ES}{256,384,512} vocabulary (HS* dropped — D11).
 type EdgeRuleJWTResolved struct {
+	EdgeRuleCondition
 	ID             string
 	AccountID      string
 	AppID          string
@@ -284,6 +288,8 @@ type EdgeRuleJWTResolved struct {
 	ExtractClaims []string
 	MCP           *api.MCPResourcePolicy
 	Unavailable   bool
+	// RequireExp rejects a verified token that carries no exp claim.
+	RequireExp bool
 }
 
 // EdgeRuleIPResolved is the kind=ip subset (ADR-091). PR 5 calls
@@ -297,6 +303,7 @@ type EdgeRuleJWTResolved struct {
 // parse error — apid-Validate already calls net.ParseCIDR once,
 // but the SQL hotfix path means we can't trust the validator.
 type EdgeRuleIPResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -328,6 +335,7 @@ type EdgeRuleIPResolved struct {
 // to pass-through unless this is true. Body validation needs the
 // full body, which streaming doesn't have.
 type EdgeRuleValidateResolved struct {
+	EdgeRuleCondition
 	ID                  string
 	AccountID           string
 	AppID               string
@@ -387,6 +395,7 @@ type EdgeRuleParamSchemaResolved struct {
 // for defense-in-depth (the §11 spirit — abuse gates must not
 // hinge on a single validator's correctness).
 type EdgeRuleGeoResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -446,15 +455,20 @@ type EdgeRuleCache struct {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
-	Host      string
-	Route     []EdgeRuleResolved
-	Rewrite   []EdgeRuleRewriteResolved
-	Redirect  []EdgeRuleRedirectResolved
-	Headers   []EdgeRuleHeadersResolved
-	CORS      []EdgeRuleCORSResolved
-	JWT       []EdgeRuleJWTResolved
-	IP        []EdgeRuleIPResolved
-	Validate  []EdgeRuleValidateResolved
+	// NotAfter is the earliest expires_at among the loaded rules (zero when
+	// none expire). The entry is neither served as current nor used as the
+	// last-known fallback past it, so a time-boxed rule stops applying on
+	// schedule even while cached or while Postgres is unreachable.
+	NotAfter time.Time
+	Host     string
+	Route    []EdgeRuleResolved
+	Rewrite  []EdgeRuleRewriteResolved
+	Redirect []EdgeRuleRedirectResolved
+	Headers  []EdgeRuleHeadersResolved
+	CORS     []EdgeRuleCORSResolved
+	JWT      []EdgeRuleJWTResolved
+	IP       []EdgeRuleIPResolved
+	Validate []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -533,6 +547,14 @@ func NewEdgeRuleCache(capacity int) *EdgeRuleCache {
 	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
 }
 
+// SetClock replaces the cache's time source. Tests outside this package use
+// it to age entries past their TTL; production keeps time.Now.
+func (c *EdgeRuleCache) SetClock(now func() time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = now
+}
+
 // GetHost returns a value-copy of every compiled rule slice for a current host.
 // Loaders use it to recheck the cache after joining an in-flight database read.
 func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
@@ -540,6 +562,32 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	if !ok {
 		return nil, false
 	}
+	return cloneHostEntry(entry), true
+}
+
+// GetLastKnownHost returns the host's most recent compiled rule set even when
+// its lifetime has lapsed. Loaders fall back to it when the database read
+// fails, so a deny rule (ip, geo, maintenance) keeps applying through a
+// Postgres outage instead of silently failing open once the entry expires.
+// Reset (any rule mutation) drops it, so a stale set can only outlive its
+// TTL while no newer policy has been written.
+func (c *EdgeRuleCache) GetLastKnownHost(host string) (*HostEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	el, ok := c.byID[host]
+	if !ok {
+		return nil, false
+	}
+	entry := el.Value.(*HostEntry)
+	if !entry.NotAfter.IsZero() && !c.now().Before(entry.NotAfter) {
+		// A rule in this set has expired: replaying it would keep a lapsed
+		// maintenance window or temporary block alive through the outage.
+		return nil, false
+	}
+	return cloneHostEntry(entry), true
+}
+
+func cloneHostEntry(entry *HostEntry) *HostEntry {
 	out := *entry
 	out.Route = slices.Clone(entry.Route)
 	out.Rewrite = slices.Clone(entry.Rewrite)
@@ -564,7 +612,7 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
 	out.PathGlobErrs = slices.Clone(entry.PathGlobErrs)
-	return &out, true
+	return &out
 }
 
 // Get returns the cached `kind=route` slice for host and whether
@@ -957,7 +1005,8 @@ func (c *EdgeRuleCache) getEntry(host string) (*HostEntry, bool) {
 	}
 	entry := el.Value.(*HostEntry)
 	if !entry.expiresAt.IsZero() && !c.now().Before(entry.expiresAt) {
-		c.removeElement(el)
+		// Expired entries stay resident (LRU-bounded) as the
+		// last-known-good set GetLastKnownHost serves on a failed reload.
 		return nil, false
 	}
 	c.ll.MoveToFront(el)
@@ -996,6 +1045,9 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 	cached := *entry
 	cached.Host = host
 	cached.expiresAt = c.now().Add(edgeRuleCacheTTL)
+	if !cached.NotAfter.IsZero() && cached.NotAfter.Before(cached.expiresAt) {
+		cached.expiresAt = cached.NotAfter
+	}
 	if el, ok := c.byID[host]; ok {
 		el.Value = &cached
 		c.ll.MoveToFront(el)
@@ -1016,6 +1068,39 @@ func (c *EdgeRuleCache) Reset() {
 	c.generation++
 	c.ll.Init()
 	c.byID = map[string]*list.Element{}
+}
+
+// InvalidateHosts drops the cached entries (current and last-known) for every
+// host matched by one of the mutated rules' match_host patterns. A rule only
+// ever applies to hosts its pattern matches, so entries for other hosts cannot
+// have changed; dropping just these keeps one tenant's rule edit from
+// flushing every other tenant's compiled rules fleet-wide. An empty pattern
+// list means the scope is unknown and falls back to Reset. The generation
+// still advances so no read started before this call can repopulate a
+// dropped host with pre-mutation rules.
+func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
+	if len(patterns) == 0 {
+		c.Reset()
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	for host, el := range c.byID {
+		for _, pattern := range patterns {
+			if EdgeRuleHostPatternMatches(pattern, host) {
+				c.removeElement(el)
+				break
+			}
+		}
+	}
+}
+
+// EdgeRuleHostPatternMatches reports whether a rule's match_host pattern
+// ("*", "*.example.com", or an exact host) covers host, case-insensitively.
+// It mirrors the store's LIKE translation and the gateway's glob recheck.
+func EdgeRuleHostPatternMatches(pattern, host string) bool {
+	return api.EdgeRuleHostMatches(pattern, host)
 }
 
 // Len returns the number of cached host entries.
@@ -1067,8 +1152,10 @@ func (c *EdgeRuleCache) removeElement(el *list.Element) {
 // loop on `db.NotifyEdgeRuleChanged`.
 type EdgeRuleMatcher interface {
 	// Converging reports whether the hostname is inside the short fail-closed
-	// window of a two-phase fleet policy mutation.
-	Converging(host string) bool
+	// window of a two-phase fleet policy mutation by ownerAccountID (the
+	// account owning the app the host resolves to; "" when none claims it).
+	// Another account's mutation never fences an owned host.
+	Converging(host, ownerAccountID string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved
 	MatchRedirect(ctx context.Context, host, path, method string) *EdgeRuleRedirectResolved
@@ -1136,6 +1223,11 @@ type EdgeRuleAuditor interface {
 type JWTVerifier interface {
 	Verify(ctx context.Context, rawToken string, rule *EdgeRuleJWTResolved) (claims *JWTClaims, err error)
 }
+
+// ErrJWTKeysUnavailable is returned (wrapped) by a JWTVerifier when the
+// rule's signing keys could not be fetched and no usable cached copy exists.
+// The token was never judged, so the gateway answers 503, not 401.
+var ErrJWTKeysUnavailable = errors.New("gateway: jwt signing keys unavailable")
 
 // JWTClaims is the parsed subset pkg/gateway cares about. Mirrors
 // pkg/edgejwks.Claims (same field set; pkg/gateway doesn't import
@@ -1271,7 +1363,7 @@ var (
 // embed it and only override the kinds it ships.
 type noOpEdgeRuleMatcher struct{}
 
-func (noOpEdgeRuleMatcher) Converging(string) bool { return false }
+func (noOpEdgeRuleMatcher) Converging(string, string) bool { return false }
 
 func (noOpEdgeRuleMatcher) MatchRetry(context.Context, string, string, string) *EdgeRuleRetryResolved {
 	return nil
@@ -1515,7 +1607,7 @@ func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method strin
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, path)
+			ok, _ := protectivePathMatch(r.PathGlob, path)
 			if !ok {
 				continue
 			}
@@ -1581,22 +1673,19 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 	return nil
 }
 
-// protectivePathMatch is pathGlobMatch for gates that deny (kind=jwt, ip,
-// geo): the rule applies when the raw path OR its dot-segment/duplicate-
-// slash normalized form matches. Frameworks that normalize before routing
-// would otherwise serve /public/../admin/x or //admin/x as /admin/x while
-// the gate compared the raw string and let it through unchecked. Matching
-// both forms only ever adds protection.
+// protectivePathMatch is pathGlobMatch for gates that deny or constrain
+// (kind=jwt, ip, geo, limit, throttle, validate, maintenance): the rule
+// applies when the raw path, its dot-segment/duplicate-slash normalized
+// form, or either compared case-insensitively matches. Frameworks that
+// normalize before routing would otherwise serve /public/../admin/x or
+// //admin/x as /admin/x, and case-insensitive routers (Express, ASP.NET,
+// many Windows-hosted stacks) serve /ADMIN/x as /admin/x, while the gate
+// compared the raw string and let the request through unchecked. Every
+// extra form only ever adds protection; non-protective kinds (headers,
+// cors, cache, redirect, ...) keep exact matching so they never widen.
+// The implementation lives in pkg/api so the trace simulator shares it.
 func protectivePathMatch(glob, p string) (bool, error) {
-	ok, err := pathGlobMatch(glob, p)
-	if ok || err != nil {
-		return ok, err
-	}
-	cleaned := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
-	if cleaned == p {
-		return false, nil
-	}
-	return pathGlobMatch(glob, cleaned)
+	return api.MatchProtectiveEdgeRulePath(glob, p)
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

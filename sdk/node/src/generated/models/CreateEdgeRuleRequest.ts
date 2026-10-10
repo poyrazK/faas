@@ -12,6 +12,7 @@ import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -44,5 +45,22 @@ export type CreateEdgeRuleRequest = {
    * Kind-tagged action body — shape depends on `kind`.
    */
   action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction);
+  /**
+   * Optional operator-facing name for the new rule.
+   */
+  name?: string;
+  /**
+   * Optional operator-facing notes for the new rule.
+   */
+  description?: string;
+  /**
+   * Optional time after which the gateway stops applying the new rule.
+   */
+  expires_at?: string;
+  match?: EdgeRuleMatchExpr;
+  /**
+   * Start the rule enforced (default) or in log mode, where it is only matched and counted.
+   */
+  mode?: 'enforce' | 'log';
 };
 

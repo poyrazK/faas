@@ -1,10 +1,13 @@
 from typing import Literal
 
-EdgeRuleThrottleActionKeyBy = Literal["", "api_key", "consumer_id", "country", "ip", "jwt_claim", "jwt_subject", "none"]
+EdgeRuleThrottleActionKeyBy = Literal[
+    "", "api_key", "composite", "consumer_id", "country", "ip", "jwt_claim", "jwt_subject", "none"
+]
 
 EDGE_RULE_THROTTLE_ACTION_KEY_BY_VALUES: set[EdgeRuleThrottleActionKeyBy] = {
     "",
     "api_key",
+    "composite",
     "consumer_id",
     "country",
     "ip",

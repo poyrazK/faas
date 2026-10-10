@@ -59,10 +59,11 @@ export type EdgeRuleThrottleAction = {
    * claim named by `jwt_claim_name`. When `"country"`, one
    * bucket per ISO 3166-1 alpha-2 country resolved from the
    * gateway's trusted client IP. When `"ip"`, one bucket per
-   * trusted client address; IPv6 clients share one bucket per
-   * /64 prefix, and a missing or forged forwarding chain is
-   * rejected with 403 before any tokens are consumed. Each
-   * non-empty value activates the bounded design: when the
+   * trusted client IP (IPv6 clients keyed by their /64).
+   * When `"composite"`, one bucket per combination of
+   * `key_fields` (ADR-965).
+   * Each non-empty
+   * value activates the bounded design: when the
    * per-rule consumer set exceeds
    * `max_keys_per_rule`, all over-cap callers collapse
    * into a single non-evicting `__other__` bucket that
@@ -70,7 +71,7 @@ export type EdgeRuleThrottleAction = {
    * property — see ADR-104 §"Consequences").
    *
    */
-  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim' | 'country' | 'ip';
+  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim' | 'country' | 'ip' | 'composite';
   /**
    * Required iff `key_by="jwt_claim"`. Names the JWT
    * custom claim to extract (e.g., `"tier"`,
@@ -97,6 +98,25 @@ export type EdgeRuleThrottleAction = {
    *
    */
   max_keys_per_rule?: number;
+  /**
+   * ADR-965. Required iff `key_by="composite"`: the request
+   * fields combined into one bucket identity. Each is one of
+   * ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+   * (with `jwt_claim_name`), method, path or `header:<name>`.
+   * A field the request lacks makes the identity missing, so
+   * `missing_key_policy` applies.
+   *
+   */
+  key_fields?: Array<string>;
+  /**
+   * ADR-965. When set, requests are admitted while the bucket
+   * has a token but only responses with one of these statuses
+   * charge it, e.g. [401, 403] to limit failed logins without
+   * limiting successful ones. Across gateways the admission
+   * check uses each gateway's last-known shared balance.
+   *
+   */
+  count_statuses?: Array<number>;
   /**
    * Behavior when an authentication-backed dimension is not
    * available on the request. `"shared"` places all such

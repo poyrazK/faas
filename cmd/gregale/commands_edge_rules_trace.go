@@ -13,7 +13,9 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
@@ -33,21 +35,29 @@ func cmdEdgeRulesTrace(args []string) int {
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
 	clientIP := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
+	asnFlag := fs.String("asn", "", "simulated client autonomous system for asn conditions, e.g. AS13335")
 	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
+	proposalFile := fs.String("proposal", "", "compare against a proposed change: JSON {add,update,remove} file (or - for stdin)")
+	var addRules, removeRules multiFlag
+	fs.Var(&addRules, "add-rule", "compare against adding this rule (create-request JSON, @file; repeat)")
+	fs.Var(&removeRules, "remove-rule", "compare against removing this rule id (repeat)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	proposal, err := buildEdgeRuleTraceProposal(*proposalFile, addRules, removeRules)
+	if err != nil {
+		return printErr("Invalid proposal", err)
+	}
 	var input edgeruletrace.Input
-	var err error
 	if *scenarioFile != "" {
 		var conflictingFlags []string
 		fs.Visit(func(parsed *flag.Flag) {
-			if parsed.Name != "config" {
+			if parsed.Name != "config" && parsed.Name != "proposal" && parsed.Name != "add-rule" && parsed.Name != "remove-rule" {
 				conflictingFlags = append(conflictingFlags, "--"+parsed.Name)
 			}
 		})
@@ -64,7 +74,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->])", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)
@@ -87,8 +97,16 @@ func cmdEdgeRulesTrace(args []string) int {
 				return printErr("Invalid --body-file", err)
 			}
 		}
+		var asn uint32
+		if *asnFlag != "" {
+			n, perr := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(*asnFlag, "AS"), "as"), 10, 32)
+			if perr != nil || n == 0 {
+				return printErr("Invalid --asn", fmt.Errorf("%q is not an ASN (use 13335 or AS13335)", *asnFlag))
+			}
+			asn = uint32(n)
+		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
-			Project: *project, Environment: *environment,
+			Project: *project, Environment: *environment, ASN: asn,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Query: u.RawQuery, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,
@@ -170,19 +188,28 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
-	if edgeRuleTraceHasEnabledKind(rules, "throttle") || edgeRuleTraceHasEnabledKind(rules, "async") {
+	// Context loading below must cover kinds the proposal introduces too.
+	contextRules := rules
+	if !proposal.Empty() {
+		proposedRules, applyErr := edgeruletrace.ApplyProposal(rules, proposal, time.Now())
+		if applyErr != nil {
+			return printErr("Invalid proposal", applyErr)
+		}
+		contextRules = append(append([]api.EdgeRuleResponse(nil), rules...), proposedRules...)
+	}
+	if edgeRuleTraceHasEnabledKind(contextRules, "throttle") || edgeRuleTraceHasEnabledKind(contextRules, "async") {
 		// The app response carries effective app/account ceilings, but the
 		// account profile supplies plan-only throttle and async limits. If it
 		// is temporarily unavailable, keep the trace useful and mark those
 		// ceilings unavailable instead of guessing.
 		if account, accountErr := client.Whoami(context.Background()); accountErr == nil {
 			if limits, ok := api.LimitsFor(api.Plan(account.Plan)); ok {
-				if edgeRuleTraceHasEnabledKind(rules, "throttle") {
+				if edgeRuleTraceHasEnabledKind(contextRules, "throttle") {
 					input.ThrottlePlanLimitsLoaded = limits.RateLimitRPS > 0 && limits.RateLimitBurst > 0
 					input.ThrottlePlanMaxRPS = limits.RateLimitRPS
 					input.ThrottlePlanMaxBurst = limits.RateLimitBurst
 				}
-				if edgeRuleTraceHasEnabledKind(rules, "async") {
+				if edgeRuleTraceHasEnabledKind(contextRules, "async") {
 					input.AsyncPlanLimitsLoaded = true
 					input.AsyncPlan = api.Plan(account.Plan)
 					input.AsyncInvokeAllowed = limits.AsyncInvokeAllowed
@@ -199,12 +226,34 @@ func cmdEdgeRulesTrace(args []string) int {
 			return printErr("Environment edge policy unavailable", err)
 		}
 	}
-	if edgeruletrace.RequiresCorsPresetData(rules) {
+	if edgeruletrace.RequiresCorsPresetData(contextRules) {
 		presets, presetErr := client.ListCorsPresets(context.Background(), "")
 		if presetErr != nil {
 			return printErr("CORS preset lookup failed", presetErr)
 		}
 		input.CorsPresets = presets.Presets
+	}
+	if names := edgeruletrace.ReferencedEdgeRuleLists(contextRules); len(names) > 0 {
+		for _, name := range names {
+			list, listErr := client.GetEdgeRuleList(context.Background(), name)
+			if listErr != nil && !isNotFound(listErr) {
+				return printErr("Edge rule list lookup failed", listErr)
+			}
+			if listErr == nil {
+				input.EdgeRuleLists = append(input.EdgeRuleLists, list)
+			}
+		}
+	}
+	if !proposal.Empty() {
+		comparison, cmpErr := edgeruletrace.SimulateProposal(input, rules, proposal, time.Now())
+		if cmpErr != nil {
+			return printErr("Invalid proposal", cmpErr)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(comparison))
+		}
+		renderEdgeRuleTraceComparison(comparison)
+		return 0
 	}
 	result, err := edgeruletrace.Simulate(input, rules)
 	if err != nil {

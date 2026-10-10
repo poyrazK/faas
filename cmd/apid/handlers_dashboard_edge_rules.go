@@ -77,6 +77,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		log.Warn("dashboard edge rules: list rules", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
 	} else {
 		data.Rules = projectDashboardEdgeRules(rules)
+		s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules)
+		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
 				data.SecurityHeadersEnabled = true
@@ -137,6 +139,17 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
 			for _, rule := range rules {
 				apiRules = append(apiRules, edgeRuleResponse(rule))
+			}
+			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
+				if store, ok := s.store.(state.EdgeRuleListStore); ok {
+					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
+					if listErr != nil {
+						log.Warn("dashboard edge rules: load edge rule lists", "account_id", acct.ID, "err", listErr)
+					}
+					for _, l := range lists {
+						traceContext.EdgeRuleLists = append(traceContext.EdgeRuleLists, edgeRuleListResponse(l, nil, true))
+					}
+				}
 			}
 			result, traceErr := edgeruletrace.Simulate(traceContext, apiRules)
 			if traceErr != nil {
@@ -253,6 +266,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageIt
 			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row),
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
+			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
 		}
 		items = append(items, item)
 	}
@@ -301,7 +315,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
-	case "created", "updated", "deleted", "security_headers_enabled":
+	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"

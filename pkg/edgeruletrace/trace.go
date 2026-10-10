@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
@@ -51,12 +52,19 @@ type Input struct {
 	Method   string
 	ClientIP string
 	Country  string
-	Headers  http.Header
-	Body     []byte
+	// ASN is the simulated client autonomous system for asn conditions
+	// (ADR-966); 0 means unknown.
+	ASN     uint32
+	Headers http.Header
+	Body    []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
 	CorsPresets []api.CorsPresetResponse
+	// EdgeRuleLists supplies the account lists (with items) that rule
+	// conditions reference through in_list (ADR-963). A referenced list
+	// missing here never matches, as on the gateway.
+	EdgeRuleLists []api.EdgeRuleListResponse
 	// AppCORSDefaultsLoaded distinguishes a known-disabled app setting from
 	// app metadata that was not available to the caller. When a request has an
 	// Origin but no matching edge-rule CORS rule, missing app settings stop the
@@ -270,21 +278,23 @@ type BudgetPolicyPreview struct {
 // known outer rate ceilings. The trace does not resolve authenticated or
 // trusted-geolocation identities and never consults or consumes a live bucket.
 type ThrottlePolicyPreview struct {
-	RequestsPerSecond float64 `json:"requests_per_second"`
-	Burst             int     `json:"burst"`
-	GatewayRateRPS    float64 `json:"gateway_rate_rps"`
-	GatewayBurst      int     `json:"gateway_burst"`
-	KeyBy             string  `json:"key_by"`
-	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
-	MaxKeysPerRule    int     `json:"max_keys_per_rule"`
-	MaxKeysSource     string  `json:"max_keys_source"`
-	MissingKeyPolicy  string  `json:"missing_key_policy"`
-	PlanCeilingStatus string  `json:"plan_ceiling_status"`
-	PlanMaxRPS        int     `json:"plan_max_rps,omitempty"`
-	PlanMaxBurst      int     `json:"plan_max_burst,omitempty"`
-	AppRequestRPS     int     `json:"app_request_rps,omitempty"`
-	AppRequestBurst   int     `json:"app_request_burst,omitempty"`
-	AccountRequestRPM int     `json:"account_request_rpm,omitempty"`
+	RequestsPerSecond float64  `json:"requests_per_second"`
+	Burst             int      `json:"burst"`
+	GatewayRateRPS    float64  `json:"gateway_rate_rps"`
+	GatewayBurst      int      `json:"gateway_burst"`
+	KeyBy             string   `json:"key_by"`
+	JWTClaimName      string   `json:"jwt_claim_name,omitempty"`
+	MaxKeysPerRule    int      `json:"max_keys_per_rule"`
+	MaxKeysSource     string   `json:"max_keys_source"`
+	MissingKeyPolicy  string   `json:"missing_key_policy"`
+	KeyFields         []string `json:"key_fields,omitempty"`
+	CountStatuses     []int    `json:"count_statuses,omitempty"`
+	PlanCeilingStatus string   `json:"plan_ceiling_status"`
+	PlanMaxRPS        int      `json:"plan_max_rps,omitempty"`
+	PlanMaxBurst      int      `json:"plan_max_burst,omitempty"`
+	AppRequestRPS     int      `json:"app_request_rps,omitempty"`
+	AppRequestBurst   int      `json:"app_request_burst,omitempty"`
+	AccountRequestRPM int      `json:"account_request_rpm,omitempty"`
 }
 
 // RetryPolicyPreview reports a matching rule's effective replay policy and
@@ -553,8 +563,19 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		if sorted[i].Priority != sorted[j].Priority {
 			return sorted[i].Priority < sorted[j].Priority
 		}
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID < sorted[j].ID
 	})
+	// The gateway does not load expired rules; evaluate them as disabled
+	// (the per-rule row still reports the expiry as the skip reason).
+	now := time.Now()
+	for i := range sorted {
+		if sorted[i].ExpiresAt != nil && !now.Before(*sorted[i].ExpiresAt) {
+			sorted[i].Enabled = false
+		}
+	}
 	result := Result{
 		Project: input.Project, Environment: input.Environment,
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
@@ -576,6 +597,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
 		switch {
+		case rule.ExpiresAt != nil && !time.Now().Before(*rule.ExpiresAt):
+			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
 		case !HostMatches(rule.MatchHost, input.Host):
@@ -584,16 +607,22 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", fmt.Sprintf("method %q is not in %s", matchMethod, strings.Join(rule.MatchMethods, ", "))
 		case !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, input.Headers):
 			row.Status, row.Reason = "skipped", headerMismatch(rule.MatchHeaders, input.Headers)
+		case !traceConditionMatches(rule, input, input.Path, matchMethod, input.Headers):
+			row.Status, row.Reason = "skipped", "match condition is false for this request"
 		default:
 			matched, matchErr := true, error(nil)
 			if rule.MatchPath != "" && rule.MatchPath != "*" {
-				matched, matchErr = api.MatchEdgeRulePath(rule.MatchPath, input.Path)
+				matched, matchErr = api.MatchEdgeRuleKindPath(rule.Kind, rule.MatchPath, input.Path)
 			}
 			switch {
 			case matchErr != nil:
 				row.Status, row.Reason = "skipped", fmt.Sprintf("invalid path glob %q: %v", rule.MatchPath, matchErr)
 			case !matched:
 				row.Status, row.Reason = "skipped", fmt.Sprintf("path %q does not match %q", input.Path, rule.MatchPath)
+			case rule.Mode == api.EdgeRuleModeLog:
+				// ADR-960: matched and counted, but never enforced and never
+				// a candidate that shadows enforced rules of its kind.
+				row.Status, row.Reason = "logged", matchedSelectors(rule)+"; log mode: counted, not enforced"
 			default:
 				if firstIndex, seen := firstByKind[rule.Kind]; seen {
 					first := &result.Rules[firstIndex]
@@ -717,7 +746,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
-		rule, tied := firstPhaseRule(rules, phase, input.Host, requestPath, matchMethod, workingHeaders)
+		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, workingHeaders)
 		if tied {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
@@ -1192,16 +1221,19 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
-func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
+func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+			continue
+		}
+		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
 			continue
 		}
 		matched, err := true, error(nil)
 		if rule.MatchPath != "" && rule.MatchPath != "*" {
-			matched, err = api.MatchEdgeRulePath(rule.MatchPath, requestPath)
+			matched, err = api.MatchEdgeRuleKindPath(rule.Kind, rule.MatchPath, requestPath)
 		}
 		if err != nil || !matched {
 			continue
@@ -1219,6 +1251,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 	switch row.Status {
 	case "skipped":
 		return "not_applicable", "static selectors did not match", nil
+	case "logged":
+		return "logged", "log-mode rule: the gateway counts the match and does not act", nil
 	case "later_candidate":
 		return "not_evaluated", "a higher-priority matching candidate is considered first", nil
 	case "tied_candidate":
@@ -1589,6 +1623,8 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 		JWTClaimName:      action.JWTClaimName,
 		MaxKeysPerRule:    action.MaxKeysPerRule,
 		MissingKeyPolicy:  action.MissingKeyPolicy,
+		KeyFields:         action.KeyFields,
+		CountStatuses:     action.CountStatuses,
 		PlanCeilingStatus: "unavailable",
 	}
 	if policy.KeyBy == "" {
@@ -1623,8 +1659,18 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 
 func throttlePolicyReason(policy ThrottlePolicyPreview) string {
 	keying := fmt.Sprintf("key_by=%s", policy.KeyBy)
+	if len(policy.KeyFields) > 0 {
+		keying += fmt.Sprintf(" fields=%s", strings.Join(policy.KeyFields, "+"))
+	}
 	if policy.JWTClaimName != "" {
 		keying += fmt.Sprintf(" claim=%q", policy.JWTClaimName)
+	}
+	if len(policy.CountStatuses) > 0 {
+		codes := make([]string, len(policy.CountStatuses))
+		for i, c := range policy.CountStatuses {
+			codes[i] = strconv.Itoa(c)
+		}
+		keying += fmt.Sprintf(", charged only for responses %s", strings.Join(codes, "/"))
 	}
 	maxKeys := fmt.Sprintf("max_keys_per_rule=%d (%s)", policy.MaxKeysPerRule, policy.MaxKeysSource)
 	reason := fmt.Sprintf("matched route-throttle rule has configured %.3g requests/s, burst %d (gateway effective %.3g requests/s and burst %d), %s, missing_key_policy=%s, %s", policy.RequestsPerSecond, policy.Burst, policy.GatewayRateRPS, policy.GatewayBurst, keying, policy.MissingKeyPolicy, maxKeys)
@@ -2537,13 +2583,67 @@ func RedactHeaderInputForDisplay(raw string) string {
 	return strings.Join(lines, "")
 }
 
-// HostMatches mirrors the edge-rule store's exact-host and leading-subdomain
-// wildcard semantics.
-func HostMatches(pattern, host string) bool {
-	if pattern == "*" || pattern == host {
+// traceConditionMatches evaluates a rule's ADR-962 match condition with the
+// gateway's evaluator. The simulated client IP and country stand in for the
+// trusted values the gateway would see; the trace takes no query string, so
+// query fields are absent. A condition that does not compile never matches,
+// as on the gateway.
+func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, method string, headers http.Header) bool {
+	if rule.Match == nil {
 		return true
 	}
-	return strings.HasPrefix(pattern, "*.") && len(host) > len(pattern)-1 && strings.HasSuffix(host, pattern[1:])
+	program, err := api.CompileEdgeRuleMatchWithLists(rule.Match, traceEdgeRuleLists(rule.Match, input.EdgeRuleLists))
+	if err != nil {
+		return false
+	}
+	return program.Matches(api.EdgeRuleMatchInput{
+		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
+		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
+	})
+}
+
+// ReferencedEdgeRuleLists returns the distinct list names the rules'
+// conditions reference, so callers load only those (ADR-963).
+func ReferencedEdgeRuleLists(rules []api.EdgeRuleResponse) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rules {
+		for _, name := range api.EdgeRuleMatchListRefs(r.Match) {
+			if _, ok := seen[name]; !ok {
+				seen[name] = struct{}{}
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// traceEdgeRuleLists compiles the supplied lists that expr references.
+func traceEdgeRuleLists(expr *api.EdgeRuleMatchExpr, supplied []api.EdgeRuleListResponse) api.EdgeRuleLists {
+	names := api.EdgeRuleMatchListRefs(expr)
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(api.EdgeRuleLists, len(names))
+	for _, name := range names {
+		for _, l := range supplied {
+			if l.Name != name {
+				continue
+			}
+			if compiled, err := api.CompileEdgeRuleList(l.Kind, l.Items); err == nil {
+				out[name] = compiled
+			}
+		}
+	}
+	return out
+}
+
+// HostMatches is the gateway's match_host comparison (case-insensitive,
+// "*" / "*.suffix" / exact / glob), shared through pkg/api so the simulator
+// and the gateway cannot disagree on which hosts a rule covers.
+func HostMatches(pattern, host string) bool {
+	return api.EdgeRuleHostMatches(pattern, host)
 }
 
 // MethodMatches compares methods case-insensitively; an empty selector matches

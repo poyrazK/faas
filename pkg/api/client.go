@@ -3349,6 +3349,87 @@ func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rules/"+id, nil, nil)
 }
 
+// GetEdgeRuleStats returns per-rule match counts over window (1h, 24h or 7d;
+// empty means 24h) (ADR-960).
+func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	path := "/v1/apps/" + slug + "/edge-rules/stats"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
+// first (ADR-964). Pass the response's NextCursor to continue.
+func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
+	v := url.Values{}
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/events"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeRuleEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
+// items (ADR-963).
+func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+	var out ListEdgeRuleListsResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+}
+
+// GetEdgeRuleList returns one list with its items (ADR-963).
+func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+}
+
+// CreateEdgeRuleList creates a list (ADR-963).
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+}
+
+// UpdateEdgeRuleList edits a list (ADR-963).
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+}
+
+// DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+}
+
+// ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
+// newest first, without rule bodies (ADR-961).
+func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
+	var out []EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)
+}
+
+// GetEdgeRuleSetVersion returns one recorded version with its rules.
+func (c *Client) GetEdgeRuleSetVersion(ctx context.Context, slug string, version int) (EdgeRuleSetVersionResponse, error) {
+	var out EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions/"+strconv.Itoa(version), nil, &out)
+}
+
+// RollbackEdgeRules restores the app's edge rules to a recorded version and
+// returns the rules now in force. The restore is recorded as a new version.
+func (c *Client) RollbackEdgeRules(ctx context.Context, slug string, version int) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/edge-rules/rollback", RollbackEdgeRulesRequest{Version: version}, &out)
+}
+
 // CreateCORSEdgeRuleOpts is the typed CORS convenience shape used by
 // CreateCORSEdgeRule (CORS improvements D5). Every field maps 1:1 to
 // an EdgeRuleCORSAction field; the helper below packs them into a

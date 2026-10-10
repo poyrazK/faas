@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.edge_rule_response_kind import EdgeRuleResponseKind, check_edge_rule_response_kind
+from ..models.edge_rule_response_mode import EdgeRuleResponseMode, check_edge_rule_response_mode
 from ..models.edge_rule_response_validate_mode import (
     EdgeRuleResponseValidateMode,
     check_edge_rule_response_validate_mode,
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+    from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
@@ -90,6 +92,27 @@ class EdgeRuleResponse:
     Resolved mode; always present on read. Empty on read
     would be a database invariant violation.
     """
+    name: str | Unset = UNSET
+    """Operator-facing rule name."""
+    description: str | Unset = UNSET
+    """Operator-facing description."""
+    expires_at: datetime.datetime | Unset = UNSET
+    """When the gateway stops applying the rule."""
+    expired: bool | Unset = UNSET
+    """True once expires_at has passed and the rule no longer applies."""
+    match: EdgeRuleMatchExpr | Unset = UNSET
+    """ADR-962 match condition, ANDed with the rule's fixed selectors. A node
+    is exactly one of all, any, not, or a field/op leaf. Fields: method,
+    path, host, client_ip, country, asn (ADR-966: the client IP's
+    autonomous system, e.g. 13335 or AS13335), header:<name>,
+    cookie:<name>, query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
+    list names an account list whose kind fits the field). Depth at most 4,
+    at most 32 nodes, 64 values per leaf, values and regexes at most 256
+    bytes. An untrusted client IP, or its unknown country or ASN, is absent.
+    """
+    mode: EdgeRuleResponseMode | Unset = UNSET
+    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -177,6 +200,24 @@ class EdgeRuleResponse:
         if not isinstance(self.validate_mode, Unset):
             validate_mode = self.validate_mode
 
+        name = self.name
+
+        description = self.description
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
+        expired = self.expired
+
+        match: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match, Unset):
+            match = self.match.to_dict()
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -198,6 +239,18 @@ class EdgeRuleResponse:
         )
         if validate_mode is not UNSET:
             field_dict["validate_mode"] = validate_mode
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
+        if expired is not UNSET:
+            field_dict["expired"] = expired
+        if match is not UNSET:
+            field_dict["match"] = match
+        if mode is not UNSET:
+            field_dict["mode"] = mode
 
         return field_dict
 
@@ -213,6 +266,7 @@ class EdgeRuleResponse:
         from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+        from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
@@ -421,6 +475,33 @@ class EdgeRuleResponse:
         else:
             validate_mode = check_edge_rule_response_validate_mode(_validate_mode)
 
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
+        expired = d.pop("expired", UNSET)
+
+        _match = d.pop("match", UNSET)
+        match: EdgeRuleMatchExpr | Unset
+        if isinstance(_match, Unset):
+            match = UNSET
+        else:
+            match = EdgeRuleMatchExpr.from_dict(_match)
+
+        _mode = d.pop("mode", UNSET)
+        mode: EdgeRuleResponseMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_edge_rule_response_mode(_mode)
+
         edge_rule_response = cls(
             id=id,
             account_id=account_id,
@@ -436,6 +517,12 @@ class EdgeRuleResponse:
             created_at=created_at,
             updated_at=updated_at,
             validate_mode=validate_mode,
+            name=name,
+            description=description,
+            expires_at=expires_at,
+            expired=expired,
+            match=match,
+            mode=mode,
         )
 
         edge_rule_response.additional_properties = d

@@ -57,6 +57,8 @@
     {{if eq .Data.Action "updated"}}<div class="flash ok" role="status">Edge rule updated.</div>{{end}}
     {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Edge rule deleted.</div>{{end}}
     {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
+    {{if eq .Data.Action "mode_enforce"}}<div class="flash ok" role="status">Rule is now enforced.</div>{{end}}
+    {{if eq .Data.Action "mode_log"}}<div class="flash ok" role="status">Rule is now in log mode: it is matched and counted but never acts.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -175,17 +177,19 @@
     <h2>Rules</h2>
     {{if .Data.Rules}}
       <table aria-label="Edge rules">
-        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Action</th><th>Manage</th></tr></thead>
+        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Matches (24 h)</th><th>Action</th><th>Manage</th></tr></thead>
         <tbody>
           {{range .Data.Rules}}
             <tr>
               <td>{{.Priority}}</td>
-              <td><strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+              <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td><code>{{.MatchHost}}{{.MatchPath}}</code></td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
-              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}</td>
+              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
+              <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
+                <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">{{if eq .Mode "log"}}<input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button>{{else}}<input type="hidden" name="mode" value="log"><button type="submit">Log only</button>{{end}}</form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
               </td>
@@ -194,6 +198,43 @@
         </tbody>
       </table>
     {{else}}<p class="muted">No edge rules yet.</p>{{end}}
+
+    <section class="card" id="security-events" aria-labelledby="security-events-heading">
+      <h2 id="security-events-heading">Security events</h2>
+      <p class="muted">Sampled requests rules matched: up to 10 per rule per minute, kept 7 days. Query strings, bodies and headers other than the user agent are never stored.</p>
+      <form method="GET" action="/dashboard/apps/{{.Data.App.Slug}}/edge-rules#security-events">
+        <label>Rule
+          <select name="rule"><option value="">all rules</option>{{range .Data.Rules}}<option value="{{.ID}}" {{if eq .ID $.Data.Events.Rule}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{.Kind}} {{.MatchHost}}{{.MatchPath}}{{end}}</option>{{end}}</select>
+        </label>
+        <label>Outcome
+          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option></select>
+        </label>
+        <label>Since
+          <select name="since"><option value="1h" {{if eq .Data.Events.Since "1h"}}selected{{end}}>1h</option><option value="24h" {{if eq .Data.Events.Since "24h"}}selected{{end}}>24h</option><option value="72h" {{if eq .Data.Events.Since "72h"}}selected{{end}}>72h</option><option value="7d" {{if eq .Data.Events.Since "7d"}}selected{{end}}>7d</option></select>
+        </label>
+        <button type="submit">Filter</button>
+      </form>
+      {{if .Data.Events.ErrorMessage}}<div class="flash error" role="alert">{{.Data.Events.ErrorMessage}}</div>
+      {{else if .Data.Events.Events}}
+        <p class="muted">Since {{.Data.Events.SinceLabel}}.</p>
+        <table aria-label="Security events">
+          <thead><tr><th>Time</th><th>Rule</th><th>Outcome</th><th>Request</th><th>Client</th><th>User agent</th></tr></thead>
+          <tbody>
+            {{range .Data.Events.Events}}
+              <tr>
+                <td class="nowrap">{{.OccurredAt}}</td>
+                <td>{{.RuleLabel}}<br><small class="muted"><code>{{.RuleID}}</code></small></td>
+                <td>{{.Outcome}}</td>
+                <td><code>{{.Method}} {{.HostPath}}</code>{{if .RequestID}}<br><small class="muted"><code>{{.RequestID}}</code></small>{{end}}</td>
+                <td>{{if .ClientIP}}<code>{{.ClientIP}}</code>{{else}}<span class="muted">unknown</span>{{end}}{{if .Country}} · {{.Country}}{{end}}</td>
+                <td><small>{{.UserAgent}}</small></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{if .Data.Events.NextURL}}<p><a href="{{.Data.Events.NextURL}}">Older events</a></p>{{end}}
+      {{else}}<p class="muted">No security events in this window.</p>{{end}}
+    </section>
 
     <section class="card" aria-labelledby="create-rule-heading">
       <h2 id="create-rule-heading">Create an edge rule</h2>
