@@ -20,5 +20,9 @@ loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
+An idle function parks after 30 seconds by default on every plan; set
+`gregale app APP --idle SECONDS` to keep it warm longer (see
+[scale-to-zero](cold-wake.md#when-an-instance-parks)).
+
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).

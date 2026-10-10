@@ -168,7 +168,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	data.Since = echoDebugSince(sinceRaw, since)
 	data.WindowStart = windowStart.Format(time.RFC3339Nano)
 	data.WindowEnd = windowEnd.Format(time.RFC3339Nano)
-	running, runningErr := s.readDebugRunning(ctx, app, windowStart, windowEnd, 20, limits.IdleTimeoutS)
+	running, runningErr := s.readDebugRunning(ctx, app, windowStart, windowEnd, 20, limits.DefaultIdleTimeoutS(string(app.Type)))
 	if runningErr != nil {
 		log.Warn("dashboard renderAppDebug: running explanation", "account_id", acct.ID, "app_id", app.ID, "err", runningErr)
 		data.RunningError = "Running-state observations are temporarily unavailable. Please try again shortly."

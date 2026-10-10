@@ -516,6 +516,8 @@ the gateway. A static C handler then answered two snapshot-restore wakes
 with `runtime=binary` and a different start-time random token each time,
 so each restore ran a fresh handler process. The migration's Up, Down and
 replay passed on Postgres 16.
+Functions without an explicit `idle_timeout_s` park after 30 s on every
+plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps keep the plan default.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
