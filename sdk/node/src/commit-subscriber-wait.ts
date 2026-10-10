@@ -45,7 +45,7 @@ export async function waitCommitSubscriber(publication: CommitEventPublication, 
           const row = page.recipients.find(r => r.subscription_id.toLowerCase() === result.subscription_id && (!r.origin || r.origin === 'acceptance'));
           if (row) {
             result.recipient = row;
-            result.status = subscriberStatus(row);
+            result.status = commitSubscriberStatus(row);
             found = true;
             break;
           }
@@ -74,7 +74,7 @@ export async function waitCommitSubscriber(publication: CommitEventPublication, 
   } finally { clearTimeout(deadline); options.signal?.removeEventListener('abort', abort); }
 }
 
-function subscriberStatus(row: EventReceiptRecipientResponse): string {
+export function commitSubscriberStatus(row: EventReceiptRecipientResponse): string {
   if (row.workflow_name) return 'unsupported_recipient';
   if (row.execution) {
     if (['completed', 'failed', 'dead_letter', 'cancelled', 'expired', 'superseded'].includes(row.execution.state)) return row.execution.state;

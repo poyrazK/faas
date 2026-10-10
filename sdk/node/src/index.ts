@@ -297,3 +297,5 @@ export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerReque
   type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
 
 export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
+
+export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem } from './commit-delivery-report.js';

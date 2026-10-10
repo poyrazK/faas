@@ -285,3 +285,6 @@ __all__ += (
 from .commit_subscriber_wait import await_commit_subscriber as await_commit_subscriber
 
 __all__ += ("await_commit_subscriber",)
+
+from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+__all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")

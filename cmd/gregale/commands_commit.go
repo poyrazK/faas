@@ -15,6 +15,8 @@ import (
 func cmdCommit(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "delivery-report":
+			return cmdCommitDeliveryReport(args[1:])
 		case "history":
 			return cmdCommitHistory(args[1:])
 		case "doctor":
@@ -24,7 +26,7 @@ func cmdCommit(args []string) int {
 		}
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|history|inspect|wait|operation|receipt|blocked|replay>", "commit")
+		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|history|delivery-report|inspect|wait|operation|receipt|blocked|replay>", "commit")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:], "allow-tenant-selection")

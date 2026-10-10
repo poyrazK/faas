@@ -158,6 +158,7 @@ WRAPPER_MODULES = (
     "operations.py",
     "event_consumer_transactions.py",
     "commit_subscriber_wait.py",
+    "commit_delivery_report.py",
     "_event_consumer_contract.py",
     "event_consumer_schema.sql",
     "_operation_contract.py",
@@ -950,6 +951,9 @@ __all__ += (
 )
 from .commit_subscriber_wait import await_commit_subscriber
 __all__ += ("await_commit_subscriber",)
+
+from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+__all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
 
 '''
 

@@ -379,3 +379,6 @@ type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
 type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse
 
 type CommitSubscriberWaitResult = api.CommitSubscriberWaitResult
+
+type CommitDeliveryReport = api.CommitDeliveryReport
+type CommitDeliveryReportItem = api.CommitDeliveryReportItem

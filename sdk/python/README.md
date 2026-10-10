@@ -775,3 +775,8 @@ For transactional publication to subscribers, configure an immutable `event` Com
 waits for one original application subscriber through an authenticated generated
 client. Only `result["status"] == "completed"` proves original execution success.
 See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publication-subscriber).
+
+`await aget_commit_delivery_report(client, source, limit=50, timeout=120)` samples
+recent original-subscriber outcomes. Check per-item evidence status and cursors;
+read failures raise `CommitDeliveryReportError` with the partial report. Counts
+cover sampled evidence only.

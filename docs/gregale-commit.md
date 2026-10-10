@@ -637,3 +637,62 @@ SDK equivalents accept a saved `CommitEventPublication` descriptor:
 SDK readers preserve the original acceptance-time guard on every page. Each
 result concerns one subscriber independently; it does not assert completion of
 other consumers or require them to finish first.
+
+### Delivery report across recent publications
+
+```sh
+gregale commit delivery-report SOURCE --limit 50 --timeout 2m
+gregale commit delivery-report SOURCE --subscription-id SUBSCRIPTION_UUID
+gregale commit delivery-report SOURCE --before NEXT_BEFORE --limit 50
+```
+
+This read-only report selects one newest-first publication-history page (default
+50, maximum 200 publications) and reads the first guarded recipient page for each
+publication (up to 200 recipients). Each item retains its acceptance receipt and
+reports `evidence_status`: `available`, `partial`, `unavailable`,
+`acceptance_replaced`, `not_read`, or `read_error`. Subscriber rows include the
+original recipient evidence, including existing recovery and attempt-history
+links. It does not request replay, cancel work or publish events.
+
+`counts` summarizes only the original subscribers actually observed, plus
+`not_targeted` when a requested subscription is absent from a complete captured
+recipient snapshot. It excludes backfills and does not adopt generic replay
+success as original execution success. Workflow recipients are reported as
+`unsupported_recipient`. Completion retains the same meaning and limitations
+as individual subscriber waits.
+
+`next_before` continues publication history. An item's `next_after` means its
+recipient coverage is incomplete; pass it to the guarded publication receipt
+reader to continue. A missing requested subscriber on a partial page stays
+unknown, rather than being labelled untargeted. Even with no continuation,
+a receipt whose original snapshot has not been captured is `partial`.
+Unavailable or replaced evidence never contributes a completion count.
+
+`read_complete` means all selected publication reads finished, including reads
+that established unavailable/replaced evidence. It does not mean every
+subscriber completed, every recipient was sampled, or every publication in the
+source was examined. These are live reads across separate snapshots; counts are
+observations rather than an atomic source-wide health snapshot.
+
+The CLI prints partial reports on read errors and exits 1 (124 for deadline,
+130 for interruption). Unvisited selected publications remain `not_read`.
+Exit 0 means the reads finished, even when subscribers failed. After a read
+error, retry the same history cursor; advancing `next_before` would skip unread
+items in that selected history page.
+
+SDK equivalents:
+
+- Go: `client.GetCommitDeliveryReport(ctx, source, before, subscriptionID, limit)`.
+  Use an empty subscription ID for all sampled recipients and set a context
+  deadline. The result is returned alongside any read error.
+- Node: `getCommitDeliveryReport(source, { before, limit, subscriptionId,
+  timeoutMs, signal })`, using configured generated services. A failed read throws
+  `CommitDeliveryReportError` with the partial `report` and original `cause`.
+- Python: `await aget_commit_delivery_report(client, source, before=cursor,
+  limit=50, subscription_id=subscription, timeout=120)`. Read failures and timeout
+  raise `CommitDeliveryReportError` with partial `report`; task cancellation
+  propagates. Omit `subscription_id` to inspect all sampled original recipients.
+
+For complete evidence of one selected subscriber, use the subscriber wait,
+which follows recipient pagination. Reports preserve the acceptance-time guard
+on every sampled receipt and remain useful after delivery evidence expires.

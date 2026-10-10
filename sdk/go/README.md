@@ -754,3 +754,7 @@ For Commit event publications, `WaitCommitSubscriber` waits for one original
 application subscriber using guarded, paginated receipt reads. Supply a context
 deadline; only `result.Status == "completed"` proves original execution success.
 See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publication-subscriber).
+
+`GetCommitDeliveryReport` samples recent publication receipts and their original
+subscriber outcomes. Counts cover sampled evidence only; use `NextAfter` and
+`NextBefore` to continue. Read errors return the partial report alongside the error.
