@@ -53,7 +53,19 @@ func render() string {
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.\n")
 	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).\n\n")
-	b.WriteString("## Choose a plan\n\n")
+	b.WriteString("## Developer environments\n\n")
+	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum.\n\n",
+		formatDuration(int(api.DeveloperLeaseDefault.Seconds())), formatDuration(int(api.DeveloperLeaseMin.Seconds())))
+	b.WriteString("| Plan | Developer apps | Maximum lease |\n")
+	b.WriteString("|---|---:|---:|\n")
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
+	}
+	b.WriteString("\n## Choose a plan\n\n")
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale plan`; quota errors include the exact observed value, limit, and next action.\n")
 	return b.String()

@@ -128,6 +128,14 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_event_publication_verification import AppEventPublicationVerification
+from .app_event_publication_verification_acceptance import AppEventPublicationVerificationAcceptance
+from .app_event_publication_verification_reason import AppEventPublicationVerificationReason
+from .app_event_publication_verification_status import AppEventPublicationVerificationStatus
+from .app_event_publish_status_response import AppEventPublishStatusResponse
+from .app_event_publish_status_response_acceptance import AppEventPublishStatusResponseAcceptance
+from .app_event_publish_status_response_reason import AppEventPublishStatusResponseReason
+from .app_event_publish_status_response_status import AppEventPublishStatusResponseStatus
 from .app_health_capacity import AppHealthCapacity
 from .app_health_changed_webhook_payload import AppHealthChangedWebhookPayload
 from .app_health_changed_webhook_payload_change import AppHealthChangedWebhookPayloadChange
@@ -209,6 +217,8 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_publish_event_request import AppPublishEventRequest
+from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
@@ -793,6 +803,10 @@ from .dev_bridge_session_summary import DevBridgeSessionSummary
 from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
+from .dev_patch_preview import DevPatchPreview
+from .dev_patch_preview_reason import DevPatchPreviewReason
+from .dev_patch_status_response import DevPatchStatusResponse
+from .dev_patch_status_response_state import DevPatchStatusResponseState
 from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
@@ -1008,6 +1022,25 @@ from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
 from .event_recovery_control_request import EventRecoveryControlRequest
 from .event_recovery_execution import EventRecoveryExecution
+from .event_recovery_execution_evidence_source import EventRecoveryExecutionEvidenceSource
+from .event_recovery_execution_finished_webhook_payload import EventRecoveryExecutionFinishedWebhookPayload
+from .event_recovery_execution_finished_webhook_payload_mode import EventRecoveryExecutionFinishedWebhookPayloadMode
+from .event_recovery_execution_finished_webhook_payload_outcome import (
+    EventRecoveryExecutionFinishedWebhookPayloadOutcome,
+)
+from .event_recovery_execution_finished_webhook_payload_pending_count import (
+    EventRecoveryExecutionFinishedWebhookPayloadPendingCount,
+)
+from .event_recovery_execution_finished_webhook_payload_state import EventRecoveryExecutionFinishedWebhookPayloadState
+from .event_recovery_execution_finished_webhook_payload_unresolved_count import (
+    EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount,
+)
+from .event_recovery_execution_health import EventRecoveryExecutionHealth
+from .event_recovery_execution_health_coverage import EventRecoveryExecutionHealthCoverage
+from .event_recovery_execution_health_job_limit import EventRecoveryExecutionHealthJobLimit
+from .event_recovery_execution_job_health import EventRecoveryExecutionJobHealth
+from .event_recovery_execution_job_health_state import EventRecoveryExecutionJobHealthState
+from .event_recovery_execution_job_health_status import EventRecoveryExecutionJobHealthStatus
 from .event_recovery_execution_source import EventRecoveryExecutionSource
 from .event_recovery_execution_state import EventRecoveryExecutionState
 from .event_recovery_execution_summary import EventRecoveryExecutionSummary
@@ -1036,6 +1069,45 @@ from .event_recovery_job_health_status import EventRecoveryJobHealthStatus
 from .event_recovery_job_health_wait_reason import EventRecoveryJobHealthWaitReason
 from .event_recovery_job_state import EventRecoveryJobState
 from .event_recovery_jobs import EventRecoveryJobs
+from .event_recovery_notification import EventRecoveryNotification
+from .event_recovery_notification_acknowledgement_status import EventRecoveryNotificationAcknowledgementStatus
+from .event_recovery_notification_capture_status import EventRecoveryNotificationCaptureStatus
+from .event_recovery_notification_event import EventRecoveryNotificationEvent
+from .event_recovery_notification_evidence_source import EventRecoveryNotificationEvidenceSource
+from .event_recovery_notification_health_counts import EventRecoveryNotificationHealthCounts
+from .event_recovery_notification_job_health import EventRecoveryNotificationJobHealth
+from .event_recovery_notification_job_health_kind import EventRecoveryNotificationJobHealthKind
+from .event_recovery_notification_kind import EventRecoveryNotificationKind
+from .event_recovery_notification_receiver import EventRecoveryNotificationReceiver
+from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
+from .event_recovery_notification_retry_backlog import EventRecoveryNotificationRetryBacklog
+from .event_recovery_notification_retry_backlog_counts_scope import EventRecoveryNotificationRetryBacklogCountsScope
+from .event_recovery_notification_retry_backlog_request import EventRecoveryNotificationRetryBacklogRequest
+from .event_recovery_notification_retry_backlog_totals import EventRecoveryNotificationRetryBacklogTotals
+from .event_recovery_notification_retry_candidate import EventRecoveryNotificationRetryCandidate
+from .event_recovery_notification_retry_candidate_kind import EventRecoveryNotificationRetryCandidateKind
+from .event_recovery_notification_retry_decision import EventRecoveryNotificationRetryDecision
+from .event_recovery_notification_retry_decision_detail import EventRecoveryNotificationRetryDecisionDetail
+from .event_recovery_notification_retry_decision_retry_outcome import EventRecoveryNotificationRetryDecisionRetryOutcome
+from .event_recovery_notification_retry_decision_state import EventRecoveryNotificationRetryDecisionState
+from .event_recovery_notification_retry_decision_summary import EventRecoveryNotificationRetryDecisionSummary
+from .event_recovery_notification_retry_decision_summary_status import (
+    EventRecoveryNotificationRetryDecisionSummaryStatus,
+)
+from .event_recovery_notification_retry_history import EventRecoveryNotificationRetryHistory
+from .event_recovery_notification_retry_history_totals import EventRecoveryNotificationRetryHistoryTotals
+from .event_recovery_notification_retry_preview import EventRecoveryNotificationRetryPreview
+from .event_recovery_notification_retry_request import EventRecoveryNotificationRetryRequest
+from .event_recovery_notification_retry_response import EventRecoveryNotificationRetryResponse
+from .event_recovery_notification_retry_result import EventRecoveryNotificationRetryResult
+from .event_recovery_notification_retry_result_state import EventRecoveryNotificationRetryResultState
+from .event_recovery_notification_retry_target import EventRecoveryNotificationRetryTarget
+from .event_recovery_notification_retry_target_kind import EventRecoveryNotificationRetryTargetKind
+from .event_recovery_notifications import EventRecoveryNotifications
+from .event_recovery_notifications_health import EventRecoveryNotificationsHealth
+from .event_recovery_notifications_health_coverage import EventRecoveryNotificationsHealthCoverage
+from .event_recovery_notifications_health_job_limit import EventRecoveryNotificationsHealthJobLimit
+from .event_recovery_notifications_receiver_limit import EventRecoveryNotificationsReceiverLimit
 from .event_recovery_preflight import EventRecoveryPreflight
 from .event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapacityScopes
 from .event_recovery_preflight_item import EventRecoveryPreflightItem
@@ -1066,6 +1138,10 @@ from .event_replay_preview_match_original_recipient import EventReplayPreviewMat
 from .event_replay_preview_response import EventReplayPreviewResponse
 from .event_replay_preview_response_coverage import EventReplayPreviewResponseCoverage
 from .event_replay_preview_retention import EventReplayPreviewRetention
+from .event_retention_health import EventRetentionHealth
+from .event_retention_sample import EventRetentionSample
+from .event_retention_sample_hold_reason import EventRetentionSampleHoldReason
+from .event_retention_sample_status import EventRetentionSampleStatus
 from .event_routing_retry_policy import EventRoutingRetryPolicy
 from .event_routing_retry_policy_response import EventRoutingRetryPolicyResponse
 from .event_schema import EventSchema
@@ -2470,6 +2546,10 @@ from .public_status_update_components_item import PublicStatusUpdateComponentsIt
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
 from .publish_automation_request import PublishAutomationRequest
+from .publish_event_batch_request import PublishEventBatchRequest
+from .publish_event_batch_response import PublishEventBatchResponse
+from .publish_event_batch_result import PublishEventBatchResult
+from .publish_event_batch_result_status import PublishEventBatchResultStatus
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
@@ -3423,6 +3503,14 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "AppEventPublicationVerification",
+    "AppEventPublicationVerificationAcceptance",
+    "AppEventPublicationVerificationReason",
+    "AppEventPublicationVerificationStatus",
+    "AppEventPublishStatusResponse",
+    "AppEventPublishStatusResponseAcceptance",
+    "AppEventPublishStatusResponseReason",
+    "AppEventPublishStatusResponseStatus",
     "AppHealthCapacity",
     "AppHealthChangedWebhookPayload",
     "AppHealthChangedWebhookPayloadChange",
@@ -3532,6 +3620,8 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppPublishEventRequest",
+    "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppResponse",
@@ -4072,6 +4162,10 @@ __all__ = (
     "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
+    "DevPatchPreview",
+    "DevPatchPreviewReason",
+    "DevPatchStatusResponse",
+    "DevPatchStatusResponseState",
     "DevPostgresRequest",
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
@@ -4283,6 +4377,19 @@ __all__ = (
     "EventRecoveryCapacityWaitScope",
     "EventRecoveryControlRequest",
     "EventRecoveryExecution",
+    "EventRecoveryExecutionEvidenceSource",
+    "EventRecoveryExecutionFinishedWebhookPayload",
+    "EventRecoveryExecutionFinishedWebhookPayloadMode",
+    "EventRecoveryExecutionFinishedWebhookPayloadOutcome",
+    "EventRecoveryExecutionFinishedWebhookPayloadPendingCount",
+    "EventRecoveryExecutionFinishedWebhookPayloadState",
+    "EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount",
+    "EventRecoveryExecutionHealth",
+    "EventRecoveryExecutionHealthCoverage",
+    "EventRecoveryExecutionHealthJobLimit",
+    "EventRecoveryExecutionJobHealth",
+    "EventRecoveryExecutionJobHealthState",
+    "EventRecoveryExecutionJobHealthStatus",
     "EventRecoveryExecutionSource",
     "EventRecoveryExecutionState",
     "EventRecoveryExecutionSummary",
@@ -4311,6 +4418,43 @@ __all__ = (
     "EventRecoveryJobHealthWaitReason",
     "EventRecoveryJobs",
     "EventRecoveryJobState",
+    "EventRecoveryNotification",
+    "EventRecoveryNotificationAcknowledgementStatus",
+    "EventRecoveryNotificationCaptureStatus",
+    "EventRecoveryNotificationEvent",
+    "EventRecoveryNotificationEvidenceSource",
+    "EventRecoveryNotificationHealthCounts",
+    "EventRecoveryNotificationJobHealth",
+    "EventRecoveryNotificationJobHealthKind",
+    "EventRecoveryNotificationKind",
+    "EventRecoveryNotificationReceiver",
+    "EventRecoveryNotificationReceiverStatus",
+    "EventRecoveryNotificationRetryBacklog",
+    "EventRecoveryNotificationRetryBacklogCountsScope",
+    "EventRecoveryNotificationRetryBacklogRequest",
+    "EventRecoveryNotificationRetryBacklogTotals",
+    "EventRecoveryNotificationRetryCandidate",
+    "EventRecoveryNotificationRetryCandidateKind",
+    "EventRecoveryNotificationRetryDecision",
+    "EventRecoveryNotificationRetryDecisionDetail",
+    "EventRecoveryNotificationRetryDecisionRetryOutcome",
+    "EventRecoveryNotificationRetryDecisionState",
+    "EventRecoveryNotificationRetryDecisionSummary",
+    "EventRecoveryNotificationRetryDecisionSummaryStatus",
+    "EventRecoveryNotificationRetryHistory",
+    "EventRecoveryNotificationRetryHistoryTotals",
+    "EventRecoveryNotificationRetryPreview",
+    "EventRecoveryNotificationRetryRequest",
+    "EventRecoveryNotificationRetryResponse",
+    "EventRecoveryNotificationRetryResult",
+    "EventRecoveryNotificationRetryResultState",
+    "EventRecoveryNotificationRetryTarget",
+    "EventRecoveryNotificationRetryTargetKind",
+    "EventRecoveryNotifications",
+    "EventRecoveryNotificationsHealth",
+    "EventRecoveryNotificationsHealthCoverage",
+    "EventRecoveryNotificationsHealthJobLimit",
+    "EventRecoveryNotificationsReceiverLimit",
     "EventRecoveryPreflight",
     "EventRecoveryPreflightCapacityScopes",
     "EventRecoveryPreflightItem",
@@ -4341,6 +4485,10 @@ __all__ = (
     "EventReplayPreviewResponse",
     "EventReplayPreviewResponseCoverage",
     "EventReplayPreviewRetention",
+    "EventRetentionHealth",
+    "EventRetentionSample",
+    "EventRetentionSampleHoldReason",
+    "EventRetentionSampleStatus",
     "EventRoutingRetryPolicy",
     "EventRoutingRetryPolicyResponse",
     "EventSchema",
@@ -5673,6 +5821,10 @@ __all__ = (
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
     "PublishAutomationRequest",
+    "PublishEventBatchRequest",
+    "PublishEventBatchResponse",
+    "PublishEventBatchResult",
+    "PublishEventBatchResultStatus",
     "PublishEventRequest",
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",

@@ -7,6 +7,14 @@ import type { EventRecoveryExecution } from './EventRecoveryExecution.js';
  * Metadata-only selected recipient. In execution mode invocation_id identifies the selected failure. Queued means replay was admitted, not that the handler succeeded.
  */
 export type EventRecoveryItem = {
+  /**
+   * Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is pruned.
+   */
+  parent_job_id?: string;
+  /**
+   * Selected item position in the parent recovery.
+   */
+  parent_position?: number;
   invocation_id?: string;
   /**
    * Exact replay admitted by this job; omitted for routing recovery and legacy items.

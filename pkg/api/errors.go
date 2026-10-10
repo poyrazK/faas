@@ -415,6 +415,7 @@ const (
 	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
 	CodePlanLimitApps                      = "plan_limit_apps"
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
+	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
 	CodePlanLimitConcur                    = "plan_limit_concurrency"
 	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
@@ -771,6 +772,13 @@ const (
 	// CodeBeforeCheckpointFailed identifies an application callback that
 	// rejected a terminal init snapshot, distinct from storage or VM failures.
 	CodeBeforeCheckpointFailed = "before_checkpoint_failed"
+	// CodeDevSourceDiverged (ADR-740) is vmmd's refusal to snapshot an
+	// instance that was served a developer live patch. The VM is destroyed
+	// instead, and the next wake restores the unpatched artifact.
+	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
+	// one developer environment.
+	CodeDevDebugSessionLimit = "dev_debug_session_limit"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1890,12 +1898,12 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -1964,7 +1972,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
 	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
@@ -2402,6 +2410,22 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		"Developer environment limit reached",
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrPlanLimitDeveloperLease is returned when a developer session requests a
+// lease longer than the plan's `gregale dev --ttl` ceiling. Limit and observed
+// values are whole hours; the observed value rounds up so it always exceeds
+// the limit it is compared with.
+func ErrPlanLimitDeveloperLease(l Limits, requestedSeconds int64) *Problem {
+	observedHours := requestedSeconds / 3600
+	if requestedSeconds%3600 != 0 {
+		observedHours++
+	}
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperLease,
+		"Developer environment lease over plan limit",
+		fmt.Sprintf("%s plan allows a developer environment lease of at most %dh; requested %dh. Choose a shorter --ttl.", l.Plan, l.DeveloperLeaseMaxHours, observedHours)).
+		WithLimit(int64(l.DeveloperLeaseMaxHours), observedHours).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 

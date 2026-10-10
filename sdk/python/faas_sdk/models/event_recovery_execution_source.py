@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryExecutionSource = Literal["attempt_history", "invocation", "unavailable"]
+EventRecoveryExecutionSource = Literal["attempt_history", "invocation", "recovery_result", "unavailable"]
 
 EVENT_RECOVERY_EXECUTION_SOURCE_VALUES: set[EventRecoveryExecutionSource] = {
     "attempt_history",
     "invocation",
+    "recovery_result",
     "unavailable",
 }
 
