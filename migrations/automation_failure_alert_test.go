@@ -17,7 +17,7 @@ func TestAutomationFailureAlertMigrationReplayAndRollback(t *testing.T) {
 	defer pool.Close()
 	ctx := t.Context()
 	migrateUpOnce(ctx, t, pool)
-	raw, err := migrations.FS.ReadFile("20261009205602232_automation_failure_alert.sql")
+	raw, err := migrations.FS.ReadFile("20261010071621984_automation_failure_alert.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

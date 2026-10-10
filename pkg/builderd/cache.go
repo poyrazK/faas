@@ -37,6 +37,9 @@ type CacheEntry struct {
 type CacheToolchain struct {
 	BuildkitVer string `json:"buildkit_version,omitempty"`
 	RailpackVer string `json:"railpack_version,omitempty"`
+	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
+	// reports the same map as the build it reuses.
+	DevPatch *api.DevPatchSourceMap `json:"dev_patch,omitempty"`
 }
 
 // Cache stores produced OCI tarballs. Deployment builds use a versioned
@@ -210,7 +213,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 				return err
 			}
 		}
-		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" {
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
 			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
@@ -289,7 +292,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
-	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" {
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
 		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 			return err
 		}

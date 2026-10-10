@@ -56,6 +56,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |
+| 741 | [Remote debugger attach for developer environments](741-developer-debugger-attach.md) | proposed | `gregale dev --debug` over a leased edge WebSocket to vmmd `ForwardTCPStream`; developer sessions only |
+| 740 | [Developer live source patches](740-developer-live-source-patch.md) | proposed | ~1 s interpreted-source edits via a guest long-poll on the runtime-config vsock; the build still converges |
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
 | 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
@@ -702,6 +705,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
+- [ADR-911: Bounded batch event publication](911-batch-event-publication.md)
+
+- [ADR-912: Event retention health and expiry warnings](912-event-retention-health.md)
 - [ADR-838: Approved route removal exceptions in the contract gate](838-approved-route-removal-contract-exceptions.md)
 
 - [ADR-839: Telemetry coverage for route removal approvals](839-route-removal-telemetry-coverage.md)

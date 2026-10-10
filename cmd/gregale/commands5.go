@@ -1785,6 +1785,12 @@ func indexByte(s string, c byte) int {
 // is watching invocations, and advisory frames are noisy (one per
 // debounce window per state-shaped path).
 func cmdTail(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return cmdTailContext(ctx, args)
+}
+
+func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
@@ -1805,9 +1811,6 @@ func cmdTail(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	// Event frames carry app_id only. Resolve --app to its id so the filter
 	// matches, and keep an id→slug map so lines name the app.

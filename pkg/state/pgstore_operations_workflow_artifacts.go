@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"math"
 	"time"
 
@@ -46,8 +47,11 @@ func workflowOperationAuthorityTx(ctx context.Context, tx pgx.Tx, id string, a O
 	}
 	run := *workflowRunFromSQLC(row)
 	proof, err := q.WorkflowOutboundAttempt(ctx, tx, sqlc.WorkflowOutboundAttemptParams{RunID: mustPgUUID(a.RunID), StepName: a.StepName, Attempt: int32(a.Attempt)})
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, WorkflowRun{}, workflowOperationWindow{}, ErrOperationStaleAttempt
+	}
+	if err != nil {
+		return Operation{}, WorkflowRun{}, workflowOperationWindow{}, err
 	}
 	if err := validateOperationWorkflowExecutionAuthority(op, run, a, pgUUIDString(proof.OutboundAttemptToken), !artifact); err != nil {
 		return Operation{}, WorkflowRun{}, workflowOperationWindow{}, err

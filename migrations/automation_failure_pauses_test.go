@@ -16,7 +16,7 @@ func TestAutomationFailurePauseMigrationReplayAndGuardedRollback(t *testing.T) {
 	defer pool.Close()
 	ctx := t.Context()
 	migrateUpOnce(ctx, t, pool)
-	raw, err := migrations.FS.ReadFile("20261009212606155_automation_failure_pauses.sql")
+	raw, err := migrations.FS.ReadFile("20261010071515271_automation_failure_pauses.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

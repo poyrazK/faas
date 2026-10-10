@@ -60,6 +60,9 @@ func recoveryExecution(now time.Time, state string, attempts int, completed *tim
 }
 func addRecoveryExecution(summary *api.EventRecoveryExecutionSummary, out api.EventRecoveryExecution) {
 	summary.TrackedCount++
+	if out.Source == "recovery_result" {
+		summary.SavedResults++
+	}
 	switch out.State {
 	case "queued":
 		summary.Queued++
@@ -84,6 +87,9 @@ func addRecoveryExecution(summary *api.EventRecoveryExecutionSummary, out api.Ev
 	}
 }
 func recoveryExecutionObservation(row sqlc.EventRecoveryExecutionObservationsRow, now time.Time) api.EventRecoveryExecution {
+	if row.ResultState != "" && row.ResultRecordedAt.Valid && !timeFromPgtype(row.ResultRecordedAt).After(now) {
+		return api.EventRecoveryExecution{ObservedAt: now, State: row.ResultState, Source: "recovery_result", Attempts: int(row.ResultAttempts), CompletedAt: timestamptzToTimePtr(row.ResultCompletedAt), RecordedAt: timestamptzToTimePtr(row.ResultRecordedAt), EvidenceSource: row.ResultEvidenceSource}
+	}
 	out := recoveryExecution(now, row.InvocationState, int(row.InvocationAttempts), timestamptzToTimePtr(row.InvocationCompletedAt), row.AttemptOutcome, int(row.AttemptNumber), timestamptzToTimePtr(row.AttemptFinishedAt))
 	if row.InvocationOutcome == string(OutcomeUncertain) {
 		out.State = "unknown"
@@ -155,12 +161,21 @@ func (m *MemStore) recoveryAttemptIndexLocked(account, app string, now time.Time
 }
 func (m *MemStore) eventRecoveryObservedItemWithAttemptsLocked(job *memEventRecoveryJob, item memEventRecoveryItem, now time.Time, attempts map[recoveryAttemptKey]InvocationAttempt) api.EventRecoveryItem {
 	out := item.EventRecoveryItem
+	recoveryItemLineage(&out, item.ExpectedProgress)
 	out.Execution = nil
 	if item.ReplayGeneration != nil {
 		generation := *item.ReplayGeneration
 		out.ReplayGeneration = &generation
 	}
 	if job.Job.Selection.Mode != "execution" || item.State != "queued" {
+		return out
+	}
+	if saved, ok := m.eventRecoveryExecutionResults[recoveryResultKey{job.Job.ID, item.Position}]; ok && saved.InvocationID == item.ReplayInvocationID && item.ReplayGeneration != nil && saved.Generation == *item.ReplayGeneration && saved.CreatedAt.Equal(item.ReplayCreatedAt) && saved.Execution.RecordedAt != nil && !saved.Execution.RecordedAt.After(now) {
+		execution := saved.Execution
+		execution.ObservedAt = now
+		execution.CompletedAt = cloneEventReceiptTime(execution.CompletedAt)
+		execution.RecordedAt = cloneEventReceiptTime(execution.RecordedAt)
+		out.Execution = &execution
 		return out
 	}
 	execution := recoveryExecution(now, "", 0, nil, "", 0, nil)
@@ -172,7 +187,7 @@ func (m *MemStore) eventRecoveryObservedItemWithAttemptsLocked(job *memEventReco
 				execution.State = "unknown"
 				execution.CompletedAt = nil
 			}
-		} else if h, ok := attempts[recoveryAttemptKey{item.ReplayInvocationID, *item.ReplayGeneration}]; ok && !h.StartedAt.Before(item.ReplayCreatedAt) {
+		} else if h, found := attempts[recoveryAttemptKey{item.ReplayInvocationID, *item.ReplayGeneration}]; found && ok && sameMemUUID(inv.AccountID, job.AccountID) && sameMemUUID(inv.AppID, job.Job.AppID) && inv.CreatedAt.Equal(item.ReplayCreatedAt) && !h.StartedAt.Before(item.ReplayCreatedAt) {
 			execution = recoveryExecution(now, "", 0, nil, h.Outcome, h.Attempt, h.FinishedAt)
 		}
 	}

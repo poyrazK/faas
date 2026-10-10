@@ -253,12 +253,23 @@ func (r *startRunner) selectSource() int {
 	return 0
 }
 
-func (r *startRunner) selectProjectSource(root string) (string, error) {
+// projectSource is one deployable member of a workspace or convention-shaped
+// repository, below the scanned root.
+type projectSource struct {
+	Name    string // workload name from the scanner
+	RootDir string // slash-separated path relative to the scanned root
+	Path    string // absolute source directory
+}
+
+// discoverProjectSources lists the deployable workspace and convention members
+// below root. The root itself is never returned; callers decide whether a
+// deployable root is also a candidate.
+func discoverProjectSources(root string) ([]projectSource, error) {
 	scan, err := reposcan.Scan(os.DirFS(root))
 	if err != nil {
-		return "", fmt.Errorf("inspect project sources: %w", err)
+		return nil, fmt.Errorf("inspect project sources: %w", err)
 	}
-	var paths, labels []string
+	var sources []projectSource
 	seen := make(map[string]bool)
 	for _, workload := range scan.Workloads {
 		if workload.RootDir == "" || workload.RootDir == "." || (workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention) {
@@ -267,9 +278,21 @@ func (r *startRunner) selectProjectSource(root string) (string, error) {
 		path := filepath.Join(root, filepath.FromSlash(workload.RootDir))
 		if !seen[path] && detectShape(path) != shapeUnknown {
 			seen[path] = true
-			paths = append(paths, path)
-			labels = append(labels, workload.Name+" · "+workload.RootDir)
+			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path})
 		}
+	}
+	return sources, nil
+}
+
+func (r *startRunner) selectProjectSource(root string) (string, error) {
+	sources, err := discoverProjectSources(root)
+	if err != nil {
+		return "", err
+	}
+	var paths, labels []string
+	for _, source := range sources {
+		paths = append(paths, source.Path)
+		labels = append(labels, source.Name+" · "+source.RootDir)
 	}
 	if len(paths) == 0 {
 		return root, nil

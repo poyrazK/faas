@@ -4,7 +4,7 @@ export type OperationRequestHeaders = HeadersInit | Record<string, string | read
 export function operationHeaders(headers: OperationRequestHeaders): Headers {
   return headers instanceof Headers || Array.isArray(headers) ? new Headers(headers) : new Headers(
     Object.entries(headers).filter((entry): entry is [string, string | readonly string[]] => entry[1] !== undefined)
-      .map(([key, value]) => [key, typeof value === 'string' ? value : value.join(', ')]),
+      .map(([key, value]): [string, string] => [key, typeof value === 'string' ? value : value.join(', ')]),
   );
 }
 

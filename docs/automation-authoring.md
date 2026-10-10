@@ -1409,7 +1409,7 @@ and can be enabled alongside the pause policy.
 The API provides `GET` and `PUT /v1/apps/{slug}/automations/{name}/failure-policy`
 and `POST /v1/apps/{slug}/automations/{name}/failure-policy/resume`. Reads require
 app read scope; configuration and resume require deploy write scope. Apply
-migration `20261009212606155_automation_failure_pauses.sql` and update all
+migration `20261010071515271_automation_failure_pauses.sql` and update all
 scheduler, admission and API replicas before enabling policies. Rollback
 requires explicitly resuming every failure pause and removes policies, guard
 state and guard history. Committed webhook events remain deliverable.
@@ -1445,7 +1445,7 @@ being created earlier. Retrieve a run's diagnostics using
 outputs, error messages, or tenant identities. Account-wide rules omit app links;
 app lookup failures omit links without suppressing the notification.
 
-Apply migration `20261009205602232_automation_failure_alert.sql` to expose the
+Apply migration `20261010071621984_automation_failure_alert.sql` to expose the
 failure preset. Updating the alert evaluator adds the investigation paths to
 all five workflow metrics. Existing rules and notification delivery history
 remain intact; no new alert is enabled automatically. Disabling the rule stops
