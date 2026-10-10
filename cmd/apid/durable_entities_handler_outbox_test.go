@@ -178,7 +178,7 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 				case "environment":
 					// Current environment deletion fences admitted invocations.
 					// Cancel the simulated guest before replacing its scope.
-					if err = e.store.CancelInvocation(t.Context(), dispatch.currentInvocationID); err != nil {
+					if err = e.store.CancelInvocation(t.Context(), dispatch.currentInvocationID.Load().(string)); err != nil {
 						t.Fatal(err)
 					}
 					dep, loadErr := e.store.LiveDeploymentForScope(t.Context(), app.ID, "staging")

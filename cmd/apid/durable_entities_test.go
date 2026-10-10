@@ -74,7 +74,7 @@ type entityDispatchFixture struct {
 	calls               atomic.Int64
 	badBody             atomic.Bool
 	beforeDispatch      func(context.Context, state.Invocation) error
-	currentInvocationID string
+	currentInvocationID atomic.Value
 }
 
 func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state.Invocation) (state.Invocation, error) {
@@ -99,7 +99,7 @@ func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state
 	if err := json.Unmarshal(delivered.Payload, &envelope); err != nil || envelope.DeploymentID != version.DeploymentID || envelope.Entity.TenantID != delivered.PlatformTenantID || (delivered.Path != api.DurableEntityHandlerPath && delivered.Path != api.DurableEntityRestoreValidationPath) || delivered.DeadlineAt == nil {
 		f.t.Errorf("guest envelope disagrees with authoritative invocation: %+v %v", delivered, err)
 	}
-	f.currentInvocationID = queued.ID
+	f.currentInvocationID.Store(queued.ID)
 	f.calls.Add(1)
 	r := httptest.NewRequest(delivered.Method, delivered.Path, strings.NewReader(string(delivered.Payload)))
 	var headers map[string]string
