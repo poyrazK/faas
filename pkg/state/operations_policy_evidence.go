@@ -7,6 +7,51 @@ import (
 )
 
 func validateWorkflowPolicyEvidence(def OperationDefinition, report api.OperationWorkflowStateReport, payloads map[string][]byte) error {
+	if report.FromState != "" && !report.BlockersOnly && !report.DeadlineOnly && !report.OutcomeOnly && !report.DependenciesOnly {
+		for _, step := range def.Spec.WorkflowSteps {
+			if step.Workflow != report.Workflow {
+				continue
+			}
+			for _, edge := range step.Transitions {
+				if edge.From != report.FromState || edge.To != report.State {
+					continue
+				}
+				for _, group := range edge.RetainedMilestoneGroups {
+					requiresChoice := false
+					for _, path := range group.Paths {
+						requiresChoice = requiresChoice || path.Decision != nil
+					}
+					chosen := false
+					for _, selection := range report.SelectedPaths {
+						if selection.GroupID != group.ID {
+							continue
+						}
+						chosen = true
+						for _, path := range group.Paths {
+							if path.ID != selection.PathID || path.Decision == nil {
+								continue
+							}
+							matched := false
+							for _, evidence := range report.EvidenceMilestones {
+								if evidence.ID != selection.DecisionMilestoneID || evidence.Name != path.Decision.Milestone {
+									continue
+								}
+								d, err := api.ParseOperationBusinessDecision(payloads[evidence.ID])
+								matched = err == nil && d != nil && api.OperationWorkflowPolicyMatches(*path.Decision, evidence.Name, report.Workflow, report.InstanceID, *d)
+							}
+							if !matched {
+								return fmt.Errorf("%w: path %s requires decision %s from rule %s version %s", ErrInvalidArgument, path.ID, path.Decision.Code, path.Decision.RuleID, path.Decision.RuleVersion)
+							}
+						}
+					}
+					if requiresChoice && !chosen {
+						return fmt.Errorf("%w: decision-constrained group %s requires a selected path", ErrInvalidArgument, group.ID)
+					}
+				}
+			}
+		}
+	}
+
 	for _, selection := range report.SelectedPaths {
 		if selection.DecisionMilestoneID == "" {
 			continue

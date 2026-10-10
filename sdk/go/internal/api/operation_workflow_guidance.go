@@ -93,6 +93,14 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 						continue
 					}
 					out = append(out, fmt.Sprintf("Path %s in group %s:", path.ID, group.ID))
+
+					if path.Decision != nil && !path.Decision.Satisfied {
+						d := path.Decision
+						out = append(out, fmt.Sprintf("Path %s requires decision %s at milestone %s from rule %s version %s.", path.ID, d.Requirement.Code, d.Requirement.Milestone, d.Requirement.RuleID, d.Requirement.RuleVersion))
+						if d.Reported != nil {
+							out = append(out, fmt.Sprintf("Application reported decision %s from rule %s version %s.", d.Reported.Code, d.Reported.RuleID, d.Reported.RuleVersion))
+						}
+					}
 					nested := OperationWorkflowTransitionReadiness{RetainedMilestones: path.Requirements}
 					out = append(out, nested.Guidance()...)
 				}

@@ -81,15 +81,24 @@ type OperationWorkflowRetainedMilestoneGroupResult struct {
 
 // OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
 type OperationWorkflowRetainedMilestonePath struct {
-	ID    string                                          `json:"id" yaml:"id" toml:"id"`
-	AllOf []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
+	Decision *OperationWorkflowPolicyRequirement             `json:"decision,omitempty" yaml:"decision,omitempty" toml:"decision"`
+	ID       string                                          `json:"id" yaml:"id" toml:"id"`
+	AllOf    []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
 }
 
 // OperationWorkflowRetainedMilestonePathResult includes every fact needed by a named path.
 type OperationWorkflowRetainedMilestonePathResult struct {
+	Decision     *OperationWorkflowPathDecisionResult `json:"decision,omitempty"`
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
 	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
+}
+
+// OperationWorkflowPathDecisionResult compares planned application reasoning with the pinned path rule.
+type OperationWorkflowPathDecisionResult struct {
+	Requirement OperationWorkflowPolicyRequirement `json:"requirement"`
+	Reported    *OperationBusinessDecision         `json:"reported,omitempty"`
+	Satisfied   bool                               `json:"satisfied"`
 }
 
 // OperationWorkflowPathSelection is the application's chosen path within a compound group.
@@ -214,6 +223,13 @@ func canonicalRetainedMilestonePaths(input []OperationWorkflowRetainedMilestoneP
 		if ValidateOperationWorkflowStateName(out[i].ID) != nil || i > 0 && out[i-1].ID == out[i].ID || len(out[i].AllOf) == 0 {
 			return nil, fmt.Errorf("retained prerequisite paths require unique valid IDs and nonempty all_of requirements")
 		}
+		if out[i].Decision != nil {
+			policies, err := CanonicalOperationWorkflowPolicies([]OperationWorkflowPolicyRequirement{*out[i].Decision})
+			if err != nil {
+				return nil, err
+			}
+			out[i].Decision = &policies[0]
+		}
 		facts, err := CanonicalOperationWorkflowRetainedMilestones(out[i].AllOf)
 		if err != nil {
 			return nil, err
@@ -245,6 +261,10 @@ func CloneOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflowReta
 		out[i].AnyOf = append([]OperationWorkflowRetainedMilestoneRequirement(nil), out[i].AnyOf...)
 		out[i].Paths = append([]OperationWorkflowRetainedMilestonePath(nil), out[i].Paths...)
 		for j := range out[i].Paths {
+			if out[i].Paths[j].Decision != nil {
+				copy := *out[i].Paths[j].Decision
+				out[i].Paths[j].Decision = &copy
+			}
 			out[i].Paths[j].AllOf = append([]OperationWorkflowRetainedMilestoneRequirement(nil), out[i].Paths[j].AllOf...)
 		}
 	}

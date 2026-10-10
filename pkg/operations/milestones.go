@@ -171,6 +171,33 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 				return err
 			}
 			transitions[j].RetainedMilestoneGroups = groups
+			for _, group := range groups {
+				for _, path := range group.Paths {
+					if path.Decision == nil {
+						continue
+					}
+					if spec.Milestones[path.Decision.Milestone] == nil {
+						return fmt.Errorf("path decision requires a declared milestone")
+					}
+					declared := false
+					for _, step := range spec.WorkflowSteps {
+						version, expected := step.Version, spec.WorkflowSteps[i].Version
+						if version == 0 {
+							version = 1
+						}
+						if expected == 0 {
+							expected = 1
+						}
+						if step.Workflow == spec.WorkflowSteps[i].Workflow && step.Milestone == path.Decision.Milestone && version == expected {
+							declared = true
+						}
+					}
+					if !declared {
+						return fmt.Errorf("path decision requires a milestone in the same workflow contract version")
+					}
+				}
+			}
+
 			selectors := api.OperationWorkflowRetainedSelectors(retained, groups)
 			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transitions[j].RetainedMilestoneInvalidations, selectors)
 			if err != nil {

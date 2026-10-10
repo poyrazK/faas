@@ -410,3 +410,26 @@ Existing JSON columns retain explanations through history and receipt replay; no
 additional migration is needed. Dashboard and CLI display the validated snapshot.
 Readiness checks validate shape, while report validation verifies evidence. A
 recorded explanation describes an application decision and grants no authority.
+
+### Pinned decision requirements for named paths
+
+A named retained prerequisite path may declare one optional existing policy
+requirement (milestone, code, rule ID, and rule version). Contract compilation
+validates bounded fields and requires the milestone in the same declared workflow
+version. Canonicalization and projection copy the optional requirement; immutable
+edge comparison already includes path contents. Omitted requirements preserve
+legacy serialization and behavior.
+
+Readiness evaluates planned decisions per path alongside retained facts. Findings
+retain the exact expected requirement and optional reported decision, and derive
+satisfaction from both. Group selection cannot substitute another path. Guidance
+explains expected and reported rules. SDK guards independently compare diagnostics
+against supplied planned facts, attach the actual staged decision reference, and
+reject mismatched supplied references. Callback inputs copy decision values and
+milestone lists before checks.
+
+Precommit and publication require an explicit choice in a group that opts into
+path decision rules, and matching linked typed evidence when the chosen path is
+constrained. Existing Operation ownership, workflow instance, and pinned version
+validation apply to that reference. An unconstrained sibling remains available.
+This adds no database column, remote business action, or execution authority.

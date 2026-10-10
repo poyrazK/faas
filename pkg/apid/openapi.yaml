@@ -38702,12 +38702,22 @@ components:
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         any_of: {type: array, minItems: 2, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}}
         paths: {type: array, minItems: 2, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestonePath'}}
+    OperationWorkflowPathDecisionResult:
+      description: Comparison of a pinned path decision requirement with planned application evidence. This is an observation and grants no execution authority.
+      type: object
+      additionalProperties: false
+      required: [requirement, satisfied]
+      properties:
+        requirement: {$ref: '#/components/schemas/OperationWorkflowPolicyRequirement'}
+        reported: {$ref: '#/components/schemas/OperationBusinessDecision'}
+        satisfied: {type: boolean}
     OperationWorkflowRetainedMilestonePath:
       description: One uniquely named business path within an alternative group. Every declared retained fact must be verified together at the evaluation time; selectors are canonicalized and unique within the path.
       type: object
       additionalProperties: false
       required: [id, all_of]
       properties:
+        decision: {$ref: '#/components/schemas/OperationWorkflowPolicyRequirement'}
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         all_of: {type: array, minItems: 1, maxItems: 16, uniqueItems: true, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestoneRequirement'}}
     OperationWorkflowRetainedMilestoneGroupResult:
@@ -38727,6 +38737,7 @@ components:
       additionalProperties: false
       required: [id, satisfied, requirements]
       properties:
+        decision: {$ref: '#/components/schemas/OperationWorkflowPathDecisionResult'}
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         satisfied: {type: boolean}
         requirements: {type: array, minItems: 1, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}}

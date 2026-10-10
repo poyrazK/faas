@@ -182,7 +182,7 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 	}
 	unmetGroup := false
 	for _, group := range out.Transition.RetainedMilestoneGroups {
-		finding := evaluateRetainedMilestoneGroup(instance, out.Transition, group, selected[group.ID])
+		finding := evaluateRetainedMilestoneGroup(instance, out.Transition, group, selected[group.ID], req)
 		unmetGroup = unmetGroup || !finding.Satisfied
 		out.RetainedMilestoneGroups = append(out.RetainedMilestoneGroups, finding)
 	}

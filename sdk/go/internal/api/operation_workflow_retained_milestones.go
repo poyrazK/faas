@@ -80,15 +80,24 @@ type OperationWorkflowRetainedMilestoneGroupResult struct {
 
 // OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
 type OperationWorkflowRetainedMilestonePath struct {
-	ID    string                                          `json:"id" yaml:"id" toml:"id"`
-	AllOf []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
+	Decision *OperationWorkflowPolicyRequirement             `json:"decision,omitempty" yaml:"decision,omitempty" toml:"decision"`
+	ID       string                                          `json:"id" yaml:"id" toml:"id"`
+	AllOf    []OperationWorkflowRetainedMilestoneRequirement `json:"all_of" yaml:"all_of" toml:"all_of"`
 }
 
 // OperationWorkflowRetainedMilestonePathResult includes every fact needed by a named path.
 type OperationWorkflowRetainedMilestonePathResult struct {
+	Decision     *OperationWorkflowPathDecisionResult `json:"decision,omitempty"`
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
 	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
+}
+
+// OperationWorkflowPathDecisionResult compares planned application reasoning with the pinned path rule.
+type OperationWorkflowPathDecisionResult struct {
+	Requirement OperationWorkflowPolicyRequirement `json:"requirement"`
+	Reported    *OperationBusinessDecision         `json:"reported,omitempty"`
+	Satisfied   bool                               `json:"satisfied"`
 }
 
 // OperationWorkflowPathSelection is the application's chosen path within a compound group.

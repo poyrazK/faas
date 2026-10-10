@@ -2753,3 +2753,58 @@ validate the bounded selection shape; decision evidence is verified during repor
 validation and publication. Applications still own decisions and authorization.
 Existing selections remain compatible. This uses the existing selected-path JSON
 columns; no additional platform migration or customer schema installation is needed.
+
+### Declare the decision rule for a business path
+
+A named retained prerequisite path can declare an optional `decision` requirement:
+
+```yaml
+retained_milestone_groups:
+  - id: payment
+    paths:
+      - id: business-credit
+        all_of:
+          - operation: approve-credit
+            milestone: credit-approved
+        decision:
+          milestone: credit-decided
+          code: credit-approved
+          rule_id: business-credit
+          rule_version: v3
+      - id: card
+        all_of:
+          - operation: charge-card
+            milestone: payment-confirmed
+```
+
+Declare `credit-decided` as a milestone in this Operation and a step of the same
+workflow contract version, with its instance pointer bound to
+`/decision/instance_id`. A requirement contains an exact milestone, decision code,
+rule ID, and rule version. Changing these expectations requires a new workflow
+contract version. Optional requirements are copied into pinned contracts.
+
+Readiness compares each path's requirement with planned `decisions` and
+`milestones`. A path passes only when both its retained facts and decision rule
+match. Each constrained path returns `decision.requirement`, `decision.reported`
+when a decision was supplied, and `decision.satisfied`. Guidance names the expected
+and reported code and rule version. A selected path that fails its decision rule
+cannot be replaced by a valid sibling. Without a selection, readiness continues
+to explore which complete paths can pass; planned evidence is not committed proof.
+
+Pass the typed business decision payload among the facts supplied to an SDK
+`guardedWorkflowTransition` / `GuardedWorkflowTransition` /
+`guarded_workflow_transition` call. The guard validates decision diagnostics against
+those facts and automatically attaches the matching staged fact reference to the
+chosen constrained path. If a reference was already supplied, it must match the
+staged fact exactly. Exactly one staged milestone may have the required name.
+The existing precommit and publication validators then verify the actual linked
+fact and reason against the pinned path rule.
+
+For direct transitions, queue the decision and build the selection using the
+[SDK decision reference helper](#explain-a-selected-business-path). A group with
+any decision-constrained path requires an explicit path choice for a business
+transition report. Selecting a constrained path also requires its matching linked
+decision; selecting an unconstrained sibling requires no decision. This applies
+when the contract opts into path rules; older contracts retain their behavior.
+Applications continue to own selection, authorization, and execution. No new
+platform migration or customer outbox schema update is required.

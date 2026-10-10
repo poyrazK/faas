@@ -95,6 +95,8 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 		return response, err
 	}
 	checkRequest := request
+	checkRequest.Decisions = append([]OperationWorkflowPlannedDecision(nil), request.Decisions...)
+	checkRequest.Milestones = append([]string(nil), request.Milestones...)
 	checkRequest.SelectedPaths = append([]OperationWorkflowPathSelection(nil), request.SelectedPaths...)
 	response, err = check(ctx, checkRequest)
 	if err != nil {
@@ -169,7 +171,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 			return response, fmt.Errorf("faas: guarded transitions require a selected path for compound group %s", group.ID)
 		}
 	}
-	if !retainedGroupsUsable(r, response.EvaluatedAt, request.SelectedPaths) {
+	if !retainedGroupsUsable(r, response.EvaluatedAt, request.SelectedPaths, request) {
 		return response, &CustomerOperationReadinessError{Response: response}
 	}
 	for _, evidence := range r.RetainedMilestones {
@@ -179,6 +181,33 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	}
 	if !r.Ready || !r.Declared || r.StateRevision != request.StateRevision || r.ContractVersion != request.ContractVersion || len(r.Reasons)+len(r.Blockers)+len(r.UnmetDependencies)+len(r.MissingMilestones)+len(r.MissingPolicies)+len(r.MissingDependencyWorkflows)+len(r.UnmetInvariants)+len(r.UnmetEffects) != 0 {
 		return response, &CustomerOperationReadinessError{Response: response}
+	}
+
+	for _, group := range r.Transition.RetainedMilestoneGroups {
+		for _, path := range group.Paths {
+			if path.Decision == nil {
+				continue
+			}
+			for i, selection := range request.SelectedPaths {
+				if selection.GroupID != group.ID || selection.PathID != path.ID {
+					continue
+				}
+				linked, linkErr := staged.WorkflowPathDecision(group.ID, path.ID, path.Decision.Milestone)
+				if linkErr != nil {
+					return response, linkErr
+				}
+				if selection.DecisionMilestoneID != "" && selection != linked {
+					return response, errors.New("faas: path decision reference does not match queued evidence")
+				}
+				staged.workflowStates[len(staged.workflowStates)-1].SelectedPaths[i] = linked
+			}
+		}
+	}
+	batch, batchErr := marshalCustomerOperationJSON(struct {
+		WorkflowStates []OperationWorkflowStateReport `json:"workflow_states"`
+	}{staged.workflowStates})
+	if batchErr != nil || len(batch) > operationWorkflowStateBatchBytes {
+		return response, errors.New("faas: workflow state batch exceeds its byte limit")
 	}
 	tx.milestones, tx.workflowStates = staged.milestones, staged.workflowStates
 	return response, nil
@@ -204,7 +233,7 @@ func retainedEvidenceUsable(e OperationWorkflowRetainedMilestone, edge Operation
 	return true
 }
 
-func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time, selections []OperationWorkflowPathSelection) bool {
+func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time, selections []OperationWorkflowPathSelection, request OperationWorkflowReadinessRequest) bool {
 	chosen := map[string]string{}
 	for _, selection := range selections {
 		valid := false
@@ -233,7 +262,7 @@ func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time, 
 			if len(expected.Paths) > 0 && chosen[expected.ID] == "" || group.SelectedPathID != chosen[expected.ID] {
 				return false
 			}
-			if !group.Satisfied || !retainedGroupUsable(expected, group, r.Transition, at) {
+			if !group.Satisfied || !retainedGroupUsable(expected, group, r.Transition, at, request) {
 				return false
 			}
 		}
@@ -270,7 +299,7 @@ func retainedFactsUsable(expected []OperationWorkflowRetainedMilestoneRequiremen
 	return true, usable
 }
 
-func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group OperationWorkflowRetainedMilestoneGroupResult, edge OperationWorkflowInstanceTransition, at time.Time) bool {
+func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group OperationWorkflowRetainedMilestoneGroupResult, edge OperationWorkflowInstanceTransition, at time.Time, request OperationWorkflowReadinessRequest) bool {
 	if len(expected.Paths) == 0 {
 		if len(expected.AnyOf) < 2 || len(group.Paths) != 0 {
 			return false
@@ -290,6 +319,12 @@ func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group
 			}
 			matches++
 			complete, usable := retainedFactsUsable(expectedPath.AllOf, path.Requirements, edge, at, true)
+
+			consistent, decisionUsable := pathDecisionUsable(expectedPath.Decision, path.Decision, request, expected.ID, path.ID)
+			usable = usable && decisionUsable
+			if !consistent {
+				return false
+			}
 			if !complete || path.Satisfied != usable {
 				return false
 			}
@@ -302,4 +337,34 @@ func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group
 		}
 	}
 	return satisfied
+}
+
+func pathDecisionUsable(expected *OperationWorkflowPolicyRequirement, actual *OperationWorkflowPathDecisionResult, request OperationWorkflowReadinessRequest, group, path string) (bool, bool) {
+	if expected == nil {
+		return actual == nil, true
+	}
+	if actual == nil || actual.Requirement != *expected {
+		return false, false
+	}
+	var reported *OperationBusinessDecision
+	satisfied := false
+	for _, planned := range request.Decisions {
+		if planned.Milestone != expected.Milestone {
+			continue
+		}
+		copy := planned.Decision
+		reported = &copy
+		present := false
+		for _, name := range request.Milestones {
+			present = present || name == planned.Milestone
+		}
+		satisfied = present && api.OperationWorkflowPolicyMatches(*expected, planned.Milestone, request.Workflow, request.InstanceID, planned.Decision)
+	}
+	for _, selection := range request.SelectedPaths {
+		if selection.GroupID == group && selection.PathID == path && selection.DecisionMilestoneID != "" {
+			satisfied = satisfied && selection.DecisionCode == expected.Code && selection.DecisionRuleID == expected.RuleID && selection.DecisionRuleVersion == expected.RuleVersion
+		}
+	}
+	same := actual.Reported == nil && reported == nil || actual.Reported != nil && reported != nil && *actual.Reported == *reported
+	return same && actual.Satisfied == satisfied, satisfied
 }

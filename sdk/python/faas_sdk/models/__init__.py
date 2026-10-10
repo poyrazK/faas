@@ -2076,6 +2076,7 @@ from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
 from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
 from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
 from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+from .operation_workflow_path_decision_result import OperationWorkflowPathDecisionResult
 from .operation_workflow_path_selection import OperationWorkflowPathSelection
 from .operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 from .operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
@@ -5505,6 +5506,7 @@ __all__ = (
     "OperationWorkflowOutcomesResponse",
     "OperationWorkflowOutcomeSummary",
     "OperationWorkflowOutcomeSummaryGroupBy",
+    "OperationWorkflowPathDecisionResult",
     "OperationWorkflowPathSelection",
     "OperationWorkflowPerformanceCohort",
     "OperationWorkflowPerformanceCoverageReason",

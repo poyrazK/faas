@@ -245,7 +245,7 @@ func retainedPrerequisiteRecovery(result api.OperationWorkflowRetainedMilestone)
 	return recovery
 }
 
-func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, group api.OperationWorkflowRetainedMilestoneGroup, selected string) api.OperationWorkflowRetainedMilestoneGroupResult {
+func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, group api.OperationWorkflowRetainedMilestoneGroup, selected string, req api.OperationWorkflowReadinessRequest) api.OperationWorkflowRetainedMilestoneGroupResult {
 	finding := api.OperationWorkflowRetainedMilestoneGroupResult{ID: group.ID, SelectedPathID: selected}
 	for _, requirement := range group.AnyOf {
 		result := evaluateRetainedMilestone(instance, edge, requirement)
@@ -258,6 +258,27 @@ func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnaps
 			fact := evaluateRetainedMilestone(instance, edge, requirement)
 			result.Requirements = append(result.Requirements, fact)
 			result.Satisfied = result.Satisfied && fact.Status == "verified"
+		}
+
+		if path.Decision != nil {
+			d := &api.OperationWorkflowPathDecisionResult{Requirement: *path.Decision}
+			for _, planned := range req.Decisions {
+				if planned.Milestone != path.Decision.Milestone {
+					continue
+				}
+				reported := planned.Decision
+				d.Reported = &reported
+				d.Satisfied = api.OperationWorkflowPolicyMatches(*path.Decision, planned.Milestone, req.Workflow, req.InstanceID, planned.Decision) && plannedMilestonePresent(req.Milestones, planned.Milestone)
+			}
+			if selected == path.ID {
+				for _, selection := range req.SelectedPaths {
+					if selection.GroupID == group.ID {
+						d.Satisfied = d.Satisfied && (selection.DecisionMilestoneID == "" || selection.DecisionCode == path.Decision.Code && selection.DecisionRuleID == path.Decision.RuleID && selection.DecisionRuleVersion == path.Decision.RuleVersion)
+					}
+				}
+			}
+			result.Decision = d
+			result.Satisfied = result.Satisfied && d.Satisfied
 		}
 		finding.Paths = append(finding.Paths, result)
 		if selected == "" || selected == result.ID {

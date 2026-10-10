@@ -1106,6 +1106,7 @@ export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOu
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomesResponse } from './models/OperationWorkflowOutcomesResponse.js';
 export type { OperationWorkflowOutcomeSummary } from './models/OperationWorkflowOutcomeSummary.js';
+export type { OperationWorkflowPathDecisionResult } from './models/OperationWorkflowPathDecisionResult.js';
 export type { OperationWorkflowPathSelection } from './models/OperationWorkflowPathSelection.js';
 export type { OperationWorkflowPerformanceCohort } from './models/OperationWorkflowPerformanceCohort.js';
 export type { OperationWorkflowPerformanceCoverageReason } from './models/OperationWorkflowPerformanceCoverageReason.js';

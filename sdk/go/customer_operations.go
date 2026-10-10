@@ -180,3 +180,5 @@ type OperationWorkflowRetainedMilestonePath = api.OperationWorkflowRetainedMiles
 type OperationWorkflowRetainedMilestonePathResult = api.OperationWorkflowRetainedMilestonePathResult
 
 type OperationWorkflowPathSelection = api.OperationWorkflowPathSelection
+
+type OperationWorkflowPathDecisionResult = api.OperationWorkflowPathDecisionResult
