@@ -49,6 +49,8 @@ export function createDataClient<Database>(options: DataClientOptions) {
 }
 
 export { PostgrestError } from '@supabase/postgrest-js'
+export { jsonText, jsonValue, selectJson } from './json.js'
+export type { Json, JsonPath, JsonProjection } from './json.js'
 
 /** Preserve the exact projection and nested relationship types of a query. */
 export type QueryResult<Query> = Query extends PromiseLike<infer Result> ? Result : never

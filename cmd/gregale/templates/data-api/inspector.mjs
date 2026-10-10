@@ -7,6 +7,9 @@ const show = (id, value) => { element(id).textContent = typeof value === 'string
 function showResource(kind, resource) {
   const computedRelationships = session.snapshot.functions.filter(f => f.schema === resource.schema && f.setof?.from === resource.name)
   show('schema', kind === 'tables' && computedRelationships.length ? { ...resource, computedRelationships: computedRelationships.map(f => ({ name: f.name, target: f.setof.to, one_to_one: f.setof.one_to_one })) } : resource)
+  const json = kind === 'tables' && resource.columns.find(c => c.type === 'Json' && !/["\\\u0000-\u001f\u007f]/.test(c.name))
+  element('json-help').hidden = !json
+  if (json) show('json-example', `select=status:"${json.name}"->>status,details:"${json.name}"->details\n${json.name}->>status=eq.paid\nselectJson(db.from(${JSON.stringify(resource.name)}), '', { status: jsonText(${JSON.stringify(json.name)}, 'status') })`)
 }
 function selectResource() {
   selected = element('resource').value

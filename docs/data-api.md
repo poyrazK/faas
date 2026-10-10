@@ -575,6 +575,68 @@ changes leave the RPC's array return type unchanged. Adding result metadata is
 compatible. The local inspector, owner dashboard and OpenAPI extensions show
 the same relationship contract without function bodies or catalog identifiers.
 
+## JSON and JSONB projections
+
+PostgREST exposes PostgreSQL JSON paths directly, including aliases, nested
+keys and array indexes. Generated JSON/JSONB columns stay `Json`; a database
+column does not describe the arbitrary keys stored inside it. Even a NOT NULL
+JSON column can have missing keys. The native SDK's JSON-path inference can
+omit this SQL nullability, so use the explicit projection helpers:
+
+```ts
+import { selectJson, jsonText, jsonValue } from '@gregale/data'
+
+const orders = await selectJson(db.from('orders'), 'id', {
+  status: jsonText('metadata', 'status'),
+  city: jsonText('metadata', 'delivery', 'city'),
+  lastItem: jsonText('metadata', 'items', -1, 'name'),
+  details: jsonValue('metadata', 'details'),
+}).eq('metadata->>status', 'paid').order('id').limit(10)
+// id retains its generated type; text aliases are string | null.
+// details is arbitrary Json, including null.
+```
+
+`selectJson` accepts table/view builders, write builders and approved
+relation-set RPC builders. Its base selection is the normal literal PostgREST
+select string, so plain columns and FK/computed joins keep their SDK inference.
+Use `''` for JSON aliases only. Put JSON paths in the alias map rather than the
+base selection to receive the nullable helper types. A source column must
+exist in the generated row contract. Alias names must be known to TypeScript,
+and type checks reject aliases that replace base fields.
+The helper generates the select expression and returns the existing SDK builder;
+filters, `.single()`, `.maybeSingle()`, tokens, RLS and SQL column grants apply
+normally. Calling `.select()` again replaces the projection.
+
+`jsonText` ends its path with `->>` and always yields `string | null`. JSON
+numbers and booleans become text; objects and arrays become serialized JSON
+text. `jsonValue` uses `->` and yields `Json`. Keys may contain spaces, commas or
+dots; names are quoted. Numeric strings select object keys, while safe integer
+numbers select array indexes (negative indexes count from the end). Empty keys,
+quotes, backslashes and control characters are rejected before sending. No JSON
+shape, key presence or value enum is inferred. Validate results in application
+code before assigning a narrower shape; SDK overrides are type assertions.
+
+| Stored value or path | JSON extraction (`->`) | Text extraction (`->>`) |
+| --- | --- | --- |
+| Missing key, invalid traversal or SQL NULL | SQL NULL, encoded as `null` | SQL NULL, encoded as `null` |
+| JSON null | JSON null, encoded as `null` | SQL NULL, encoded as `null` |
+| JSON string `"null"` | String `"null"` | Text `"null"` |
+| JSON number `42` | Number `42` | Text `"42"` |
+
+HTTP JSON cannot distinguish an extracted JSON null from SQL NULL. For a JSONB
+column, `.is('metadata', null)` selects SQL NULL and
+`.eq('metadata', 'null')` selects stored JSON null. For a path,
+`.is('metadata->>status', null)` also matches missing keys and JSON null values;
+it does not match a JSON string containing `"null"`. Text path filters such as
+`.eq('metadata->>status', 'paid')` work for both JSON and JSONB. JSONB equality
+and containment operators do not apply directly to PostgreSQL `json` columns.
+
+The local inspector shows JSON path examples for readable JSON columns. Its
+requests use the selected test identity. JSON projections do not bypass source
+column grants or the relation's RLS, including through security-invoker views,
+approved RPCs and write representations. Upgrading the SDK provides these
+helpers without changing the normalized schema format or fingerprints.
+
 ## Automate migrations and client validation
 
 Commit a `data-api.json` workflow alongside your application:

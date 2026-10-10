@@ -77,6 +77,39 @@ joins, projections and filters on their result relation. Upgrade the CLI/runtime
 for normalized version 3 contracts; version 1/2 baselines remain readable.
 See [the Data API guide](../../docs/data-api.md).
 
+For JSON/JSONB paths, use explicit JSON aliases to preserve SQL nullability:
+
+```ts
+import { selectJson, jsonText, jsonValue } from '@gregale/data'
+
+const orders = await selectJson(db.from('orders'), 'id', {
+  status: jsonText('metadata', 'status'),
+  city: jsonText('metadata', 'delivery', 'city'),
+  details: jsonValue('metadata', 'details'),
+  first: jsonText('metadata', 'items', 0, 'name'),
+}).eq('metadata->>status', 'paid')
+// id retains its generated type; status/city/first are string | null.
+// details is Json, including null; no arbitrary keys are inferred.
+```
+
+The second argument is a literal normal select string, or `''` for JSON aliases
+only. Keep JSON paths in the third argument: native JSON paths inside the base
+selection retain the upstream SDK's inference, which can omit SQL nullability.
+Alias names must be known to TypeScript and must not duplicate base fields.
+Source columns are checked against the
+generated row contract. Tables, views, write representations and relation-set
+RPC builders work with the usual filters, ordering, `.single()`/`.maybeSingle()`
+and error handling. Select again to replace the projection.
+
+Paths accept nonempty string keys and safe integer array indexes, including
+negative indexes. Numeric strings select object keys; numbers select array
+positions. Names are quoted and URL-encoded by the SDK; quotes, backslashes and
+control characters in names are rejected before sending. Missing paths, SQL
+NULL and JSON null all yield null with `jsonText`. `jsonValue` preserves JSON
+values, but HTTP JSON cannot distinguish extracted JSON null from SQL NULL.
+Use database predicates when that distinction matters. See the guide for
+JSONB `eq.null` versus SQL `is.null` and RLS examples.
+
 Opted-in PostgreSQL functions appear in the generated `Functions` contract.
 Call `db.rpc('function_name', { named_argument: value }).retry(false)` using an
 application JWT. Gregale permits POST RPC only; omit `get` and `head` options.
