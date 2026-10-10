@@ -187,6 +187,11 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 	// App groups are accumulated through a map, so normalize the result before
 	// handing it to the bulk deleter. The filesystem work is order-independent,
 	// but deterministic targets make retries and diagnostics reproducible.
+	sortDeleteTargets(drop)
+	return drop
+}
+
+func sortDeleteTargets(drop []deleteTarget) {
 	sort.SliceStable(drop, func(i, j int) bool {
 		if drop[i].DeploymentID != drop[j].DeploymentID {
 			return drop[i].DeploymentID < drop[j].DeploymentID
@@ -196,6 +201,28 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 		}
 		return drop[i].Tier < drop[j].Tier
 	})
+}
+
+// rollbackDepthFunc resolves an account's per-plan rollback window (ADR-972).
+type rollbackDepthFunc func(accountID string) int
+
+func fixedRollbackDepth(keepDeployments int) rollbackDepthFunc {
+	return func(string) int { return keepDeployments }
+}
+
+// perPlanKeepRollbackWindow applies perAppKeepRollbackWindow with each
+// account's own window. Every app belongs to exactly one account, so
+// partitioning by account preserves the per-app generation grouping.
+func perPlanKeepRollbackWindow(rows []state.SnapshotForGC, depth rollbackDepthFunc) []deleteTarget {
+	byAccount := make(map[string][]state.SnapshotForGC)
+	for _, r := range rows {
+		byAccount[r.AccountID] = append(byAccount[r.AccountID], r)
+	}
+	var drop []deleteTarget
+	for accountID, accountRows := range byAccount {
+		drop = append(drop, perAppKeepRollbackWindow(accountRows, depth(accountID))...)
+	}
+	sortDeleteTargets(drop)
 	return drop
 }
 
@@ -246,6 +273,12 @@ func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 //
 // Pure function. Deterministic given identical input.
 func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
+	return evictOldestFromHeaviestAccountWithDepth(rows, fixedRollbackDepth(api.SnapshotRollbackRetentionDeployments))
+}
+
+// evictOldestFromHeaviestAccountWithDepth is evictOldestFromHeaviestAccount
+// with the heaviest account's own per-plan rollback window (ADR-972).
+func evictOldestFromHeaviestAccountWithDepth(rows []state.SnapshotForGC, depth rollbackDepthFunc) []deleteTarget {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -276,7 +309,7 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 			heavyRows = append(heavyRows, r)
 		}
 	}
-	candidates := perAppRollbackEvictionCandidates(heavyRows, api.SnapshotRollbackRetentionDeployments)
+	candidates := perAppRollbackEvictionCandidates(heavyRows, depth(heavyID))
 	if len(candidates) == 0 {
 		return nil
 	}

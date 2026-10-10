@@ -503,11 +503,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		return
 	}
 
-	// Step A: bounded rollback window. The current deployment plus the two
-	// previous generations retain their restore material; older rows are
+	// Step A: bounded rollback window. The newest generations allowed by each
+	// account's plan (ADR-972) retain their restore material; older rows are
 	// reclaimed. The legacy perAppKeepTierFloor remains available for replay
 	// and characterization tests of the pre-window policy.
-	stale := perAppKeepRollbackWindow(rows, api.SnapshotRollbackRetentionDeployments)
+	depth := l.rollbackDepthResolver(ctx)
+	stale := perPlanKeepRollbackWindow(rows, depth)
 	if len(stale) > 0 {
 		if err := l.deleteSnapshotsAndFiles(ctx, stale); err != nil {
 			l.log.Warn("imaged: per-app gc", "err", err)
@@ -529,7 +530,7 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		if err != nil {
 			return
 		}
-		evicted := evictOldestFromHeaviestAccount(rows)
+		evicted := evictOldestFromHeaviestAccountWithDepth(rows, depth)
 		if len(evicted) == 0 {
 			l.log.Warn("imaged: pressure gc no candidates", "lv_fc_pct", pct)
 			return
@@ -538,6 +539,28 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: pressure gc", "err", err)
 			return
 		}
+	}
+}
+
+// rollbackDepthResolver caches each account's per-plan rollback window for
+// one GC tick. A missing or unreadable account keeps the deepest window, so a
+// lookup failure never reclaims a generation its plan would retain.
+func (l *Loop) rollbackDepthResolver(ctx context.Context) rollbackDepthFunc {
+	cache := make(map[string]int)
+	return func(accountID string) int {
+		if depth, ok := cache[accountID]; ok {
+			return depth
+		}
+		depth := api.MaxRollbackRetentionDeployments()
+		if accountID != "" {
+			if acct, err := l.store.AccountByID(ctx, accountID); err == nil {
+				depth = api.RollbackRetentionDeploymentsFor(acct.Plan)
+			} else {
+				l.log.Warn("imaged: gc rollback depth lookup", "account", accountID, "err", err)
+			}
+		}
+		cache[accountID] = depth
+		return depth
 	}
 }
 

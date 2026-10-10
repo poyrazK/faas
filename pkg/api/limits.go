@@ -1508,6 +1508,13 @@ type Limits struct {
 	// locked off regardless.
 	MaxMinInstances int // Free 0, Hobby 1, Pro 3, Scale 10
 
+	// RollbackRetentionDeployments (ADR-972) is the number of newest
+	// deployment generations per app, including the live one, whose
+	// snapshot and cold-boot layer survive imaged's nightly GC. Older
+	// generations are reclaimed and answer rollback with
+	// rollback_target_unavailable. Free 2, Hobby 3, Pro 3, Scale 5.
+	RollbackRetentionDeployments int
+
 	// ScaleUpTargetRPSAllowed toggles `autoscale_target_rps` per plan
 	// (issue #169 / #172). Hobby + Pro + Scale opt in; Free does not
 	// (Free is single-concurrency and the per-request cost envelope
@@ -2715,6 +2722,9 @@ var planLimits = map[Plan]Limits{
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
+		// RollbackRetentionDeployments (ADR-972): live + one previous.
+		RollbackRetentionDeployments: 2,
+
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -3202,6 +3212,9 @@ var planLimits = map[Plan]Limits{
 		// deliver (the customer's "first request never pays the
 		// §6.3 wake budget" expectation).
 		MaxMinInstances: 1,
+		// RollbackRetentionDeployments (ADR-972): live + two previous,
+		// the pre-ADR-972 fleet default.
+		RollbackRetentionDeployments: 3,
 		// Cron: Hobby gets a small per-app budget (5) and a per-account
 		// budget that absorbs ~2 Hobby-tier apps (10). Tracks the
 		// Hobby apps cap (5) with headroom for the cron-example
@@ -3572,6 +3585,8 @@ var planLimits = map[Plan]Limits{
 		// without letting one Pro app reserve a quarter of the
 		// box's RAM ceiling.
 		MaxMinInstances: 3,
+		// RollbackRetentionDeployments (ADR-972): live + two previous.
+		RollbackRetentionDeployments: 3,
 		// TrustedSignerCountMax: Pro covers a small-team rotation
 		// matrix (5-8 publishers). Enough for "every dev has their own
 		// key" workflows without letting the table grow unbounded.
@@ -3956,6 +3971,8 @@ var planLimits = map[Plan]Limits{
 		// delivering the "always-warm for traffic spikes" UX
 		// the tier promises.
 		MaxMinInstances: 10,
+		// RollbackRetentionDeployments (ADR-972): live + four previous.
+		RollbackRetentionDeployments: 5,
 		// TrustedSignerCountMax: Scale is the regulated-workload
 		// tier; 16 publishers covers "every platform team's CI
 		// plus break-glass" without letting the table grow into
@@ -4445,12 +4462,12 @@ const (
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
-	// SnapshotRollbackRetentionDeployments is the number of newest deployment
-	// generations whose restore snapshots remain eligible for the fast rollback
-	// path. The window includes the live deployment, so the default retains the
-	// live release plus two previous releases. Older snapshots are reclaimed by
-	// imaged's nightly GC and rollback still has the documented cold-boot
-	// fallback when an operator selects one of those releases.
+	// SnapshotRollbackRetentionDeployments is the fallback rollback window for
+	// rows whose plan is unknown to a pure GC helper. Production GC uses the
+	// per-plan Limits.RollbackRetentionDeployments (ADR-972). The window
+	// includes the live deployment. Once a generation leaves the window, GC
+	// reclaims its snapshots and then its cold-boot layer, so rollback to it
+	// fails with rollback_target_unavailable; there is no cold-boot fallback.
 	SnapshotRollbackRetentionDeployments = 3
 	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
 	// imaged GC switches from per-app retention (keep the rollback window
@@ -6261,6 +6278,26 @@ func ConcurrencyQueueMaxDepthForPlan(p Plan) int {
 		depth = 1
 	}
 	return depth * ConcurrencyQueueMaxDepthMultiplier
+}
+
+// MaxRollbackRetentionDeployments is the deepest per-plan rollback window.
+// GC uses it when an account's plan cannot be resolved, so a failed lookup
+// never reclaims a generation that any plan would retain.
+func MaxRollbackRetentionDeployments() int {
+	deepest := SnapshotRollbackRetentionDeployments
+	for _, limits := range planLimits {
+		deepest = max(deepest, limits.RollbackRetentionDeployments)
+	}
+	return deepest
+}
+
+// RollbackRetentionDeploymentsFor returns the plan's rollback window, or the
+// deepest window for an unknown plan.
+func RollbackRetentionDeploymentsFor(p Plan) int {
+	if limits, ok := planLimits[p]; ok && limits.RollbackRetentionDeployments > 0 {
+		return limits.RollbackRetentionDeployments
+	}
+	return MaxRollbackRetentionDeployments()
 }
 
 // MustLimitsFor returns the limits for a plan and panics on an unknown plan.

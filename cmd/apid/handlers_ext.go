@@ -2530,7 +2530,7 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 		"err", err)
 	var problem *api.Problem
 	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
-		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs; deployments older than the plan's rollback history are reclaimed, so redeploy its source instead", target.ID))
 	}
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }

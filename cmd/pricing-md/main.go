@@ -33,18 +33,18 @@ func render() string {
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
 	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in euros. Usage beyond the included GB-RAM-hours is billed at €0.01 per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
-	b.WriteString("| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Rollback history |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %d MB | %s |\n",
+		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %d MB | %s | %d |\n",
 			titlePlan(plan), formatPrice(l.PriceMillicents), l.DeployedApps,
 			l.PreviewApps, l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
 			l.AppLayerMaxMB,
-			formatDuration(l.IdleTimeoutS))
+			formatDuration(l.IdleTimeoutS), l.RollbackRetentionDeployments)
 	}
 	b.WriteString("\n## What each limit means\n\n")
 	b.WriteString("- **Deployed apps** is the maximum number of production app records on the plan. `gregale dev` environments have a separate developer-app allowance.\n")
@@ -52,7 +52,8 @@ func render() string {
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.\n")
-	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).\n\n")
+	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).\n")
+	b.WriteString("- **Rollback history** is how many of an app's newest deployments, including the live one, can be rolled back to. Older deployments are reclaimed nightly and `gregale rollback` to them returns `rollback_target_unavailable`; see [safe changes](deploys.md#safe-changes).\n\n")
 	b.WriteString("## Developer environments\n\n")
 	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum.\n\n",
 		formatDuration(int(api.DeveloperLeaseDefault.Seconds())), formatDuration(int(api.DeveloperLeaseMin.Seconds())))

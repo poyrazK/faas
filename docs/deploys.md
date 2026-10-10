@@ -68,6 +68,14 @@ rollback or a completed canary restores the release that was just replaced.
 A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
 so it remains available for another rollback.
+
+Rollback history is bounded by plan: an app keeps its newest 2 (Free),
+3 (Hobby, Pro) or 5 (Scale) deployments, including the live one; see
+[plans](plans.md). Older deployments are reclaimed nightly, and a rollback to
+one returns `409 rollback_target_unavailable` while the current release keeps
+serving. Redeploy that revision's source to restore it. After a plan
+downgrade, the next nightly cleanup trims history to the new limit; an
+upgrade does not restore deployments that were already reclaimed.
 See [deployment history](deployments.md) for annotations and receipts.
 
 ## Revisions

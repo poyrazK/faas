@@ -462,7 +462,9 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	// expect the eviction to come from A under pressure.
 	store := state.NewMemStore()
 
-	heavyAcct, _ := store.CreateAccount(context.Background(), "heavy@x.com", "scale")
+	// Pro keeps a three-generation rollback window (ADR-972), so the fourth
+	// heavy generation below is the one pressure GC may evict.
+	heavyAcct, _ := store.CreateAccount(context.Background(), "heavy@x.com", "pro")
 	midAcct, _ := store.CreateAccount(context.Background(), "mid@x.com", "scale")
 	lightAcct, _ := store.CreateAccount(context.Background(), "light@x.com", "scale")
 
