@@ -111,11 +111,13 @@ import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js
 import type { SaveProfileDeploymentPolicyRequest } from '../models/SaveProfileDeploymentPolicyRequest.js';
 import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInvestigationRequest.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
+import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
@@ -4547,6 +4549,95 @@ export class AppsService {
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an app's service wake-ahead opt-in.
+   * Service wake-ahead (ADR-946) is off by default. When it is on and this
+   * app starts a cold wake, the gateway also starts restoring the services
+   * it has measured this app calling soon after it wakes, so their restores
+   * overlap instead of running one after another. Measurement is per
+   * gateway and needs at least 20 observed wakes of this app before any
+   * service is woken ahead. Woken services are billed like any other
+   * running instance. Requires app read access and completed MFA.
+   *
+   * @returns ServiceWakeAheadResponse The app's wake-ahead opt-in.
+   * @throws ApiError
+   */
+  public static getServiceWakeAhead({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ServiceWakeAheadResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/service-wake-ahead',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Turn an app's service wake-ahead on or off.
+   * Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+   * Wake-ahead never starts while fleet residency is at or above 60% of the
+   * admission ceiling, never parks other instances to make room, and goes
+   * through the same admission and plan concurrency limits as a request.
+   * Requires deploy write access and completed MFA. Body limit is 1 KiB.
+   *
+   * @returns ServiceWakeAheadResponse The updated opt-in.
+   * @throws ApiError
+   */
+  public static setServiceWakeAhead({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetServiceWakeAheadRequest,
+  }): CancelablePromise<ServiceWakeAheadResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/service-wake-ahead',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

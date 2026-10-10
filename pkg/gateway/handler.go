@@ -962,6 +962,8 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
+	// wakeAhead is the opt-in ADR-946 wake-ahead runner; nil disables it.
+	wakeAhead *wakeAheadRunner
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
 	// picker selects a concrete instance. Instance slots and FIFO ordering are
 	// gateway-local; production installs a shared admission backend so the
@@ -6803,6 +6805,9 @@ haveApp:
 		return
 	}
 	if !pick.OK {
+		// ADR-946: a cold app starts restoring the services it is measured to
+		// call before its own restore completes. Opt-in; never blocks.
+		h.noteColdWake(r.Context(), app.ID)
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -8756,12 +8761,23 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // not an error: the caller re-reads the endpoint registry and surfaces
 // "no healthy replicas" if the wake genuinely produced nothing.
 func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
+}
+
+// triggerServiceWakeAhead attributes ADR-946 wake-ahead restores.
+const triggerServiceWakeAhead = sched.TriggerServiceWakeAhead
+
+// ensureServiceCapacity is the shared body of service-mesh and wake-ahead
+// restores. A parked target starting to wake may itself wake its measured
+// targets ahead (ADR-946), up to the depth limit.
+func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {
 		limits = api.Limits{}
 	}
+	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
 	return err
 }
 

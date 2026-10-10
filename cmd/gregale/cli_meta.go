@@ -134,7 +134,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -4200,6 +4200,13 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "interval between instance status checks (default 250ms)", Value: "DURATION"},
 		},
 		Examples: []string{"gregale wake my-api", "gregale wake --wait --timeout 2m my-api"},
+	},
+	{
+		Name:        "wake-ahead",
+		DocSlug:     "service-wake-ahead",
+		Short:       "Wake the services an app calls while the app itself wakes (opt-in)",
+		Positionals: []string{"<slug>", "[on|off]"},
+		Examples:    []string{"gregale wake-ahead my-api", "gregale wake-ahead my-api on", "gregale wake-ahead my-api off --json"},
 	},
 	{
 		Name:    "traffic",

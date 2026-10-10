@@ -14823,6 +14823,62 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/service-wake-ahead:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getServiceWakeAhead
+      summary: Read an app's service wake-ahead opt-in.
+      description: |
+        Service wake-ahead (ADR-946) is off by default. When it is on and this
+        app starts a cold wake, the gateway also starts restoring the services
+        it has measured this app calling soon after it wakes, so their restores
+        overlap instead of running one after another. Measurement is per
+        gateway and needs at least 20 observed wakes of this app before any
+        service is woken ahead. Woken services are billed like any other
+        running instance. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's wake-ahead opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setServiceWakeAhead
+      summary: Turn an app's service wake-ahead on or off.
+      description: |
+        Sets the ADR-946 opt-in. Gateways apply the change within 30 seconds.
+        Wake-ahead never starts while fleet residency is at or above 60% of the
+        admission ceiling, never parks other instances to make room, and goes
+        through the same admission and plan concurrency limits as a request.
+        Requires deploy write access and completed MFA. Body limit is 1 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceWakeAheadRequest' }
+      responses:
+        '200':
+          description: The updated opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/route-monitor/report:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -41756,6 +41812,21 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    ServiceWakeAheadResponse:
+      type: object
+      description: "An app's service wake-ahead opt-in (ADR-946)."
+      required: [slug, enabled]
+      properties:
+        slug: {"type": "string"}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+    SetServiceWakeAheadRequest:
+      type: object
+      description: "Turns service wake-ahead on or off for one app."
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: {"type": "boolean", "description": "true to wake measured services ahead, false to wake them only when called."}
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."

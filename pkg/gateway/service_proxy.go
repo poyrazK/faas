@@ -258,6 +258,10 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
+	// ObserveCall is the optional ADR-946 learner seam. It receives every
+	// call that reached the target's guest from a production caller, with
+	// woken true when the call itself restored the target.
+	ObserveCall func(callerAppID, targetAppID string, woken bool)
 	// WakeDeployment is the optional deployment-scoped wake seam used by
 	// version-affinity calls. It prevents a warm sibling from suppressing the
 	// selected cohort's restore.
@@ -314,6 +318,7 @@ type ServiceProxy struct {
 	resolveCallerIdentity ServiceProxyCallerIdentityResolver
 	resolveRelease        ServiceProxyReleaseResolver
 	devBridge             ServiceProxyDevBridge
+	observeCall           func(callerAppID, targetAppID string, woken bool)
 	forward               func(Target) http.Handler
 	rawForward            func(Target) http.Handler
 	wake                  ServiceProxyWaker
@@ -414,6 +419,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:         cfg.ResolveCaller,
 		resolveCallerIdentity: cfg.ResolveCallerIdentity,
 		resolveRelease:        cfg.ResolveRelease,
+		observeCall:           cfg.ObserveCall,
 		devBridge:             cfg.DevBridge,
 		forward:               cfg.Forward,
 		rawForward:            cfg.RawForward,
@@ -957,11 +963,21 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 			return
 		}
 		p.countForward(woken)
+		p.observeWakeAheadCall(caller, target, woken)
 		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
 	p.countForward(woken)
+	p.observeWakeAheadCall(caller, target, woken)
 	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
+}
+
+// observeWakeAheadCall feeds the ADR-946 learner. Preview callers are left
+// out: their calls must not teach production wake-ahead.
+func (p *ServiceProxy) observeWakeAheadCall(caller ServiceCaller, target ServiceTarget, woken bool) {
+	if p.observeCall != nil && caller.PreviewOfSlug == "" {
+		p.observeCall(caller.AppID, target.AppID, woken)
+	}
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold

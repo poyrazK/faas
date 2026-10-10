@@ -1648,6 +1648,7 @@ export type { ServiceReplicas } from './ServiceReplicas.js';
 export type { ServiceRolloutBindingGate } from './ServiceRolloutBindingGate.js';
 export type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 export type { ServiceRolloutRecoveryReceipt } from './ServiceRolloutRecoveryReceipt.js';
+export type { ServiceWakeAheadResponse } from './ServiceWakeAheadResponse.js';
 export type { SessionInfo } from './SessionInfo.js';
 export type { SessionListResponse } from './SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './SessionsRevokeAllResponse.js';
@@ -1671,6 +1672,7 @@ export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRe
 export type { SetRouteHealthGateRequest } from './SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './SetRouteMonitorRequest.js';
 export type { SetRouteRemovalPolicyRequest } from './SetRouteRemovalPolicyRequest.js';
+export type { SetServiceWakeAheadRequest } from './SetServiceWakeAheadRequest.js';
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';
 export type { SidecarExecProbe } from './SidecarExecProbe.js';
