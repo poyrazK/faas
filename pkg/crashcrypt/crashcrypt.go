@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
@@ -161,4 +162,44 @@ func (r readClosers) Close() error {
 		errs = append(errs, c.Close())
 	}
 	return errors.Join(errs...)
+}
+
+// sparseBlock is the granularity CopySparse checks for zero blocks.
+const sparseBlock = 64 << 10
+
+// CopySparse copies src into dst (positioned at 0), seeking over all-zero
+// blocks instead of writing them, and sets dst's length to the bytes copied.
+// A decrypted capture would otherwise be written dense: guest memory and a
+// private drive are mostly zero, and the original files were sparse.
+func CopySparse(dst *os.File, src io.Reader) (int64, error) {
+	buf := make([]byte, sparseBlock)
+	var written int64
+	for {
+		n, err := io.ReadFull(src, buf)
+		if n > 0 {
+			if isZero(buf[:n]) {
+				if _, serr := dst.Seek(int64(n), io.SeekCurrent); serr != nil {
+					return written, serr
+				}
+			} else if _, werr := dst.Write(buf[:n]); werr != nil {
+				return written, werr
+			}
+			written += int64(n)
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return written, dst.Truncate(written)
+		}
+		if err != nil {
+			return written, err
+		}
+	}
+}
+
+func isZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
