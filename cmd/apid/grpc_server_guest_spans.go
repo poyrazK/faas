@@ -1,4 +1,4 @@
-// apid-side receiver for in-guest trace exports (ADR-829).
+// apid-side receiver for in-guest trace exports (ADR-934).
 //
 // Direction: vmmd → apid IngestGuestSpans on the SpansWriter service. vmmd
 // bounds the frame and supplies the host-owned principal; it never decodes

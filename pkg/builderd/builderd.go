@@ -502,6 +502,7 @@ type BuildResult struct {
 	RailpackVer       string
 	BuilderBaseDigest string
 	RuntimeBaseRef    string
+	DevPatch          *api.DevPatchSourceMap
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -863,7 +864,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
-				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef}, buildStart)
+				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+				DevPatch: cached.Toolchain.DevPatch}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
 		}
@@ -1190,7 +1192,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
 			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef}, buildStart)
+			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+			DevPatch: out.DevPatch}, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
@@ -1201,6 +1204,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
 			BuildkitVer: result.BuildkitVer,
 			RailpackVer: result.RailpackVer,
+			DevPatch:    result.DevPatch,
 		}); err != nil {
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
@@ -1504,6 +1508,7 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		BuildkitVer: result.BuildkitVer, RailpackVer: result.RailpackVer,
 		BaseDigest: result.BuilderBaseDigest, RuntimeBaseRef: result.RuntimeBaseRef,
 		StartedAt: build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
+		DevPatch: result.DevPatch,
 	}
 	if err := retryStateMutation(ctx, func() error {
 		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)

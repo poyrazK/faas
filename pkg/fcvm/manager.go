@@ -549,6 +549,10 @@ type Instance struct {
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is the declared ADR-137 lifecycle mode from WakeRequest.
+	// Worker and job instances have no HTTP contract, so the plan-default
+	// /healthz liveness probe does not apply to them.
+	ExecutionMode string
 
 	// WorkloadNames (issue #463 / ADR-069 / PR-B) is the set of
 	// workload names whose cgroup child scopes vmmd wrote under
@@ -2199,6 +2203,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// instanceHasNoHTTPContract reports whether the instance is a declared
+// worker/job (ADR-137), or a legacy undeclared app the guest characterized
+// as a worker, so no port answers the plan-default HTTP liveness probe.
+func instanceHasNoHTTPContract(inst *Instance) bool {
+	switch inst.ExecutionMode {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return true
+	case "":
+		return inst.Characterization.ObservedClass == api.ExecutionModeWorker
+	}
+	return false
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
@@ -2251,15 +2268,24 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			}
 		}
 	}
+	noHTTPContract := false
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
+		noHTTPContract = instanceHasNoHTTPContract(inst)
 	}
 	m.mu.Unlock()
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
 	// liveness overrides remain additional independent probes.
 	if cfg.ImageHealthcheckRequired && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	// A worker never listens, so the plan-default /healthz probe fails three
+	// times and destroys a healthy worker ~10 s after every boot (H8-16).
+	// Process exit still reports through ProcessExited, and an explicit
+	// override or image HEALTHCHECK remains the worker's liveness contract.
+	if noHTTPContract && len(override) == 0 {
 		cfg.PeriodSeconds = 0
 	}
 	if cfg.PeriodSeconds <= 0 && !cfg.ImageHealthcheckRequired {
@@ -4325,49 +4351,82 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
-	netnsStart := time.Now()
-	preparedHit := false
-	var networkErr error
-	if !req.ExecutionOnly {
-		preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
-	}
-	err = networkErr
-	if err != nil {
-		// Issue #1059 / ADR-127: closed-reason counter on the
-		// setupNetwork path. The error wrap "network setup: %w"
-		// surfaces every netns / TAP / nft failure under one
-		// umbrella, so per ADR §3 we hardcode reason="netns_fail"
-		// rather than rely on inner-error typed-sentinel matching
-		// (which would require pkg/netns/config.go callers to
-		// wrap with %w ErrNetnsFail — a follow-up extension). The
-		// reason literal is load-bearing for the §12
-		// "vmmd_wake_failure_total" panel legend — operators
-		// triaging a netns_fail spike do not need to know which
-		// inner step (netns add, TAP create, nft apply) failed.
-		// nil-safe: the receiver guards on m.wakeFailureMetrics.
-		if m.wakeFailureMetrics != nil {
-			m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
-		}
-		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
-	}
-	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
-	if networkReady != nil && !req.ExecutionOnly {
-		networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
-	}
-	if m.preparedNetworks != nil && !req.ExecutionOnly {
-		m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
-		defer func() {
-			if err == nil {
-				if policy, ok := m.preparedPolicy(req); ok {
-					m.preparedNetworks.observe(policy)
-				}
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly {
+		// See wake_network.go: build the namespace while bringUp stages the
+		// jail; the VMM joins it before startJailer.
+		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
+			if networkReady != nil {
+				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
 			}
-		}()
-	}
+		})
+		// Registered after the cleanup defer, so it runs first: cleanup
+		// never races a namespace that is still being built.
+		defer func() { _ = network.join() }()
+		phases.mark("setup_network")
+		timings.prepare = phases.prepareTimings()
+		method, err = m.bringUp(withWakeNetwork(ctx, network), lease, nc, req, &timings)
+		if netErr := network.join(); netErr != nil {
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
+			}
+			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+		}
+		timings.netnsTapMs = network.duration.Milliseconds()
+		if m.preparedNetworks != nil {
+			m.log.Info("wake network cache", "instance", req.Instance, "hit", network.hit)
+			defer func() {
+				if err == nil {
+					if policy, ok := m.preparedPolicy(req); ok {
+						m.preparedNetworks.observe(policy)
+					}
+				}
+			}()
+		}
+	} else {
+		netnsStart := time.Now()
+		preparedHit := false
+		var networkErr error
+		if !req.ExecutionOnly {
+			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+		}
+		err = networkErr
+		if err != nil {
+			// Issue #1059 / ADR-127: closed-reason counter on the
+			// setupNetwork path. The error wrap "network setup: %w"
+			// surfaces every netns / TAP / nft failure under one
+			// umbrella, so per ADR §3 we hardcode reason="netns_fail"
+			// rather than rely on inner-error typed-sentinel matching
+			// (which would require pkg/netns/config.go callers to
+			// wrap with %w ErrNetnsFail — a follow-up extension). The
+			// reason literal is load-bearing for the §12
+			// "vmmd_wake_failure_total" panel legend — operators
+			// triaging a netns_fail spike do not need to know which
+			// inner step (netns add, TAP create, nft apply) failed.
+			// nil-safe: the receiver guards on m.wakeFailureMetrics.
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
+			}
+			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+		}
+		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
+		if networkReady != nil && !req.ExecutionOnly {
+			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+		}
+		if m.preparedNetworks != nil && !req.ExecutionOnly {
+			m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
+			defer func() {
+				if err == nil {
+					if policy, ok := m.preparedPolicy(req); ok {
+						m.preparedNetworks.observe(policy)
+					}
+				}
+			}()
+		}
 
-	phases.mark("setup_network")
-	timings.prepare = phases.prepareTimings()
-	method, err = m.bringUp(ctx, lease, nc, req, &timings)
+		phases.mark("setup_network")
+		timings.prepare = phases.prepareTimings()
+		method, err = m.bringUp(ctx, lease, nc, req, &timings)
+	}
 	// Marked before the error check so a FAILED bringUp still reports
 	// how long it burned — that is the phase most likely to hold a
 	// hung Firecracker, and the one the defer most needs to name.
@@ -4587,6 +4646,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
@@ -4900,6 +4960,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				// returning the restore error preserves the paused-state
 				// contract and lets the normal cleanup release the lease.
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", rErr)
+			}
+			if errors.Is(rErr, errWakeNetwork) {
+				// The overlapped wake network failed; a cold boot would
+				// need the same namespace (wake_network.go).
+				return WakeRestore, rErr
 			}
 			// Fall back to cold boot into the same netns; kill any half-restored VM.
 			// The wrapped rErr names the failure mode (vsock dial timeout vs

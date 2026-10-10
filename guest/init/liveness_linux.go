@@ -282,6 +282,12 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if timeoutMs > VsockLivenessHardTimeoutMs {
 		timeoutMs = VsockLivenessHardTimeoutMs
 	}
+	if devDebugActive.Load() {
+		// ADR-741: a debugged process may be paused at a breakpoint. Report
+		// healthy so vmmd does not destroy the developer VM mid-session.
+		writeLivenessResp(f, livenessResp{Status: http.StatusOK})
+		return
+	}
 	var status int
 	var errStr, wwwAuth string
 	if req.GRPC {

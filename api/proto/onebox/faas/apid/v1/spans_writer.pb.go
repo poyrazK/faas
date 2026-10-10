@@ -174,7 +174,7 @@ func (x *WriteSpansSummaryResponse) GetRetryAfterMs() int64 {
 }
 
 // IngestGuestSpansRequest is one in-guest OTLP export plus the identity
-// vmmd resolved from the vsock peer (ADR-829).
+// vmmd resolved from the vsock peer (ADR-934).
 type IngestGuestSpansRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// account_id, app_id, deployment_id, instance_id — host-owned identity.

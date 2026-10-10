@@ -3,7 +3,7 @@ package fcvm
 import "fmt"
 
 // TraceInstanceIdentity is the host-owned identity stamped on in-guest trace
-// exports (ADR-829). It never carries guest-provided metadata.
+// exports (ADR-934). It never carries guest-provided metadata.
 type TraceInstanceIdentity struct {
 	AccountID, AppID, DeploymentID string
 }

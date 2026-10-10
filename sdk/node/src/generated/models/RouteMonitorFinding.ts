@@ -14,5 +14,13 @@ export type RouteMonitorFinding = {
   error_status: 'healthy' | 'violated' | 'unknown' | 'disabled';
   latency_status: 'healthy' | 'violated' | 'unknown' | 'disabled';
   windows: Array<RouteMonitorWindow>;
+  /**
+   * Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged.
+   */
+  evidence_window?: 'pooled';
+  /**
+   * Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse.
+   */
+  pooled_windows?: Array<RouteMonitorWindow>;
 };
 

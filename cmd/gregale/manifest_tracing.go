@@ -9,7 +9,7 @@ import (
 )
 
 // Tracing, like profiling, is baked into the guest manifest by imaged, so it
-// must be staged before the deployment is submitted (ADR-829). Failed
+// must be staged before the deployment is submitted (ADR-934). Failed
 // submissions/builds restore the previous setting unless another client has
 // changed it since.
 type manifestTracingTransaction struct {

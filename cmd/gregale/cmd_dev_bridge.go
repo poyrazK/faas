@@ -211,7 +211,7 @@ func cmdDevBridge(args []string) (exit int) {
 		return devbridge.NewWebSocketConn(socket), nil
 	}
 	serve := func(ctx context.Context, socket net.Conn) error {
-		return devbridge.ServeLocal(ctx, socket, target, api.DevBridgeMaxConcurrentRequests, inspector)
+		return devbridge.ServeLocal(ctx, socket, target, api.DevBridgeMaxConcurrentRequests+api.DevBridgeMaxUpgradedConnections, inspector)
 	}
 	var replayOnce sync.Once
 	state := func(connected bool) {

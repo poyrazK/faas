@@ -10,6 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func operationDoctorExecutionPreview(p operations.PreviewObservation, d state.OperationDefinition) api.OperationDoctorCheck {
+	kind := operations.DefinitionExecutionKind(d.Spec)
+	o := p.ForExecutionKind(kind)
+	c := operationDoctorFact("execution_preview", o.Allowed, o.Code, o.Code, "This definition's execution type is allowed in the observed cohort.", "Have the platform operator inspect this cohort's execution_kinds allowlist; enabling a type requires its native qualification receipts.")
+	c.DefinitionID, c.Name, c.Revision, c.ReleaseID, c.ExecutionKind = d.ID, d.Spec.Name, d.Revision, d.ReleaseID, kind
+	return c
+}
+
 func (s *server) observeOperationDefinition(ctx context.Context, acct state.Account, dep state.Deployment, d state.OperationDefinition) []api.OperationDoctorCheck {
 	contract, err := operations.Compile(d.Spec, api.MustLimitsFor(acct.Plan).Operations)
 	valid := err == nil && contract.Revision == d.Revision && d.AccountID == acct.ID && d.AppID == dep.AppID && d.DeploymentID == dep.ID && d.Scope == dep.Scope

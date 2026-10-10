@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Decision:** Package pinned PostgREST with a JWT-verifying Node gateway as an ordinary Gregale app. Add the portable `data_api` managed PostgreSQL credential mode, a private catalog-based TypeScript generator, `gregale data-api create|types|refresh`, and `@gregale/data`.
+- **Decision:** Package pinned PostgREST with a JWT-verifying Node gateway as an ordinary Gregale app. Add the portable `data_api` managed PostgreSQL credential mode, a private catalog-based TypeScript generator, `gregale data-api create|types|refresh|sync`, and `@gregale/data`.
 - **Why:** Application table endpoints and their TypeScript definitions currently duplicate database schema knowledge. PostgREST supplies schema-driven CRUD and OpenAPI while Gregale's existing app, binding, build, deployment and task lifecycles supply ownership and execution.
 - **Consequences:** An explicitly opted-in and newly qualified backend can provision schema-restricted bindings. No additional resource owner, deployment path, metering model or plan quota is introduced. Applications and bindings use existing quota and egress admission. Runtime and export limits are canonical in `pkg/api/limits.go` with an embedded-runtime parity test.
 - **Rejected alternatives:** Generating SQL endpoints inside apid would move customer query execution into the control plane. Sending database passwords to client machines would weaken binding custody. Classic PostgREST administrator role membership would allow a JWT role-selection mistake to become DDL authority. Public schema-introspection endpoints would expose an owner development tool to application clients.
@@ -38,6 +38,16 @@ migrations; a snapshot restart could preserve a stale schema cache. SIGUSR1
 reload is also forwarded for operator diagnostics. Generated types come from
 the current database and `--check` detects drift; exporting does not itself
 refresh a serving cache. A failed release does not undo database changes.
+
+The optional CLI `sync` workflow composes an explicit local migration command,
+fresh-restart completion and readiness, the existing private type-export task,
+and an explicit local application check. Managed migrations continue to run in
+deployment release tasks. Commands use argument arrays without an implicit
+shell and must wait for completion. A failed step prevents later work; generated
+types remain available after a failed client check. Completed steps and accepted
+remote work are not rolled back when the local workflow fails or stops. This
+adds no server-side orchestration or credential delivery path. Application CI
+retains the independent, read-only `types --check` drift check.
 
 Neon advertises this mode only with `data_api_enabled: true`.
 Changing this rollout flag requires a fresh qualification report whose

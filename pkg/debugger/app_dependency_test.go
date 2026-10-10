@@ -1,6 +1,6 @@
 package debugger
 
-// adr: 829 — standard OTel client spans become bounded app_dependency identities.
+// adr: 934 — standard OTel client spans become bounded app_dependency identities.
 
 import (
 	"encoding/json"

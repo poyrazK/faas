@@ -49,9 +49,9 @@ test('signout fences a late download even when a transport ignores abort', async
 });
 
 test('ordinary handler uses trusted context and rejects invalid input', async () => {
-  const reports = []; const runtime = {runRequest: (_headers, handler) => handler(), context: () => ({id}), progress: async report => reports.push(report)};
+  const reports = []; const runtime = {runCancellableRequest: (_headers, handler) => handler({signal: new AbortController().signal, throwIfStopped() {}}), context: () => ({id}), progress: async report => reports.push(report)};
   assert.deepEqual(await generateExport(runtime, {}, {count: 2}), {csv: 'id,value\n1,10\n2,20\n', rows: 2});
-  assert.deepEqual(reports.map(r => r.report_id), ['generating', 'complete']);
+  assert.deepEqual(reports.map(r => r.report_id), ['generating']);
   await assert.rejects(generateExport(runtime, {}, {count: 1001}));
   await assert.rejects(generateExport({...runtime, context: () => undefined}, {}, {count: 1}), /Trusted/);
 });
@@ -64,5 +64,7 @@ test('sample server exposes only public selectors and bounded allowlisted assets
   assert.deepEqual(await (await fetch(base+'/config')).json(), {...settings, apiURL: 'https://api.example.com'});
   const page = await fetch(base+'/'); assert.equal(page.status, 200); assert.equal(page.headers.get('cache-control'), 'no-store'); assert.match(await page.text(), /Your exports/);
   assert.equal((await fetch(base+'/sdk/operations-runtime.js')).status, 404);
+  const sdk = await fetch(base+'/sdk/operations.js'); assert.equal(sdk.status, 200);
+  assert.match(await sdk.text(), /export class GregaleOperationClient/);
   assert.equal((await fetch(base+'/exports', {method: 'POST', body: '{}'})).status, 503);
 });

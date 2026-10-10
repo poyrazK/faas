@@ -494,7 +494,7 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "accepted deployment version is unavailable")
 		return
 	}
-	coordinated, err := d.engine.EnsureWakeForDeployment(ctx, op.AppID, version.DeploymentID, scope, TriggerMeterd)
+	coordinated, err := d.engine.EnsureWakeForDeployment(ctx, op.AppID, version.DeploymentID, scope, TriggerInvocation)
 	if err == nil {
 		err = coordinated.Err
 	}
@@ -859,12 +859,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// row so the meter's per-instance count is non-zero for this minute.
 	var wakeRes WakeResult
 	if version.DeploymentID != "" {
-		wakeRes, err = d.engine.Wake(claimCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		wakeRes, err = d.engine.Wake(claimCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerInvocation)
 		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(WithScope(claimCtx, version.Scope), inv.AppID, TriggerMeterd)
+		coord, wakeErr := d.engine.EnsureWake(WithScope(claimCtx, version.Scope), inv.AppID, TriggerInvocation)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err

@@ -241,6 +241,108 @@ func TestAutomationSimulationMatchesOutboundRetrySafety(t *testing.T) {
 	}
 }
 
+func TestAutomationSimulationResolvesOutboundTargets(t *testing.T) {
+	request := api.SimulateAutomationRequest{
+		Definition: api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{
+			{Name: "lookup", Run: "lookup"},
+			{Name: "read", DependsOn: []string{"lookup"}, Outbound: &api.WorkflowOutboundSpec{
+				IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET",
+				Path: "/contacts/{{steps.lookup.output.id}}", Query: map[string]string{"email": "{{input.email}}", "source": "automation"},
+			}},
+		}},
+		Input:       json.RawMessage(`{"email":"a+b@example.com"}`),
+		MockOutputs: map[string]json.RawMessage{"lookup": json.RawMessage(`{"id":"contact 42"}`), "read": json.RawMessage(`null`)},
+	}
+	before, _ := json.Marshal(request)
+	response := simulateTest(t, request)
+	row := simulationStep(t, response, "read")
+	if !response.Complete || row.State != "mocked" || row.Path != "/contacts/contact%2042" || row.RawQuery != "email=a%2Bb%40example.com&source=automation" || len(row.Input) != 0 {
+		t.Fatalf("resolved outbound trace: %+v", response)
+	}
+	after, _ := json.Marshal(request)
+	if string(before) != string(after) {
+		t.Fatal("simulation mutated the definition or samples")
+	}
+	for _, invalid := range []string{`{"id":"../private-value"}`, `{"id":null}`, `{}`} {
+		request.MockOutputs["lookup"] = json.RawMessage(invalid)
+		response = simulateTest(t, request)
+		row = simulationStep(t, response, "read")
+		if response.Complete || row.State != "error" || row.Reason != "outbound_target_resolution_failed" || len(row.Attempts) != 0 || row.RawQuery != "" {
+			t.Fatalf("invalid target accepted success mock: %+v", response)
+		}
+		if strings.Contains(strings.Join(response.Issues, " "), "private-value") {
+			t.Fatal("resolution error exposed the invalid sample")
+		}
+	}
+}
+
+func TestAutomationSimulationResolvesOutboundLoopTargets(t *testing.T) {
+	request := api.SimulateAutomationRequest{
+		Definition: api.WorkflowSpec{Name: "batch", Steps: []api.WorkflowStepSpec{{Name: "batch", ForEach: &api.WorkflowForEachSpec{
+			Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{
+				IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET",
+				Path: "/contacts/{{input.item}}", Query: map[string]string{"index": "{{input.index}}", "source": "{{input.input.source}}"},
+			}},
+		}}}},
+		Input:           json.RawMessage(`{"items":["one","two"],"source":"a&b"}`),
+		MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`null`), json.RawMessage(`null`)}},
+	}
+	response := simulateTest(t, request)
+	if !response.Complete {
+		t.Fatalf("loop did not resolve: %+v", response)
+	}
+	for index, id := range []string{"one", "two"} {
+		row := simulationStep(t, response, api.WorkflowForEachItemName("batch", index))
+		if row.Path != "/contacts/"+id || row.RawQuery != fmt.Sprintf("index=%d&source=a%%26b", index) || len(row.Input) != 0 {
+			t.Fatalf("loop context: %+v", row)
+		}
+	}
+	request.Input = json.RawMessage(`{"items":["../unsafe","two"],"source":"a&b"}`)
+	response = simulateTest(t, request)
+	if response.Complete || simulationStep(t, response, api.WorkflowForEachItemName("batch", 0)).State != "error" || simulationStep(t, response, api.WorkflowForEachItemName("batch", 1)).State != "blocked" {
+		t.Fatalf("invalid loop target accepted mock: %+v", response)
+	}
+	request.Definition.Steps[0].ForEach.Action.Outbound.Path = "/contacts/{{input.item.id}}"
+	request.Definition.Steps[0].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item.active", Op: "eq", Value: json.RawMessage(`true`)}
+	request.Input = json.RawMessage(`{"items":[{"id":"../unsafe","active":false},{"id":"one","active":true}],"source":"a&b"}`)
+	response = simulateTest(t, request)
+	first := simulationStep(t, response, api.WorkflowForEachItemName("batch", 0))
+	second := simulationStep(t, response, api.WorkflowForEachItemName("batch", 1))
+	if !response.Complete || first.State != "skipped" || first.RawQuery != "" || second.Path != "/contacts/one" || second.RawQuery != "index=1&source=a%26b" {
+		t.Fatalf("skipped loop target was resolved: %+v", response)
+	}
+}
+
+func TestAutomationSimulationOutboundTargetControlFlow(t *testing.T) {
+	target := &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "GET", Path: "/contacts/{{input.id}}", Query: map[string]string{"email": "{{input.email}}"}}
+	request := api.SimulateAutomationRequest{
+		Definition: api.WorkflowSpec{Name: "guard", Steps: []api.WorkflowStepSpec{{Name: "read", Outbound: target,
+			When: &api.WorkflowGuardSpec{Ref: "input.active", Op: "eq", Value: json.RawMessage(`true`)},
+		}}},
+		Input: json.RawMessage(`{"active":false,"id":"../private-value"}`),
+	}
+	response := simulateTest(t, request)
+	if !response.Complete || len(response.Issues) != 0 || simulationStep(t, response, "read").State != "skipped" {
+		t.Fatalf("skipped target was resolved: %+v", response)
+	}
+	request.Definition.Steps[0].When = nil
+	request.Definition.Steps[0].DependsOn = []string{"lookup"}
+	request.Definition.Steps = append(request.Definition.Steps, api.WorkflowStepSpec{Name: "lookup", Run: "lookup"})
+	response = simulateTest(t, request)
+	if len(response.Issues) != 0 || simulationStep(t, response, "read").State != "blocked" {
+		t.Fatalf("blocked target was resolved: %+v", response)
+	}
+	request.Definition.Steps = request.Definition.Steps[:1]
+	request.Definition.Steps[0].DependsOn = nil
+	request.MockAttempts = map[string][]api.AutomationSimulationMockAttempt{"read": {{Outcome: "success", Output: json.RawMessage(`null`)}}}
+	request.Input = json.RawMessage(`{"id":"42","email":{"invalid":true}}`)
+	response = simulateTest(t, request)
+	row := simulationStep(t, response, "read")
+	if response.Complete || row.State != "error" || row.Reason != "outbound_target_resolution_failed" || len(row.Attempts) != 0 {
+		t.Fatalf("invalid query accepted an attempt mock: %+v", response)
+	}
+}
+
 func TestAutomationSimulationTransportErrorIsDead(t *testing.T) {
 	spec := api.WorkflowSpec{Name: "transport-error", Steps: []api.WorkflowStepSpec{{Name: "source", Run: "lookup", Retry: &api.WorkflowRetrySpec{MaxAttempts: 1}}}}
 	response := simulateTest(t, api.SimulateAutomationRequest{Definition: spec, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{

@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationCheckEvidence } from './AutomationCheckEvidence.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * Immutable published automation definition with actor and rollout provenance.
  */
 export type AutomationRevisionResponse = {
+  check_evidence?: AutomationCheckEvidence;
   /**
    * Immutable published revision identifier.
    */

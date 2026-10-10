@@ -16,6 +16,12 @@ UUID, HTTP method, and fixed canonical relative path. Exactly one step target is
 allowed. The normal workflow input templates supply a bounded JSON request body.
 GET and HEAD send no body and forbid explicit input. This first slice supports
 no query parameters, dynamic paths, custom headers, origins, or inline credentials.
+Subsequent implementation adds whole-segment path templates and bounded query
+value templates while retaining fixed-origin routing and live route policy
+checks. Simulation now resolves these targets using the executor's resolver,
+including loop contexts, before accepting action mocks. See
+[automation authoring](../automation-authoring.md#preview-managed-integration-requests)
+for the current syntax, limits, and preview contract.
 The integration must be customer-owned, sealed-credential managed, enabled, and
 explicitly bound to the workflow app. Authoring validation and publication check
 the integration and binding route policies. Runtime authorization checks current

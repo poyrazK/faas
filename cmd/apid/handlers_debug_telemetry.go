@@ -766,7 +766,7 @@ func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependen
 // edge rollups. classify decides whether a row is included and whether it
 // belongs to the "current" side of the baseline/current comparison, so the
 // same machinery serves the time-split history and the deployment
-// comparison (ADR-829 §5).
+// comparison (ADR-934 §5).
 func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansRow, classify func(sqlc.ListRequestTelemetryDependencySpansRow) (include, current bool)) ([]api.DebugDependencyLatencyItem, []api.DebugDependencyImpactEdge, bool, int64, int64) {
 	aggregates := make(map[string]*debugDependencyHistoryAggregate)
 	edgeAggregates := make(map[string]*debugDependencyImpactAggregate)

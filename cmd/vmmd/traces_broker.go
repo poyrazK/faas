@@ -25,7 +25,7 @@ type traceAppReader interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 }
 
-// traceBroker relays in-guest trace exports to apid (ADR-829). Like the
+// traceBroker relays in-guest trace exports to apid (ADR-934). Like the
 // profile broker it only bounds frames and stamps host-owned identity: it
 // never decompresses or decodes OTLP, which happens in unprivileged apid.
 type traceBroker struct {

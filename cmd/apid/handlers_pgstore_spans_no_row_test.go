@@ -2,7 +2,7 @@
 
 package main
 
-// adr: 829 — PgStore distinguishes a missing request row from a write.
+// adr: 934 — PgStore distinguishes a missing request row from a write.
 
 import (
 	"context"

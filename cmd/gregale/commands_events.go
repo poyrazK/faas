@@ -21,7 +21,7 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|notification-retry-reconcile|notification-retry-plan|notification-retry-apply|notification-retry-backlog|recovery-notification-retry-history|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-app-verify|publish-app-status|publish-app|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -59,6 +59,22 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptionControl(args[1:], "status")
 	case "recovery-preflight":
 		return cmdEventsRecoveryPreflight(args[1:])
+	case "notification-retry-reconcile":
+		return cmdEventsNotificationRetryReconcile(args[1:])
+	case "notification-retry-plan":
+		return cmdEventsNotificationRetryBatch(args[1:], false)
+	case "notification-retry-apply":
+		return cmdEventsNotificationRetryBatch(args[1:], true)
+	case "notification-retry-backlog":
+		return cmdEventsNotificationRetryBacklog(args[1:])
+	case "recovery-notification-retry-history":
+		return cmdEventsRecoveryNotificationRetryHistory(args[1:])
+	case "recovery-notification-retry-preview":
+		return cmdEventsRecoveryNotificationRetryPreview(args[1:])
+	case "recovery-notification-retry":
+		return cmdEventsRecoveryNotificationRetry(args[1:])
+	case "recovery-notifications":
+		return cmdEventsRecoveryNotifications(args[1:])
 	case "recovery-health":
 		return cmdEventsRecoveryHealth(args[1:])
 	case "recovery-history":
@@ -105,6 +121,16 @@ func cmdEvents(args []string) int {
 		return cmdEventsRecover(args[1:])
 	case "attempts":
 		return cmdEventsAttempts(args[1:])
+	case "retention":
+		return cmdEventsRetention(args[1:])
+	case "publish-app-verify":
+		return cmdEventsPublishAppVerify(args[1:])
+	case "publish-app-status":
+		return cmdEventsPublishAppStatus(args[1:])
+	case "publish-app":
+		return cmdEventsPublishApp(args[1:])
+	case "publish-batch":
+		return cmdEventsPublishBatch(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":

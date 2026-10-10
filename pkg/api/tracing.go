@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TracingConfig enables zero-config in-guest request tracing (ADR-829).
+// TracingConfig enables zero-config in-guest request tracing (ADR-934).
 // Settings are baked into the deployment; changing them requires a redeploy.
 type TracingConfig struct {
 	Enabled bool `json:"enabled" yaml:"enabled" toml:"enabled"`
@@ -14,7 +14,7 @@ type TracingConfig struct {
 	SampleRatio float64 `json:"sample_ratio,omitempty" yaml:"sample_ratio,omitempty" toml:"sample_ratio"`
 }
 
-// Guest tracing transport bounds (ADR-829). The frame bound applies to the
+// Guest tracing transport bounds (ADR-934). The frame bound applies to the
 // encoded export as sent by the SDK (possibly gzip); apid separately bounds
 // the decoded body with the public ingest limit.
 const (

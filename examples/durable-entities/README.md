@@ -202,8 +202,8 @@ branches and the legacy archive. It retains new-generation uploads, manifests,
 unknown paths and probes. A delayed orphan upload can be removed on a later
 sweep. A reader racing reclamation can receive a retryable conflict.
 
-Manifest writes upgrade to schema 4; older binaries fail closed. Stop old entity
-callers/alarm workers when upgrading. Downgrading after upgrade needs an explicit
+Manifest writes upgrade to schema 5; older binaries fail closed. Stop old entity
+callers/alarm/maintenance workers when upgrading. Downgrading needs an explicit
 storage migration. Keep bucket lifecycle deletion disabled. Versioned buckets may
 retain historical versions/delete markers; this command deletes current keys and
 does not reclaim those physical versions or backups.
@@ -289,9 +289,24 @@ With a cap they return 503 `durable_entity_inventory_pending` for new work until
 the logical proof completes; reads and original receipt replays remain available.
 The separately enabled maintenance worker alternates cleanup and inventory pages
 and gives legacy accounting priority. For manual migration rerun `-inventory`.
-Stop all old entity callers, alarm and maintenance workers before this schema-4
-upgrade; binaries supporting only manifest schemas 1/2/3 reject the new manifests.
+Stop all old entity callers, alarm and maintenance workers before this schema-5
+upgrade; binaries supporting only manifest schemas 1/2/3/4 reject new manifests.
 A downgrade requires storage migration. Guest protocol version 1 is unchanged.
+
+## Internal outgoing-intent contract
+
+The private Go state engine can append `Transition.Outbox` webhook intents and
+restore them using `Manager.PendingOutbox` for one exact entity scope. Messages
+commit with state/receipts, retain stable IDs across replay/restart, and survive
+ordinary transitions and cleanup. Pending bytes count in snapshot/storage caps.
+Limits are 16 messages per transition, 128 pending, 64 KiB per payload and
+256 KiB of encoded pending messages; the 1 MiB snapshot ceiling also applies.
+Queue/cap rejection publishes neither new state nor outgoing messages.
+
+This is an engine contract, with no delivery worker, acknowledgement/removal or
+customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
+remain pure. Registered-webhook admission and deduplicated relay acceptance
+must precede guest enablement. See [ADR-903](../../docs/adr/903-object-storage-entity-outbox-contract.md).
 
 ## Deploy the counter invocation preview
 

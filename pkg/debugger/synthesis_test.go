@@ -26,7 +26,7 @@ func TestSynthesizePrioritizesGuestFailure(t *testing.T) {
 	}
 }
 
-// adr: 829 — a regressed dependency is named in the headline.
+// adr: 934 — a regressed dependency is named in the headline.
 func TestSynthesizeNamesRegressedDependency(t *testing.T) {
 	evidence := api.DebugRequestEvidenceResponse{
 		Request:    api.DebugTelemetryRequestItem{Status: 200},

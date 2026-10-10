@@ -1,4 +1,4 @@
-# Generated from requirements.in for linux x86_64 CPython 3.12/3.13 (ADR-829).
+# Generated from requirements.in for linux x86_64 CPython 3.12/3.13 (ADR-934).
 # Do not edit by hand; regenerate after changing requirements.in.
 asgiref==3.12.1 \
     --hash=sha256:fe386d1c2bff7259ea95929266d12a8cf9a8b5a1c2598402967d8792e7a7c094

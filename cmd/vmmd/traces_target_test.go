@@ -1,6 +1,6 @@
 package main
 
-// adr: 829 — split-box guest spans use vmmd's node-identity mTLS leaf.
+// adr: 934 — split-box guest spans use vmmd's node-identity mTLS leaf.
 
 import (
 	"crypto/ecdsa"

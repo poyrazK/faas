@@ -92,7 +92,7 @@ type spansWriterReceiver struct {
 	ops     spansWriterMonitor
 	limiter *peraccount.Limiter
 	enabled bool
-	// guest is the ADR-829 in-guest export ingester; nil disables it.
+	// guest is the ADR-934 in-guest export ingester; nil disables it.
 	guest *guestSpansIngester
 }
 
@@ -191,7 +191,7 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 		// db_error so an operator chasing a Postgres
 		// failover drill doesn't get misled by client-side
 		// shape drift.
-		// ADR-829: spans that arrive before their request row are
+		// ADR-934: spans that arrive before their request row are
 		// retryable, not delivered; producers keep them for the next flush.
 		if errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
 			r.observe(swOutcomeNoRow)

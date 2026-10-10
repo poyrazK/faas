@@ -38,15 +38,19 @@ jobs:
     name: CodeQL ${{ matrix.language }}
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - language: actions
+            timeout_minutes: 30
             queries: security-and-quality
             upload: always
           - language: go
+            # Full Go extraction exceeded 30 minutes on hosted runners.
+            # Allow it to finish without reducing the analyzed source set.
+            timeout_minutes: 60
             queries: security-and-quality
             # The Go suppression query has kind `alert-suppression`, so it
             # must be added as a query-pack query rather than a local query

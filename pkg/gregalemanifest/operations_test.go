@@ -4,6 +4,7 @@ package gregalemanifest
 import (
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -12,8 +13,8 @@ import (
 
 func TestOperationManifestSourceBundle(t *testing.T) {
 	for _, source := range []string{
-		"operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: schemas/input.json\n    output_schema: schemas/output.json\n    progress_stages: [generating, uploading]\n",
-		"[[operations]]\nname = 'export'\nmethod = 'POST'\npath = '/exports'\nowner = 'platform_tenant'\ninput_schema = 'schemas/input.json'\noutput_schema = 'schemas/output.json'\nprogress_stages = ['generating', 'uploading']\n",
+		"operations:\n  - name: export\n    transaction_receipt: postgres_v1\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: schemas/input.json\n    output_schema: schemas/output.json\n    progress_stages: [generating, uploading]\n",
+		"[[operations]]\nname = 'export'\ntransaction_receipt = 'postgres_v1'\nmethod = 'POST'\npath = '/exports'\nowner = 'platform_tenant'\ninput_schema = 'schemas/input.json'\noutput_schema = 'schemas/output.json'\nprogress_stages = ['generating', 'uploading']\n",
 	} {
 		var m *Manifest
 		var err error
@@ -43,7 +44,7 @@ func TestOperationManifestSourceBundle(t *testing.T) {
 				return nil, errors.New("missing")
 			}
 		})
-		if err != nil || reads != 2 || len(m.ResolvedOperations) != 1 || m.ResolvedOperations[0].Recovery != api.OperationRecoveryReconcile {
+		if err != nil || reads != 2 || len(m.ResolvedOperations) != 1 || m.ResolvedOperations[0].Recovery != api.OperationRecoveryReconcile || m.ResolvedOperations[0].TransactionReceipt != api.OperationTransactionPostgres {
 			t.Fatalf("immutable bundle: %+v, reads=%d, err=%v", m, reads, err)
 		}
 		m.Operations[0].InputSchema = "../outside.json"
@@ -71,8 +72,9 @@ func TestOperationManifestPerAppContracts(t *testing.T) {
 	}
 }
 
-// ADR-521: the staged HTTP contract rejects native targets and stale source bundles.
-func TestOperationManifestHTTPOnlyAndAtomicResolution(t *testing.T) {
+// ADR-664: native targets are named strings; malformed targets and stale
+// source bundles must fail without partially replacing the resolved contract.
+func TestOperationManifestMalformedNativeTargetAndAtomicResolution(t *testing.T) {
 	for _, source := range []string{
 		"operations:\n  - name: export\n    job: {name: export}\n",
 		"[[operations]]\nname='export'\nworkflow={name='export'}\n",
@@ -84,7 +86,7 @@ func TestOperationManifestHTTPOnlyAndAtomicResolution(t *testing.T) {
 			_, err = ParseBytes([]byte(source))
 		}
 		if err == nil {
-			t.Fatal("native target entered HTTP manifest contract")
+			t.Fatal("malformed native target entered manifest contract")
 		}
 	}
 	m := &Manifest{Operations: []Operation{{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"generating"}}}}
@@ -93,6 +95,29 @@ func TestOperationManifestHTTPOnlyAndAtomicResolution(t *testing.T) {
 	}
 	if err := m.ResolveOperations("export", api.PlanPro, func(string, int) ([]byte, error) { return nil, errors.New("source changed") }); err == nil || len(m.ResolvedOperations) != 0 {
 		t.Fatalf("old bundle retained on resolution failure: %+v %v", m.ResolvedOperations, err)
+	}
+}
+
+func TestOperationManifestWorkflowExport(t *testing.T) {
+	raw, err := os.ReadFile("../../examples/customer-operation-workflow-export/gregale.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := ParseBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.ResolveOperations("exports", api.PlanPro, func(file string, _ int) ([]byte, error) {
+		return os.ReadFile("../../examples/customer-operation-workflow-export/" + file)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.ResolvedOperations) != 1 || manifest.ResolvedOperations[0].Workflow != "export-chain" || len(manifest.Workflows) != 1 {
+		t.Fatalf("workflow contract lost: %+v", manifest.ResolvedOperations)
+	}
+	manifest.Workflows[0].Steps[1].DependsOn = nil
+	if err := manifest.ResolveOperations("exports", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`true`), nil }); err == nil || len(manifest.ResolvedOperations) != 0 {
+		t.Fatal("parallel workflow entered the bounded adapter")
 	}
 }
 
@@ -191,7 +216,7 @@ operation_workflows:
 	}
 	revisions := map[string]string{}
 	for _, spec := range manifest.ResolvedOperations {
-		if len(spec.WorkflowSteps) != 1 || spec.WorkflowSteps[0].Workflow != "order-lifecycle" || spec.WorkflowSteps[0].Title != "Order lifecycle" {
+		if len(spec.WorkflowSteps) != 1 || spec.WorkflowSteps[0].Workflow != "order-lifecycle" || spec.WorkflowSteps[0].Title != "Order lifecycle" || spec.WorkflowSteps[0].Version != 1 {
 			t.Fatalf("workflow step was not pinned to %s: %+v", spec.Name, spec.WorkflowSteps)
 		}
 		revisions[spec.Name] = mustWorkflowRevision(t, spec)
@@ -211,6 +236,46 @@ operation_workflows:
 	reads = 0
 	if err := manifest.ResolveOperations("orders", api.PlanPro, read); err == nil || reads != 0 || len(manifest.ResolvedOperations) != 0 {
 		t.Fatalf("unknown workflow operation read schemas or retained stale bundle: reads=%d err=%v", reads, err)
+	}
+}
+
+func TestOperationWorkflowVersionAndScopedTransitionEvidence(t *testing.T) {
+	manifest := &Manifest{
+		Operations: []Operation{
+			{Name: "fulfill-order", Method: "POST", Path: "/orders/fulfill", Owner: api.OperationOwnerPlatformTenant,
+				InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"complete"},
+				Milestones: map[string]string{"order-fulfilled": "fulfilled.json"}, HTTPTransactionVersion: api.OperationHTTPTransactionVersion},
+			{Name: "authorize-payment", Method: "POST", Path: "/payments/authorize", Owner: api.OperationOwnerPlatformTenant,
+				InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"complete"},
+				Milestones: map[string]string{"payment-authorized": "paid.json"}, HTTPTransactionVersion: api.OperationHTTPTransactionVersion},
+		},
+		OperationWorkflows: []OperationWorkflow{{
+			Name: "order-fulfillment", Title: "Order fulfillment", Version: 2, States: []string{"pending", "fulfilled"},
+			Transitions: []OperationWorkflowTransitionSource{{From: "pending", To: "fulfilled", Operation: "fulfill-order", RequiresMilestones: []string{"order-fulfilled"}}},
+			Steps: []OperationWorkflowStepSource{
+				{Name: "paid", Label: "Payment authorized", Operation: "authorize-payment", Milestone: "payment-authorized", InstanceIDFrom: "/workflow_run_id", Position: 1},
+				{Name: "fulfilled", Label: "Order fulfilled", Operation: "fulfill-order", Milestone: "order-fulfilled", InstanceIDFrom: "/workflow_run_id", Position: 2},
+			},
+		}},
+	}
+	if err := manifest.ResolveOperations("orders", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`true`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]api.OperationDefinitionSpec)
+	for _, spec := range manifest.ResolvedOperations {
+		byName[spec.Name] = spec
+	}
+	fulfill := byName["fulfill-order"].WorkflowSteps[0]
+	if fulfill.Version != 2 || !fulfill.TransitionsDeclared || len(fulfill.Transitions) != 1 || len(fulfill.Transitions[0].RequiredMilestones) != 1 || fulfill.Transitions[0].RequiredMilestones[0] != "order-fulfilled" {
+		t.Fatalf("transition contract was not pinned to its producer: %+v", fulfill)
+	}
+	payment := byName["authorize-payment"].WorkflowSteps[0]
+	if payment.Version != 2 || !payment.TransitionsDeclared || len(payment.Transitions) != 0 {
+		t.Fatalf("scoped edge leaked to an unrelated Operation: %+v", payment)
+	}
+	manifest.OperationWorkflows[0].Transitions[0].Operation = ""
+	if err := manifest.ResolveOperations("orders", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`true`), nil }); err == nil {
+		t.Fatal("unscoped transition evidence was accepted")
 	}
 }
 

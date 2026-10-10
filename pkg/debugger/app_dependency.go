@@ -9,7 +9,7 @@ import (
 
 // AppDependencyType classifies a customer-emitted OpenTelemetry client span
 // (database, HTTP, RPC or messaging call) recognised from standard semantic
-// conventions (ADR-829 §5). Platform-owned types keep precedence.
+// conventions (ADR-934 §5). Platform-owned types keep precedence.
 const AppDependencyType = "app_dependency"
 
 const (

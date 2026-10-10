@@ -1,4 +1,4 @@
-"""Application startup compatibility checks for the tracing preloads (ADR-829)."""
+"""Application startup compatibility checks for the tracing preloads (ADR-934)."""
 import os
 from pathlib import Path
 import shutil

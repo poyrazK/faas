@@ -99,7 +99,7 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		addRecommendation("compare_deployments", "Compare this deployment with its previous healthy deployment before rolling back.")
 	}
 
-	// ADR-829 §5: a dependency whose p95 regressed between the previous
+	// ADR-934 §5: a dependency whose p95 regressed between the previous
 	// deployment and this request's deployment is the most specific
 	// actionable signal the debugger can give.
 	var dependencyRegression *api.DebugDependencyLatencyItem

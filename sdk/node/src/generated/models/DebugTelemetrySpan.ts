@@ -34,7 +34,7 @@ export type DebugTelemetrySpan = {
    */
   dependency_kind?: string;
   /**
-   * Grouping identity of an app_dependency span (ADR-829): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials.
+   * Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials.
    */
   dependency_name?: string;
 };

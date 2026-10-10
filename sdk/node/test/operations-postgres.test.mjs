@@ -10,11 +10,15 @@ import {
   withOperationTransaction, OperationConflictError, OperationCommitUnknownError,
   GregaleOperations, customerOperationReceiptSchema, customerOperationRequestFromHeaders,
   customerOperationRequestDigest, withCustomerOperationTransaction, OperationMilestonePublicationError,
+  customerOperationReceiptRequestFromHeaders, customerOperationReceiptRequestDigest,
+  withCustomerOperationReceiptTransaction,
 } from '../dist/index.js';
 
 const dsn = process.env.DATABASE_URL;
 const fixture = JSON.parse(await readFile(new URL('../../operation-tests/request-fixture.json', import.meta.url), 'utf8'));
+const customerReceiptFixture = JSON.parse(await readFile(new URL('../../operation-tests/customer-request-fixture.json', import.meta.url), 'utf8'));
 const request = operationRequestFromHeaders(fixture.headers, fixture.method, fixture.path, Buffer.from(fixture.body_base64, 'base64'));
+const customerReceiptRequest = customerOperationReceiptRequestFromHeaders(customerReceiptFixture.headers, customerReceiptFixture.method, customerReceiptFixture.path, Buffer.from(customerReceiptFixture.body_base64, 'base64'));
 const customerHeaders = {
   'x-gregale-customer-operation-transaction-version': '1',
   'x-gregale-customer-operation-result-max-bytes': '262144',
@@ -49,6 +53,26 @@ test('Customer transaction requires explicit trusted HTTP execution and customer
   const next = customerOperationRequestFromHeaders({ ...customerHeaders, 'x-gregale-operation-attempt': '2', 'x-faas-invocation-id': randomUUID(), 'x-gregale-operation-capability': 'b'.repeat(64) }, 'POST', '/orders/fulfill', request.body);
   assert.deepEqual(customerOperationRequestDigest(next), customerOperationRequestDigest(customerRequest));
   assert.notDeepEqual(customerOperationRequestDigest(customerRequest), operationRequestDigest({ ...request, path: customerRequest.path }));
+});
+
+test('Customer receipt contract retains its binding-scoped request digest', async () => {
+  assert.equal(Buffer.from(customerOperationReceiptRequestDigest(customerReceiptRequest)).toString('hex'), customerReceiptFixture.digest);
+  assert.deepEqual(customerOperationReceiptRequestDigest({...customerReceiptRequest, generation: '2'}), customerOperationReceiptRequestDigest(customerReceiptRequest));
+  for (const change of [
+    {'x-gregale-customer-operation-receipt-version': '2'},
+    {'x-gregale-customer-operation-receipt-binding': 'bad'},
+    {'x-gregale-customer-operation-receipt-binding': [customerReceiptFixture.headers['x-gregale-customer-operation-receipt-binding'], 'b'.repeat(64)]},
+    {'x-faas-platform-tenant-id': undefined},
+    {'x-faas-invocation-id': undefined},
+    {'x-gregale-operation-capability': 'bad'},
+    {'x-gregale-operation-attempt': '01'},
+    {'x-gregale-operation-attempt': '2147483648'},
+    {'x-gregale-operation-result-version': '1'},
+    {'x-gregale-operation-execution-kind': 'workflow'},
+  ]) {
+    assert.throws(() => customerOperationReceiptRequestFromHeaders({...customerReceiptFixture.headers, ...change}, customerReceiptFixture.method, customerReceiptFixture.path, customerReceiptRequest.body), TypeError);
+  }
+  await assert.rejects(withOperationTransaction({connect: async () => { throw Error('unexpected DB'); }}, customerReceiptRequest, async () => ({result: {}})), TypeError);
 });
 
 test('Operation request contract rejects forged/ambiguous context and preserves generation identity', () => {
@@ -96,6 +120,32 @@ async function databaseFixture() {
   const customerCounts = async () => (await pool.query('SELECT (SELECT total FROM business.counter WHERE id=1) AS total,(SELECT count(*)::int FROM public.gregale_customer_operation_inbox) AS receipts')).rows[0];
   return { pool, counts, customerCounts, url: url.toString(), close };
 }
+
+test('Bound customer receipts roll back, deduplicate, and replay the original plain result', {skip: !dsn, timeout: 30000}, async t => {
+  const {pool, customerCounts, close} = await databaseFixture();
+  t.after(close);
+  const callback = async tx => {
+    await tx.query('UPDATE business.counter SET total=total+1 WHERE id=1');
+    return {file: 'ready.csv'};
+  };
+  await assert.rejects(withCustomerOperationReceiptTransaction(pool, customerReceiptRequest, async tx => {
+    await callback(tx);
+    throw Error('abort');
+  }), /abort/);
+  assert.deepEqual(await customerCounts(), {total: 0, receipts: 0});
+  const attempts = await Promise.all(Array.from({length: 8}, () => withCustomerOperationReceiptTransaction(pool, customerReceiptRequest, callback)));
+  assert.equal(attempts.filter(value => !value.replayed).length, 1);
+  assert.ok(attempts.every(value => value.body === '{"file":"ready.csv"}'));
+  assert.deepEqual(await customerCounts(), {total: 1, receipts: 1});
+  const changed = customerOperationReceiptRequestFromHeaders(
+    {...customerReceiptFixture.headers, 'x-gregale-customer-operation-receipt-binding': 'd'.repeat(64)},
+    customerReceiptFixture.method,
+    customerReceiptFixture.path,
+    customerReceiptRequest.body,
+  );
+  await assert.rejects(withCustomerOperationReceiptTransaction(pool, changed, callback), OperationConflictError);
+  assert.deepEqual(await customerCounts(), {total: 1, receipts: 1});
+});
 
 test('Customer transaction rolls back invalid work, serializes duplicates, and fences receipt ownership', { skip: !dsn, timeout: 30000 }, async t => {
   const { pool, customerCounts, close } = await databaseFixture(); t.after(close);

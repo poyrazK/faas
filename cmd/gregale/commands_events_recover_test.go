@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +24,8 @@ func eventRecoveryAPI(t *testing.T, handler http.HandlerFunc) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 }
 
 func recoveryRecipient(kind string) api.EventReceiptRecipientResponse {

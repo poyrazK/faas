@@ -58,7 +58,7 @@ func TestPgStoreUpdateSpansSummaryMergesAndDeduplicatesWriters(t *testing.T) {
 
 	// The composite account predicate must still prevent a different tenant's
 	// writer from replacing or appending evidence to this trace.
-	// The foreign write matches no row, which the store reports as such (ADR-829).
+	// The foreign write matches no row, which the store reports as such (ADR-934).
 	if err := store.UpdateSpansSummary(ctx, traceID, uuid.New(), []byte(`[{"span_id":"foreign"}]`)); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
 		t.Fatalf("cross-account update: %v, want ErrRequestTelemetryRowNotFound", err)
 	}

@@ -21,7 +21,7 @@ type prebuiltImageDescriptor struct {
 }
 
 // PrebuiltImage loads an OCI image assembled outside the test (for example
-// a real Node runtime plus the ADR-829 tracing bundle) from dir/image.json
+// a real Node runtime plus the ADR-934 tracing bundle) from dir/image.json
 // and serves it like the generated fixtures. Layer digests are verified.
 func PrebuiltImage(repo, dir string) (fakeImage, string, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "image.json"))

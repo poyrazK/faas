@@ -14,6 +14,14 @@ resolver: operation metadata resolution adds database work. Qualify store outage
 and fleet rollback as well as the portable tests. A host is not currently
 available; customer activation remains pending these results.
 
+For definitions using `transaction_receipt: postgres_v1`, first run
+`make test-customer-operation-sdk` with a disposable PostgreSQL cluster and SDK
+acceptance dependencies. Native qualification must then repeat the committed
+customer write / lost HTTP response / approved receipt replay scenario through
+the guest listener, including stale completion rejection and independent webhook
+retry. Install the receipt schema in the customer's database explicitly and
+verify its retention. The portable receipt gate does not enable a cohort.
+
 Record the source and binary hashes, migration state and native receipts. Verify
 the existing Operations, invocation and private-copy migrations are installed
 once. Do not install duplicate migrations from the preserved full-feature drafts.
@@ -87,10 +95,25 @@ per cohort. Wildcards, unknown fields and duplicate JSON members are rejected.
     "account_id": "<ACCOUNT UUID>",
     "app_id": "<APP UUID>",
     "scope": "<EXACT ENVIRONMENT>",
-    "platform_tenant_ids": ["<CUSTOMER UUID>"]
+    "platform_tenant_ids": ["<CUSTOMER UUID>"],
+    "execution_kinds": ["http"]
   }]
 }
 ```
+
+The execution allowlist selects exactly `http`, `workflow` and/or `job` for
+this cohort. Omitted or null defaults to HTTP only; an empty array, duplicate,
+unknown value or wrong type invalidates the policy. Keep this explicit HTTP
+grant until each native family has qualification receipts, then add only that
+family to the appropriate cohort. An HTTP transaction receipt uses `http`.
+The [Customer Job Operations native lane](customer-job-operations-native.md)
+provides the bounded Job harness; its KVM execution receipts remain pending.
+The [Customer Workflow Operations native lane](customer-workflow-operations-native.md)
+provides the workflow harness; its KVM execution receipts also remain pending.
+Mixed source deployments require every declared type before manifest mutations
+and build enqueue. Update every API/gateway binary before native admission;
+older binaries reject `execution_kinds` and fail closed. Do not rely on an
+omitted field to isolate types on older nodes.
 
 The app/environment grant allows definition registration and source deployment
 for that cohort. It does not grant another customer access. Identity comes from
@@ -110,6 +133,14 @@ An expired window closes admission until another explicit bounded grant is
 installed. Keep node clocks synchronized.
 
 ## Roll back admission
+
+To roll back a native family while retaining HTTP ingress, atomically replace
+its cohort's allowlist with `["http"]` on every node. Verify new definition and
+submission requests for the removed type return 503, including same-key
+resubmissions. Check `customer-operations doctor --name NAME`: the definition's
+`execution_preview` should show its type and `preview_execution_kind_excluded`.
+Retained status, events, runtime reports, private results, completion delivery
+and controlled recovery must still work for accepted native operations.
 
 Replace policy on **every serving node** with version 1, enabled false. This
 example is a future operator action, not a command executed by local qualification.
@@ -137,6 +168,17 @@ accepted executions and use the existing cancellation/reconciliation contract
 if intervention is needed. Closing policy does not cancel accepted work or
 block explicit recovery. In particular, an uncertain external effect requires
 evidence or an explicitly safe retry, not blind repetition.
+
+Use `gregale customer-operations inspect ID --app SLUG --json` for confirmed
+steps, uncertain attempts, retained files and pins. Read a proposed retry with
+`gregale customer-operations recover ID --app SLUG --preview
+--expected-generation N --resolution safe_to_retry --json`. Preview records no
+decision, starts no work and publishes no file. Platform eligibility still
+requires operator evidence about external effects. A blocked preview exits 4.
+Save the observed generation and inspection revision with the evidence; normal
+recovery can use `--inspection-revision` to reject changed execution evidence.
+Recheck the proposal after a conflict. Do not regenerate successful work to
+repair its independent notification.
 
 While closed, observe the recorded operation through status and events. Allow
 its existing handler to report progress and attach its result, then verify the

@@ -38,7 +38,7 @@ class DebugTelemetrySpan:
     dependency_kind: str | Unset = UNSET
     """Allowlisted platform-owned dependency kind; raw span attributes are never returned."""
     dependency_name: str | Unset = UNSET
-    """Grouping identity of an app_dependency span (ADR-829): database operation and table, HTTP host, RPC method
+    """Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method
     or messaging destination. Never contains literals, paths, query strings or credentials."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

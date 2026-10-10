@@ -1,6 +1,6 @@
 [Service]
 {% if faas_gatewayd_app_errors_target | default('') | length > 0 %}
-# Split-box guest trace exports (ADR-829). vmmd forwards in-guest OTLP
+# Split-box guest trace exports (ADR-934). vmmd forwards in-guest OTLP
 # exports to apid's private mTLS listener — the same SpansWriter endpoint
 # gatewayd-internal uses — authenticated by vmmd's node-identity apid-client
 # leaf (CN = compute_nodes.name). Inert unless the operator also sets

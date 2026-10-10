@@ -1,7 +1,7 @@
 -- filename: 20261009183654862_debug_regression_suspected_dependency.sql
 
 -- +goose Up
--- ADR-829 §5: a route regression carries the dependency whose p95 regressed
+-- ADR-934 §5: a route regression carries the dependency whose p95 regressed
 -- most between the previous and the current deployment, so the alert itself
 -- names it. The value is a bounded redacted identity produced by apid
 -- (type/kind/name plus both p95 values); it never holds raw span attributes.

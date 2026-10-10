@@ -70,7 +70,17 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
+	ConditionField   string              `json:"condition_field,omitempty"`
+	ConditionIndex   *int                `json:"condition_index,omitempty"`
+	FieldExists      *bool               `json:"field_exists,omitempty"`
+	EntityKey        string              `json:"entity_key,omitempty"`
+	ExpectedVersion  *int64              `json:"expected_version,omitempty"`
+	CurrentVersion   *int64              `json:"current_version,omitempty"`
+	EntityExists     *bool               `json:"entity_exists,omitempty"`
+	MessageIndex     *int                `json:"message_index,omitempty"`
+	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
+	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
+	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -405,6 +415,7 @@ const (
 	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
 	CodePlanLimitApps                      = "plan_limit_apps"
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
+	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
 	CodePlanLimitConcur                    = "plan_limit_concurrency"
 	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
@@ -639,6 +650,9 @@ const (
 	CodeAutomationVersionConflict       = "automation_version_conflict"
 	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
 	CodeAutomationInvalid               = "automation_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
@@ -758,6 +772,13 @@ const (
 	// CodeBeforeCheckpointFailed identifies an application callback that
 	// rejected a terminal init snapshot, distinct from storage or VM failures.
 	CodeBeforeCheckpointFailed = "before_checkpoint_failed"
+	// CodeDevSourceDiverged (ADR-740) is vmmd's refusal to snapshot an
+	// instance that was served a developer live patch. The VM is destroyed
+	// instead, and the next wake restores the unpatched artifact.
+	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
+	// one developer environment.
+	CodeDevDebugSessionLimit = "dev_debug_session_limit"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1580,6 +1601,9 @@ const (
 	// CodeAPIContractBreakingChange is stamped on deployments rejected by
 	// the production OpenAPI contract gate.
 	CodeAPIContractBreakingChange = "api_contract_breaking_change"
+	// CodeAPIContractComparisonIncomplete means a promotion was blocked
+	// because an unsupported response-schema change could not be classified.
+	CodeAPIContractComparisonIncomplete = "api_contract_comparison_incomplete"
 	// CodeOpenAPIPolicyConfirmationRequired means a policy apply request
 	// omitted the approval token returned by the preceding plan.
 	CodeOpenAPIPolicyConfirmationRequired = "openapi_policy_confirmation_required"
@@ -1874,12 +1898,12 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -1938,7 +1962,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
@@ -1948,7 +1972,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
 	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
@@ -1958,7 +1982,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2386,6 +2410,22 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		"Developer environment limit reached",
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrPlanLimitDeveloperLease is returned when a developer session requests a
+// lease longer than the plan's `gregale dev --ttl` ceiling. Limit and observed
+// values are whole hours; the observed value rounds up so it always exceeds
+// the limit it is compared with.
+func ErrPlanLimitDeveloperLease(l Limits, requestedSeconds int64) *Problem {
+	observedHours := requestedSeconds / 3600
+	if requestedSeconds%3600 != 0 {
+		observedHours++
+	}
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperLease,
+		"Developer environment lease over plan limit",
+		fmt.Sprintf("%s plan allows a developer environment lease of at most %dh; requested %dh. Choose a shorter --ttl.", l.Plan, l.DeveloperLeaseMaxHours, observedHours)).
+		WithLimit(int64(l.DeveloperLeaseMaxHours), observedHours).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 
@@ -3083,12 +3123,12 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 // FAAS_DOMAIN_DOCTOR_ENABLED is unset. The route stays
 // registered (per the pre-#911 pattern in api/flags.go) so
 // the CLI gets a deterministic error code rather than a
-// generic 404. The detail line is the operator-facing
-// "set FAAS_DOMAIN_DOCTOR_ENABLED=1" hint.
+// generic 404. The detail stays customer-facing; operators key on
+// the stable code, not on FAAS_DOMAIN_DOCTOR_ENABLED in the text.
 func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
-		"the FAAS_DOMAIN_DOCTOR_ENABLED flag is not set on this cluster; ask the operator to enable it or use `gregale domains verify` for a one-shot check").
+		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
 		WithDocs(docsBase + "/domains/doctor")
 }
 
@@ -3109,7 +3149,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 func ErrAPIContractDiffDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
 		"API contract diff is disabled",
-		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		"API contract diff is not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -3118,6 +3158,15 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractComparisonIncomplete is used when the compatibility gate
+// cannot classify a changed response schema with its currently supported
+// checks.
+func ErrAPIContractComparisonIncomplete(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
+		"API contract comparison incomplete", detail).
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -4357,7 +4406,7 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 func ErrTenantSurfacesNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
 		"Tenant surfaces are not enabled",
-		"the FAAS_TENANT_SURFACES_ENABLED flag is not enabled on this cluster; ask the cluster operator to enable the tenant-surface API").
+		"tenant surfaces are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
@@ -4370,7 +4419,7 @@ func ErrTenantSurfacesNotEnabled() *Problem {
 func ErrStaticEgressIPNotEnabled() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeStaticEgressIPNotEnabled,
 		"Static egress IP feature is not enabled on this cluster",
-		"the FAAS_STATIC_EGRESS_IP_ENABLED env var is not set; ask the cluster operator to enable the static egress IP surface.").
+		"static egress IPs are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
@@ -4379,7 +4428,7 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 func ErrPrivateNetworkNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
 		"Private network attachments are not enabled on this cluster",
-		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		"private network attachments are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/networking")
 }
 

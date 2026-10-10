@@ -15,11 +15,17 @@ func writeCustomerInternalProblem(w http.ResponseWriter, r *http.Request, log *s
 }
 
 func customerInternalProblem(log *slog.Logger, operation, detail, hint string, cause error) *api.Problem {
+	if p := routeRemovalBlockedProblem(cause); p != nil {
+		return p
+	}
 	logCustomerFailure(log, operation, cause)
 	return api.ErrInternal(detail).WithHint(hint)
 }
 
 func customerCapacityProblem(log *slog.Logger, operation, title, detail, hint string, cause error) *api.Problem {
+	if p := routeRemovalBlockedProblem(cause); p != nil {
+		return p
+	}
 	logCustomerFailure(log, operation, cause)
 	return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, title, detail).
 		WithHeader("Retry-After", "5").

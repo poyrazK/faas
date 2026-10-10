@@ -26,10 +26,10 @@ func (s *server) getEventStorageUsage(w http.ResponseWriter, r *http.Request, ac
 	writeJSON(w, http.StatusOK, usage)
 }
 
-func writeEventStorageCapacity(w http.ResponseWriter, err error) bool {
+func eventStorageCapacityProblem(err error) *api.Problem {
 	var capacity *state.EventStorageCapacityError
 	if !errors.As(err, &capacity) {
-		return false
+		return nil
 	}
 	retry := int64(api.EventStorageRetryAfterSeconds)
 	problem := api.NewProblem(http.StatusTooManyRequests, "event_storage_capacity_exhausted", "Event storage capacity exhausted",
@@ -40,7 +40,15 @@ func writeEventStorageCapacity(w http.ResponseWriter, err error) bool {
 		problem.LimitBytes = &capacity.Limit
 		problem.ObservedBytes = &capacity.Observed
 	}
-	w.Header().Set("Retry-After", strconv.FormatInt(retry, 10))
+	return problem
+}
+
+func writeEventStorageCapacity(w http.ResponseWriter, err error) bool {
+	problem := eventStorageCapacityProblem(err)
+	if problem == nil {
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(*problem.RetryAfterSeconds, 10))
 	api.WriteProblem(w, problem)
 	return true
 }

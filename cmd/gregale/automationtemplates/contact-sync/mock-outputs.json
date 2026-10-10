@@ -1,0 +1,12 @@
+{
+  "lookup": {
+    "status": 200,
+    "body": {
+      "id": "contact-42",
+      "email": "sample@example.com"
+    }
+  },
+  "sync": {
+    "synced": true
+  }
+}

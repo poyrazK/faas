@@ -83,12 +83,13 @@
     <p class="brand">Gregale</p>
 
     {{if .Flash}}
-      {{if index .Data "Error"}}<div class="errorbox" role="alert">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
+      {{if and .Data (index .Data "Error")}}<div class="errorbox" role="alert">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
     {{end}}
 
     <h1>{{.Title}}</h1>
 
     <form method="POST" action="/login">
+      {{with .Data}}{{with index . "Next"}}<input type="hidden" name="next" value="{{.}}">{{end}}{{end}}
       <label for="email">Email
         <input id="email" name="email" type="email" required autocomplete="email">
       </label>
@@ -106,7 +107,7 @@
     </div>
     {{end}}{{end}}
 
-    <p class="signup">No account? <a href="/signup">Sign up</a></p>
+    <p class="signup">No account? <a href="{{with .Data}}{{with index . "SignupURL"}}{{.}}{{else}}/signup{{end}}{{else}}/signup{{end}}">Sign up</a></p>
   </main>
 </body>
 </html>

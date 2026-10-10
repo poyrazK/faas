@@ -94,3 +94,26 @@ func (s *server) recoverOperation(w http.ResponseWriter, r *http.Request, acct s
 	}
 	writeJSON(w, http.StatusOK, got.OperationResponse)
 }
+
+func (s *server) getOperationExecutionControl(w http.ResponseWriter, r *http.Request) {
+	authority, err := s.runtimeOperationAuthority(r)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "provide a current operation workload assertion"))
+		return
+	}
+	if _, ok := s.operationStore(w); !ok {
+		return
+	}
+	store, ok := s.store.(state.OperationExecutionControlStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("operation execution control is unavailable"))
+		return
+	}
+	control, err := store.OperationExecutionControl(r.Context(), r.PathValue("id"), authority)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, control)
+}

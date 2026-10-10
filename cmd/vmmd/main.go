@@ -1331,7 +1331,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance-bound guest metadata endpoint. The receiver only returns rows
 	// for the deployment/app/account attached to the Firecracker stream.
 	runtimeEnvStore, _ := store.(runtimeConfigStore)
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer)
+	// ADR-740: instances served a developer live patch are never snapshotted.
+	// The receiver marks them; the gRPC snapshot handlers refuse them.
+	divergedInstances := vmmdgrpc.NewDivergedInstances()
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances)
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
@@ -1492,7 +1495,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID).
-		WithExecutionIdentitySigner(identitySigner)
+		WithExecutionIdentitySigner(identitySigner).
+		WithDivergedInstances(divergedInstances)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200
