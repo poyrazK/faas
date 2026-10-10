@@ -664,6 +664,7 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	allowReconciliation := false
 	contractVersion := 0
 	var requiredMilestones []string
+	var selectedGroups []api.OperationWorkflowRetainedMilestoneGroup
 	for _, step := range c.Spec.WorkflowSteps {
 		if step.Workflow != report.Workflow || step.InstanceIDFrom == "" {
 			continue
@@ -686,6 +687,7 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 			for _, transition := range step.Transitions {
 				if transition.From == report.FromState && transition.To == report.State {
 					transitionAllowed = true
+					selectedGroups = transition.RetainedMilestoneGroups
 					requiredMilestones = append([]string(nil), transition.RequiredMilestones...)
 					for _, effect := range transition.RequiredEffects {
 						requiredMilestones = append(requiredMilestones, effect.Milestone)
@@ -864,6 +866,17 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 		return resolutions[i].Code < resolutions[j].Code
 	})
 	report.BlockerResolutions = resolutions
+	selections, err := api.CanonicalOperationWorkflowPathSelections(report.SelectedPaths)
+	if err != nil {
+		return report, "", err
+	}
+	if len(selections) > 0 && (report.FromState == "" || report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly || !transitionAllowed) {
+		return report, "", fmt.Errorf("path selections require a declared business transition")
+	}
+	if err := api.ValidateOperationWorkflowPathSelections(selections, selectedGroups); err != nil {
+		return report, "", err
+	}
+	report.SelectedPaths = selections
 	if report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
 		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 {
 			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain no transition evidence")

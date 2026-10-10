@@ -71,10 +71,11 @@ type OperationWorkflowRetainedMilestoneGroup struct {
 
 // OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
 type OperationWorkflowRetainedMilestoneGroupResult struct {
-	Paths        []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
-	ID           string                                         `json:"id"`
-	Satisfied    bool                                           `json:"satisfied"`
-	Alternatives []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
+	SelectedPathID string                                         `json:"selected_path_id,omitempty"`
+	Paths          []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
+	ID             string                                         `json:"id"`
+	Satisfied      bool                                           `json:"satisfied"`
+	Alternatives   []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
 }
 
 // OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
@@ -88,6 +89,12 @@ type OperationWorkflowRetainedMilestonePathResult struct {
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
 	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
+}
+
+// OperationWorkflowPathSelection is the application's chosen path within a compound group.
+type OperationWorkflowPathSelection struct {
+	GroupID string `json:"group_id"`
+	PathID  string `json:"path_id"`
 }
 
 func CanonicalOperationWorkflowRetainedMilestones(input []OperationWorkflowRetainedMilestoneRequirement) ([]OperationWorkflowRetainedMilestoneRequirement, error) {
@@ -236,4 +243,35 @@ func CloneOperationWorkflowRetainedMilestoneGroups(input []OperationWorkflowReta
 		}
 	}
 	return out
+}
+
+func CanonicalOperationWorkflowPathSelections(input []OperationWorkflowPathSelection) ([]OperationWorkflowPathSelection, error) {
+	if len(input) > OperationWorkflowRetainedGroupsMax {
+		return nil, fmt.Errorf("workflow path selections exceed limit")
+	}
+	out := append([]OperationWorkflowPathSelection(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].GroupID < out[j].GroupID })
+	for i, p := range out {
+		if ValidateOperationWorkflowStateName(p.GroupID) != nil || ValidateOperationWorkflowStateName(p.PathID) != nil || i > 0 && out[i-1].GroupID == p.GroupID {
+			return nil, fmt.Errorf("workflow path selections require valid IDs and unique groups")
+		}
+	}
+	return out, nil
+}
+
+func ValidateOperationWorkflowPathSelections(selections []OperationWorkflowPathSelection, groups []OperationWorkflowRetainedMilestoneGroup) error {
+	for _, selection := range selections {
+		found := false
+		for _, group := range groups {
+			if group.ID == selection.GroupID {
+				for _, path := range group.Paths {
+					found = found || path.ID == selection.PathID
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("selected workflow path is not declared for this edge")
+		}
+	}
+	return nil
 }

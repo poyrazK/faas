@@ -1763,6 +1763,7 @@ type CustomerOperationWorkflowStateReport struct {
 	OutcomeOnly        bool
 	DependsOn          []byte
 	DependenciesOnly   bool
+	SelectedPaths      []byte
 }
 
 type DataUpstream struct {

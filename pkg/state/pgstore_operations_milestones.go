@@ -261,7 +261,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 		}
 		return api.OperationWorkflowStateReportResponse{ID: prior.ID, OperationID: id, Workflow: prior.Workflow, InstanceID: prior.InstanceID,
 			FromState: prior.FromState, State: prior.State, Revision: prior.Revision,
-			Blockers: decodeWorkflowBlockers(prior.Blockers), BlockerResolutions: decodeWorkflowResolutions(prior.BlockerResolutions), DependsOn: decodeWorkflowDependencies(prior.DependsOn), DependenciesOnly: prior.DependenciesOnly, OutcomeCode: prior.OutcomeCode, OutcomeDescription: prior.OutcomeDescription, OutcomeOnly: prior.OutcomeOnly, DeadlineAt: prior.DeadlineAt, DeadlineOnly: prior.DeadlineOnly, BlockersOnly: prior.BlockersOnly, ContractVersion: int(prior.ContractVersion), EvidenceMilestones: decodeWorkflowEvidence(prior.EvidenceMilestones)}, nil
+			SelectedPaths: decodeWorkflowPathSelections(prior.SelectedPaths), Blockers: decodeWorkflowBlockers(prior.Blockers), BlockerResolutions: decodeWorkflowResolutions(prior.BlockerResolutions), DependsOn: decodeWorkflowDependencies(prior.DependsOn), DependenciesOnly: prior.DependenciesOnly, OutcomeCode: prior.OutcomeCode, OutcomeDescription: prior.OutcomeDescription, OutcomeOnly: prior.OutcomeOnly, DeadlineAt: prior.DeadlineAt, DeadlineOnly: prior.DeadlineOnly, BlockersOnly: prior.BlockersOnly, ContractVersion: int(prior.ContractVersion), EvidenceMilestones: decodeWorkflowEvidence(prior.EvidenceMilestones)}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.OperationWorkflowStateReportResponse{}, err
@@ -280,6 +280,10 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	if report.DependsOn == nil {
 		dependenciesJSON = []byte("[]")
 	}
+	selectionsJSON, _ := json.Marshal(report.SelectedPaths)
+	if report.SelectedPaths == nil {
+		selectionsJSON = []byte("[]")
+	}
 	resolutionsJSON, _ := json.Marshal(report.BlockerResolutions)
 	if report.BlockerResolutions == nil {
 		resolutionsJSON = []byte("[]")
@@ -293,7 +297,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 		OperationID: operationID, ID: stateID, Workflow: report.Workflow, InstanceID: report.InstanceID,
 		FromState: report.FromState, State: report.State, Revision: report.Revision, OccurredAt: pgtype.Timestamptz{Time: report.OccurredAt, Valid: true},
 		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, Fingerprint: fingerprint,
-		ContractVersion: int32(report.ContractVersion), EvidenceMilestones: evidenceJSON, Blockers: blockersJSON, BlockerResolutions: resolutionsJSON, DependsOn: dependenciesJSON, DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly,
+		SelectedPaths: selectionsJSON, ContractVersion: int32(report.ContractVersion), EvidenceMilestones: evidenceJSON, Blockers: blockersJSON, BlockerResolutions: resolutionsJSON, DependsOn: dependenciesJSON, DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly,
 	}); err != nil {
 		return api.OperationWorkflowStateReportResponse{}, err
 	}
@@ -308,7 +312,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	}
 	return api.OperationWorkflowStateReportResponse{ID: report.ID, OperationID: id, Workflow: report.Workflow,
 		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
-		Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}, nil
+		SelectedPaths: append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...), Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}, nil
 }
 
 func decodeWorkflowEvidence(raw []byte) []api.OperationWorkflowEvidenceMilestone {
@@ -573,4 +577,10 @@ func validateWorkflowResolutionSourcesTx(ctx context.Context, tx pgx.Tx, op Oper
 		}
 	}
 	return nil
+}
+
+func decodeWorkflowPathSelections(raw []byte) []api.OperationWorkflowPathSelection {
+	var out []api.OperationWorkflowPathSelection
+	_ = json.Unmarshal(raw, &out)
+	return out
 }

@@ -239,7 +239,7 @@ export { runJobOperation, type JobOperationContext, type JobOperationScope, type
 export type { OperationDirectUploadInput } from './operation-upload.js';
 
 export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
-export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
+export { OperationWorkflowStatePublicationError, type OperationWorkflowPathSelection, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
 
 export {
   createRealtimeSignalTracker,

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
     from ..models.operation_workflow_state_sla import OperationWorkflowStateSLA
 
 
@@ -39,6 +40,7 @@ class OperationWorkflowState:
     revision: int
     contract_version: int
     updated_at: datetime.datetime
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     sla: OperationWorkflowStateSLA | Unset = UNSET
     """Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state
     metadata reports preserve entry time. Known history establishes the current visit from revision 1 or a
@@ -100,6 +102,13 @@ class OperationWorkflowState:
         contract_version = self.contract_version
 
         updated_at = self.updated_at.isoformat()
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         sla: dict[str, Any] | Unset = UNSET
         if not isinstance(self.sla, Unset):
@@ -181,6 +190,8 @@ class OperationWorkflowState:
                 "updated_at": updated_at,
             }
         )
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if sla is not UNSET:
             field_dict["sla"] = sla
         if depends_on is not UNSET:
@@ -224,6 +235,7 @@ class OperationWorkflowState:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
         from ..models.operation_workflow_state_sla import OperationWorkflowStateSLA
 
         d = dict(src_dict)
@@ -246,6 +258,15 @@ class OperationWorkflowState:
         contract_version = d.pop("contract_version")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _sla = d.pop("sla", UNSET)
         sla: OperationWorkflowStateSLA | Unset
@@ -345,6 +366,7 @@ class OperationWorkflowState:
             revision=revision,
             contract_version=contract_version,
             updated_at=updated_at,
+            selected_paths=selected_paths,
             sla=sla,
             depends_on=depends_on,
             dependencies_only=dependencies_only,

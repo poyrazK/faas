@@ -15482,6 +15482,8 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     outcome_only boolean DEFAULT false NOT NULL,
     depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     dependencies_only boolean DEFAULT false NOT NULL,
+    selected_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT customer_operation_workflow_selected_paths_check CHECK (((jsonb_typeof(selected_paths) = 'array'::text) AND (jsonb_array_length(selected_paths) <= 8))),
     CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
     CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
     CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),

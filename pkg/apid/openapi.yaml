@@ -38680,6 +38680,14 @@ components:
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           description: Milestone names that must be committed in the same application transaction as this transition.
+    OperationWorkflowPathSelection:
+      description: Application-reported choice of one named path in a compound prerequisite group of the selected pinned transition. Each group may appear once. Choices do not authorize or execute actions.
+      type: object
+      additionalProperties: false
+      required: [group_id, path_id]
+      properties:
+        group_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        path_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
     OperationWorkflowRetainedMilestoneGroup:
       description: Named alternatives in a pinned workflow edge. Declare either a nonempty any_of list or nonempty named paths. Any verified fact satisfies a flat group; every fact in one complete path satisfies a path group. All groups and mandatory prerequisites must pass. Across named paths a group permits at most 16 fact occurrences including repeated selectors. Changes require a new contract version.
       type: object
@@ -38703,6 +38711,7 @@ components:
       additionalProperties: false
       required: [id, satisfied]
       properties:
+        selected_path_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$', description: 'When supplied by the application readiness request only this path determines group satisfaction; other paths remain diagnostic.'}
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         satisfied: {type: boolean}
         alternatives: {type: array, minItems: 2, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRetainedMilestone'}}
@@ -39392,6 +39401,7 @@ components:
       additionalProperties: false
       required: [scope, subject, workflow, instance_id, operation, from_state, to_state]
       properties:
+        selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedEffect'}}
         invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedInvariant'}}
         decisions: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedDecision'}}
@@ -39423,7 +39433,7 @@ components:
         transition: {$ref: '#/components/schemas/OperationWorkflowInstanceTransition'}
         declared: {type: boolean}
         ready: {type: boolean}
-        reasons: {type: array, maxItems: 17, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required, retained_milestone_invalidated, retained_milestone_expired, retained_milestone_group_unmet]}}
+        reasons: {type: array, maxItems: 18, uniqueItems: true, items: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required, retained_milestone_invalidated, retained_milestone_expired, retained_milestone_group_unmet, path_selection_invalid]}}
         advisories: {type: array, maxItems: 2, uniqueItems: true, items: {type: string, enum: [state_stale, deadline_overdue]}}
         state_revision: {type: integer, format: int64, minimum: 1, maximum: 9007199254740991}
         contract_version: {type: integer, minimum: 0, maximum: 1000000}
@@ -39532,6 +39542,7 @@ components:
       required: [id, workflow, instance_id, state, revision, occurred_at]
       description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
       properties:
+        selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         depends_on: {type: array, maxItems: 16, description: Full replacement snapshot of direct prerequisite references., items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: Same-state metadata update mutually exclusive with other metadata-only flags.}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Explicit application-defined business result for a declared terminal state.}
@@ -39580,6 +39591,7 @@ components:
       additionalProperties: false
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version]
       properties:
+        selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         depends_on: {type: array, maxItems: 16, description: "In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "In the accepted report acknowledgement, same-state metadata update mutually exclusive with other metadata-only flags."}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "In the accepted report acknowledgement, explicit application-defined business result for a declared terminal state."}
@@ -39608,6 +39620,7 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, overdue, occurred_at, revision, contract_version, updated_at]
       properties:
+        selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         sla: {$ref: '#/components/schemas/OperationWorkflowStateSLA'}
         depends_on: {type: array, maxItems: 16, description: "In the latest retained state, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."}
@@ -39644,6 +39657,7 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}
         resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Current retained-evidence status for verification obligations in this history report.}
         depends_on: {type: array, maxItems: 16, description: "At this retained historical revision, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only flags."}

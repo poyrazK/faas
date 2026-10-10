@@ -15,6 +15,9 @@ type OperationWorkflowReadinessStore interface {
 }
 
 func validateOperationWorkflowReadiness(req api.OperationWorkflowReadinessRequest, operator bool) error {
+	if _, err := api.CanonicalOperationWorkflowPathSelections(req.SelectedPaths); err != nil {
+		return ErrInvalidArgument
+	}
 	validName := func(value string) bool {
 		return len(value) > 0 && len(value) <= 64 && operationHistoryName.MatchString(value)
 	}
@@ -169,9 +172,17 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 	if invalidatedRetained {
 		reason("retained_milestone_invalidated")
 	}
+	selections, selectionErr := api.CanonicalOperationWorkflowPathSelections(req.SelectedPaths)
+	if selectionErr != nil || api.ValidateOperationWorkflowPathSelections(selections, out.Transition.RetainedMilestoneGroups) != nil {
+		reason("path_selection_invalid")
+	}
+	selected := map[string]string{}
+	for _, selection := range selections {
+		selected[selection.GroupID] = selection.PathID
+	}
 	unmetGroup := false
 	for _, group := range out.Transition.RetainedMilestoneGroups {
-		finding := evaluateRetainedMilestoneGroup(instance, out.Transition, group)
+		finding := evaluateRetainedMilestoneGroup(instance, out.Transition, group, selected[group.ID])
 		unmetGroup = unmetGroup || !finding.Satisfied
 		out.RetainedMilestoneGroups = append(out.RetainedMilestoneGroups, finding)
 	}

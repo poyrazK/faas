@@ -245,8 +245,8 @@ func retainedPrerequisiteRecovery(result api.OperationWorkflowRetainedMilestone)
 	return recovery
 }
 
-func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, group api.OperationWorkflowRetainedMilestoneGroup) api.OperationWorkflowRetainedMilestoneGroupResult {
-	finding := api.OperationWorkflowRetainedMilestoneGroupResult{ID: group.ID}
+func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnapshot, edge api.OperationWorkflowInstanceTransition, group api.OperationWorkflowRetainedMilestoneGroup, selected string) api.OperationWorkflowRetainedMilestoneGroupResult {
+	finding := api.OperationWorkflowRetainedMilestoneGroupResult{ID: group.ID, SelectedPathID: selected}
 	for _, requirement := range group.AnyOf {
 		result := evaluateRetainedMilestone(instance, edge, requirement)
 		finding.Alternatives = append(finding.Alternatives, result)
@@ -260,7 +260,9 @@ func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnaps
 			result.Satisfied = result.Satisfied && fact.Status == "verified"
 		}
 		finding.Paths = append(finding.Paths, result)
-		finding.Satisfied = finding.Satisfied || result.Satisfied
+		if selected == "" || selected == result.ID {
+			finding.Satisfied = finding.Satisfied || result.Satisfied
+		}
 	}
 	return finding
 }

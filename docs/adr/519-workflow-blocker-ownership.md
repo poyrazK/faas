@@ -372,3 +372,24 @@ from complete paths. Shared guidance names valid paths or describes recovery per
 blocked path. SDK guards verify complete matching path evidence and consistent
 satisfaction flags. No query or schema migration is introduced. Applications
 choose, authorize, and execute business paths; readiness grants no execution lease.
+
+### Application-reported path selection
+
+Readiness requests and business transition reports may carry at most 8 canonical
+`group_id`/`path_id` selections, one per compound group. Choices bind to the pinned
+edge and version. Read-only checks without choices continue to expose available
+paths; checks with choices require the chosen paths rather than any valid sibling.
+Unknown choices deny readiness. Metadata-only reports and initial snapshots cannot
+carry choices. Direct legacy reporting can omit them without inferring a path.
+
+Guarded transitions require choices for every compound group, verify complete
+selected-path evidence and response identity, and queue those exact choices.
+Requests and selections are copied before calling an external checker. Publication
+verifies choices against receipts before acknowledging application outbox rows.
+
+An additive platform report-ledger migration and an additive customer outbox
+column retain selections with the business transaction. Choices participate in
+canonical report identity, preserving old fingerprints when omitted. Memory and
+SQLC projections expose them in receipts and transition history; dashboard/CLI
+views display the application's choice. The application owns selection, execution,
+and authorization, and readiness remains a point-in-time observation.

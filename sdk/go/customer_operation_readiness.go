@@ -44,6 +44,10 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	if check == nil || ctx == nil || request.AppID != tx.input.appID || request.TenantID != "" || request.StateRevision <= 0 || request.ContractVersion <= 0 {
 		return response, errors.New("faas: readiness guard requires a customer checker, matching app, and positive locked revision and contract version")
 	}
+	request.SelectedPaths, err = canonicalCustomerWorkflowPaths(request.SelectedPaths)
+	if err != nil {
+		return response, err
+	}
 	// Stage actual evidence through the existing validators without mutating the queue.
 	staged := *tx
 	staged.milestones = append([]OperationMilestoneRequest(nil), tx.milestones...)
@@ -87,10 +91,12 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 			seen[fact.Name] = true
 		}
 	}
-	if err = staged.WorkflowTransition(request.Workflow, request.InstanceID, request.FromState, request.ToState); err != nil {
+	if err = staged.WorkflowTransition(request.Workflow, request.InstanceID, request.FromState, request.ToState, request.SelectedPaths...); err != nil {
 		return response, err
 	}
-	response, err = check(ctx, request)
+	checkRequest := request
+	checkRequest.SelectedPaths = append([]OperationWorkflowPathSelection(nil), request.SelectedPaths...)
+	response, err = check(ctx, checkRequest)
 	if err != nil {
 		return response, err
 	}
@@ -151,7 +157,19 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 			return response, &CustomerOperationReadinessError{Response: response}
 		}
 	}
-	if !retainedGroupsUsable(r, response.EvaluatedAt) {
+	for _, group := range r.Transition.RetainedMilestoneGroups {
+		if len(group.Paths) == 0 {
+			continue
+		}
+		selected := false
+		for _, selection := range request.SelectedPaths {
+			selected = selected || selection.GroupID == group.ID
+		}
+		if !selected {
+			return response, fmt.Errorf("faas: guarded transitions require a selected path for compound group %s", group.ID)
+		}
+	}
+	if !retainedGroupsUsable(r, response.EvaluatedAt, request.SelectedPaths) {
 		return response, &CustomerOperationReadinessError{Response: response}
 	}
 	for _, evidence := range r.RetainedMilestones {
@@ -186,7 +204,22 @@ func retainedEvidenceUsable(e OperationWorkflowRetainedMilestone, edge Operation
 	return true
 }
 
-func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time) bool {
+func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time, selections []OperationWorkflowPathSelection) bool {
+	chosen := map[string]string{}
+	for _, selection := range selections {
+		valid := false
+		for _, group := range r.Transition.RetainedMilestoneGroups {
+			if group.ID == selection.GroupID {
+				for _, path := range group.Paths {
+					valid = valid || path.ID == selection.PathID
+				}
+			}
+		}
+		if !valid {
+			return false
+		}
+		chosen[selection.GroupID] = selection.PathID
+	}
 	if len(r.RetainedMilestoneGroups) != len(r.Transition.RetainedMilestoneGroups) {
 		return false
 	}
@@ -197,6 +230,9 @@ func retainedGroupsUsable(r OperationWorkflowTransitionReadiness, at time.Time) 
 				continue
 			}
 			matches++
+			if len(expected.Paths) > 0 && chosen[expected.ID] == "" || group.SelectedPathID != chosen[expected.ID] {
+				return false
+			}
 			if !group.Satisfied || !retainedGroupUsable(expected, group, r.Transition, at) {
 				return false
 			}
@@ -257,7 +293,9 @@ func retainedGroupUsable(expected OperationWorkflowRetainedMilestoneGroup, group
 			if !complete || path.Satisfied != usable {
 				return false
 			}
-			satisfied = satisfied || usable
+			if group.SelectedPathID == "" || group.SelectedPathID == path.ID {
+				satisfied = satisfied || usable
+			}
 		}
 		if matches != 1 {
 			return false

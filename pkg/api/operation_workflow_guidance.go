@@ -16,6 +16,8 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			out = append(out, "Report the current workflow state before evaluating this transition.")
 		case "transition_undeclared":
 			out = append(out, "Declare this operation and state edge in a new workflow contract version.")
+		case "path_selection_invalid":
+			out = append(out, "Choose a path declared in the selected transition and pinned workflow contract.")
 		case "terminal":
 			out = append(out, "This workflow instance has completed; inspect its outcome before starting another instance.")
 		case "from_state_mismatch", "revision_mismatch", "contract_version_mismatch":
@@ -74,9 +76,12 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 	}
 	for _, group := range r.RetainedMilestoneGroups {
 		if len(group.Paths) > 0 {
+			if group.SelectedPathID != "" {
+				out = append(out, fmt.Sprintf("The application selected path %s in group %s; another valid path does not satisfy this choice.", group.SelectedPathID, group.ID))
+			}
 			if group.Satisfied {
 				for _, path := range group.Paths {
-					if path.Satisfied {
+					if path.Satisfied && (group.SelectedPathID == "" || group.SelectedPathID == path.ID) {
 						out = append(out, fmt.Sprintf("Alternative group %s is satisfied by complete path %s.", group.ID, path.ID))
 						break
 					}
@@ -84,6 +89,9 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 			} else {
 				out = append(out, fmt.Sprintf("Satisfy one complete path in retained prerequisite group %s; every requirement within a chosen path must pass.", group.ID))
 				for _, path := range group.Paths {
+					if group.SelectedPathID != "" && group.SelectedPathID != path.ID {
+						continue
+					}
 					out = append(out, fmt.Sprintf("Path %s in group %s:", path.ID, group.ID))
 					nested := OperationWorkflowTransitionReadiness{RetainedMilestones: path.Requirements}
 					out = append(out, nested.Guidance()...)

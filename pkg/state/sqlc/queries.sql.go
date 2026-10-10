@@ -15838,7 +15838,7 @@ SELECT json_build_object(
   'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, dep.value::jsonb AS dependency
 FROM jsonb_array_elements($1::jsonb) dep(value)
@@ -16106,7 +16106,7 @@ SELECT jsonb_build_object(
   'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) || jsonb_build_object(
  'required_outcome_code',COALESCE(link.value->>'required_outcome_code',''),
@@ -16321,7 +16321,7 @@ func (q *Queries) GetCustomerOperationWorkflowSLABudget(ctx context.Context, db 
 }
 
 const getCustomerOperationWorkflowStateReport = `-- name: GetCustomerOperationWorkflowStateReport :one
-SELECT id::text,workflow,instance_id,from_state,state,revision,occurred_at,fingerprint,contract_version,evidence_milestones,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only
+SELECT id::text,workflow,instance_id,from_state,state,revision,occurred_at,fingerprint,contract_version,evidence_milestones,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths
 FROM customer_operation_workflow_state_reports
 WHERE operation_id=$1::uuid AND id=$2::uuid
 `
@@ -16352,6 +16352,7 @@ type GetCustomerOperationWorkflowStateReportRow struct {
 	OutcomeOnly        bool
 	DependsOn          []byte
 	DependenciesOnly   bool
+	SelectedPaths      []byte
 }
 
 func (q *Queries) GetCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStateReportParams) (GetCustomerOperationWorkflowStateReportRow, error) {
@@ -16378,6 +16379,7 @@ func (q *Queries) GetCustomerOperationWorkflowStateReport(ctx context.Context, d
 		&i.OutcomeOnly,
 		&i.DependsOn,
 		&i.DependenciesOnly,
+		&i.SelectedPaths,
 	)
 	return i, err
 }
@@ -19672,10 +19674,10 @@ func (q *Queries) InsertCustomerOperationWorkflowRun(ctx context.Context, db DBT
 }
 
 const insertCustomerOperationWorkflowStateReport = `-- name: InsertCustomerOperationWorkflowStateReport :exec
-INSERT INTO customer_operation_workflow_state_reports(operation_id,id,workflow,instance_id,from_state,state,revision,occurred_at,created_at,fingerprint,contract_version,evidence_milestones,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only)
+INSERT INTO customer_operation_workflow_state_reports(operation_id,id,workflow,instance_id,from_state,state,revision,occurred_at,created_at,fingerprint,contract_version,evidence_milestones,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths)
 VALUES($1::uuid,$2::uuid,$3::text,$4::text,
  $5::text,$6::text,$7::bigint,$8::timestamptz,
- $9::timestamptz,$10::text,$11::integer,$12::jsonb,$13::jsonb,$14::boolean,$15::jsonb,$16::text,$17::boolean,$18::text,$19::text,$20::boolean,$21::jsonb,$22::boolean)
+ $9::timestamptz,$10::text,$11::integer,$12::jsonb,$13::jsonb,$14::boolean,$15::jsonb,$16::text,$17::boolean,$18::text,$19::text,$20::boolean,$21::jsonb,$22::boolean,$23::jsonb)
 `
 
 type InsertCustomerOperationWorkflowStateReportParams struct {
@@ -19701,6 +19703,7 @@ type InsertCustomerOperationWorkflowStateReportParams struct {
 	OutcomeOnly        bool
 	DependsOn          []byte
 	DependenciesOnly   bool
+	SelectedPaths      []byte
 }
 
 func (q *Queries) InsertCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStateReportParams) error {
@@ -19727,6 +19730,7 @@ func (q *Queries) InsertCustomerOperationWorkflowStateReport(ctx context.Context
 		arg.OutcomeOnly,
 		arg.DependsOn,
 		arg.DependenciesOnly,
+		arg.SelectedPaths,
 	)
 	return err
 }
@@ -26121,7 +26125,7 @@ const listAccountCustomerOperationWorkflowStateHistory = `-- name: ListAccountCu
 SELECT json_build_object(
  'platform_tenant_id',o.platform_tenant_id,'id',r.id,'operation_id',o.id,
  'workflow',r.workflow,'instance_id',r.instance_id,'from_state',r.from_state,
-	'state',r.state,'revision',r.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,
+	'state',r.state,'revision',r.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,
 	'occurred_at',r.occurred_at,'published_at',r.created_at) AS workflow_state_history
 FROM customer_operation_workflow_state_reports r
 JOIN customer_operations o ON o.id=r.operation_id
@@ -26201,7 +26205,7 @@ SELECT json_build_object(
      AND COALESCE(workflow_step->'terminal_states','[]'::jsonb) ? s.state
  ),
  'occurred_at',r.occurred_at,'stale_after_seconds',workflow_config.stale_after_seconds,
- 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+ 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
 ) AS workflow_state
 FROM customer_operation_workflow_states s
 JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id
@@ -28316,7 +28320,7 @@ SELECT json_build_object(
   'sla',sla.value,'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -28657,7 +28661,7 @@ SELECT json_build_object(
   'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -32375,7 +32379,7 @@ const listPlatformTenantCustomerOperationWorkflowStateHistory = `-- name: ListPl
 SELECT json_build_object(
  'id',r.id,'operation_id',o.id,'workflow',r.workflow,'instance_id',r.instance_id,
  'from_state',r.from_state,'state',r.state,'revision',r.revision,
-	'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,
+	'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,
 	'occurred_at',r.occurred_at,'published_at',r.created_at) AS workflow_state_history
 FROM customer_operation_workflow_state_reports r
 JOIN customer_operations o ON o.id=r.operation_id
@@ -32454,7 +32458,7 @@ SELECT json_build_object(
      AND COALESCE(workflow_step->'terminal_states','[]'::jsonb) ? s.state
  ),
  'occurred_at',r.occurred_at,'stale_after_seconds',workflow_config.stale_after_seconds,
- 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+ 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
 ) AS workflow_state
 FROM customer_operation_workflow_states s
 JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id
@@ -67347,7 +67351,7 @@ SELECT jsonb_build_object(
  AND ($8::text='' OR b->>'operation'=$8::text)
  AND ($4::text<>'unacknowledged' OR COALESCE(b->>'acknowledged_at','')='')
  AND ($4::text<>'follow_up_overdue' OR NULLIF(b->>'follow_up_at','')::timestamptz<=$2::timestamptz)
- AND ($4::text<>'escalated' OR EXISTS (SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE e->>'code'=b->>'code' AND e->>'operation'=b->>'operation'))),'[]'::jsonb) ELSE r.blockers END END,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+ AND ($4::text<>'escalated' OR EXISTS (SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE e->>'code'=b->>'code' AND e->>'operation'=b->>'operation'))),'[]'::jsonb) ELSE r.blockers END END,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -67721,7 +67725,7 @@ SELECT json_build_object(
   'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -67806,7 +67810,7 @@ WITH candidates AS (
  jsonb_build_object('workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
  'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
  'terminal',config.terminal,'stale_after_seconds',config.stale_after_seconds,'occurred_at',r.occurred_at,'updated_at',s.updated_at,
- 'blockers',r.blockers,'blocker_resolutions',r.blocker_resolutions,'depends_on',r.depends_on,
+ 'blockers',r.blockers,'selected_paths',r.selected_paths,'blocker_resolutions',r.blocker_resolutions,'depends_on',r.depends_on,
  'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'deadline_at',r.deadline_at,
  'blockers_only',r.blockers_only,'dependencies_only',r.dependencies_only,'outcome_only',r.outcome_only,'deadline_only',r.deadline_only,
  'evidence_milestones',r.evidence_milestones) AS current_state,

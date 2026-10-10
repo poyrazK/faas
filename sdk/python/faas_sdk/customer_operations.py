@@ -26,9 +26,11 @@ from ._operation_contract import (
     OPERATION_SUBJECT_ID_BYTES,
     OPERATION_WORKFLOW_STATE_BATCH_BYTES,
     OPERATION_WORKFLOW_STATE_REPORTS,
+    OPERATION_WORKFLOW_PATH_SELECTIONS,
 )
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .models.operation_workflow_path_selection import OperationWorkflowPathSelection
 from .models.operation_workflow_state_report import OperationWorkflowStateReport
 from .models.operation_workflow_dependency import OperationWorkflowDependency
 from .models.operation_workflow_blocker import OperationWorkflowBlocker
@@ -393,8 +395,14 @@ class CustomerOperationTransaction:
     def workflow_state(self, workflow: str, instance_id: str, state: str) -> None:
         self._queue_workflow_state(workflow, instance_id, state, None)
 
-    def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str) -> None:
+    def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str, *, selected_paths: Sequence[OperationWorkflowPathSelection] = ()) -> None:
+        selected = _canonical_workflow_paths(selected_paths)
         self._queue_workflow_state(workflow, instance_id, to_state, from_state)
+        report = self._workflow_states[-1]
+        report.selected_paths = selected
+        if len(_json_bytes({"workflow_states": [item.to_dict() for item in self._workflow_states]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES:
+            self._workflow_states.pop()
+            raise ValueError("workflow state batch exceeds its byte limit")
 
     async def guarded_workflow_transition(
         self, proposal: OperationWorkflowReadinessRequest,
@@ -416,18 +424,18 @@ class CustomerOperationTransaction:
             invariants=[OperationWorkflowPlannedInvariant(name,OperationBusinessInvariant(**payload["invariant"]).canonical()) for name,payload in facts if isinstance(payload,dict) and payload.get("kind")=="gregale.business-invariant.v1"]
             effects=[OperationWorkflowPlannedEffect(name,OperationBusinessEffect(**payload["effect"])) for name,payload in facts if isinstance(payload,dict) and payload.get("kind")=="gregale.business-effect.v1"]
             for planned in effects: planned.effect.to_payload()
-            request = evolve(proposal, subject=evolve(proposal.subject), effects=effects, invariants=invariants, decisions=decisions, milestones=list(dict.fromkeys(name for name, _ in facts)))
+            request = evolve(proposal, selected_paths=_canonical_workflow_paths([] if proposal.selected_paths is UNSET else proposal.selected_paths), subject=evolve(proposal.subject), effects=effects, invariants=invariants, decisions=decisions, milestones=list(dict.fromkeys(name for name, _ in facts)))
             prior_facts, prior_states = self._milestones, self._workflow_states
             prior_fact_count, prior_state_count = len(prior_facts), len(prior_states)
             self._milestones, self._workflow_states = list(prior_facts), list(prior_states)
             try:
                 for name, payload in facts:
                     self.milestone(name, payload)
-                self.workflow_transition(request.workflow, request.instance_id, request.from_state, request.to_state)
+                self.workflow_transition(request.workflow, request.instance_id, request.from_state, request.to_state, selected_paths=request.selected_paths)
                 staged_facts, staged_states = self._milestones, self._workflow_states
             finally:
                 self._milestones, self._workflow_states = prior_facts, prior_states
-            response = await check(request)
+            response = await check(evolve(request, selected_paths=_canonical_workflow_paths(request.selected_paths)))
             self._check_open("Readiness guards")
             if len(self._milestones) != prior_fact_count or len(self._workflow_states) != prior_state_count:
                 raise ValueError("Do not queue evidence concurrently with a readiness guard")
@@ -472,6 +480,14 @@ class CustomerOperationTransaction:
                 return complete, valid
             expected_groups = [] if r.transition.retained_milestone_groups is UNSET else r.transition.retained_milestone_groups
             groups = [] if r.retained_milestone_groups is UNSET else r.retained_milestone_groups
+            selected = {p.group_id: p.path_id for p in request.selected_paths}
+            for selection in request.selected_paths:
+                if not any(group.id == selection.group_id and group.paths is not UNSET
+                    and any(path.id == selection.path_id for path in group.paths) for group in expected_groups):
+                    raise ValueError("Selected path is not declared for this transition")
+            for group in expected_groups:
+                if group.paths is not UNSET and group.paths and group.id not in selected:
+                    raise ValueError(f"Guarded transitions require a selected path for compound group {group.id}")
             groups_missing = len(groups) != len(expected_groups)
             for expected in expected_groups:
                 matches = [group for group in groups if group.id == expected.id]
@@ -479,7 +495,7 @@ class CustomerOperationTransaction:
                     groups_missing = True
                     continue
                 group = matches[0]
-                if not group.satisfied:
+                if not group.satisfied or ("" if group.selected_path_id is UNSET else group.selected_path_id) != selected.get(expected.id, ""):
                     groups_missing = True
                 choices = [] if expected.any_of is UNSET else expected.any_of
                 paths = [] if expected.paths is UNSET else expected.paths
@@ -502,7 +518,8 @@ class CustomerOperationTransaction:
                     complete, valid = evaluate_facts(expected_path.all_of, path.requirements, True)
                     if not complete or path.satisfied != valid:
                         groups_missing = True
-                    satisfied = satisfied or valid
+                    if path.id == selected.get(expected.id):
+                        satisfied = satisfied or valid
                 if not satisfied:
                     groups_missing = True
             if (groups_missing or retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
@@ -821,8 +838,8 @@ async def _save_workflow_states(
 
         await cursor.execute(
             "INSERT INTO public.gregale_customer_operation_workflow_states "
-            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only) "
-            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths) "
+            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)",
             (
                 request.operation_id,
                 str(saved_report.id),
@@ -844,6 +861,7 @@ async def _save_workflow_states(
                 saved_report.outcome_only is True,
                 _json_bytes(report_data["depends_on"]).decode("utf-8"),
                 saved_report.dependencies_only is True,
+                _json_bytes([p.to_dict() for p in _canonical_workflow_paths([] if saved_report.selected_paths is UNSET else saved_report.selected_paths)]).decode("utf-8"),
             ),
         )
         await cursor.execute(
@@ -983,3 +1001,18 @@ def _canonical_workflow_dependencies(value: list[OperationWorkflowDependency]) -
         if code is not UNSET and (not isinstance(code,str) or code and not _STATE.fullmatch(code)): raise ValueError("invalid required outcome")
         result.append(OperationWorkflowDependency(subject_type=d.subject_type,subject_id=d.subject_id,workflow=d.workflow,instance_id=d.instance_id,required_outcome_code=code if code else UNSET))
     return sorted(result,key=lambda d:(d.subject_type,d.subject_id,d.workflow,d.instance_id))
+
+
+def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -> list[OperationWorkflowPathSelection]:
+    if len(input) > OPERATION_WORKFLOW_PATH_SELECTIONS:
+        raise ValueError("too many selected workflow paths")
+    result = []
+    seen = set()
+    for p in input:
+        if (not isinstance(p, OperationWorkflowPathSelection) or not isinstance(p.group_id, str)
+            or not _STATE.fullmatch(p.group_id) or not isinstance(p.path_id, str)
+            or not _STATE.fullmatch(p.path_id) or p.group_id in seen):
+            raise ValueError("selected paths require valid IDs and unique groups")
+        seen.add(p.group_id)
+        result.append(OperationWorkflowPathSelection(group_id=p.group_id, path_id=p.path_id))
+    return sorted(result, key=lambda p: p.group_id)

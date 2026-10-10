@@ -6,11 +6,13 @@ import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+  selected_paths?: Array<OperationWorkflowPathSelection>;
   /**
    * Current retained-evidence status for verification obligations in this history report.
    */

@@ -259,6 +259,11 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		for _, selection := range transition.SelectedPaths {
+			if _, err := fmt.Fprintf(out, "workflow-selected-path\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID); err != nil {
+				return err
+			}
+		}
 		var pending int64
 		for _, v := range transition.ResolutionVerifications {
 			if v.Status == "awaiting_verification" {

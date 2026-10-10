@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
 
@@ -36,6 +37,7 @@ class OperationWorkflowStateHistoryEntry:
     contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
     """Current retained-evidence status for verification obligations in this history report."""
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -88,6 +90,13 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         resolution_verifications: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.resolution_verifications, Unset):
@@ -161,6 +170,8 @@ class OperationWorkflowStateHistoryEntry:
                 "published_at": published_at,
             }
         )
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if resolution_verifications is not UNSET:
             field_dict["resolution_verifications"] = resolution_verifications
         if depends_on is not UNSET:
@@ -198,6 +209,7 @@ class OperationWorkflowStateHistoryEntry:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
         d = dict(src_dict)
@@ -218,6 +230,15 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _resolution_verifications = d.pop("resolution_verifications", UNSET)
         resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
@@ -304,6 +325,7 @@ class OperationWorkflowStateHistoryEntry:
             contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
+            selected_paths=selected_paths,
             resolution_verifications=resolution_verifications,
             depends_on=depends_on,
             dependencies_only=dependencies_only,

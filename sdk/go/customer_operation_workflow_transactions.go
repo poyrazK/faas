@@ -84,11 +84,27 @@ func (tx *CustomerOperationTransaction) WorkflowState(workflow, instanceID, stat
 // WorkflowTransition queues a declared edge. Check fromState against the
 // locked business row before calling; the helper also checks its saved report
 // head to serialize competing reports across Operations.
-func (tx *CustomerOperationTransaction) WorkflowTransition(workflow, instanceID, fromState, toState string) error {
+func (tx *CustomerOperationTransaction) WorkflowTransition(workflow, instanceID, fromState, toState string, selections ...OperationWorkflowPathSelection) error {
 	if !customerOperationStateName.MatchString(fromState) {
 		return errors.New("faas: workflow transition source must be a bounded lowercase slug")
 	}
-	return tx.queueWorkflowState(workflow, instanceID, toState, fromState)
+	canonical, err := canonicalCustomerWorkflowPaths(selections)
+	if err != nil {
+		return err
+	}
+	if err := tx.queueWorkflowState(workflow, instanceID, toState, fromState); err != nil {
+		return err
+	}
+	index := len(tx.workflowStates) - 1
+	tx.workflowStates[index].SelectedPaths = canonical
+	batch, err := marshalCustomerOperationJSON(struct {
+		WorkflowStates []OperationWorkflowStateReport `json:"workflow_states"`
+	}{tx.workflowStates})
+	if err != nil || len(batch) > operationWorkflowStateBatchBytes {
+		tx.workflowStates = tx.workflowStates[:index]
+		return errors.New("faas: workflow state batch exceeds its byte limit")
+	}
+	return nil
 }
 
 func (tx *CustomerOperationTransaction) queueWorkflowState(workflow, instanceID, state, fromState string) error {
@@ -502,11 +518,22 @@ func saveCustomerOperationWorkflowStates(ctx context.Context, tx OperationSQLTra
 		if err != nil {
 			return nil, err
 		}
+		selected, err := canonicalCustomerWorkflowPaths(report.SelectedPaths)
+		if err != nil {
+			return nil, err
+		}
+		if selected == nil {
+			selected = []OperationWorkflowPathSelection{}
+		}
+		selectedJSON, err := marshalCustomerOperationJSON(selected)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO public.gregale_customer_operation_workflow_states
-			(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only)
-			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean)`,
+			(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths)
+			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean,$21::jsonb)`,
 			input.operationID, report.ID, input.platformTenantID, report.Workflow, report.InstanceID, report.FromState, report.State,
-			report.Revision, string(evidenceJSON), report.OccurredAt, string(blockersJSON), report.BlockersOnly, string(resolutionsJSON), report.DeadlineAt, report.DeadlineOnly, report.OutcomeCode, report.OutcomeDescription, report.OutcomeOnly, string(dependenciesJSON), report.DependenciesOnly); err != nil {
+			report.Revision, string(evidenceJSON), report.OccurredAt, string(blockersJSON), report.BlockersOnly, string(resolutionsJSON), report.DeadlineAt, report.DeadlineOnly, report.OutcomeCode, report.OutcomeDescription, report.OutcomeOnly, string(dependenciesJSON), report.DependenciesOnly, string(selectedJSON)); err != nil {
 			return nil, fmt.Errorf("faas: save workflow state outbox row: %w", err)
 		}
 		var updatedRevision int64
@@ -777,4 +804,32 @@ func (tx *CustomerOperationTransaction) WorkflowDependencies(workflow, instanceI
 
 func validCustomerWorkflowBlockerText(value string, maxBytes int) bool {
 	return len(value) <= maxBytes && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
+func canonicalCustomerWorkflowPaths(input []OperationWorkflowPathSelection) ([]OperationWorkflowPathSelection, error) {
+	if len(input) > operationWorkflowPathSelections {
+		return nil, errors.New("faas: too many selected workflow paths")
+	}
+	out := append([]OperationWorkflowPathSelection(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].GroupID < out[j].GroupID })
+	for i, p := range out {
+		if !customerOperationStateName.MatchString(p.GroupID) || !customerOperationStateName.MatchString(p.PathID) || i > 0 && out[i-1].GroupID == p.GroupID {
+			return nil, errors.New("faas: selected paths require valid IDs and unique groups")
+		}
+	}
+	return out, nil
+}
+
+func sameCustomerWorkflowPaths(a, b []OperationWorkflowPathSelection) bool {
+	left, e1 := canonicalCustomerWorkflowPaths(a)
+	right, e2 := canonicalCustomerWorkflowPaths(b)
+	if e1 != nil || e2 != nil || len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }

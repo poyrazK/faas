@@ -4,6 +4,7 @@ import "time"
 
 // Readiness checks declared requirements against retained reports, not execution authority.
 type OperationWorkflowReadinessRequest struct {
+	SelectedPaths   []OperationWorkflowPathSelection    `json:"selected_paths,omitempty"`
 	AppID           string                              `json:"app_id,omitempty"`
 	TenantID        string                              `json:"tenant_id,omitempty"`
 	Scope           string                              `json:"scope"`

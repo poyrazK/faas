@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
 
 
 T = TypeVar("T", bound="OperationWorkflowStateReportResponse")
@@ -30,6 +31,7 @@ class OperationWorkflowStateReportResponse:
     state: str
     revision: int
     contract_version: int
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
     """In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references."""
     dependencies_only: bool | Unset = UNSET
@@ -74,6 +76,13 @@ class OperationWorkflowStateReportResponse:
         revision = self.revision
 
         contract_version = self.contract_version
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -134,6 +143,8 @@ class OperationWorkflowStateReportResponse:
                 "contract_version": contract_version,
             }
         )
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if dependencies_only is not UNSET:
@@ -167,6 +178,7 @@ class OperationWorkflowStateReportResponse:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -182,6 +194,15 @@ class OperationWorkflowStateReportResponse:
         revision = d.pop("revision")
 
         contract_version = d.pop("contract_version")
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -248,6 +269,7 @@ class OperationWorkflowStateReportResponse:
             state=state,
             revision=revision,
             contract_version=contract_version,
+            selected_paths=selected_paths,
             depends_on=depends_on,
             dependencies_only=dependencies_only,
             outcome_code=outcome_code,

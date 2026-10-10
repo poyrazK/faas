@@ -116,7 +116,7 @@ async def apublish_customer_operation_workflow_states(
     async with connection.cursor(row_factory=_tuple_row) as cursor:
         await cursor.execute(
             "SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,"
-            "s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only "
+            "s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only,s.selected_paths "
             "FROM public.gregale_customer_operation_workflow_states s "
             "JOIN public.gregale_customer_operation_inbox r ON r.operation_id=s.operation_id "
             "WHERE r.operation_id=%s::uuid AND r.account_id=%s::uuid AND r.app_id=%s::uuid "
@@ -136,7 +136,7 @@ async def apublish_customer_operation_workflow_states(
         raise ValueError("saved workflow state count exceeds its bound")
 
     for row in pending:
-        identity, workflow, instance_id, from_state, state, revision, evidence, occurred_at, blockers, blockers_only, resolutions, deadline_at, deadline_only, outcome_code, outcome_description, outcome_only, dependencies, dependencies_only = row
+        identity, workflow, instance_id, from_state, state, revision, evidence, occurred_at, blockers, blockers_only, resolutions, deadline_at, deadline_only, outcome_code, outcome_description, outcome_only, dependencies, dependencies_only, selected_paths = row
         if (
             not isinstance(identity, str)
             or not _UUID.fullmatch(identity)
@@ -170,7 +170,13 @@ async def apublish_customer_operation_workflow_states(
                 raise ValueError("invalid saved workflow state evidence")
             evidence_models.append(OperationWorkflowEvidenceMilestone(id=UUID(item["id"]), name=item["name"]))
 
+        from .customer_operations import _canonical_workflow_paths
+        from .models.operation_workflow_path_selection import OperationWorkflowPathSelection
+        if isinstance(selected_paths, str): selected_paths = json.loads(selected_paths)
+        if not isinstance(selected_paths, list): raise ValueError("invalid saved selected paths")
+        selected_models = _canonical_workflow_paths([OperationWorkflowPathSelection.from_dict(p) for p in selected_paths])
         report_data: dict[str, Any] = {
+            "selected_paths": [p.to_dict() for p in selected_models],
             "id": identity,
             "workflow": workflow,
             "instance_id": instance_id,
@@ -219,7 +225,8 @@ async def apublish_customer_operation_workflow_states(
         receipt_blockers = _canonical_workflow_blockers([] if receipt.blockers is UNSET else receipt.blockers)
         receipt_resolutions = _canonical_workflow_resolutions([] if receipt.blocker_resolutions is UNSET else receipt.blocker_resolutions, receipt_blockers)
         if (
-            [v.to_dict() for v in receipt_resolutions] != [v.to_dict() for v in resolution_models]
+            [p.to_dict() for p in _canonical_workflow_paths([] if receipt.selected_paths is UNSET else receipt.selected_paths)] != [p.to_dict() for p in selected_models]
+            or [v.to_dict() for v in receipt_resolutions] != [v.to_dict() for v in resolution_models]
             or [d.to_dict() for d in _canonical_workflow_dependencies([] if receipt.depends_on is UNSET else receipt.depends_on)] != [d.to_dict() for d in dependency_models]
             or (receipt.dependencies_only is True)!=(report.dependencies_only is True)
             or ("" if receipt.outcome_code is UNSET else receipt.outcome_code) != ("" if report.outcome_code is UNSET else report.outcome_code)

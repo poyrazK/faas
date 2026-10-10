@@ -1100,6 +1100,7 @@ export type { OperationWorkflowOutcomeEntry } from './OperationWorkflowOutcomeEn
 export type { OperationWorkflowOutcomeGroup } from './OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeSummary } from './OperationWorkflowOutcomeSummary.js';
 export type { OperationWorkflowOutcomesResponse } from './OperationWorkflowOutcomesResponse.js';
+export type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 export type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
 export type { OperationWorkflowPerformanceCoverageReason } from './OperationWorkflowPerformanceCoverageReason.js';
 export type { OperationWorkflowPerformanceGroup } from './OperationWorkflowPerformanceGroup.js';

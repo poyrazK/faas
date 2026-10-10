@@ -2665,3 +2665,51 @@ Recovery choices belong to the application: authorize and check business rows
 before performing any actions, publish actual facts, then recheck readiness.
 Gregale does not choose or execute a path. Arbitrary recursive Boolean expressions
 are unsupported, and no database or application-schema migration is required.
+
+### Report the selected business path
+
+Applications can supply `selected_paths` in a readiness request and transition
+report. Each entry identifies `group_id` and `path_id` in the pinned edge:
+
+```javascript
+await tx.guardedWorkflowTransition({
+  ...proposal,
+  selected_paths: [{group_id: 'settlement', path_id: 'card'}],
+}, facts, checkReadiness);
+```
+
+Readiness still evaluates every path for diagnostics, but only the selected path
+can satisfy that group. A valid credit path cannot make the chosen card path ready.
+Without a selection the read-only check continues to show available paths.
+Unknown group/path pairs deny readiness through `path_selection_invalid`.
+Malformed IDs, duplicate group selections, and more than 8 selections are rejected.
+
+Guarded transitions require an explicit selection for every compound group and
+verify that its complete evidence passes. SDK guards compare the response's
+`selected_path_id` against the proposed choice and queue that same choice with
+the transition. Choices are copied before passing the request to a checker to
+prevent callback mutation from changing what the guard verifies. Flat groups keep
+their existing behavior and cannot receive named-path selections.
+
+For direct reporting, Node `tx.workflowTransition` accepts selections as its fifth
+argument; Go `tx.WorkflowTransition` accepts variadic
+`faas.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
+accepts `selected_paths=[OperationWorkflowPathSelection(...)]`. Guards obtain
+choices from the readiness proposal. Direct reporting validates choices against
+the pinned contract, while retained-evidence readiness remains observational.
+Choices must belong to a declared business transition; metadata-only updates and
+initial state snapshots cannot carry them. Omission remains supported for legacy
+reporting and does not imply a path choice.
+
+Choices commit in the application outbox, publish with the report, participate in
+its canonical fingerprint, and appear in receipts and retained workflow history.
+Publication requires the returned choices to match before acknowledging the row.
+The dashboard and CLI history identify each selected group/path. Choices describe
+that transition, not a persistent preference for later edges; metadata reports
+omit them and do not remove prior transition history.
+
+Before upgrading the platform, apply `20261010114245301_customer_operation_selected_paths.sql`. Application database owners
+must reinstall the SDK's additive customer Operation schema before upgrading the
+adapters. The new `selected_paths` JSON column defaults to an empty array, so old
+pending reports remain publishable. Gregale records the application's decision
+without choosing a path, authorizing actions, or changing business state.

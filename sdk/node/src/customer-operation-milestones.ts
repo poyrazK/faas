@@ -10,7 +10,7 @@ import { OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPE
 import { customerOperationRequestDigest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import type { OperationConnection, OperationPool, OperationTransaction } from './operation-receipt.js';
 import type { OperationMilestone, OperationMilestoneReport } from './customer-operations.js';
-import { workflowStateTransaction, type OperationWorkflowStateReport, type OperationWorkflowDependency, type OperationWorkflowBlocker, type OperationWorkflowBlockerResolution } from './customer-operation-workflow-states.js';
+import { workflowStateTransaction, type OperationWorkflowPathSelection, type OperationWorkflowStateReport, type OperationWorkflowDependency, type OperationWorkflowBlocker, type OperationWorkflowBlockerResolution } from './customer-operation-workflow-states.js';
 
 export interface CustomerOperationTransaction extends OperationTransaction {
   businessCompensation(milestone: string, compensation: OperationBusinessCompensation): void;
@@ -28,7 +28,7 @@ export interface CustomerOperationTransaction extends OperationTransaction {
   workflowBlockers(workflow: string, instanceID: string, state: string, blockers: OperationWorkflowBlocker[], resolutions?: OperationWorkflowBlockerResolution[]): void;
   workflowState(workflow: string, instanceID: string, state: string): void;
   /** Declared state transition. Check that fromState matches the locked business row. */
-  workflowTransition(workflow: string, instanceID: string, fromState: string, toState: string): void;
+  workflowTransition(workflow: string, instanceID: string, fromState: string, toState: string, selectedPaths?: OperationWorkflowPathSelection[]): void;
 }
 export class OperationMilestonePublicationError extends Error {
   readonly code = 'operation_milestone_publication_incomplete';

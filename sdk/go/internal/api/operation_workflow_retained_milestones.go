@@ -69,10 +69,11 @@ type OperationWorkflowRetainedMilestoneGroup struct {
 
 // OperationWorkflowRetainedMilestoneGroupResult preserves every alternative's diagnostics.
 type OperationWorkflowRetainedMilestoneGroupResult struct {
-	Paths        []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
-	ID           string                                         `json:"id"`
-	Satisfied    bool                                           `json:"satisfied"`
-	Alternatives []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
+	SelectedPathID string                                         `json:"selected_path_id,omitempty"`
+	Paths          []OperationWorkflowRetainedMilestonePathResult `json:"paths,omitempty"`
+	ID             string                                         `json:"id"`
+	Satisfied      bool                                           `json:"satisfied"`
+	Alternatives   []OperationWorkflowRetainedMilestone           `json:"alternatives,omitempty"`
 }
 
 // OperationWorkflowRetainedMilestonePath requires all facts in one alternative business path.
@@ -86,4 +87,10 @@ type OperationWorkflowRetainedMilestonePathResult struct {
 	ID           string                               `json:"id"`
 	Satisfied    bool                                 `json:"satisfied"`
 	Requirements []OperationWorkflowRetainedMilestone `json:"requirements"`
+}
+
+// OperationWorkflowPathSelection is the application's chosen path within a compound group.
+type OperationWorkflowPathSelection struct {
+	GroupID string `json:"group_id"`
+	PathID  string `json:"path_id"`
 }

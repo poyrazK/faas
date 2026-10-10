@@ -1,6 +1,6 @@
 // ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
-import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
+import { OPERATION_WORKFLOW_PATH_SELECTIONS, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import { customerOperationRequestDigest } from './customer-operation-transactions.js';
 import type { OperationPool, OperationTransaction } from './operation-receipt.js';
@@ -13,7 +13,9 @@ export interface OperationWorkflowBlocker { priority?: 'low' | 'normal' | 'high'
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 
 export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
+export interface OperationWorkflowPathSelection { group_id: string; path_id: string }
 export interface OperationWorkflowStateReport {
+ selected_paths?: OperationWorkflowPathSelection[];
  depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean;
  outcome_code?: string; outcome_description?: string; outcome_only?: boolean;
  deadline_at?: string;
@@ -50,7 +52,7 @@ export function workflowStateTransaction(
   workflowDeadline(workflow: string, instanceID: string, state: string, dueAt: string): void;
   workflowBlockers(workflow: string, instanceID: string, state: string, blockers: OperationWorkflowBlocker[], resolutions?: OperationWorkflowBlockerResolution[]): void;
   workflowState(workflow: string, instanceID: string, state: string): void;
-  workflowTransition(workflow: string, instanceID: string, fromState: string, toState: string): void;
+  workflowTransition(workflow: string, instanceID: string, fromState: string, toState: string, selectedPaths?: OperationWorkflowPathSelection[]): void;
 } {
   const queue = (workflow: string, instanceID: string, state: string, fromState?: string, blockers?: OperationWorkflowBlocker[], blockersOnly = false, resolutions?: OperationWorkflowBlockerResolution[], deadline?: string, outcome?: {code: string; description: string}, dependencies?: OperationWorkflowDependency[]) => {
     if (!isOpen()) throw new TypeError('Workflow state must be reported inside the transaction callback');
@@ -81,7 +83,13 @@ export function workflowStateTransaction(
     workflowDeadline(workflow,instanceID,state,dueAt) { queue(workflow,instanceID,state,state,undefined,false,undefined,dueAt); },
     workflowBlockers(workflow, instanceID, state, blockers, resolutions) { queue(workflow, instanceID, state, state, blockers, true, resolutions); },
     workflowState(workflow, instanceID, state) { queue(workflow, instanceID, state); },
-    workflowTransition(workflow, instanceID, fromState, toState) { queue(workflow, instanceID, toState, fromState); },
+    workflowTransition(workflow, instanceID, fromState, toState, selectedPaths = []) {
+      const selected = canonicalWorkflowPaths(selectedPaths);
+      queue(workflow, instanceID, toState, fromState);
+      const report = reports[reports.length - 1]!;
+      if (selected.length) report.selected_paths = selected;
+      if (Buffer.byteLength(JSON.stringify({workflow_states: reports})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES) { reports.pop(); throw new TypeError('Workflow state batch exceeds its byte limit'); }
+    },
   };
 }
 
@@ -149,9 +157,9 @@ export async function saveCustomerWorkflowStates(
       return b;
     });
     await tx.query(
-      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only)
-       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean)`,
-      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, JSON.stringify(value.evidence_milestones ?? []), value.occurred_at, JSON.stringify(value.blockers ?? []), value.blockers_only ?? false, JSON.stringify(value.blocker_resolutions ?? []),value.deadline_at ?? '',value.deadline_only ?? false,value.outcome_code ?? '',value.outcome_description ?? '',value.outcome_only ?? false,JSON.stringify(value.depends_on),value.dependencies_only ?? false],
+      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz,$11::jsonb,$12::boolean,$13::jsonb,$14::text,$15::boolean,$16::text,$17::text,$18::boolean,$19::jsonb,$20::boolean,$21::jsonb)`,
+      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, JSON.stringify(value.evidence_milestones ?? []), value.occurred_at, JSON.stringify(value.blockers ?? []), value.blockers_only ?? false, JSON.stringify(value.blocker_resolutions ?? []),value.deadline_at ?? '',value.deadline_only ?? false,value.outcome_code ?? '',value.outcome_description ?? '',value.outcome_only ?? false,JSON.stringify(value.depends_on),value.dependencies_only ?? false,JSON.stringify(canonicalWorkflowPaths(value.selected_paths ?? []))],
     );
     const updatedHead = (await tx.query(
       `UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state=$4,last_blockers=$6::jsonb,last_blockers_revision=$5,last_deadline_at=$7,last_deadline_revision=$5,last_outcome_code=$8,last_outcome_description=$9,last_outcome_revision=$5,last_dependencies=$10::jsonb,last_dependencies_revision=$5
@@ -186,7 +194,7 @@ export async function publishCustomerWorkflowStates(
     const digest = Buffer.from(customerOperationRequestDigest(request));
     const values = [request.operationId, request.accountId, request.appId, request.platformTenantId, digest];
     const rows = (await connection.query(
-      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only FROM public.gregale_customer_operation_workflow_states s
+      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only,s.selected_paths FROM public.gregale_customer_operation_workflow_states s
        JOIN public.gregale_customer_operation_inbox r ON r.operation_id=s.operation_id
        WHERE r.operation_id=$1::uuid AND r.account_id=$2::uuid AND r.app_id=$3::uuid AND r.platform_tenant_id=$4::uuid
         AND r.request_digest=$5 AND s.acknowledged_at IS NULL ORDER BY s.revision,s.id LIMIT $6`, [...values, OPERATION_WORKFLOW_STATE_REPORTS + 1],
@@ -199,6 +207,7 @@ export async function publishCustomerWorkflowStates(
       const date = row.occurred_at instanceof Date ? row.occurred_at : new Date(String(row.occurred_at));
       if (!Number.isFinite(date.valueOf())) throw new TypeError('Invalid saved workflow state timestamp');
       const report: OperationWorkflowStateReport = {id: row.id, workflow: row.workflow, instance_id: row.instance_id, state: row.state, revision, occurred_at: date.toISOString()};
+      report.selected_paths = canonicalWorkflowPaths(typeof row.selected_paths === 'string' ? JSON.parse(row.selected_paths) : row.selected_paths);
       report.depends_on=canonicalWorkflowDependencies(typeof row.depends_on==='string' ? JSON.parse(row.depends_on) : row.depends_on);
       if (row.dependencies_only===true) report.dependencies_only=true;
       if (row.outcome_code || row.outcome_description) {validateWorkflowOutcome(row.outcome_code,row.outcome_description);report.outcome_code=row.outcome_code as string;report.outcome_description=row.outcome_description as string;}
@@ -214,7 +223,7 @@ export async function publishCustomerWorkflowStates(
           || typeof (item as Record<string, unknown>).id !== 'string' || typeof (item as Record<string, unknown>).name !== 'string')) throw new TypeError('Invalid saved workflow state evidence');
       if (evidence.length > 0) report.evidence_milestones = evidence as OperationWorkflowEvidenceMilestone[];
       const receipt = await publish(report);
-      if (JSON.stringify(canonicalWorkflowDependencies(receipt?.depends_on ?? []))!==JSON.stringify(report.depends_on) || (receipt?.dependencies_only ?? false)!==(report.dependencies_only ?? false) || (receipt?.outcome_code ?? '')!==(report.outcome_code ?? '') || (receipt?.outcome_description ?? '')!==(report.outcome_description ?? '') || (receipt?.outcome_only ?? false)!==(report.outcome_only ?? false) || canonicalWorkflowDeadline(receipt?.deadline_at ?? '')!==canonicalWorkflowDeadline(report.deadline_at ?? '') || (receipt?.deadline_only ?? false)!==(report.deadline_only ?? false) || receipt?.id !== report.id || receipt.operation_id !== request.operationId || receipt.revision !== revision
+      if (JSON.stringify(canonicalWorkflowPaths(receipt?.selected_paths ?? [])) !== JSON.stringify(report.selected_paths) || JSON.stringify(canonicalWorkflowDependencies(receipt?.depends_on ?? []))!==JSON.stringify(report.depends_on) || (receipt?.dependencies_only ?? false)!==(report.dependencies_only ?? false) || (receipt?.outcome_code ?? '')!==(report.outcome_code ?? '') || (receipt?.outcome_description ?? '')!==(report.outcome_description ?? '') || (receipt?.outcome_only ?? false)!==(report.outcome_only ?? false) || canonicalWorkflowDeadline(receipt?.deadline_at ?? '')!==canonicalWorkflowDeadline(report.deadline_at ?? '') || (receipt?.deadline_only ?? false)!==(report.deadline_only ?? false) || receipt?.id !== report.id || receipt.operation_id !== request.operationId || receipt.revision !== revision
           || !Number.isSafeInteger(receipt.contract_version) || receipt.contract_version < 1
           || receipt.workflow !== report.workflow || receipt.instance_id !== report.instance_id || receipt.from_state !== report.from_state || receipt.state !== report.state
           || JSON.stringify(receipt.evidence_milestones ?? []) !== JSON.stringify(report.evidence_milestones ?? [])
@@ -340,4 +349,14 @@ export function canonicalWorkflowDependencies(value: unknown): OperationWorkflow
   const dep: OperationWorkflowDependency={subject_type:d.subject_type,subject_id:d.subject_id,workflow:d.workflow,instance_id:d.instance_id};if(d.required_outcome_code)dep.required_outcome_code=d.required_outcome_code as string;return dep;
  });
  return result.sort((a,b)=>{for(const key of ['subject_type','subject_id','workflow','instance_id'] as const){if(a[key]<b[key])return -1;if(a[key]>b[key])return 1;}return 0;});
+}
+
+export function canonicalWorkflowPaths(input: unknown): OperationWorkflowPathSelection[] {
+ if (!Array.isArray(input) || input.length > OPERATION_WORKFLOW_PATH_SELECTIONS) throw new TypeError('Invalid selected workflow paths');
+ const result: OperationWorkflowPathSelection[] = input.map(p => {
+  if (!p || typeof p.group_id !== 'string' || !STATE.test(p.group_id) || typeof p.path_id !== 'string' || !STATE.test(p.path_id)) throw new TypeError('Selected paths require valid IDs');
+  return {group_id:p.group_id,path_id:p.path_id};
+ }).sort((a,b) => a.group_id < b.group_id ? -1 : a.group_id > b.group_id ? 1 : 0);
+ if (result.some((p,i) => i > 0 && result[i-1]!.group_id === p.group_id)) throw new TypeError('Selected paths require unique groups');
+ return result;
 }

@@ -22,6 +22,7 @@ type OperationMilestoneValidationResponse struct {
 }
 
 type OperationWorkflowStateReport struct {
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
 	OutcomeCode        string                               `json:"outcome_code,omitempty"`
@@ -58,6 +59,7 @@ type OperationWorkflowStateValidationResponse struct {
 }
 
 type OperationWorkflowStateReportResponse struct {
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
 	OutcomeCode        string                               `json:"outcome_code,omitempty"`
@@ -80,6 +82,7 @@ type OperationWorkflowStateReportResponse struct {
 }
 
 type OperationWorkflowState struct {
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	SLA                *OperationWorkflowStateSLA           `json:"sla,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -110,6 +113,7 @@ type OperationWorkflowState struct {
 }
 
 type OperationWorkflowStateHistoryEntry struct {
+	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
 	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
 	DependsOn               []OperationWorkflowDependency             `json:"depends_on,omitempty"`
 	DependenciesOnly        bool                                      `json:"dependencies_only,omitempty"`

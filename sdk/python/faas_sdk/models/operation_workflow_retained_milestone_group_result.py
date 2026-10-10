@@ -25,6 +25,9 @@ class OperationWorkflowRetainedMilestoneGroupResult:
 
     id: str
     satisfied: bool
+    selected_path_id: str | Unset = UNSET
+    """When supplied by the application readiness request only this path determines group satisfaction; other paths
+    remain diagnostic."""
     alternatives: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
     paths: list[OperationWorkflowRetainedMilestonePathResult] | Unset = UNSET
 
@@ -32,6 +35,8 @@ class OperationWorkflowRetainedMilestoneGroupResult:
         id = self.id
 
         satisfied = self.satisfied
+
+        selected_path_id = self.selected_path_id
 
         alternatives: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.alternatives, Unset):
@@ -55,6 +60,8 @@ class OperationWorkflowRetainedMilestoneGroupResult:
                 "satisfied": satisfied,
             }
         )
+        if selected_path_id is not UNSET:
+            field_dict["selected_path_id"] = selected_path_id
         if alternatives is not UNSET:
             field_dict["alternatives"] = alternatives
         if paths is not UNSET:
@@ -73,6 +80,8 @@ class OperationWorkflowRetainedMilestoneGroupResult:
         id = d.pop("id")
 
         satisfied = d.pop("satisfied")
+
+        selected_path_id = d.pop("selected_path_id", UNSET)
 
         _alternatives = d.pop("alternatives", UNSET)
         alternatives: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
@@ -95,6 +104,7 @@ class OperationWorkflowRetainedMilestoneGroupResult:
         operation_workflow_retained_milestone_group_result = cls(
             id=id,
             satisfied=satisfied,
+            selected_path_id=selected_path_id,
             alternatives=alternatives,
             paths=paths,
         )

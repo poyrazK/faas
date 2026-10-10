@@ -8,6 +8,10 @@ import type { OperationWorkflowRetainedMilestonePathResult } from './OperationWo
  * Evaluation of one retained alternative group. Flat groups return alternatives; compound groups return paths. Every fact includes freshness and invalidation and recovery diagnostics. A satisfied group requires at least one verified alternative or fully satisfied path.
  */
 export type OperationWorkflowRetainedMilestoneGroupResult = {
+  /**
+   * When supplied by the application readiness request only this path determines group satisfaction; other paths remain diagnostic.
+   */
+  selected_path_id?: string;
   id: string;
   satisfied: boolean;
   alternatives?: Array<OperationWorkflowRetainedMilestone>;

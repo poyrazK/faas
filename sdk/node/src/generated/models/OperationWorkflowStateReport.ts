@@ -6,10 +6,12 @@ import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 /**
  * Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
  */
 export type OperationWorkflowStateReport = {
+  selected_paths?: Array<OperationWorkflowPathSelection>;
   /**
    * Full replacement snapshot of direct prerequisite references.
    */

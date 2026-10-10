@@ -4,7 +4,7 @@ import { businessDecisionPayload, type OperationBusinessDecision } from './custo
 import type { CustomerOperationTransaction } from './customer-operation-milestones.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import type { OperationWorkflowRetainedMilestoneRequirement, OperationWorkflowRetainedMilestone, OperationMilestoneReport, OperationWorkflowReadinessRequest, OperationWorkflowReadinessResponse } from './customer-operations.js';
-import type { OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
+import { canonicalWorkflowPaths, type OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
 
 function usableRetainedMilestone(e: OperationWorkflowRetainedMilestone): boolean {
  const f = e.freshness;
@@ -50,12 +50,12 @@ export async function guardedWorkflowTransition(
       if(payload?.kind!=='gregale.business-effect.v1')return [];
       return [{milestone:fact.name,effect:businessEffectPayload(payload.effect!).effect}];
     });
-    const request = {...proposal, effects, invariants, decisions, subject: {...proposal.subject}, milestones: [...new Set(facts.map(fact => fact.name))]};
+    const request = {...proposal, selected_paths: canonicalWorkflowPaths(proposal.selected_paths ?? []), effects, invariants, decisions, subject: {...proposal.subject}, milestones: [...new Set(facts.map(fact => fact.name))]};
     for (const fact of facts) tx.milestone(fact.name, fact.payload);
-    tx.workflowTransition(request.workflow, request.instance_id, request.from_state, request.to_state);
+    tx.workflowTransition(request.workflow, request.instance_id, request.from_state, request.to_state, request.selected_paths);
     const stagedReports = reports.slice(), stagedStates = states.slice();
     reports.splice(0, reports.length, ...priorReports); states.splice(0, states.length, ...priorStates);
-    const response = await check(request);
+    const response = await check({...request, selected_paths: canonicalWorkflowPaths(request.selected_paths)});
     if (!isOpen()) throw new TypeError('Readiness guard must be awaited inside the callback');
     if (reports.length !== priorReports.length || states.length !== priorStates.length) throw new TypeError('Do not queue evidence concurrently with a readiness guard');
     const r = response.readiness;
@@ -78,12 +78,15 @@ export async function guardedWorkflowTransition(
       usable: all ? facts.every(usable) : facts.some(usable),
     });
     const groups = r.retained_milestone_groups ?? [], expectedGroups = r.transition.retained_milestone_groups ?? [];
+    const selected = new Map(request.selected_paths.map(p => [p.group_id,p.path_id]));
+    if (request.selected_paths.some(p => !expectedGroups.some(group => group.id === p.group_id && group.paths?.some(path => path.id === p.path_id)))) throw new TypeError('Selected path is not declared for this transition');
+    for (const group of expectedGroups) { if (group.paths?.length && !selected.has(group.id)) throw new TypeError(`Guarded transitions require a selected path for compound group ${group.id}`); }
     if (groups.length !== expectedGroups.length || expectedGroups.some(expected => {
       const matches = groups.filter(group => group.id === expected.id);
       if (matches.length !== 1) return true;
       const group = matches[0];
       if (!group) return true;
-      if (!group.satisfied) return true;
+      if (!group.satisfied || (group.selected_path_id ?? '') !== (selected.get(expected.id) ?? '')) return true;
       const choices = expected.any_of ?? [], paths = expected.paths ?? [], results = group.paths ?? [], alternatives = group.alternatives ?? [];
       if (!paths.length) {
         const result = evaluateFacts(choices, alternatives, false);
@@ -97,7 +100,7 @@ export async function guardedWorkflowTransition(
         if (matches.length !== 1 || !path) return true;
         const result = evaluateFacts(expectedPath.all_of, path.requirements, true);
         if (!result.complete || path.satisfied !== result.usable) return true;
-        satisfied ||= result.usable;
+        if (path.id === selected.get(expected.id)) satisfied ||= result.usable;
       }
       return !satisfied;
     })) throw new CustomerOperationReadinessError(response);
