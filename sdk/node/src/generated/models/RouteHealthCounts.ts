@@ -13,5 +13,9 @@ export type RouteHealthCounts = {
    * Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.
    */
   p95_latency_ms?: number;
+  /**
+   * Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).
+   */
+  unauthenticated?: number;
 };
 

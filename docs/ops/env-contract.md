@@ -127,6 +127,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEV_BRIDGE_ENABLED` | apid, bridged, gatewayd-internal | `default` |  | 0 | `` | ADR-378 operator gate; explicit 1 on the API, relay and compute gateways |
 | `FAAS_DEV_BRIDGE_GATEWAY_URL` | bridged | `default` |  | http://127.0.0.1:8080 | `` | existing public gateway ingress for scoped development dependencies |
 | `FAAS_DEV_BRIDGE_RELAY_URL` | apid | `dropin` |  | http://127.0.0.1:9098 | `` | API-to-relay loopback hop |
+| `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector |
+| `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `default` |  | 0 | `` | ADR-740 operator gate for developer live source patches; explicit 1 on both apid and vmmd |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DNS_API_URL` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_BLOCKLIST_FILE` | gatewayd-internal | `default` |  |  | `` | ADR-373 optional operator threat feed added to the built-in guest DNS blocklist; unset uses the built-in list only, an unreadable file fails startup |
@@ -149,6 +151,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
+| `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
@@ -405,6 +408,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
 | `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
 | `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |

@@ -85,22 +85,24 @@ class ShardTest(unittest.TestCase):
         self.assertNotIn("cmd/apid", [d for s in shards[:3] for d in s])
 
     def test_shards_partition_the_set_deterministically(self):
-        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/apid"]
+        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/gregale"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
         flat = sorted(d for s in shards for d in s)
         self.assertEqual(flat, sorted(dirs))
         self.assertEqual(shards, [ap.shard(dirs, i, 3) for i in (1, 2, 3)])
 
     def test_heaviest_package_gets_a_shard_to_itself(self):
-        dirs = ["cmd/apid", "pkg/x", "pkg/y"]
+        dirs = ["cmd/gregale", "pkg/x", "pkg/y"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
-        self.assertIn(["cmd/apid"], shards)
+        self.assertIn(["cmd/gregale"], shards)
 
     def test_split_packages_are_never_assigned_whole(self):
-        # pkg/state runs by test name across every shard instead.
-        shards = [ap.shard(["pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
-        self.assertNotIn("pkg/state", [d for s in shards for d in s])
-        self.assertIn("pkg/state", ap.SPLIT_PACKAGES)
+        # API and state tests run by name across every shard instead.
+        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3)
+                  for i in (1, 2, 3)]
+        self.assertEqual([d for s in shards for d in s], ["pkg/x"])
+        for pkg in ("cmd/apid", "pkg/state"):
+            self.assertIn(pkg, ap.SPLIT_PACKAGES)
 
 
 if __name__ == "__main__":

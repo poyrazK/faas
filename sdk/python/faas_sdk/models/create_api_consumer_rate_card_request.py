@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+    from ..models.create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+
 
 T = TypeVar("T", bound="CreateAPIConsumerRateCardRequest")
 
@@ -18,6 +24,18 @@ class CreateAPIConsumerRateCardRequest:
 
     price_millicents_per_unit: int
     currency: str | Unset = "EUR"
+    included_units_per_month: int | Unset = 0
+    """Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order.
+    Once any card includes units, effective_from cannot be in the past."""
+    tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+    """Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's
+    units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds
+    increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods
+    priced by a tiered card must cover exactly one UTC calendar month."""
+    route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset = UNSET
+    plan_id: UUID | Unset = UNSET
+    """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be
+    backdated."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -26,6 +44,23 @@ class CreateAPIConsumerRateCardRequest:
         price_millicents_per_unit = self.price_millicents_per_unit
 
         currency = self.currency
+
+        included_units_per_month = self.included_units_per_month
+
+        tiers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.tiers, Unset):
+            tiers = []
+            for tiers_item_data in self.tiers:
+                tiers_item = tiers_item_data.to_dict()
+                tiers.append(tiers_item)
+
+        route_weights: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_weights, Unset):
+            route_weights = self.route_weights.to_dict()
+
+        plan_id: str | Unset = UNSET
+        if not isinstance(self.plan_id, Unset):
+            plan_id = str(self.plan_id)
 
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
@@ -44,6 +79,14 @@ class CreateAPIConsumerRateCardRequest:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if included_units_per_month is not UNSET:
+            field_dict["included_units_per_month"] = included_units_per_month
+        if tiers is not UNSET:
+            field_dict["tiers"] = tiers
+        if route_weights is not UNSET:
+            field_dict["route_weights"] = route_weights
+        if plan_id is not UNSET:
+            field_dict["plan_id"] = plan_id
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -51,10 +94,38 @@ class CreateAPIConsumerRateCardRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+        from ..models.create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+
         d = dict(src_dict)
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
         currency = d.pop("currency", UNSET)
+
+        included_units_per_month = d.pop("included_units_per_month", UNSET)
+
+        _tiers = d.pop("tiers", UNSET)
+        tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+        if _tiers is not UNSET:
+            tiers = []
+            for tiers_item_data in _tiers:
+                tiers_item = APIConsumerRateCardTier.from_dict(tiers_item_data)
+
+                tiers.append(tiers_item)
+
+        _route_weights = d.pop("route_weights", UNSET)
+        route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset
+        if isinstance(_route_weights, Unset):
+            route_weights = UNSET
+        else:
+            route_weights = CreateAPIConsumerRateCardRequestRouteWeights.from_dict(_route_weights)
+
+        _plan_id = d.pop("plan_id", UNSET)
+        plan_id: UUID | Unset
+        if isinstance(_plan_id, Unset):
+            plan_id = UNSET
+        else:
+            plan_id = UUID(_plan_id)
 
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -76,6 +147,10 @@ class CreateAPIConsumerRateCardRequest:
         create_api_consumer_rate_card_request = cls(
             price_millicents_per_unit=price_millicents_per_unit,
             currency=currency,
+            included_units_per_month=included_units_per_month,
+            tiers=tiers,
+            route_weights=route_weights,
+            plan_id=plan_id,
             effective_from=effective_from,
         )
 

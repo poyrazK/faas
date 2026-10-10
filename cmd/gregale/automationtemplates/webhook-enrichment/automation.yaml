@@ -1,0 +1,16 @@
+name: webhook-enrichment
+trigger:
+  type: event
+  source: external.orders
+  event_type: order.created
+steps:
+  - name: lookup
+    path: /lookup-customer
+    input:
+      customer_id: "{{input.data.customer_id}}"
+  - name: enrich
+    path: /record-enriched-order
+    depends_on: [lookup]
+    input:
+      order_id: "{{input.data.order_id}}"
+      customer: "{{steps.lookup.output}}"

@@ -46,9 +46,9 @@ func (s *server) getEventConsumerHealth(w http.ResponseWriter, r *http.Request, 
 	}
 }
 func validateEventConsumerAlert(metric, sub, window string) *api.Problem {
-	if api.IsEventRecoveryAlertMetric(metric) {
+	if api.IsEventRecoveryAlertMetric(metric) || api.IsEventRetentionAlertMetric(metric) {
 		if sub != "" {
-			return api.ErrAlertRuleInvalid("recovery health metrics are app-scoped and do not accept event_subscription_id")
+			return api.ErrAlertRuleInvalid("recovery and retention health metrics require an app and do not accept event_subscription_id")
 		}
 		if _, err := api.EventConsumerHealthWindow(window); err != nil {
 			return api.ErrAlertRuleInvalid(err.Error())

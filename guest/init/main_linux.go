@@ -424,6 +424,10 @@ func boot() error {
 	if rotatingSecrets != nil {
 		startRuntimeSecretReloader(bootCtx, manifest, rotatingSecrets, supRef, slog.Default())
 	}
+	// ADR-740: developer environments receive live source patches. vmmd
+	// answers dev_patch_disabled for every other app, which ends the loop
+	// after a single request.
+	startDevPatchLoop(bootCtx, supRef, slog.Default())
 	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
@@ -516,6 +520,17 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// for warm handlers uses the traceparent HTTP header at the guest
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
+	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
+	// workload only.
+	preload := ""
+	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
+		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+		} else {
+			preload = devDebugPreloadPath
+		}
+	}
+	env = StampDevDebugEnv(env, preload)
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -1971,6 +1986,9 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		FailureClass:    fc,
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
+	}
+	if runErr == nil {
+		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
 	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {

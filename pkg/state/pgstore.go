@@ -12232,12 +12232,20 @@ func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenanc
 type buildProvenanceWriter = sqlc.DBTX
 
 func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, prov BuildProvenance) error {
+	var devPatch []byte
+	if prov.DevPatch != nil {
+		encoded, err := json.Marshal(prov.DevPatch)
+		if err != nil {
+			return fmt.Errorf("encode build provenance dev patch: %w", err)
+		}
+		devPatch = encoded
+	}
 	_, err := writer.Exec(ctx,
 		`insert into build_provenance
 		   (build_id, buildkit_version, railpack_version, base_digest, source_sha256,
 		    source_url, commit_sha, plan, runner_digest, builder_node_id,
-		    started_at, finished_at, sbom_storage_key, framework_version)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		    started_at, finished_at, sbom_storage_key, framework_version, dev_patch)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		 on conflict (build_id) do update set
 		   buildkit_version = excluded.buildkit_version,
 		   railpack_version = excluded.railpack_version,
@@ -12251,7 +12259,8 @@ func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, pr
 		   started_at       = excluded.started_at,
 		   finished_at      = excluded.finished_at,
 		   sbom_storage_key = coalesce(excluded.sbom_storage_key, build_provenance.sbom_storage_key),
-		   framework_version = excluded.framework_version`,
+		   framework_version = excluded.framework_version,
+		   dev_patch         = excluded.dev_patch`,
 		prov.BuildID,
 		nullString(prov.BuildkitVer),
 		nullString(prov.RailpackVer),
@@ -12266,6 +12275,7 @@ func createBuildProvenance(ctx context.Context, writer buildProvenanceWriter, pr
 		prov.FinishedAt,
 		nullString(prov.SBOMStorageKey),
 		nullString(prov.FrameworkVer),
+		devPatch,
 	)
 	if err != nil {
 		return err
@@ -12288,7 +12298,7 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 		        coalesce(base_digest,''), source_sha256, coalesce(source_url,''), coalesce(commit_sha,''),
 		        coalesce(plan,''), coalesce(runner_digest,''), coalesce(builder_node_id,''),
 		        started_at, finished_at, coalesce(sbom_storage_key,''),
-		        coalesce(framework_version,'')
+		        coalesce(framework_version,''), dev_patch
 		   from build_provenance where build_id = $1`, buildID)
 	prov, err := scanBuildProvenance(row)
 	if err != nil {
@@ -25058,14 +25068,22 @@ func scanBuild(row pgx.Row) (Build, error) {
 // NOT NULL).
 func scanBuildProvenance(row pgx.Row) (BuildProvenance, error) {
 	p := BuildProvenance{}
+	var devPatch []byte
 	if err := row.Scan(
 		&p.ID, &p.BuildID, &p.BuildkitVer, &p.RailpackVer,
 		&p.BaseDigest, &p.SourceSHA256, &p.SourceURL, &p.CommitSHA,
 		&p.Plan, &p.RunnerDigest, &p.BuilderNodeID,
 		&p.StartedAt, &p.FinishedAt, &p.SBOMStorageKey,
-		&p.FrameworkVer,
+		&p.FrameworkVer, &devPatch,
 	); err != nil {
 		return BuildProvenance{}, mapErr(err)
+	}
+	if len(devPatch) > 0 {
+		var sourceMap api.DevPatchSourceMap
+		if err := json.Unmarshal(devPatch, &sourceMap); err != nil {
+			return BuildProvenance{}, fmt.Errorf("decode build provenance dev patch: %w", err)
+		}
+		p.DevPatch = &sourceMap
 	}
 	return p, nil
 }

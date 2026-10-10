@@ -33,13 +33,16 @@ import (
 )
 
 func cmdCompletionZsh() int {
-	w := osStdout
+	renderZshCompletion(osStdout)
+	return 0
+}
+
+func renderZshCompletion(w io.Writer) {
 	renderZshHeader(w)
 	for _, c := range customerCliCommands() {
 		renderZshCommand(w, c)
 	}
 	renderZshFooter(w)
-	return 0
 }
 
 func renderZshHeader(w io.Writer) {

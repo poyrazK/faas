@@ -595,6 +595,12 @@ const (
 	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
 	DevBridgeWebhookReplayTimeout  = 30 * time.Second
 	DevBridgeReplayResponseBytes   = 64 << 10
+	// WebSocket upgrades (ADR-742) share one per-session budget across the
+	// scoped-traffic and dependency directions. Upgraded tunnels hold their
+	// own HTTP/2 streams, so the laptop accepts requests + upgrades streams.
+	DevBridgeMaxUpgradedConnections = 8
+	DevBridgeUpgradeIdleTimeout     = 5 * time.Minute
+	DevBridgeUpgradeMaxBytes        = 64 << 20 // per connection, per direction
 )
 
 // Flags qualification safeguards, independent from billing allowances.
@@ -847,6 +853,19 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
+	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
+	// using the normal developer build.
+	DevPatchMaxEntries       = 200
+	DevPatchMaxBytes   int64 = 8 << 20
+	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
+	// sessions per developer app, the quiet period after which a session is
+	// closed, the per-direction byte cap, and how long the tunnel waits for a
+	// parked developer app to wake.
+	DevDebugSessionsPerApp       = 4
+	DevDebugIdleTimeout          = 30 * time.Minute
+	DevDebugMaxBytes       int64 = 256 << 20
+	DevDebugWakeTimeout          = 60 * time.Second
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
@@ -1199,6 +1218,12 @@ type Limits struct {
 	RAMMB              int // max ram_mb per app (memory.max = RAMMB + PerVMOverheadMB)
 	AppLayerMaxMB      int // drive1 ext4 cap (spec §4.6)
 	SourceTarballMaxMB int // upload cap; >cap => 413 (spec §4.2)
+
+	// DeveloperLeaseMaxHours is the longest lease a `gregale dev`
+	// environment may request (`--ttl`, `dev.ttl`). Every sync renews the
+	// lease; the preview janitor tears down an environment once it lapses.
+	// A request without a lease gets DeveloperLeaseDefault.
+	DeveloperLeaseMaxHours int
 
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// upper bound on concurrent in-flight requests one VM can handle
@@ -2664,6 +2689,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		OutboundRequestsPerDayMax: 100_000,
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
+		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -3058,6 +3085,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		OutboundRequestsPerDayMax: 1_000_000,
 		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
+		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -3470,6 +3499,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		OutboundRequestsPerDayMax: 10_000_000,
 		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
+		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -3844,6 +3875,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
 		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
+		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -5885,43 +5918,60 @@ var (
 )
 
 const (
-	AutomationSimulationRequestMaxBytes     int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes    int64 = 4 << 20
-	AutomationSimulationMaxSteps                  = 128
-	AutomationSimulationMaxTraceEntries           = 1024
-	AutomationDefinitionMaxBytes            int64 = 1 << 20
-	AutomationNameMaxBytes                        = 128
-	WorkflowRunInputMaxBytes                int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes          int64 = 64 << 10
-	WorkflowWebhookFilterMaxBytes                 = 32 << 10
-	WorkflowWebhookNameMaxBytes                   = 128
-	WorkflowWebhookEventMaxBytes                  = 256
-	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
-	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
-	WorkflowAutomationHealthMaxFailureSteps       = 10
-	WorkflowAutomationHealthReadTimeout           = 5 * time.Second
-	WorkflowRunDiagnosticsReadTimeout             = 5 * time.Second
-	WorkflowSchedulePreviewDefaultCount           = 5
-	WorkflowSchedulePreviewMaxCount               = 20
-	WorkflowSchedulePreviewReadTimeout            = 5 * time.Second
-	WorkflowBacklogAlertThresholdSeconds          = 300
-	WorkflowBacklogAlertCooldownMinutes           = 30
-	WorkflowAlertSnapshotReadTimeout              = 5 * time.Second
-	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
-	WorkflowOutboundStepNameMaxBytes              = 128
-	WorkflowResumeRequestMaxBytes           int64 = 4096
-	WorkflowRunMaxResumes                         = 16
-	WorkflowForEachMaxItems                       = 128
-	WorkflowForEachMaxParallelLimit               = 16
-	WorkflowForEachNameMaxBytes                   = 64
-	WorkflowForEachMaxInputBytes            int64 = 1 << 20
-	WorkflowForEachMaxOutputBytes           int64 = 1 << 20
-	WorkflowJoinMaxDependencies                   = 128
-	WorkflowGuardMaxBytes                         = 16 << 10
-	WorkflowGuardMaxDepth                         = 8
-	WorkflowGuardMaxNodes                         = 32
-	WorkflowGuardNumberMaxBytes                   = 4096
-	WorkflowGuardNumberMaxExponent                = 4096
+	AutomationPublishCheckMaxBytes        int64 = 8 * AutomationSimulationRequestMaxBytes
+	AutomationPublishCheckMaxScenarios          = 32
+	AutomationPublishCheckMaxExpectations       = 4096
+	AutomationPublishCheckMaxExclusions         = 256
+	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
+
+	AutomationSimulationRequestMaxBytes         int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes        int64 = 4 << 20
+	AutomationSimulationMaxSteps                      = 128
+	AutomationSimulationMaxTraceEntries               = 1024
+	AutomationDefinitionMaxBytes                int64 = 1 << 20
+	AutomationNameMaxBytes                            = 128
+	WorkflowRunInputMaxBytes                    int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes                     = 32 << 10
+	WorkflowWebhookNameMaxBytes                       = 128
+	WorkflowWebhookEventMaxBytes                      = 256
+	WorkflowAutomationHealthDefaultRange              = 7 * 24 * time.Hour
+	WorkflowAutomationHealthMaxRange                  = 30 * 24 * time.Hour
+	WorkflowAutomationHealthMaxFailureSteps           = 10
+	WorkflowAutomationHealthReadTimeout               = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout                 = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount               = 5
+	WorkflowSchedulePreviewMaxCount                   = 20
+	WorkflowSchedulePreviewReadTimeout                = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds              = 300
+	WorkflowBacklogAlertCooldownMinutes               = 30
+	AutomationFailurePolicyMaxCount                   = 10000
+	AutomationFailurePolicyMinWindowSeconds           = 60
+	AutomationFailurePolicyMaxWindowSeconds           = 86400
+	AutomationFailurePolicyDefaultWindowSeconds       = 300
+	AutomationFailurePolicyDefaultThreshold           = 3
+	AutomationFailurePolicyDefaultMinRuns             = 5
+	AutomationFailurePolicyHistoryLimit               = 100
+	AutomationFailurePolicyBatch                      = 100
+	AutomationFailurePolicyRequestMaxBytes      int64 = 4096
+	WorkflowFailureAlertThreshold                     = 1
+	WorkflowFailureAlertCooldownMinutes               = 30
+	WorkflowAlertSnapshotReadTimeout                  = 5 * time.Second
+	WorkflowOutboundBodyMaxBytes                int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes                  = 128
+	WorkflowResumeRequestMaxBytes               int64 = 4096
+	WorkflowRunMaxResumes                             = 16
+	WorkflowForEachMaxItems                           = 128
+	WorkflowForEachMaxParallelLimit                   = 16
+	WorkflowForEachNameMaxBytes                       = 64
+	WorkflowForEachMaxInputBytes                int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes               int64 = 1 << 20
+	WorkflowJoinMaxDependencies                       = 128
+	WorkflowGuardMaxBytes                             = 16 << 10
+	WorkflowGuardMaxDepth                             = 8
+	WorkflowGuardMaxNodes                             = 32
+	WorkflowGuardNumberMaxBytes                       = 4096
+	WorkflowGuardNumberMaxExponent                    = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -8001,6 +8051,26 @@ func (p Plan) RateLimitPerAccountRPM() int {
 	return l.RateLimitPerAccountRPM
 }
 
+// DeveloperLeaseDefault is the `gregale dev` environment lease used when a
+// session request does not choose one; it is also the pre-`--ttl` behavior.
+// DeveloperLeaseMin is the shortest lease a request may choose, so a typo
+// such as `--ttl 1m` cannot make an environment vanish between two saves.
+// The per-plan ceiling is Limits.DeveloperLeaseMaxHours.
+const (
+	DeveloperLeaseDefault = 24 * time.Hour
+	DeveloperLeaseMin     = time.Hour
+)
+
+// DeveloperLeaseMax returns the longest `gregale dev` lease the plan allows.
+// Unknown plans fail closed to the default lease.
+func (p Plan) DeveloperLeaseMax() time.Duration {
+	l, ok := LimitsFor(p)
+	if !ok || l.DeveloperLeaseMaxHours <= 0 {
+		return DeveloperLeaseDefault
+	}
+	return time.Duration(l.DeveloperLeaseMaxHours) * time.Hour
+}
+
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
 func (p Plan) DeploysPerHour() int {
@@ -9083,6 +9153,37 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
 
+// RouteHealthSeed bounds the report-mode selectors apid saves for an app that
+// never configured route health when its first canary advances (ADR-844).
+const (
+	RouteHealthSeedRoutes   = 10
+	RouteHealthSeedLookback = 7 * 24 * time.Hour
+)
+
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
+// requests per route and deployment, only while a canary is in flight.
+// Probe requests are never written to request telemetry or usage.
+const (
+	RouteHealthProbeMaxRoutes         = 5
+	RouteHealthProbeRequestsPerMinute = 10
+	RouteHealthProbeRequestTimeout    = 10 * time.Second
+	RouteHealthProbeChallengeTTL      = 2 * time.Minute
+	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbeRetention         = 24 * time.Hour
+	// A probe window is unknown when at least this share of responses were
+	// 401/403: customer auth gates stay in force for probes.
+	RouteHealthProbeUnauthenticatedShare = 0.5
+)
+
+// RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// covering at most the newest RouteHealthPooledMaxSpan of the stage.
+const (
+	RouteHealthPooledMinSpan = 4 * time.Minute
+	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
@@ -9137,6 +9238,11 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// error-budget incident must open within this long after the deployment
+// started serving all traffic.
+const RouteMonitorRollbackWindow = 30 * time.Minute
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
@@ -9481,4 +9587,75 @@ const (
 const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
+)
+
+// Event publication batches bound synchronous acceptance work (ADR-911).
+const (
+	EventPublishBatchMaxEvents          = 100
+	EventPublishBatchBodyMaxBytes int64 = 1 << 20
+	EventPublishBatchTimeout            = 30 * time.Second
+)
+
+// Retention observations are bounded read-only snapshots (ADR-912).
+const (
+	EventRetentionDefaultWindow  = 24 * time.Hour
+	EventRetentionMaxWindow      = 30 * 24 * time.Hour
+	EventRetentionSampleMax      = 100
+	EventRetentionSourceMaxBytes = 256
+	EventRetentionRequestTimeout = 15 * time.Second
+)
+
+// Recheck unresolved execution recovery jobs without scanning retained history on every tick.
+const EventRecoveryExecutionNotificationPollInterval = 10 * time.Second
+
+const (
+	EventRecoveryExecutionHealthJobsMax    = 50
+	EventRecoveryExecutionHealthSampleMax  = 3
+	EventRecoveryExecutionWaitWarning      = 15 * time.Minute
+	EventRecoveryExecutionRetentionWarning = 24 * time.Hour
+)
+
+// EventRecoveryNotificationReceiversMax bounds each notification report.
+const EventRecoveryNotificationReceiversMax = 100
+
+const (
+	EventRecoveryNotificationHealthJobsMax   = 50
+	EventRecoveryNotificationHealthSampleMax = 3
+	EventRecoveryNotificationOverdueGrace    = 15 * time.Minute
+)
+
+const (
+	EventRecoveryNotificationRetryTargetsMax   = 100
+	EventRecoveryNotificationRetryReceiptsMax  = 100
+	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
+)
+
+// CLI polling for the immutable requested notification retry generations (ADR-923).
+const (
+	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
+	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
+)
+
+// Bounded job pages for app-wide notification retry evidence (ADR-926).
+const (
+	EventRecoveryNotificationRetryBacklogJobsDefault = 5
+	EventRecoveryNotificationRetryBacklogJobsMax     = 10
+)
+
+// CLI selected notification retry workflow bounds.
+const (
+	EventRecoveryNotificationRetryBatchJobsMax      = 10
+	EventRecoveryNotificationRetryBatchBodyMaxBytes = 1 << 20
+)
+
+// Application-scoped producer-key publication bounds.
+const (
+	AppEventPublishKeyMaxBytes        = 256
+	AppEventPublishBodyMaxBytes int64 = 1 << 20
+)
+
+// App producer-key status uses existing receipt pagination and cursor format.
+const (
+	AppEventPublishStatusRecipientsDefault = 100
+	AppEventPublishStatusCursorMaxBytes    = 8192
 )

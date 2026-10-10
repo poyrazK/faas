@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { operationAPIBase, operationJSON, operationResponse, type OperationArtifact, type OperationArtifactReport } from './customer-operations.js';
 import { prepareOperationArtifact, type OperationArtifactInput, type PreparedOperationArtifact } from './operation-artifact.js';
 import type { GregaleOperationsOptions, OperationRequestHeaders } from './operations-runtime.js';
+import { operationHeaders } from './operation-execution-context.js';
 import { OperationControlScope, validateWorkflowOperationControl, type OperationHandlerScope } from './operation-control.js';
 import { operationUploader, type OperationDirectUploadInput } from './operation-upload.js';
 import type { OperationArtifactUploadRequest } from './generated/models/OperationArtifactUploadRequest.js';
@@ -35,7 +36,7 @@ export class GregaleWorkflowOperations {
     return e ? { id: e.id, runID: e.runID, step: e.step, generation: e.generation, attempt: e.attempt } : undefined;
   }
   runRequest<T>(headers: OperationRequestHeaders, handler: () => T | Promise<T>): T | Promise<T> {
-    const h = headers instanceof Headers || Array.isArray(headers) ? new Headers(headers) : new Headers(Object.entries(headers).filter((entry): entry is [string, string | string[]] => entry[1] !== undefined).map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : value]));
+    const h = operationHeaders(headers);
     const id = h.get('X-Gregale-Customer-Operation-Id');
     if (!id) return this.request.run(undefined, handler);
     const execution = workflowExecution(h, id);

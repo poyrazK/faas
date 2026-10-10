@@ -2,11 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventRecoveryExecutionHealth } from './EventRecoveryExecutionHealth.js';
 import type { EventRecoveryJobHealth } from './EventRecoveryJobHealth.js';
+import type { EventRecoveryNotificationsHealth } from './EventRecoveryNotificationsHealth.js';
 /**
- * Bounded application recovery health summary and sampled actionable jobs.
+ * Application admission health and bounded unresolved execution health with sampled actionable jobs.
  */
 export type EventRecoveryHealth = {
+  notifications?: EventRecoveryNotificationsHealth;
+  execution?: EventRecoveryExecutionHealth;
   capacity_wait_warning_seconds: number;
   /**
    * Running capacity-wait jobs observed within the five-minute freshness grace.

@@ -87,7 +87,7 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 	rateCardID := uuid.NewString()
 	input := APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
-		PeriodStart: start, PeriodEnd: end, Currency: "eur",
+		PeriodStart: start, PeriodEnd: end, Revision: 1, Currency: "eur",
 		BillableUnits: 2, AmountMillicents: 20, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 2, RateCardID: rateCardID, Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 20}},
 	}
@@ -114,6 +114,45 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 	}
 }
 
+// adr: 843
+func TestMemAPIConsumerUsageStatementRevisions(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	quote := func(revision int, prior APIConsumerUsageStatementStatus, units int64) APIConsumerUsageStatementInput {
+		return APIConsumerUsageStatementInput{
+			AccountID: accountID, AppID: appID, ConsumerID: consumerID, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
+			Revision: revision, PriorStatus: prior, BillableUnits: units, UnpricedUnits: units, AsOf: time.Now().UTC(),
+			Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: units}},
+		}
+	}
+	first, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(1, "", 1))
+	if err != nil || !created || first.Revision != 1 {
+		t.Fatalf("first = %+v created=%v err=%v", first, created, err)
+	}
+	if same, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementDraft, 1)); err != nil || created || same.ID != first.ID {
+		t.Fatalf("unchanged draft = %+v created=%v err=%v, want replay of revision 1", same, created, err)
+	}
+	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementFinalized, 2)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale prior status err=%v, want ErrConflict", err)
+	}
+	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(3, APIConsumerUsageStatementDraft, 2)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("skipped revision err=%v, want ErrConflict", err)
+	}
+	second, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementDraft, 2))
+	if err != nil || !created || second.Revision != 2 {
+		t.Fatalf("second = %+v created=%v err=%v", second, created, err)
+	}
+	revisions, err := m.ListAPIConsumerUsageStatementRevisions(ctx, accountID, appID, consumerID, start, start.Add(time.Hour))
+	if err != nil || len(revisions) != 2 || revisions[0].Status != APIConsumerUsageStatementSuperseded || revisions[1].ID != second.ID {
+		t.Fatalf("revisions = %+v err=%v", revisions, err)
+	}
+	if _, _, err := m.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, first.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("finalize superseded err=%v, want ErrConflict", err)
+	}
+}
+
 func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	consumerID := uuid.NewString()
@@ -126,7 +165,7 @@ func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	statement, _, err := m.CreateAPIConsumerUsageStatement(ctx, APIConsumerUsageStatementInput{
 		AccountID: acct.ID, AppID: app.ID, ConsumerID: consumerID,
-		PeriodStart: start, PeriodEnd: start.Add(time.Hour), AsOf: time.Now().UTC(),
+		PeriodStart: start, PeriodEnd: start.Add(time.Hour), Revision: 1, AsOf: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +204,7 @@ func TestMemAPIConsumerUsageStatementRejectsUnpricedFinalize(t *testing.T) {
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumerID, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
+		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 		BillableUnits: 1, UnpricedUnits: 1, AsOf: time.Now().UTC(),
 		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 1}},
 	})
@@ -182,7 +221,7 @@ func TestMemAPIConsumerUsageStatementHandoffIsIdempotentAndImmutable(t *testing.
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumerID, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
+		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 		Currency: "EUR", BillableUnits: 4, AmountMillicents: 100, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 4, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 100}},
 	})
@@ -214,7 +253,7 @@ func TestMemAPIConsumerUsageStatementHandoffIsIdempotentAndImmutable(t *testing.
 		t.Fatalf("statement reuse err=%v, want ErrConflict", err)
 	}
 	other, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumerID, PeriodStart: start.Add(2 * time.Hour), PeriodEnd: start.Add(3 * time.Hour),
+		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start.Add(2 * time.Hour), PeriodEnd: start.Add(3 * time.Hour),
 		Currency: "EUR", BillableUnits: 1, AmountMillicents: 25, Priced: true, AsOf: time.Now().UTC(),
 		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start.Add(2 * time.Hour), BillableUnits: 1, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 25}},
 	})

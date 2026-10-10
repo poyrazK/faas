@@ -194,8 +194,12 @@ type ConsumerUsageEvent struct {
 	DiscoveredAtUnixMs                   int64  `protobuf:"varint,12,opt,name=discovered_at_unix_ms,json=discoveredAtUnixMs,proto3" json:"discovered_at_unix_ms,omitempty"`
 	PlatformTenantSurfaceId              string `protobuf:"bytes,13,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"`                                            // anonymous traffic on a verified surface only
 	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,14,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"` // anonymous traffic attributed by this verified JWT rule
-	unknownFields                        protoimpl.UnknownFields
-	sizeCache                            protoimpl.SizeCache
+	// Bounded "METHOD /template" label for consumer-attributed traffic. apid
+	// keeps route-level billable minutes so rate cards can weight routes
+	// (ADR-846). Empty for anonymous traffic and from older gateways.
+	BillingRoute  string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -322,6 +326,13 @@ func (x *ConsumerUsageEvent) GetPlatformTenantSurfaceId() string {
 func (x *ConsumerUsageEvent) GetPlatformTenantJwtAuthorizationRuleId() string {
 	if x != nil {
 		return x.PlatformTenantJwtAuthorizationRuleId
+	}
+	return ""
+}
+
+func (x *ConsumerUsageEvent) GetBillingRoute() string {
+	if x != nil {
+		return x.BillingRoute
 	}
 	return ""
 }
@@ -1247,7 +1258,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12-\n" +
 	"\x13received_at_unix_ms\x18\x06 \x01(\x03R\x10receivedAtUnixMs\"<\n" +
 	"\x1eRecordRequestIDJournalResponse\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\bR\brecorded\"\x87\x05\n" +
+	"\brecorded\x18\x01 \x01(\bR\brecorded\"\xac\x05\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -1266,7 +1277,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x10discovered_route\x18\v \x01(\tR\x0fdiscoveredRoute\x121\n" +
 	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\x12;\n" +
 	"\x1aplatform_tenant_surface_id\x18\r \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
-	")platform_tenant_jwt_authorization_rule_id\x18\x0e \x01(\tR$platformTenantJwtAuthorizationRuleId\"\x93\x02\n" +
+	")platform_tenant_jwt_authorization_rule_id\x18\x0e \x01(\tR$platformTenantJwtAuthorizationRuleId\x12#\n" +
+	"\rbilling_route\x18\x0f \x01(\tR\fbillingRoute\"\x93\x02\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
 	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +

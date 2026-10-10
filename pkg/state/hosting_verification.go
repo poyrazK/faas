@@ -25,12 +25,13 @@ var (
 )
 
 type HostingVerificationProgress struct {
-	StartedAt      time.Time  `json:"started_at"`
-	DeadlineAt     time.Time  `json:"deadline_at"`
-	Attempts       int        `json:"attempts"`
-	LastErrorCode  string     `json:"last_error_code,omitempty"`
-	RetryNotBefore *time.Time `json:"retry_not_before,omitempty"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	StartedAt       time.Time                        `json:"started_at"`
+	DeadlineAt      time.Time                        `json:"deadline_at"`
+	Attempts        int                              `json:"attempts"`
+	LastErrorCode   string                           `json:"last_error_code,omitempty"`
+	LastRouteChecks *apihostingreceipt.RouteCheckSet `json:"last_route_checks,omitempty"`
+	RetryNotBefore  *time.Time                       `json:"retry_not_before,omitempty"`
+	CompletedAt     *time.Time                       `json:"completed_at,omitempty"`
 }
 
 type HostingVerificationAction string
@@ -45,6 +46,7 @@ type HostingVerificationUpdate struct {
 	Action         HostingVerificationAction
 	Attempt        int
 	ErrorCode      string
+	RouteChecks    *apihostingreceipt.RouteCheckSet
 	At             time.Time
 	RetryNotBefore time.Time
 }
@@ -91,14 +93,40 @@ func advanceHostingVerification(prior *HostingVerificationProgress, u HostingVer
 		if next.After(p.DeadlineAt) {
 			next = p.DeadlineAt
 		}
+		p.LastRouteChecks = nil
+		if u.RouteChecks != nil {
+			if u.RouteChecks.Status != apihostingreceipt.RouteCheckSetUnavailable || u.RouteChecks.Validate() != nil {
+				return p, ErrInvalidArgument
+			}
+			copied, err := copyHostingRouteChecks(u.RouteChecks)
+			if err != nil {
+				return p, ErrInvalidArgument
+			}
+			p.LastRouteChecks = copied
+		}
 		p.LastErrorCode = code
 		p.RetryNotBefore, p.CompletedAt = &next, nil
 	case HostingVerificationComplete:
-		p.LastErrorCode, p.RetryNotBefore, p.CompletedAt = "", nil, &at
+		p.LastErrorCode, p.LastRouteChecks, p.RetryNotBefore, p.CompletedAt = "", nil, nil, &at
 	default:
 		return p, ErrInvalidArgument
 	}
 	return p, nil
+}
+
+func copyHostingRouteChecks(in *apihostingreceipt.RouteCheckSet) (*apihostingreceipt.RouteCheckSet, error) {
+	if in == nil {
+		return nil, nil
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	var isolated apihostingreceipt.RouteCheckSet
+	if err := json.Unmarshal(body, &isolated); err != nil {
+		return nil, err
+	}
+	return &isolated, nil
 }
 
 func updateHostingVerification(status DeploymentStatus, raw []byte, u HostingVerificationUpdate) (HostingVerificationProgress, []byte, error) {

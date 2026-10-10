@@ -50,7 +50,7 @@ INVARIANT_PACKAGES = ("tests/property",)
 # assigned whole, each one's tests are split by name across every shard
 # (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
 # the ones a change selects.
-SPLIT_PACKAGES = ("pkg/state",)
+SPLIT_PACKAGES = ("cmd/apid", "pkg/state")
 
 # cmd/apid and pkg/state both create/drop databases while clone tests verify
 # the whole PostgreSQL catalogue. Give apid separate CI services, and split

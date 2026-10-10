@@ -178,11 +178,15 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 // Centralize memory writes to mirror the PostgreSQL transition trigger.
 func (m *MemStore) setInvocationLocked(id string, inv Invocation) {
 	old := m.invocations[id]
+	now := time.Now().UTC()
+	if old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) {
+		m.captureRecoveryInvocationResultLocked(old, now)
+	}
 	m.invocations[id] = cloneInvocationWorkEnvelope(inv)
+	m.captureRecoveryInvocationResultLocked(inv, now)
 	if inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay {
 		return
 	}
-	now := time.Now().UTC()
 	changed := old.State != inv.State || old.Attempts != inv.Attempts || old.ReplayGeneration != inv.ReplayGeneration
 	if !changed {
 		return
