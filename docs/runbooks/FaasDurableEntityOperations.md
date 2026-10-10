@@ -6,11 +6,21 @@ does not import it into a running service. See [ADR-945](../adr/945-durable-enti
 for metric boundaries and [the qualification handoff](FaasDurableEntityQualification.md)
 for evidence requirements.
 
+## Symptom
+
+Entity operations are slow, busy, rejected, or return an uncertain outcome. A
+missing dashboard series means observations are unavailable; it does not confirm
+that the operation or its effects never happened.
+
+## Check
+
 The dashboard compares engine p95 latency with private-storage p95. Sustained
 storage latency suggests provider/network/permission investigation. High engine
 latency with healthy storage suggests guest queue, app execution, contention or
 validation costs. Histogram quantiles need sufficient samples; missing series or
 no traffic means unknown. Operations overlap: validation is part of restore.
+
+## Recover
 
 Busy/conflict outcomes are normal under contention. Inspect the exact entity using
 known application selectors; check pending work and owner status before retrying.
