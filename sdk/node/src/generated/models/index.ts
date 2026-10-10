@@ -11,6 +11,7 @@ export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
@@ -1482,6 +1483,10 @@ export type { RotateManagedRealtimeAuthRequest } from './RotateManagedRealtimeAu
 export type { RotateManagedRealtimeAuthResponse } from './RotateManagedRealtimeAuthResponse.js';
 export type { RotateOrgAPIKeyRequest } from './RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './RotateOrgAPIKeyResponse.js';
+export type { RouteAdviceEvidence } from './RouteAdviceEvidence.js';
+export type { RouteAdviceImpact } from './RouteAdviceImpact.js';
+export type { RouteAdviceResponse } from './RouteAdviceResponse.js';
+export type { RouteAdviceSuggestion } from './RouteAdviceSuggestion.js';
 export type { RouteAssignedCheck } from './RouteAssignedCheck.js';
 export type { RouteAssignment } from './RouteAssignment.js';
 export type { RouteBudgetRequirement } from './RouteBudgetRequirement.js';

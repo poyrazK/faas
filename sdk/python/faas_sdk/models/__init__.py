@@ -2738,6 +2738,11 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_impact import RouteAdviceImpact
+from .route_advice_response import RouteAdviceResponse
+from .route_advice_suggestion import RouteAdviceSuggestion
+from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
 from .route_budget_requirement import RouteBudgetRequirement
@@ -6051,6 +6056,11 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAdviceEvidence",
+    "RouteAdviceImpact",
+    "RouteAdviceResponse",
+    "RouteAdviceSuggestion",
+    "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
     "RouteBudgetRequirement",

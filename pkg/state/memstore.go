@@ -559,7 +559,7 @@ type MemStore struct {
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
-	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
+	// routeProbeData holds ADR-945 probe rounds and results; lazily created.
 	routeProbeOnce           sync.Once
 	routeProbeData           *memRouteProbes
 	routeHealthGates         map[string]api.RouteHealthGate

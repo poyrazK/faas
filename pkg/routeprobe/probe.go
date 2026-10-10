@@ -1,4 +1,4 @@
-// Package routeprobe sends ADR-847 synthetic route probes through the public
+// Package routeprobe sends ADR-945 synthetic route probes through the public
 // gateway to one exact live deployment. A probe token is a separate challenge
 // kind from the hosting smoke: it selects the deployment but never bypasses
 // customer auth gates, and the gateway writes no request telemetry or usage

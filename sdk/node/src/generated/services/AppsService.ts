@@ -81,6 +81,7 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RouteAdviceResponse } from '../models/RouteAdviceResponse.js';
 import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
 import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
 import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageResponse.js';
@@ -4547,6 +4548,82 @@ export class AppsService {
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Suggest edge rules for observed routes with what-if estimates.
+   * Read-only route advisor (ADR-940). Reads retained request telemetry for
+   * the app's busiest observed routes across deployments and suggests three
+   * kinds of edge rules: cache for anonymous, successful GET routes with
+   * repeat traffic; async for POST routes that time out or exceed a 10 s
+   * p95; and a per-consumer throttle when one consumer dominates a route and
+   * a limit exists that no other observed consumer reaches. A route needs at
+   * least 200 requests in the window, and routes that already have a rule of
+   * the suggested kind (enabled or not) are skipped.
+   *
+   * Each suggestion carries its evidence, an estimate replayed from the same
+   * window, cautions, and ready-to-create rule bodies: one per hostname (the
+   * platform hostname and every verified custom domain), always disabled.
+   * Nothing is applied; create the rules with POST /v1/apps/{slug}/edge-rules
+   * and enable them after review. Suggestion IDs are stable for the same
+   * kind, method and route. Estimates are observed_only and upper bounds:
+   * the cache estimate cannot see credential headers or query strings.
+   * Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
+   * plan gate.
+   *
+   * @returns RouteAdviceResponse Route advisor suggestions for the window.
+   * @throws ApiError
+   */
+  public static getRouteAdvice({
+    slug,
+    since = '168h',
+    until,
+    cacheMaxAge = 60,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Positive lookback duration (for example 7d) or RFC3339 start timestamp; clamped to current plan retention.
+     */
+    since?: string,
+    /**
+     * Exclusive end of the advice window, default now; must be within retained telemetry and not in the future.
+     */
+    until?: string,
+    /**
+     * What-if cache lifetime in seconds for cache estimates and proposed cache rules.
+     */
+    cacheMaxAge?: number,
+  }): CancelablePromise<RouteAdviceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/routes/advice',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'cache_max_age': cacheMaxAge,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

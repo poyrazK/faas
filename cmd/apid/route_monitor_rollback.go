@@ -17,7 +17,7 @@ const routeMonitorRollbackActor = "apid:route_monitor_rollback"
 
 // applyRouteMonitorRollback requests at most one checked rollback for an app's
 // active error-budget incident when its monitor opts into on_violation
-// rollback (ADR-845). The checked rollback path owns every deployment write
+// rollback (ADR-943). The checked rollback path owns every deployment write
 // and rechecks that the incident's deployment still serves all traffic with no
 // rollout or other rollback in its scope.
 func (s *server) applyRouteMonitorRollback(ctx context.Context, target state.RouteMonitorTarget) {

@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 845
+// adr: 943
 func TestDecideRollback(t *testing.T) {
 	released := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	budget := int64(100)
@@ -52,7 +52,7 @@ func TestDecideRollback(t *testing.T) {
 	}
 }
 
-// adr: 845
+// adr: 943
 func TestValidateOnViolation(t *testing.T) {
 	zero, budget := int64(0), int64(100)
 	request := func(onViolation string, routes ...api.RouteMonitorRoute) api.SetRouteMonitorRequest {

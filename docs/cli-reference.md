@@ -6744,6 +6744,28 @@ gregale routes status my-api
 gregale routes status my-api --since 24h --json
 ```
 
+### routes advise
+
+Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates
+
+`gregale routes advise [--since <DURATION>] [--until <RFC3339>] [--cache-max-age <SECONDS>] [--apply <ID>] [--enable] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | traffic window to analyze (default 7d; clamped to telemetry retention) |  |
+| `--until <RFC3339>` | end of the window (default now) |  |
+| `--cache-max-age <SECONDS>` | what-if cache lifetime for cache suggestions (default 60) |  |
+| `--apply <ID>` | create the edge rules of this suggestion (disabled for review) |  |
+| `--enable` | with --apply, create the rules enabled |  |
+
+Examples:
+
+```sh
+gregale routes advise my-api
+gregale routes advise my-api --cache-max-age 300
+gregale routes advise my-api --apply 3f9a1c2b7d4e
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app

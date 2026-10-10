@@ -1,8 +1,8 @@
-# ADR-844: Default report-mode route health selectors
+# ADR-942: Default report-mode route health selectors
 
 - Status: Accepted
 - Date: 2026-10-09
-- Related: ADR-122, ADR-454, ADR-456, ADR-493, ADR-843
+- Related: ADR-122, ADR-454, ADR-456, ADR-493, ADR-941
 - Amends: ADR-454 ("Default is report mode with no selected routes")
 
 ## Context

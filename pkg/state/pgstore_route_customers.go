@@ -19,7 +19,7 @@ func (m *MemStore) RequestTelemetryRouteCustomers(_ context.Context, _ sqlc.Requ
 
 // RouteHealthStableIDs returns at most two live, traffic-serving siblings in
 // the candidate's scope. Default route-health seeding requires exactly one
-// (ADR-844), matching the stable selection of the route-health report.
+// (ADR-942), matching the stable selection of the route-health report.
 func (s *PgStore) RouteHealthStableIDs(ctx context.Context, appID, candidateID string) ([]string, error) {
 	return (&sqlc.Queries{}).RouteHealthStableIDs(ctx, s.pool, sqlc.RouteHealthStableIDsParams{AppID: appID, DeploymentID: candidateID})
 }

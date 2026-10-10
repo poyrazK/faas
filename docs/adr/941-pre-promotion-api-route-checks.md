@@ -1,4 +1,4 @@
-# ADR-843: Pre-promotion API route checks
+# ADR-941: Pre-promotion API route checks
 
 Status: accepted
 

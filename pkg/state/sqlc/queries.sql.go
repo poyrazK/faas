@@ -33558,7 +33558,7 @@ type ListRouteProbeTargetsRow struct {
 	CandidateID string
 }
 
-// ADR-847: apps whose route health gate opts a selector into probes and that
+// ADR-945: apps whose route health gate opts a selector into probes and that
 // have exactly one in-flight canary candidate in the default scope.
 func (q *Queries) ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error) {
 	rows, err := db.Query(ctx, listRouteProbeTargets, batchLimit)
@@ -37905,7 +37905,7 @@ type LockRouteMonitorRollbackIncidentRow struct {
 	ActiveIncidentID string
 }
 
-// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
+// ADR-943: waits for an in-flight evaluation instead of skipping it, so the
 // claim reads the incident that evaluation committed.
 func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error) {
 	row := db.QueryRow(ctx, lockRouteMonitorRollbackIncident, arg.AppID, arg.AccountID)

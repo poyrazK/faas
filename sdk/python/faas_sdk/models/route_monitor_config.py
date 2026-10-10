@@ -37,7 +37,7 @@ class RouteMonitorConfig:
     """Saved request-time identity dimension used for per-cohort budget evaluation."""
     on_violation: RouteMonitorConfigOnViolation | Unset = UNSET
     """Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving
-    all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default
+    all traffic requests a checked rollback to the incident's healthy baseline (ADR-943). Omitted for the default
     report-only action."""
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

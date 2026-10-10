@@ -1,15 +1,15 @@
-# ADR-847: Opt-in synthetic probes for routes without organic traffic
+# ADR-945: Opt-in synthetic probes for routes without organic traffic
 
 - Status: Accepted
 - Date: 2026-10-09
-- Related: ADR-454, ADR-459, ADR-482, ADR-843, ADR-846
+- Related: ADR-454, ADR-459, ADR-482, ADR-941, ADR-944
 - Amends: ADR-454 (observed evidence only)
 
 ## Context
 
-ADR-846 pools sparse organic traffic over the stage, but a critical route that
+ADR-944 pools sparse organic traffic over the stage, but a critical route that
 receives no traffic during a canary still has no evidence: it is never judged
-in report mode and holds an enforced rollout. The hosting smoke (ADR-482/843)
+in report mode and holds an enforced rollout. The hosting smoke (ADR-482/941)
 can reach an exact candidate, but only before promotion, and it deliberately
 bypasses customer auth gates, which is not acceptable for live traffic.
 

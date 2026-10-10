@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-845: opt-in automatic rollback on a confirmed production error-budget
+-- ADR-943: opt-in automatic rollback on a confirmed production error-budget
 -- incident. Existing monitors keep report-only behavior.
 ALTER TABLE route_monitors
  ADD COLUMN IF NOT EXISTS on_violation text NOT NULL DEFAULT 'report';

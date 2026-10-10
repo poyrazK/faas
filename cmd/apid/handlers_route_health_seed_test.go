@@ -61,7 +61,7 @@ func seedCanaryFixture(t *testing.T, e testEnv, slug string) (state.App, state.D
 	return app, stable, canary
 }
 
-// adr: 844
+// adr: 942
 // The first canary advance of an unconfigured app saves report-mode
 // selectors ranked by tenant reach on the stable deployment.
 func TestAdvanceCanarySeedsReportModeRouteHealth(t *testing.T) {
@@ -100,7 +100,7 @@ func TestAdvanceCanarySeedsReportModeRouteHealth(t *testing.T) {
 	}
 }
 
-// adr: 844
+// adr: 942
 func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 	rows := []sqlc.RequestTelemetryRouteCustomersRow{seedUsageRow("POST", "/checkout", 3, 100)}
 

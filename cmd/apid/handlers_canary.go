@@ -84,7 +84,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Best-effort and report-only: an unconfigured app gets observed critical
-	// routes before its first stage advances (ADR-844).
+	// routes before its first stage advances (ADR-942).
 	s.seedDefaultRouteHealthGate(r.Context(), acct, app, d)
 	var profileDecision api.ProfileCanaryGateDecision
 	if !requireWorkerLease {

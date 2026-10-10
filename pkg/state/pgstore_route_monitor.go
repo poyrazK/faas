@@ -499,7 +499,7 @@ func (s *PgStore) DeferRouteMonitor(ctx context.Context, t RouteMonitorTarget) e
 }
 
 // pgPooledRouteMonitor reads pooled_windows only for routes whose one-minute
-// windows were sparse, then re-evaluates with unchanged budgets (ADR-846).
+// windows were sparse, then re-evaluates with unchanged budgets (ADR-944).
 // One-minute windows and customer cohorts stay as evaluated.
 func pgPooledRouteMonitor(ctx context.Context, db sqlc.DBTX, accountID string, r *api.RouteMonitorReport) error {
 	windows, ok := routemonitor.PooledWindows(r.ObservationAnchor, r.CheckedAt)
