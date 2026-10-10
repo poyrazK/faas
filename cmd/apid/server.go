@@ -1396,6 +1396,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/forks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.createAppFork))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppFork))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppFork)))))
+	// ADR-732 fork exec: a command and its output can reach production data,
+	// so creating and reading one both need deploy:write and secrets:read.
+	mux.HandleFunc("POST /v1/apps/{slug}/forks/{id}/execs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.createAppForkExec))))))
+	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}/execs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.listAppForkExecs)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.getAppForkExec)))))
 	// ADR-733 crash snapshots. Opening one as a fork needs the fork route's
 	// deploy:write AND secrets:read.
 	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots/settings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCrashSnapshotSettings))))

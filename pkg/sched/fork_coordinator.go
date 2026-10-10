@@ -57,6 +57,9 @@ type ForkCoordinator struct {
 
 	mu   sync.Mutex
 	held map[string]string // fork id -> lease token
+
+	// execs runs ADR-732 fork exec commands; nil when not wired.
+	execs *forkExecs
 }
 
 // NewForkCoordinator builds a coordinator; Run starts it.
@@ -104,6 +107,7 @@ func (c *ForkCoordinator) Tick(ctx context.Context) {
 	c.takeOverAbandoned(ctx, now)
 	c.renewHeld(ctx, now)
 	c.claimQueued(ctx, now)
+	c.runForkExecs(ctx, now)
 }
 
 // Held reports how many forks this coordinator holds.

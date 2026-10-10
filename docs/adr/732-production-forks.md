@@ -120,6 +120,23 @@
   `LiveForkCaptureRetention` (the 4 h fork maximum plus 10 min) instead of
   7 days. Live forks need the capture coordinator, so apid answers
   `501 live_forks_not_enabled` unless `FAAS_CRASH_SNAPSHOTS=1`.
+- **Amendment (2026-10-10): fork exec.** `POST /v1/apps/{slug}/forks/
+  {id}/execs` runs one non-interactive command inside a running fork.
+  apid only records it (`app_fork_execs`, same scopes as creating the
+  fork: deploy:write + secrets:read, MFA; audited without arguments). The
+  fork coordinator that holds the fork's lease claims queued commands one
+  per fork and runs each in its own goroutine (so a long command never
+  delays lease renewal) through the fork node's vmmd: `ExecForkCommand`
+  reuses the app-task protocol (`apptaskproto`) and the host-initiated
+  vsock CONNECT, on a new guest port (1034). Every app VM's guest-init
+  listens there; only the host can reach a guest vsock port, and vmmd
+  refuses (`FailedPrecondition`) any instance whose lease is not
+  quarantined, so a serving instance is never reached. The command runs
+  with the app's working directory, user and manifest environment, but no
+  secrets (they were scrubbed at restore), bounded by `timeout_seconds`
+  (≤600) and `max_output_bytes` (≤1 MiB, tail kept). Commands of a fork
+  that ends, or that run past their timeout plus a minute, are failed.
+  Interactive sessions (a PTY) are out of scope.
 - **Rejected alternatives:**
   - **Networkless restore.** `SnapshotRef.networkless` removes the NIC, but
     Firecracker must restore the device set the snapshot was taken with, and

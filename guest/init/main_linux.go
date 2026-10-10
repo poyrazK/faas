@@ -147,6 +147,10 @@ func boot() error {
 		if err := startEventPublishProxy(slog.Default()); err != nil {
 			slog.Default().Warn("event publish proxy unavailable", "err", err)
 		}
+		// ADR-732: host-only channel for commands in a quarantined fork.
+		if err := startForkExecListener(slog.Default()); err != nil {
+			slog.Default().Warn("fork exec listener unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's

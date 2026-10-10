@@ -72,6 +72,12 @@ service Vmmd {
   // vmmd tears the disposable VM down before returning the terminal result.
   rpc ExecuteAppTask(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
 
+  // ExecForkCommand (ADR-732) runs one command inside a running quarantined
+  // fork instance over the guest's host-only fork exec port. task_id carries
+  // the fork exec id. Any instance that is not a live quarantined fork is
+  // refused with FailedPrecondition; the VM is never torn down.
+  rpc ExecForkCommand(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
+
   // ExecuteAppTaskStream is the live-output variant. The terminal frame is
   // metadata-only because stdout/stderr have already arrived as chunks.
   rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);

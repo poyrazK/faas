@@ -10286,6 +10286,41 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_fork_execs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_fork_execs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    fork_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    requested_by text NOT NULL,
+    command text[] NOT NULL,
+    command_shell boolean DEFAULT false NOT NULL,
+    timeout_seconds integer NOT NULL,
+    max_output_bytes integer NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    exit_code integer,
+    output_truncated boolean DEFAULT false NOT NULL,
+    stdout bytea DEFAULT '\x'::bytea NOT NULL,
+    stderr bytea DEFAULT '\x'::bytea NOT NULL,
+    failure_code text,
+    failure_message text,
+    created_at timestamp with time zone NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT app_fork_execs_command_chk CHECK (((cardinality(command) >= 1) AND (cardinality(command) <= 64) AND ((NOT command_shell) OR (cardinality(command) = 1)))),
+    CONSTRAINT app_fork_execs_failure_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 512)))),
+    CONSTRAINT app_fork_execs_output_chk CHECK ((((max_output_bytes >= 1024) AND (max_output_bytes <= 16777216)) AND ((octet_length(stdout) + octet_length(stderr)) <= max_output_bytes))),
+    CONSTRAINT app_fork_execs_requested_by_chk CHECK (((octet_length(requested_by) >= 1) AND (octet_length(requested_by) <= 256))),
+    CONSTRAINT app_fork_execs_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'timed_out'::text]))),
+    CONSTRAINT app_fork_execs_timeout_chk CHECK (((timeout_seconds >= 1) AND (timeout_seconds <= 3600))),
+    CONSTRAINT app_fork_execs_times_chk CHECK ((((started_at IS NULL) = (status = 'queued'::text)) AND ((finished_at IS NULL) = (status = ANY (ARRAY['queued'::text, 'running'::text]))) AND (updated_at >= created_at)))
+);
+
+
+--
 -- Name: app_forks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22048,6 +22083,14 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_fork_execs app_fork_execs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_fork_execs
+    ADD CONSTRAINT app_fork_execs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_forks app_forks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27183,6 +27226,20 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_fork_execs_fork_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_fork_execs_fork_idx ON public.app_fork_execs USING btree (fork_id, created_at DESC, id DESC);
+
+
+--
+-- Name: app_fork_execs_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_fork_execs_pending_idx ON public.app_fork_execs USING btree (created_at, id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
 
 
 --
@@ -36026,6 +36083,30 @@ ALTER TABLE ONLY public.app_forks
 
 ALTER TABLE ONLY public.app_forks
     ADD CONSTRAINT app_forks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_fork_execs app_fork_execs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_fork_execs
+    ADD CONSTRAINT app_fork_execs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_fork_execs app_fork_execs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_fork_execs
+    ADD CONSTRAINT app_fork_execs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_fork_execs app_fork_execs_fork_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_fork_execs
+    ADD CONSTRAINT app_fork_execs_fork_id_fkey FOREIGN KEY (fork_id) REFERENCES public.app_forks(id) ON DELETE CASCADE;
 
 
 --

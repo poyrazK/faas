@@ -34,6 +34,7 @@ const (
 	Vmmd_RestoreExecution_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_RestoreAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
+	Vmmd_ExecForkCommand_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/ExecForkCommand"
 	Vmmd_ExecuteAppTaskStream_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
 	Vmmd_WaitJobExit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
@@ -125,6 +126,11 @@ type VmmdClient interface {
 	// ExecuteAppTask dispatches exactly one command to a restored app-task VM.
 	// vmmd tears the disposable VM down before returning the terminal result.
 	ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (*ExecuteAppTaskResponse, error)
+	// ExecForkCommand (ADR-732) runs one command inside a running quarantined
+	// fork instance over the guest's host-only fork exec port. task_id carries
+	// the fork exec id. Any instance that is not a live quarantined fork is
+	// refused with FailedPrecondition; the VM is never torn down.
+	ExecForkCommand(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (*ExecuteAppTaskResponse, error)
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error)
@@ -648,6 +654,16 @@ func (c *vmmdClient) ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskReque
 	return out, nil
 }
 
+func (c *vmmdClient) ExecForkCommand(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (*ExecuteAppTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteAppTaskResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecForkCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
@@ -1091,6 +1107,11 @@ type VmmdServer interface {
 	// ExecuteAppTask dispatches exactly one command to a restored app-task VM.
 	// vmmd tears the disposable VM down before returning the terminal result.
 	ExecuteAppTask(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error)
+	// ExecForkCommand (ADR-732) runs one command inside a running quarantined
+	// fork instance over the guest's host-only fork exec port. task_id carries
+	// the fork exec id. Any instance that is not a live quarantined fork is
+	// refused with FailedPrecondition; the VM is never torn down.
+	ExecForkCommand(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error)
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error
@@ -1518,6 +1539,9 @@ func (UnimplementedVmmdServer) RestoreAppTask(context.Context, *RestoreAppTaskRe
 func (UnimplementedVmmdServer) ExecuteAppTask(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExecuteAppTask not implemented")
 }
+func (UnimplementedVmmdServer) ExecForkCommand(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecForkCommand not implemented")
+}
 func (UnimplementedVmmdServer) ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteAppTaskStream not implemented")
 }
@@ -1841,6 +1865,24 @@ func _Vmmd_ExecuteAppTask_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ExecuteAppTask(ctx, req.(*ExecuteAppTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecForkCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteAppTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecForkCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecForkCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecForkCommand(ctx, req.(*ExecuteAppTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2481,6 +2523,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExecuteAppTask",
 			Handler:    _Vmmd_ExecuteAppTask_Handler,
+		},
+		{
+			MethodName: "ExecForkCommand",
+			Handler:    _Vmmd_ExecForkCommand_Handler,
 		},
 		{
 			MethodName: "WaitJobExit",

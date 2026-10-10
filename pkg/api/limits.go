@@ -4127,6 +4127,16 @@ const (
 	LiveForkCaptureCooldown  = time.Minute
 	LiveForkCaptureRetention = AppForkMaxTTL + 10*time.Minute
 
+	// Fork exec (ADR-732): commands run inside a running fork. At most
+	// AppForkExecMaxPending are queued or running per fork; each runs for at
+	// most AppForkExecMaxTimeout and keeps at most AppForkExecMaxOutputBytes
+	// of combined stdout/stderr (the tail beyond that is dropped).
+	AppForkExecMaxPending         = 4
+	AppForkExecDefaultTimeout     = time.Minute
+	AppForkExecMaxTimeout         = 10 * time.Minute
+	AppForkExecDefaultOutputBytes = 64 << 10
+	AppForkExecMaxOutputBytes     = 1 << 20
+
 	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
 	// and then deleted. An app gets at most one capture in flight and no
 	// new request within CrashCaptureCooldown of the last; a capture that

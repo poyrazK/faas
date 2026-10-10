@@ -4457,6 +4457,98 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/apps/{slug}/forks/{id}/execs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: listAppForkExecs
+      summary: List the commands run in a production fork.
+      description: Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of commands to return (default 100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The fork's commands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppForkExec
+      summary: Run a command inside a running production fork.
+      description: |
+        Queues one command to run inside the running fork (ADR-732), in the
+        app's working directory and user, with its manifest environment and
+        no secrets. The fork cannot reach the network. Poll the returned
+        command for its exit code and the tail of its output. A command never
+        runs in a serving instance. Needs `secrets:read` as well as
+        `deploy:write`; every request is audited (without its arguments).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkExecRequest' }
+      responses:
+        '202':
+          description: Command queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The fork is not running, or already has 4 commands pending (`app_fork_exec_refused`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs/{exec_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+      - name: exec_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Canonical UUID for a fork command.
+    get:
+      tags: [apps]
+      operationId: getAppForkExec
+      summary: Read one command run in a production fork, with its result.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The command.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -55338,6 +55430,55 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/CrashCaptureResponse' }
+    CreateAppForkExecRequest:
+      description: Body of `POST /v1/apps/{slug}/forks/{id}/execs`.
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+          description: The argv to run. With `shell`, exactly one string run by the app's shell.
+        shell: { type: boolean, description: Run the single command string through the app's shell. }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 600, description: "Default 60." }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 1048576, description: "Combined stdout/stderr kept (the tail). Default 65536." }
+    AppForkExecResponse:
+      description: One command run inside a production fork (ADR-732) and, once finished, its result.
+      type: object
+      required: [id, fork_id, command, timeout_seconds, max_output_bytes, status, output_truncated, stdout, stderr, requested_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        fork_id: { type: string, format: uuid }
+        command: { type: array, items: { type: string } }
+        shell: { type: boolean }
+        timeout_seconds: { type: integer }
+        max_output_bytes: { type: integer }
+        status: { type: string, enum: [queued, running, succeeded, failed, timed_out] }
+        exit_code: { type: integer }
+        output_truncated: { type: boolean }
+        stdout: { type: string, description: Tail of standard output. }
+        stderr: { type: string, description: Tail of standard error. }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    AppForkExecListResponse:
+      description: A fork's commands, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkExecResponse' }
     CreateAppForkRequest:
       description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
       type: object

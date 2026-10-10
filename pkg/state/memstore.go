@@ -645,6 +645,8 @@ type MemStore struct {
 	appTasks map[string]AppTask
 	// appForks are production fork intents (ADR-732), keyed by fork id.
 	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
 	// crashCaptures / crashSettings are ADR-733 crash snapshots.
 	crashCaptures map[string]CrashCapture
 	crashSettings map[string]CrashSnapshotSettings

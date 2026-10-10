@@ -15757,6 +15757,81 @@ WHERE c.id = sqlc.arg(crash_capture_id)::uuid
   AND c.trigger = 'live_fork' AND c.status = 'requested'
 RETURNING *;
 
+-- name: InsertAppForkExec :one
+-- apid: a command for a running fork of the app, refused when the fork is
+-- not running or already has max_pending commands queued or running.
+INSERT INTO app_fork_execs (fork_id, account_id, app_id, requested_by, command, command_shell,
+                            timeout_seconds, max_output_bytes, created_at, updated_at)
+SELECT f.id, f.account_id, f.app_id, sqlc.arg(requested_by)::text, sqlc.arg(command)::text[],
+       sqlc.arg(command_shell)::boolean, sqlc.arg(timeout_seconds)::integer, sqlc.arg(max_output_bytes)::integer,
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM app_forks f
+WHERE f.id = sqlc.arg(fork_id)::uuid AND f.app_id = sqlc.arg(app_id)::uuid
+  AND f.account_id = sqlc.arg(account_id)::uuid AND f.status = 'running'
+  AND f.cancel_requested_at IS NULL AND f.expires_at > sqlc.arg(now)::timestamptz
+  AND (SELECT count(*) FROM app_fork_execs e
+       WHERE e.fork_id = f.id AND e.status IN ('queued', 'running')) < sqlc.arg(max_pending)::integer
+RETURNING *;
+
+-- name: ClaimNextAppForkExec :one
+-- schedd: the oldest queued command of a running fork this scheduler holds.
+UPDATE app_fork_execs
+SET status = 'running',
+    started_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT e.id FROM app_fork_execs e
+    JOIN app_forks f ON f.id = e.fork_id
+    WHERE e.status = 'queued' AND f.status = 'running' AND f.lease_owner = sqlc.arg(owner)::text
+      AND NOT EXISTS (SELECT 1 FROM app_fork_execs r WHERE r.fork_id = e.fork_id AND r.status = 'running')
+    ORDER BY e.created_at, e.id
+    FOR UPDATE OF e SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: FinishAppForkExec :one
+UPDATE app_fork_execs
+SET status = sqlc.arg(status)::text,
+    exit_code = sqlc.narg(exit_code)::integer,
+    output_truncated = sqlc.arg(output_truncated)::boolean,
+    stdout = sqlc.arg(stdout)::bytea,
+    stderr = sqlc.arg(stderr)::bytea,
+    failure_code = sqlc.narg(failure_code)::text,
+    failure_message = sqlc.narg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(exec_id)::uuid AND status = 'running'
+RETURNING *;
+
+-- name: FailOrphanedAppForkExecs :many
+-- schedd: commands whose fork is no longer running, or that ran past their
+-- timeout plus grace, end failed.
+UPDATE app_fork_execs e
+SET status = 'failed',
+    failure_code = 'fork_ended',
+    failure_message = 'the fork ended before the command finished',
+    started_at = coalesce(e.started_at, sqlc.arg(now)::timestamptz),
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(e.updated_at, sqlc.arg(now)::timestamptz)
+FROM app_forks f
+WHERE f.id = e.fork_id AND e.status IN ('queued', 'running')
+  AND (f.status <> 'running'
+       OR (e.status = 'running' AND e.started_at + make_interval(secs => e.timeout_seconds + sqlc.arg(grace_seconds)::integer) < sqlc.arg(now)::timestamptz))
+RETURNING e.*;
+
+-- name: GetAppForkExec :one
+SELECT * FROM app_fork_execs
+WHERE id = sqlc.arg(exec_id)::uuid AND fork_id = sqlc.arg(fork_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ListAppForkExecs :many
+SELECT * FROM app_fork_execs
+WHERE fork_id = sqlc.arg(fork_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND account_id = sqlc.arg(account_id)::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
 -- name: InsertAppForkFromCrashCapture :one
 -- ADR-733: a fork pinned to a ready, unexpired crash capture of the app. The
 -- fork's deployment is the capture's, which may no longer be live.

@@ -2136,7 +2136,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if owner == "" {
 			owner = "schedd"
 		}
-		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log)
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log).
+			WithForkExecs(store, engine)
 		log.Info("schedd: production forks enabled", "owner", owner)
 	}
 	loopErr := make(chan error, 1)

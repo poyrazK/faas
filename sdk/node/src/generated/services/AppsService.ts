@@ -6,6 +6,8 @@ import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppForkExecListResponse } from '../models/AppForkExecListResponse.js';
+import type { AppForkExecResponse } from '../models/AppForkExecResponse.js';
 import type { AppForkListResponse } from '../models/AppForkListResponse.js';
 import type { AppForkResponse } from '../models/AppForkResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
@@ -26,6 +28,7 @@ import type { CrashCaptureListResponse } from '../models/CrashCaptureListRespons
 import type { CrashCaptureResponse } from '../models/CrashCaptureResponse.js';
 import type { CrashSnapshotSettingsRequest } from '../models/CrashSnapshotSettingsRequest.js';
 import type { CrashSnapshotSettingsResponse } from '../models/CrashSnapshotSettingsResponse.js';
+import type { CreateAppForkExecRequest } from '../models/CreateAppForkExecRequest.js';
 import type { CreateAppForkRequest } from '../models/CreateAppForkRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -672,6 +675,156 @@ export class AppsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List the commands run in a production fork.
+   * Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+   * @returns AppForkExecListResponse The fork's commands.
+   * @throws ApiError
+   */
+  public static listAppForkExecs({
+    slug,
+    id,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Maximum number of commands to return (default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkExecListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Run a command inside a running production fork.
+   * Queues one command to run inside the running fork (ADR-732), in the
+   * app's working directory and user, with its manifest environment and
+   * no secrets. The fork cannot reach the network. Poll the returned
+   * command for its exit code and the tail of its output. A command never
+   * runs in a serving instance. Needs `secrets:read` as well as
+   * `deploy:write`; every request is audited (without its arguments).
+   *
+   * @returns AppForkExecResponse Command queued.
+   * @throws ApiError
+   */
+  public static createAppForkExec({
+    slug,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    requestBody: CreateAppForkExecRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The fork is not running, or already has 4 commands pending (\`app_fork_exec_refused\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one command run in a production fork, with its result.
+   * @returns AppForkExecResponse The command.
+   * @throws ApiError
+   */
+  public static getAppForkExec({
+    slug,
+    id,
+    execId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Canonical UUID for a fork command.
+     */
+    execId: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs/{exec_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'exec_id': execId,
       },
       errors: {
         401: `code: unauthorized`,

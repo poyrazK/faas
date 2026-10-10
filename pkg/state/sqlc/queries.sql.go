@@ -3622,6 +3622,57 @@ func (q *Queries) ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAp
 	return i, err
 }
 
+const claimNextAppForkExec = `-- name: ClaimNextAppForkExec :one
+UPDATE app_fork_execs
+SET status = 'running',
+    started_at = $1::timestamptz,
+    updated_at = greatest(updated_at, $1::timestamptz)
+WHERE id = (
+    SELECT e.id FROM app_fork_execs e
+    JOIN app_forks f ON f.id = e.fork_id
+    WHERE e.status = 'queued' AND f.status = 'running' AND f.lease_owner = $2::text
+      AND NOT EXISTS (SELECT 1 FROM app_fork_execs r WHERE r.fork_id = e.fork_id AND r.status = 'running')
+    ORDER BY e.created_at, e.id
+    FOR UPDATE OF e SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, fork_id, account_id, app_id, requested_by, command, command_shell, timeout_seconds, max_output_bytes, status, exit_code, output_truncated, stdout, stderr, failure_code, failure_message, created_at, started_at, finished_at, updated_at
+`
+
+type ClaimNextAppForkExecParams struct {
+	Now   pgtype.Timestamptz
+	Owner string
+}
+
+// schedd: the oldest queued command of a running fork this scheduler holds.
+func (q *Queries) ClaimNextAppForkExec(ctx context.Context, db DBTX, arg ClaimNextAppForkExecParams) (AppForkExec, error) {
+	row := db.QueryRow(ctx, claimNextAppForkExec, arg.Now, arg.Owner)
+	var i AppForkExec
+	err := row.Scan(
+		&i.ID,
+		&i.ForkID,
+		&i.AccountID,
+		&i.AppID,
+		&i.RequestedBy,
+		&i.Command,
+		&i.CommandShell,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.Status,
+		&i.ExitCode,
+		&i.OutputTruncated,
+		&i.Stdout,
+		&i.Stderr,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimNextCrashCapture = `-- name: ClaimNextCrashCapture :one
 UPDATE crash_captures
 SET status = 'capturing', updated_at = greatest(updated_at, $1::timestamptz)
@@ -13181,6 +13232,69 @@ func (q *Queries) FailNotificationClaim(ctx context.Context, db DBTX, arg FailNo
 	return result.RowsAffected(), nil
 }
 
+const failOrphanedAppForkExecs = `-- name: FailOrphanedAppForkExecs :many
+UPDATE app_fork_execs e
+SET status = 'failed',
+    failure_code = 'fork_ended',
+    failure_message = 'the fork ended before the command finished',
+    started_at = coalesce(e.started_at, $1::timestamptz),
+    finished_at = $1::timestamptz,
+    updated_at = greatest(e.updated_at, $1::timestamptz)
+FROM app_forks f
+WHERE f.id = e.fork_id AND e.status IN ('queued', 'running')
+  AND (f.status <> 'running'
+       OR (e.status = 'running' AND e.started_at + make_interval(secs => e.timeout_seconds + $2::integer) < $1::timestamptz))
+RETURNING e.id, e.fork_id, e.account_id, e.app_id, e.requested_by, e.command, e.command_shell, e.timeout_seconds, e.max_output_bytes, e.status, e.exit_code, e.output_truncated, e.stdout, e.stderr, e.failure_code, e.failure_message, e.created_at, e.started_at, e.finished_at, e.updated_at
+`
+
+type FailOrphanedAppForkExecsParams struct {
+	Now          pgtype.Timestamptz
+	GraceSeconds int32
+}
+
+// schedd: commands whose fork is no longer running, or that ran past their
+// timeout plus grace, end failed.
+func (q *Queries) FailOrphanedAppForkExecs(ctx context.Context, db DBTX, arg FailOrphanedAppForkExecsParams) ([]AppForkExec, error) {
+	rows, err := db.Query(ctx, failOrphanedAppForkExecs, arg.Now, arg.GraceSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppForkExec{}
+	for rows.Next() {
+		var i AppForkExec
+		if err := rows.Scan(
+			&i.ID,
+			&i.ForkID,
+			&i.AccountID,
+			&i.AppID,
+			&i.RequestedBy,
+			&i.Command,
+			&i.CommandShell,
+			&i.TimeoutSeconds,
+			&i.MaxOutputBytes,
+			&i.Status,
+			&i.ExitCode,
+			&i.OutputTruncated,
+			&i.Stdout,
+			&i.Stderr,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const failStaleCrashCaptures = `-- name: FailStaleCrashCaptures :many
 UPDATE crash_captures
 SET status = 'failed', failure_code = 'capture_timeout',
@@ -13572,6 +13686,71 @@ func (q *Queries) FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkP
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
 		&i.CrashCaptureID,
+	)
+	return i, err
+}
+
+const finishAppForkExec = `-- name: FinishAppForkExec :one
+UPDATE app_fork_execs
+SET status = $1::text,
+    exit_code = $2::integer,
+    output_truncated = $3::boolean,
+    stdout = $4::bytea,
+    stderr = $5::bytea,
+    failure_code = $6::text,
+    failure_message = $7::text,
+    finished_at = $8::timestamptz,
+    updated_at = greatest(updated_at, $8::timestamptz)
+WHERE id = $9::uuid AND status = 'running'
+RETURNING id, fork_id, account_id, app_id, requested_by, command, command_shell, timeout_seconds, max_output_bytes, status, exit_code, output_truncated, stdout, stderr, failure_code, failure_message, created_at, started_at, finished_at, updated_at
+`
+
+type FinishAppForkExecParams struct {
+	Status          string
+	ExitCode        pgtype.Int4
+	OutputTruncated bool
+	Stdout          []byte
+	Stderr          []byte
+	FailureCode     pgtype.Text
+	FailureMessage  pgtype.Text
+	Now             pgtype.Timestamptz
+	ExecID          pgtype.UUID
+}
+
+func (q *Queries) FinishAppForkExec(ctx context.Context, db DBTX, arg FinishAppForkExecParams) (AppForkExec, error) {
+	row := db.QueryRow(ctx, finishAppForkExec,
+		arg.Status,
+		arg.ExitCode,
+		arg.OutputTruncated,
+		arg.Stdout,
+		arg.Stderr,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.Now,
+		arg.ExecID,
+	)
+	var i AppForkExec
+	err := row.Scan(
+		&i.ID,
+		&i.ForkID,
+		&i.AccountID,
+		&i.AppID,
+		&i.RequestedBy,
+		&i.Command,
+		&i.CommandShell,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.Status,
+		&i.ExitCode,
+		&i.OutputTruncated,
+		&i.Stdout,
+		&i.Stderr,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -14894,6 +15073,52 @@ func (q *Queries) GetAppFork(ctx context.Context, db DBTX, arg GetAppForkParams)
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
 		&i.CrashCaptureID,
+	)
+	return i, err
+}
+
+const getAppForkExec = `-- name: GetAppForkExec :one
+SELECT id, fork_id, account_id, app_id, requested_by, command, command_shell, timeout_seconds, max_output_bytes, status, exit_code, output_truncated, stdout, stderr, failure_code, failure_message, created_at, started_at, finished_at, updated_at FROM app_fork_execs
+WHERE id = $1::uuid AND fork_id = $2::uuid
+  AND app_id = $3::uuid AND account_id = $4::uuid
+`
+
+type GetAppForkExecParams struct {
+	ExecID    pgtype.UUID
+	ForkID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) GetAppForkExec(ctx context.Context, db DBTX, arg GetAppForkExecParams) (AppForkExec, error) {
+	row := db.QueryRow(ctx, getAppForkExec,
+		arg.ExecID,
+		arg.ForkID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var i AppForkExec
+	err := row.Scan(
+		&i.ID,
+		&i.ForkID,
+		&i.AccountID,
+		&i.AppID,
+		&i.RequestedBy,
+		&i.Command,
+		&i.CommandShell,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.Status,
+		&i.ExitCode,
+		&i.OutputTruncated,
+		&i.Stdout,
+		&i.Stderr,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -17453,6 +17678,75 @@ func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkP
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
 		&i.CrashCaptureID,
+	)
+	return i, err
+}
+
+const insertAppForkExec = `-- name: InsertAppForkExec :one
+INSERT INTO app_fork_execs (fork_id, account_id, app_id, requested_by, command, command_shell,
+                            timeout_seconds, max_output_bytes, created_at, updated_at)
+SELECT f.id, f.account_id, f.app_id, $1::text, $2::text[],
+       $3::boolean, $4::integer, $5::integer,
+       $6::timestamptz, $6::timestamptz
+FROM app_forks f
+WHERE f.id = $7::uuid AND f.app_id = $8::uuid
+  AND f.account_id = $9::uuid AND f.status = 'running'
+  AND f.cancel_requested_at IS NULL AND f.expires_at > $6::timestamptz
+  AND (SELECT count(*) FROM app_fork_execs e
+       WHERE e.fork_id = f.id AND e.status IN ('queued', 'running')) < $10::integer
+RETURNING id, fork_id, account_id, app_id, requested_by, command, command_shell, timeout_seconds, max_output_bytes, status, exit_code, output_truncated, stdout, stderr, failure_code, failure_message, created_at, started_at, finished_at, updated_at
+`
+
+type InsertAppForkExecParams struct {
+	RequestedBy    string
+	Command        []string
+	CommandShell   bool
+	TimeoutSeconds int32
+	MaxOutputBytes int32
+	Now            pgtype.Timestamptz
+	ForkID         pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	MaxPending     int32
+}
+
+// apid: a command for a running fork of the app, refused when the fork is
+// not running or already has max_pending commands queued or running.
+func (q *Queries) InsertAppForkExec(ctx context.Context, db DBTX, arg InsertAppForkExecParams) (AppForkExec, error) {
+	row := db.QueryRow(ctx, insertAppForkExec,
+		arg.RequestedBy,
+		arg.Command,
+		arg.CommandShell,
+		arg.TimeoutSeconds,
+		arg.MaxOutputBytes,
+		arg.Now,
+		arg.ForkID,
+		arg.AppID,
+		arg.AccountID,
+		arg.MaxPending,
+	)
+	var i AppForkExec
+	err := row.Scan(
+		&i.ID,
+		&i.ForkID,
+		&i.AccountID,
+		&i.AppID,
+		&i.RequestedBy,
+		&i.Command,
+		&i.CommandShell,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.Status,
+		&i.ExitCode,
+		&i.OutputTruncated,
+		&i.Stdout,
+		&i.Stderr,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -24897,6 +25191,67 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 			&i.DeploymentTag,
 			&i.DeploymentCreatedAt,
 			&i.ImageDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppForkExecs = `-- name: ListAppForkExecs :many
+SELECT id, fork_id, account_id, app_id, requested_by, command, command_shell, timeout_seconds, max_output_bytes, status, exit_code, output_truncated, stdout, stderr, failure_code, failure_message, created_at, started_at, finished_at, updated_at FROM app_fork_execs
+WHERE fork_id = $1::uuid AND app_id = $2::uuid
+  AND account_id = $3::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT $4::integer
+`
+
+type ListAppForkExecsParams struct {
+	ForkID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) ListAppForkExecs(ctx context.Context, db DBTX, arg ListAppForkExecsParams) ([]AppForkExec, error) {
+	rows, err := db.Query(ctx, listAppForkExecs,
+		arg.ForkID,
+		arg.AppID,
+		arg.AccountID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppForkExec{}
+	for rows.Next() {
+		var i AppForkExec
+		if err := rows.Scan(
+			&i.ID,
+			&i.ForkID,
+			&i.AccountID,
+			&i.AppID,
+			&i.RequestedBy,
+			&i.Command,
+			&i.CommandShell,
+			&i.TimeoutSeconds,
+			&i.MaxOutputBytes,
+			&i.Status,
+			&i.ExitCode,
+			&i.OutputTruncated,
+			&i.Stdout,
+			&i.Stderr,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
