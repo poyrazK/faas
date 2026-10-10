@@ -262,9 +262,36 @@ Findings:
 Proposed shape for the next step, for the product owner to decide:
 
 1. `warn` and `block` evaluate headers and URI only, in-path, with the
-   trimmed rule set at PL1, behind its own latency measurement on the
+   trimmed rule set plus 913 and 921 (see the addendum) at PL1, behind its own latency measurement on the
    reference node.
 2. Bodies stay observe-only and sampled off-path, budgeted in worker time
    (amendment 2), with the full rule set.
 3. Adopt RE2 only if body samples turn out to be mostly long text fields;
    for JSON APIs it adds a dependency without a gain.
+
+### Amendment 3 addendum: which rule files a headers/URI blocker needs
+
+The trimmed set drops the families that matter most for headers-and-URI
+blocking, so each was added back and measured (same idle node, PL1, 3000
+requests). Probes: sqlmap and Nikto user agents, CRLF injection in the
+query, HTTP response splitting in the query, Transfer-Encoding plus
+Content-Length, encoded path traversal, and two benign requests.
+
+| Rule files | Scanners | CRLF / splitting | Traversal | TE+CL | p95 / p99 |
+|---|---|---|---|---|---|
+| full CRS | yes | yes | yes | 3 pts (below 5) | 1.63 / 3.52 ms |
+| trimmed | no | no | yes | — | 0.99 / 1.94 ms |
+| trimmed + 913 | yes | no | yes | — | 1.01 / 2.03 ms |
+| trimmed + 913 + 921 | yes | yes | yes | — | 1.07 / 2.06 ms |
+| trimmed + 913 + 920 + 921 | yes | yes | yes | 3 pts (below 5) | 1.19 / 2.59 ms |
+
+No configuration flagged the benign requests, and the body probes from the
+table above still detected in every configuration. Run-to-run variation
+on this node is about 0.15 ms at p95 (the full set measured 1.46 ms
+earlier).
+
+Trimmed plus 913 and 921 catches every header and URI probe the full rule
+set catches, at 1.07 ms p95 against 1.63 ms. 920 adds 0.12 ms p95 for one
+protocol warning that scores below the threshold on its own, so it is
+left out. The proposed in-path set is therefore: 901, 913, 921, 930, 931,
+932, 941 and 942 at PL1.
