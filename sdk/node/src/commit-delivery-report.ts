@@ -8,6 +8,7 @@ export interface CommitDeliveryReportItem {
   acceptance: CommitPublicationHistoryItem;
   evidence_status: string;
   subscribers: CommitSubscriberWaitResult[];
+  observed_at?: string;
   next_after?: string;
 }
 export interface CommitDeliveryReport {
@@ -16,8 +17,29 @@ export interface CommitDeliveryReport {
   items: CommitDeliveryReportItem[];
   counts: Record<string, number>;
   next_before?: string;
+  changes?: CommitDeliveryReportChange[];
   read_complete: boolean;
 }
+export interface CommitDeliveryReportChange {
+  event_id: string; subscription_id?: string; kind: 'evidence' | 'subscriber';
+  previous_status: string; status: string; previous_observed_at?: string; observed_at?: string;
+}
+function compareReports(previous: CommitDeliveryReport, current: CommitDeliveryReport): CommitDeliveryReportChange[] {
+  const changes: CommitDeliveryReportChange[] = [];
+  current.items.forEach((item, index) => {
+    const old = previous.items[index];
+    if (!old || !item.observed_at) return;
+    const common = { event_id: item.acceptance.event_id, previous_observed_at: old.observed_at, observed_at: item.observed_at };
+    if (old.evidence_status !== item.evidence_status && !['not_read', 'read_error'].includes(item.evidence_status)) changes.push({ ...common, kind: 'evidence', previous_status: old.evidence_status, status: item.evidence_status });
+    const statuses = new Map(old.subscribers.map(row => [row.subscription_id.toLowerCase(), row.status]));
+    for (const row of item.subscribers) {
+      const before = statuses.get(row.subscription_id.toLowerCase()) ?? 'unobserved';
+      if (before !== row.status) changes.push({ ...common, kind: 'subscriber', subscription_id: row.subscription_id, previous_status: before, status: row.status });
+    }
+  });
+  return changes;
+}
+
 export class CommitDeliveryReportError extends Error {
   constructor(readonly report: CommitDeliveryReport, cause: unknown) {
     super('Commit delivery report read failed; partial observations are attached', { cause });
@@ -27,15 +49,23 @@ export class CommitDeliveryReportError extends Error {
 
 /** Sample one history page and one guarded recipient page per publication. */
 export async function getCommitDeliveryReport(source: string, options: {
-  before?: string; limit?: number; subscriptionId?: string; timeoutMs?: number; signal?: AbortSignal; recipientPages?: number; resume?: CommitDeliveryReport;
+  before?: string; limit?: number; subscriptionId?: string; timeoutMs?: number; signal?: AbortSignal; recipientPages?: number; resume?: CommitDeliveryReport; refresh?: CommitDeliveryReport;
 } = {}): Promise<CommitDeliveryReport> {
-  const { before, limit = 50, subscriptionId, timeoutMs = 120000, signal, recipientPages = 1, resume } = options;
+  const { before, limit = 50, subscriptionId, timeoutMs = 120000, signal, recipientPages = 1, resume, refresh } = options;
   if (!Number.isInteger(recipientPages) || recipientPages < 1 || recipientPages > 20 || !Number.isInteger(limit) || limit < 1 || limit > 200 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000
     || (subscriptionId !== undefined && (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(subscriptionId)
       || subscriptionId === '00000000-0000-0000-0000-000000000000'))) throw new TypeError('invalid delivery report options');
-  if (resume && (before !== undefined || options.limit !== undefined || subscriptionId !== undefined)) throw new TypeError('resume fixes publication selection and subscriber filter');
-  const report: CommitDeliveryReport = resume ? structuredClone(resume) : { source_id: source, subscription_id: subscriptionId?.toLowerCase(), items: [], counts: {}, read_complete: false };
-  if (resume && (report.source_id !== source || !Array.isArray(report.items) || report.items.length > 200)) throw new TypeError('invalid saved report');
+  if (resume && refresh) throw new TypeError('choose resume or refresh');
+  const saved = resume ?? refresh;
+  if (saved && (before !== undefined || options.limit !== undefined || subscriptionId !== undefined)) throw new TypeError('resume fixes publication selection and subscriber filter');
+  const report: CommitDeliveryReport = saved ? structuredClone(saved) : { source_id: source, subscription_id: subscriptionId?.toLowerCase(), items: [], counts: {}, read_complete: false };
+  if (saved && (report.source_id !== source || !Array.isArray(report.items) || report.items.length > 200)) throw new TypeError('invalid saved report');
+  if (resume) delete report.changes;
+  const baseline = refresh ? structuredClone(report) : undefined;
+  if (refresh) {
+    report.changes = [];
+    for (const item of report.items) { item.subscribers = []; item.evidence_status = 'not_read'; delete item.next_after; delete item.observed_at; }
+  }
   report.read_complete = false;
   function recount() { report.counts = Object.create(null); for (const item of report.items) for (const row of item.subscribers) report.counts[row.status] = (report.counts[row.status] ?? 0) + 1; }
   recount();
@@ -51,13 +81,13 @@ export async function getCommitDeliveryReport(source: string, options: {
     try { return await request; } finally { controller.signal.removeEventListener('abort', cancel); }
   }
   try {
-    if (resume) {
+    if (saved) {
       const binding = await read(QueuesService.getCommitSource({ source }));
       if (binding.destination !== 'event') throw new TypeError('saved report requires an event source');
       const ids = new Set<string>();
       const uuid = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
       if (report.subscription_id && (!uuid.test(report.subscription_id) || report.subscription_id === '00000000-0000-0000-0000-000000000000')) throw new TypeError('invalid saved subscriber filter');
-      for (const item of report.items) {
+      for (const item of (baseline ?? report).items) {
         const a = item.acceptance, p = a.publication;
         if (!p || a.source_id.toLowerCase() !== source.toLowerCase() || !uuid.test(a.event_id) || ids.has(a.event_id.toLowerCase())
           || p.source !== `app.${binding.app_id}` || p.id !== `commit.${source.toLowerCase()}.${a.event_id.toLowerCase()}` || !p.accepted_at
@@ -109,6 +139,7 @@ export async function getCommitDeliveryReport(source: string, options: {
             }
             report.counts[row.status] = (report.counts[row.status] ?? 0) + 1;
           }
+          item.observed_at = new Date().toISOString();
           item.next_after = page.next_after;
           if (report.subscription_id && !item.subscribers.length && item.evidence_status === 'available') {
             item.subscribers.push({ publication, subscription_id: report.subscription_id, status: 'not_targeted' });
@@ -118,14 +149,16 @@ export async function getCommitDeliveryReport(source: string, options: {
         } catch (error) {
           const status = (error as { status?: number }).status;
           if (!controller.signal.aborted && (status === 404 || status === 409)) {
+            item.observed_at = new Date().toISOString();
             item.evidence_status = status === 404 ? 'unavailable' : 'acceptance_replaced';
             break;
           } else { item.evidence_status = 'read_error'; throw error; }
         }
       }
     }
+    if (baseline) report.changes = compareReports(baseline, report);
     report.read_complete = true;
     return report;
-  } catch (error) { throw new CommitDeliveryReportError(report, error); }
+  } catch (error) { if (baseline) report.changes = compareReports(baseline, report); throw new CommitDeliveryReportError(report, error); }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }

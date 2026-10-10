@@ -763,3 +763,8 @@ Use `GetCommitDeliveryReportWithPages` to traverse more recipient pages, or
 `ResumeCommitDeliveryReport(ctx, saved, pages)` to continue the saved selection.
 The per-publication budget is 1–20 pages. Resume merges subscribers without
 counting an observation twice; saved completed coverage is not refreshed.
+
+`RefreshCommitDeliveryReport(ctx, saved, pages)` rereads the saved selection,
+returning fresh counts, observation timestamps, and changes against the baseline.
+Missing evidence does not carry forward saved successes. Resume and refresh
+have separate coverage semantics; see the Commit documentation.

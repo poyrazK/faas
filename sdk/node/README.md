@@ -2369,3 +2369,7 @@ Delivery reports accept `recipientPages` (1–20, default 1) and `resume: savedR
 Resume fixes selection and filter, merges recipients without duplicate counts,
 and checks the source under the current account. Omit selection/filter options
 when resuming; saved completed coverage is not refreshed.
+
+Use `getCommitDeliveryReport(source, { refresh: savedReport, recipientPages: 5 })`
+to reread a fixed selection. Fresh counts, `observed_at`, and `changes` describe
+new observations; omit resume and selection/filter options. The baseline is copied.

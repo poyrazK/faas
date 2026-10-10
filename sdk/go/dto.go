@@ -382,3 +382,5 @@ type CommitSubscriberWaitResult = api.CommitSubscriberWaitResult
 
 type CommitDeliveryReport = api.CommitDeliveryReport
 type CommitDeliveryReportItem = api.CommitDeliveryReportItem
+
+type CommitDeliveryReportChange = api.CommitDeliveryReportChange

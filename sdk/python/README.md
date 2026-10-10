@@ -785,3 +785,7 @@ Delivery reports accept `recipient_pages` (1–20, default 1) and `resume=saved_
 Resume fixes selection/filter and merges recipients without duplicate counts.
 Omit selection/filter arguments when resuming; saved completed coverage is not
 refreshed. The saved dictionary is copied before reads.
+
+Use `aget_commit_delivery_report(client, source, refresh=saved_report,
+recipient_pages=5)` to reread a fixed selection. Fresh counts, observation times,
+and changes describe new evidence. Omit resume and selection/filter arguments.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // CommitDeliveryReportItem keeps acceptance separate from sampled delivery evidence.
@@ -13,17 +14,96 @@ type CommitDeliveryReportItem struct {
 	Acceptance     CommitPublicationHistoryItem `json:"acceptance"`
 	EvidenceStatus string                       `json:"evidence_status"`
 	Subscribers    []CommitSubscriberWaitResult `json:"subscribers"`
+	ObservedAt     *time.Time                   `json:"observed_at,omitempty"`
 	NextAfter      string                       `json:"next_after,omitempty"`
 }
 
 // CommitDeliveryReport is a bounded live read, never an aggregate delivery acknowledgement.
 type CommitDeliveryReport struct {
-	SourceID       string                     `json:"source_id"`
-	SubscriptionID string                     `json:"subscription_id,omitempty"`
-	Items          []CommitDeliveryReportItem `json:"items"`
-	Counts         map[string]int             `json:"counts"`
-	NextBefore     string                     `json:"next_before,omitempty"`
-	ReadComplete   bool                       `json:"read_complete"`
+	SourceID       string                       `json:"source_id"`
+	SubscriptionID string                       `json:"subscription_id,omitempty"`
+	Items          []CommitDeliveryReportItem   `json:"items"`
+	Counts         map[string]int               `json:"counts"`
+	NextBefore     string                       `json:"next_before,omitempty"`
+	Changes        []CommitDeliveryReportChange `json:"changes,omitempty"`
+	ReadComplete   bool                         `json:"read_complete"`
+}
+
+// CommitDeliveryReportChange compares local saved observations with newly read evidence.
+type CommitDeliveryReportChange struct {
+	EventID            string     `json:"event_id"`
+	SubscriptionID     string     `json:"subscription_id,omitempty"`
+	Kind               string     `json:"kind"`
+	PreviousStatus     string     `json:"previous_status"`
+	Status             string     `json:"status"`
+	PreviousObservedAt *time.Time `json:"previous_observed_at,omitempty"`
+	ObservedAt         *time.Time `json:"observed_at,omitempty"`
+}
+
+// RefreshCommitDeliveryReport rereads the saved selection from its first recipient pages.
+// Counts contain only fresh observations; a partial refresh never carries old successes forward.
+func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return saved, err
+	}
+	var out CommitDeliveryReport
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return saved, err
+	}
+	var baseline CommitDeliveryReport
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		return CommitDeliveryReport{}, err
+	}
+	out.ReadComplete = false
+	out.Counts = map[string]int{}
+	validationErr := error(nil)
+	if pages < 1 || pages > CommitDeliveryReportPagesMax || len(out.Items) > CommitPublicationHistoryPageMax {
+		validationErr = ErrValidation("invalid recipient page budget or saved report")
+	} else {
+		validationErr = c.validateCommitReportResume(ctx, baseline)
+	}
+	for i := range out.Items {
+		item := &out.Items[i]
+		item.Subscribers = []CommitSubscriberWaitResult{}
+		item.EvidenceStatus = "not_read"
+		item.NextAfter = ""
+		item.ObservedAt = nil
+	}
+	out.Changes = nil
+	if validationErr != nil {
+		return out, validationErr
+	}
+	out, err = c.continueCommitDeliveryReport(ctx, out, pages, false)
+	out.Changes = compareCommitDeliveryReports(baseline, out)
+	return out, err
+}
+
+func compareCommitDeliveryReports(saved, current CommitDeliveryReport) []CommitDeliveryReportChange {
+	changes := []CommitDeliveryReportChange{}
+	for i, item := range current.Items {
+		previous := saved.Items[i]
+		if item.ObservedAt == nil {
+			continue
+		}
+		if item.EvidenceStatus != previous.EvidenceStatus && item.EvidenceStatus != "read_error" && item.EvidenceStatus != "not_read" {
+			changes = append(changes, CommitDeliveryReportChange{EventID: item.Acceptance.EventID, Kind: "evidence", PreviousStatus: previous.EvidenceStatus, Status: item.EvidenceStatus, PreviousObservedAt: previous.ObservedAt, ObservedAt: item.ObservedAt})
+		}
+		before := map[string]string{}
+		for _, row := range previous.Subscribers {
+			before[strings.ToLower(row.SubscriptionID)] = row.Status
+		}
+		for _, row := range item.Subscribers {
+			old, ok := before[strings.ToLower(row.SubscriptionID)]
+			if !ok {
+				old = "unobserved"
+			}
+			if old != row.Status {
+				changes = append(changes, CommitDeliveryReportChange{EventID: item.Acceptance.EventID, SubscriptionID: row.SubscriptionID, Kind: "subscriber", PreviousStatus: old, Status: row.Status, PreviousObservedAt: previous.ObservedAt, ObservedAt: item.ObservedAt})
+			}
+		}
+	}
+	return changes
 }
 
 // GetCommitDeliveryReport samples one history page and one recipient page per publication.
@@ -76,6 +156,7 @@ func (c *Client) ResumeCommitDeliveryReport(ctx context.Context, saved CommitDel
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return saved, err
 	}
+	out.Changes = nil
 	return c.continueCommitDeliveryReport(ctx, out, pages, true)
 }
 
@@ -122,8 +203,12 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 				var apiErr *APIError
 				switch {
 				case errors.As(err, &apiErr) && apiErr.Problem.Status == 404:
+					at := time.Now().UTC()
+					item.ObservedAt = &at
 					item.EvidenceStatus = "unavailable"
 				case errors.As(err, &apiErr) && apiErr.Problem.Status == 409:
+					at := time.Now().UTC()
+					item.ObservedAt = &at
 					item.EvidenceStatus = "acceptance_replaced"
 				default:
 					item.EvidenceStatus = "read_error"
@@ -180,6 +265,8 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 				}
 				out.Counts[row.Status]++
 			}
+			at := time.Now().UTC()
+			item.ObservedAt = &at
 			item.NextAfter = page.NextAfter
 			item.EvidenceStatus = "available"
 			if page.NextAfter != "" || !page.SnapshotCaptured {

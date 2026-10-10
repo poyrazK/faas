@@ -746,3 +746,57 @@ SDK support preserves existing one-page defaults:
   resume=saved, timeout=120)`. With `resume`, omit selection/filter options.
 
 Resume errors preserve partial reports using the same SDK error contracts.
+
+### Refresh a saved delivery report
+
+```sh
+gregale commit delivery-report SOURCE --refresh report.json \
+  --recipient-pages 5 --timeout 2m > report-refreshed.json
+```
+
+Refresh rereads the same saved publication selection and subscriber filter from
+the first recipient pages. It preserves the original acceptance-time guards,
+checks the source under the current account, and uses the same 1–20 page budget
+and 64 MiB CLI input limit as resume. `--refresh` and `--resume` are mutually
+exclusive; omit `--before`, `--limit` and `--subscription-id` with either mode.
+Write refreshed output to a different file from the input.
+
+Refresh clears previous recipient coverage and counts before reading. Its
+counts describe only newly observed subscriber outcomes, including on a partial
+read failure. Saved successes are not carried into unread or unavailable rows.
+Earlier observations remain in the input file. Missing recipients on a partial
+page are unknown; refresh does not infer completion, removal or recovery from
+absence. It continues to classify original executions independently of generic
+replay recovery and backfills.
+
+Every report item now records optional `observed_at`, the client's UTC time of
+its latest successful receipt-page read or conclusive unavailable/replaced
+response. This is not the application's execution time or a snapshot timestamp
+shared by all subscribers. Earlier reports without this field remain valid.
+
+Refresh includes `changes` for differences between saved and newly observed
+statuses. `kind: evidence` describes changes in coverage/availability;
+`kind: subscriber` describes an observed subscriber outcome. Each change has
+`event_id`, optional `subscription_id`, `previous_status`, `status`, and available
+previous/current observation timestamps. A newly observed subscriber has
+`previous_status: unobserved`; that is new evidence, not proof of a new delivery.
+Unobserved previous recipients are not reported as removed. Unchanged outcomes
+produce no change entry. Changes compare editable local evidence, not signed
+platform history. Read errors remain errors and do not become delivery changes.
+
+If refreshed coverage is partial, resume the refreshed output to extend those
+fresh observations. Resume omits the preceding refresh's change summary because
+it does not retain the earlier comparison baseline. Run another refresh against
+a saved baseline when a new outcome comparison is needed.
+
+SDK equivalents:
+
+- Go: `client.RefreshCommitDeliveryReport(ctx, saved, pages)`, returning fresh
+  partial observations alongside any error.
+- Node: `getCommitDeliveryReport(source, { refresh: saved, recipientPages: 5,
+  timeoutMs: 120000 })`; omit selection/filter and resume options.
+- Python: `await aget_commit_delivery_report(client, source, refresh=saved,
+  recipient_pages=5, timeout=120)`; omit selection/filter and resume options.
+
+All helpers copy the saved report. Existing resume behavior preserves earlier
+observations; refresh gives an explicit way to inspect the same selection again.

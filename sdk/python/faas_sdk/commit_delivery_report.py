@@ -35,6 +35,7 @@ async def aget_commit_delivery_report(
     timeout: float = 120,
     recipient_pages: int = 1,
     resume: dict[str, Any] | None = None,
+    refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read one history page and one guarded recipient page per publication.
 
@@ -55,12 +56,15 @@ async def aget_commit_delivery_report(
         or not 0 < timeout <= 86400
     ):
         raise ValueError("invalid delivery report options")
+    if resume is not None and refresh is not None:
+        raise ValueError("choose resume or refresh")
+    saved = resume if resume is not None else refresh
     report: dict[str, Any] = (
-        copy.deepcopy(resume)
-        if resume is not None
+        copy.deepcopy(saved)
+        if saved is not None
         else {"source_id": source, "items": [], "counts": {}, "read_complete": False}
     )
-    if resume is not None and (
+    if saved is not None and (
         before is not None
         or subscription is not None
         or limit != 50
@@ -68,11 +72,21 @@ async def aget_commit_delivery_report(
         or len(report.get("items", [])) > 200
     ):
         raise ValueError("resume fixes publication selection and subscriber filter")
-    subscription = report.get("subscription_id") if resume is not None else subscription
+    subscription = report.get("subscription_id") if saved is not None else subscription
     if subscription:
         subscription = str(UUID(subscription))
         if UUID(subscription).int == 0:
             raise ValueError("invalid saved subscriber filter")
+    if resume is not None:
+        report.pop("changes", None)
+    baseline = copy.deepcopy(report) if refresh is not None else None
+    if refresh is not None:
+        report["changes"] = []
+        for item in report["items"]:
+            item["subscribers"] = []
+            item["evidence_status"] = "not_read"
+            item.pop("next_after", None)
+            item.pop("observed_at", None)
     report["read_complete"] = False
 
     def recount() -> None:
@@ -88,7 +102,7 @@ async def aget_commit_delivery_report(
     current: dict[str, Any] | None = None
     try:
         async with asyncio.timeout(timeout):
-            if resume is not None:
+            if saved is not None:
                 binding = await get_commit_source.asyncio_detailed(client=client, source=UUID(source))
                 if (
                     binding.status_code != 200
@@ -97,7 +111,7 @@ async def aget_commit_delivery_report(
                 ):
                     raise ValueError("saved report requires an accessible event source")
                 ids: set[str] = set()
-                for item in report["items"]:
+                for item in (baseline if baseline is not None else report)["items"]:
                     a, publication = item["acceptance"], item["acceptance"].get("publication")
                     if (
                         not publication
@@ -157,6 +171,7 @@ async def aget_commit_delivery_report(
                         limit=200,
                     )
                     if response.status_code in {404, 409}:
+                        current["observed_at"] = datetime.datetime.now(datetime.UTC).isoformat()
                         current["evidence_status"] = (
                             "unavailable" if response.status_code == 404 else "acceptance_replaced"
                         )
@@ -207,6 +222,7 @@ async def aget_commit_delivery_report(
                                 del report["counts"][old]
                             current["subscribers"][index] = row
                         report["counts"][row["status"]] = report["counts"].get(row["status"], 0) + 1
+                    current["observed_at"] = datetime.datetime.now(datetime.UTC).isoformat()
                     current["next_after"] = page.get("next_after", "")
                     if subscription and not current["subscribers"] and current["evidence_status"] == "available":
                         current["subscribers"].append(
@@ -216,9 +232,49 @@ async def aget_commit_delivery_report(
                         report["counts"]["not_targeted"] = report["counts"].get("not_targeted", 0) + 1
                     if not current.get("next_after"):
                         break
+            if baseline is not None:
+                report["changes"] = _compare_reports(baseline, report)
             report["read_complete"] = True
             return report
     except Exception as error:
         if current is not None:
             current["evidence_status"] = "read_error"
+        if baseline is not None:
+            report["changes"] = _compare_reports(baseline, report)
         raise CommitDeliveryReportError(report) from error
+
+
+def _compare_reports(previous: dict[str, Any], current: dict[str, Any]) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    for old, item in zip(previous["items"], current["items"], strict=True):
+        if not item.get("observed_at"):
+            continue
+        common = {"event_id": item["acceptance"]["event_id"], "observed_at": item["observed_at"]}
+        if old.get("observed_at"):
+            common["previous_observed_at"] = old["observed_at"]
+        if old["evidence_status"] != item["evidence_status"] and item["evidence_status"] not in {
+            "not_read",
+            "read_error",
+        }:
+            changes.append(
+                {
+                    **common,
+                    "kind": "evidence",
+                    "previous_status": old["evidence_status"],
+                    "status": item["evidence_status"],
+                }
+            )
+        statuses = {row["subscription_id"].lower(): row["status"] for row in old["subscribers"]}
+        for row in item["subscribers"]:
+            before = statuses.get(row["subscription_id"].lower(), "unobserved")
+            if before != row["status"]:
+                changes.append(
+                    {
+                        **common,
+                        "kind": "subscriber",
+                        "subscription_id": row["subscription_id"],
+                        "previous_status": before,
+                        "status": row["status"],
+                    }
+                )
+    return changes

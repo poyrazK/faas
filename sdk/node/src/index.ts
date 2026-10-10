@@ -298,4 +298,4 @@ export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerReque
 
 export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
 
-export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem } from './commit-delivery-report.js';
+export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem, type CommitDeliveryReportChange } from './commit-delivery-report.js';

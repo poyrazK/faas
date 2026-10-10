@@ -16,6 +16,7 @@ import (
 
 func cmdCommitDeliveryReport(args []string) int {
 	fs := newFlagSet("commit delivery-report", flag.ContinueOnError)
+	refresh := fs.String("refresh", "", "reread a saved selection; mutually exclusive with resume")
 	resume := fs.String("resume", "", "saved report JSON file; fixes publication selection and subscriber filter")
 	pages := fs.Int("recipient-pages", 1, "recipient pages per publication (1..20)")
 	before := fs.String("before", "", "history next_before cursor")
@@ -35,7 +36,10 @@ func cmdCommitDeliveryReport(args []string) int {
 			return printErr("Invalid Commit identity", api.ErrValidation("identity must be a nonzero UUID"))
 		}
 	}
-	if *resume != "" {
+	if *resume != "" && *refresh != "" {
+		return printErr("Choose resume or refresh", fmt.Errorf("saved report modes are mutually exclusive"))
+	}
+	if *resume != "" || *refresh != "" {
 		invalid := false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "before" || f.Name == "limit" || f.Name == "subscription-id" {
@@ -43,7 +47,7 @@ func cmdCommitDeliveryReport(args []string) int {
 			}
 		})
 		if invalid {
-			return printErr("Resume fixes report selection", fmt.Errorf("omit before, limit and subscription-id"))
+			return printErr("Saved report fixes selection", fmt.Errorf("omit before, limit and subscription-id"))
 		}
 	}
 	client, err := authedClient()
@@ -55,15 +59,23 @@ func cmdCommitDeliveryReport(args []string) int {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	var out api.CommitDeliveryReport
-	if *resume != "" {
-		saved, readErr := readCommitDeliveryReport(*resume)
+	if *resume != "" || *refresh != "" {
+		path := *resume
+		if *refresh != "" {
+			path = *refresh
+		}
+		saved, readErr := readCommitDeliveryReport(path)
 		if readErr != nil {
 			return printErr("Cannot read saved report", readErr)
 		}
 		if saved.SourceID != positional[0] {
 			return printErr("Saved report source mismatch", fmt.Errorf("use the original source UUID"))
 		}
-		out, err = client.ResumeCommitDeliveryReport(ctx, saved, *pages)
+		if *refresh != "" {
+			out, err = client.RefreshCommitDeliveryReport(ctx, saved, *pages)
+		} else {
+			out, err = client.ResumeCommitDeliveryReport(ctx, saved, *pages)
+		}
 	} else {
 		out, err = client.GetCommitDeliveryReportWithPages(ctx, positional[0], *before, *subscription, *limit, *pages)
 	}
