@@ -222,6 +222,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL (required)")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-967)")
 
 	// headers
 	var headersReqAdd, headersReqSet multiFlag
@@ -404,6 +405,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		RewriteTo:                         *rewriteTo,
 		RedirectStatus:                    *redirectStatus,
 		RedirectTo:                        *redirectTo,
+		ActionTemplate:                    *actionTemplate,
 		RedirectHeaders:                   redirectHeaders,
 		HeadersReqAdd:                     headersReqAdd,
 		HeadersReqSet:                     headersReqSet,
@@ -586,7 +588,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "template")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -624,6 +626,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-967)")
 	var headersReqAdd, headersReqSet, headersReqRm multiFlag
 	var headersResAdd, headersResSet, headersResRm multiFlag
 	fs.Var(&headersReqAdd, "headers-request-add", "kind=headers: request header to add")
@@ -853,6 +856,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			RewriteTo:                         *rewriteTo,
 			RedirectStatus:                    *redirectStatus,
 			RedirectTo:                        *redirectTo,
+			ActionTemplate:                    *actionTemplate,
 			RedirectHeaders:                   redirectHeaders,
 			HeadersReqAdd:                     headersReqAdd,
 			HeadersReqSet:                     headersReqSet,
@@ -1002,6 +1006,7 @@ type edgeRuleActionInputs struct {
 	// redirect
 	RedirectStatus  int
 	RedirectTo      string
+	ActionTemplate  bool // ADR-967
 	RedirectHeaders []string
 	// headers
 	HeadersReqAdd, HeadersReqSet []string
@@ -1128,7 +1133,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		if err != nil {
 			return nil, err
 		}
-		a := api.EdgeRuleRedirectAction{StatusCode: in.RedirectStatus, To: in.RedirectTo, Headers: headers}
+		a := api.EdgeRuleRedirectAction{StatusCode: in.RedirectStatus, To: in.RedirectTo, Headers: headers, Template: in.ActionTemplate}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
 		}
@@ -1141,6 +1146,13 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		res, err := parseHeaderOps(in.HeadersResAdd, in.HeadersResSet, in.HeadersResRm, "response")
 		if err != nil {
 			return nil, err
+		}
+		if in.ActionTemplate {
+			for _, ops := range [][]api.EdgeRuleHeaderOp{req, res} {
+				for i := range ops {
+					ops[i].Template = ops[i].Action != "remove"
+				}
+			}
 		}
 		a := api.EdgeRuleHeadersAction{RequestHeaders: req, ResponseHeaders: res}
 		if err := a.Validate(); err != nil {
@@ -1673,7 +1685,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"rewrite-from", "rewrite-to",
-		"redirect-status", "redirect-to", "redirect-header",
+		"redirect-status", "redirect-to", "redirect-header", "template",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
 		"headers-response-add", "headers-response-set", "headers-response-remove",
 		"cors-allow-origin", "cors-allow-method", "cors-allow-header", "cors-expose-header",

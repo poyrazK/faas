@@ -61997,6 +61997,13 @@ components:
           type: object
           additionalProperties: { type: string }
           description: 'Headers stamped on the redirect response.'
+        template:
+          type: boolean
+          description: |
+            ADR-967. Expand ${name} request values in `to` and in the
+            header values (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>; $$ is a
+            literal $). The target must start with a literal "/" or
+            "http(s)://", and only ${host} may appear before the path.
 
     EdgeRuleHeaderOp:
       description: 'One header mutation. `action` ∈ {add,set,remove}.'
@@ -62008,6 +62015,12 @@ components:
         action:
           type: string
           enum: [add, set, remove]
+        template:
+          type: boolean
+          description: |
+            ADR-967. Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
+            $$ is a literal $). Control characters are dropped and each
+            value is capped at 1 KiB. Not allowed with action=remove.
 
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'

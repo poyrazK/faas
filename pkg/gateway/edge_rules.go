@@ -188,6 +188,9 @@ type EdgeRuleRedirectResolved struct {
 	StatusCode   int
 	To           string
 	Headers      map[string]string
+	// ADR-967: set when the redirect is templated.
+	ToTemplate      *api.EdgeRuleTemplate
+	HeaderTemplates map[string]*api.EdgeRuleTemplate
 }
 
 // EdgeRuleHeaderOp is one mutation a kind=headers rule carries.
@@ -198,6 +201,8 @@ type EdgeRuleHeaderOp struct {
 	Name   string
 	Value  string
 	Action string
+	// Template, when set, renders Value per request (ADR-967).
+	Template *api.EdgeRuleTemplate
 }
 
 // EdgeRuleHeadersResolved is the kind=headers subset. PR 4 applies
