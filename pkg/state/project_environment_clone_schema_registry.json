@@ -787,6 +787,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_route_priorities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "routes",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_route_removal_policies",
     "columns": [
       "account_id",

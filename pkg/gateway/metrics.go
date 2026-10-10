@@ -720,6 +720,9 @@ type Metrics struct {
 	// serviceWakeAhead (ADR-946) counts speculative wake-ahead decisions by
 	// outcome. used/unused close the loop on whether a prediction helped.
 	serviceWakeAhead *prometheus.CounterVec
+	// routePriorityQueue (ADR-947) counts warm-capacity queue entries by route
+	// priority class and outcome.
+	routePriorityQueue *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
 	// app into a production service because no same-PR sibling was available.
 	// This is the fleet-wide signal that preview traffic is exercising live
@@ -1552,6 +1555,12 @@ func NewMetrics() *Metrics {
 				Help: "Opt-in service wake-ahead decisions (ADR-946) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
 			}, []string{"outcome"},
 		),
+		routePriorityQueue: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_route_priority_queue_total",
+				Help: "Warm-capacity queue entries by route priority class (critical, normal, bulk) and outcome: queued, displacing (entered by taking a lower-class waiter's place), displaced (lost its place to a higher class), rejected (queue full).",
+			}, []string{"class", "outcome"},
+		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_wake_latency_seconds",
@@ -1922,6 +1931,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.serviceWakeAhead)
+	reg.MustRegister(m.routePriorityQueue)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -3541,6 +3551,14 @@ func (m *Metrics) IncServiceWakeAhead(outcome string) {
 		return
 	}
 	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
+}
+
+// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-947).
+func (m *Metrics) IncRoutePriorityQueue(class, outcome string) {
+	if m == nil || m.routePriorityQueue == nil {
+		return
+	}
+	m.routePriorityQueue.WithLabelValues(class, outcome).Inc()
 }
 
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {

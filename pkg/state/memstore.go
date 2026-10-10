@@ -842,7 +842,9 @@ type MemStore struct {
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
 	// serviceWakeAhead holds ADR-946 opt-ins keyed by app ID.
-	serviceWakeAhead    map[string]memServiceWakeAhead
+	serviceWakeAhead map[string]memServiceWakeAhead
+	// routePriorities holds ADR-947 saved route priorities keyed by app ID.
+	routePriorities     map[string]memRoutePriorities
 	platformTenantUsage map[string]APIConsumerUsageBucket
 	// Consumer plans (ADR-847): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.

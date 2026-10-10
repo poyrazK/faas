@@ -2814,6 +2814,11 @@ var cliCommands = []cliCommand{
 			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
 			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
 			{Name: "enable", Short: "with --apply, create the rules enabled"},
+		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
+			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
+			{Name: "clear", Short: "save no priorities, not even the route-health default"},
+			{Name: "reset", Short: "delete saved priorities and use the route-health default"},
 		}}, {Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save version 2 route intent after comparing the current revision", Examples: []string{"gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0"}, Flags: []cliFlag{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},

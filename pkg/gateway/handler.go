@@ -964,6 +964,9 @@ type Handler struct {
 	burstPressure *burstPressure
 	// wakeAhead is the opt-in ADR-946 wake-ahead runner; nil disables it.
 	wakeAhead *wakeAheadRunner
+	// routePriorities orders the warm-capacity queue by route (ADR-947);
+	// nil keeps it FIFO.
+	routePriorities *routePriorityCache
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
 	// picker selects a concrete instance. Instance slots and FIFO ordering are
 	// gateway-local; production installs a shared admission backend so the
@@ -7092,7 +7095,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),

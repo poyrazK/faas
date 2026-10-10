@@ -1630,6 +1630,8 @@ export type { RoutePolicyPlan } from './models/RoutePolicyPlan.js';
 export type { RoutePolicyPlanRequest } from './models/RoutePolicyPlanRequest.js';
 export type { RoutePolicyReceipt } from './models/RoutePolicyReceipt.js';
 export type { RoutePolicyRuleUsage } from './models/RoutePolicyRuleUsage.js';
+export type { RoutePrioritiesResponse } from './models/RoutePrioritiesResponse.js';
+export type { RoutePriorityRule } from './models/RoutePriorityRule.js';
 export type { RoutePublicException } from './models/RoutePublicException.js';
 export type { RouteRemovalApproval } from './models/RouteRemovalApproval.js';
 export type { RouteRemovalCheck } from './models/RouteRemovalCheck.js';
@@ -1713,6 +1715,7 @@ export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatform
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';
 export type { SetRouteHealthGateRequest } from './models/SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './models/SetRouteMonitorRequest.js';
+export type { SetRoutePrioritiesRequest } from './models/SetRoutePrioritiesRequest.js';
 export type { SetRouteRemovalPolicyRequest } from './models/SetRouteRemovalPolicyRequest.js';
 export type { SetServiceWakeAheadRequest } from './models/SetServiceWakeAheadRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
