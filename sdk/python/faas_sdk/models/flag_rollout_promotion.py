@@ -25,7 +25,7 @@ class FlagRolloutPromotion:
     flag: str
     rule_id: str
     config_version: int
-    """Current version after promotion"""
+    """Current version after promotion, unchanged when held or complete."""
     current_stage: int
     """One-based ordinal of the currently configured stage."""
     stage_count: int

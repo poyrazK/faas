@@ -1,5 +1,11 @@
 // ADR-713: authorize business access before the receipt helper, including replays.
 import {customerOperationRequestFromHeaders} from './sdk.mjs';
+import {
+  State_order_fulfillment__pending,
+  State_order_fulfillment__fulfilled,
+  Milestone_fulfill_order__order_fulfilled,
+  transition_order_fulfillment__fulfill_order__pending__fulfilled as fulfillTransition,
+} from './workflow-bindings.mjs';
 
 export class OrderRequestError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -24,12 +30,14 @@ export async function fulfillOrder({runtime, pool, request}) {
       // Recheck ownership under the row lock: authorization can change after the first read.
       const locked = await tx.query('SELECT status FROM public.example_orders WHERE id = $1 AND platform_tenant_id = $2 FOR UPDATE', owner);
       if (locked.rows.length !== 1) throw new OrderRequestError(404, 'Order not found');
-      if (locked.rows[0].status === 'pending') {
-        await tx.query("UPDATE public.example_orders SET status = 'fulfilled', fulfillment_count = 1 WHERE id = $1 AND platform_tenant_id = $2", owner);
-        tx.workflowTransition('order-fulfillment', input.workflow_run_id, 'pending', 'fulfilled');
+      const fact = {order_id: input.order_id, workflow_run_id: input.workflow_run_id, status: State_order_fulfillment__fulfilled};
+      if (locked.rows[0].status === State_order_fulfillment__pending) {
+        await tx.query('UPDATE public.example_orders SET status = $3, fulfillment_count = 1 WHERE id = $1 AND platform_tenant_id = $2', [...owner, State_order_fulfillment__fulfilled]);
+        fulfillTransition(tx, input.workflow_run_id, locked.rows[0].status, fact);
+      } else {
+        tx.milestone(Milestone_fulfill_order__order_fulfilled, fact);
       }
-      tx.milestone('order-fulfilled', {order_id: input.order_id, workflow_run_id: input.workflow_run_id, status: 'fulfilled'});
-      return {order_id: input.order_id, status: 'fulfilled'};
+      return {order_id: input.order_id, status: State_order_fulfillment__fulfilled};
     });
     // Report the committed stage once per execution; recovery has a fresh reporting fence.
     await runtime.progress({report_id: 'order-fulfilled', stage: 'complete', completed: 1, total: 1});

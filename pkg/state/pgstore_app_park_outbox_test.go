@@ -1,7 +1,10 @@
 package state_test
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -98,5 +101,44 @@ func TestPgAppLifecycleTransitionHealthTracksPendingOnly(t *testing.T) {
 	terminal, err := store.AppLifecycleTransitionHealth(ctx)
 	if err != nil || terminal.WakePendingCount != 0 || terminal.WakeOldestPendingAt != nil {
 		t.Fatalf("terminal wake health = %+v, %v", terminal, err)
+	}
+}
+
+func TestPgAppParkRejectsDeploymentCommittedDuringRetirement(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	_, appID, firstID := seedLiveDeploy(t, store, ctx)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Deployment creation and conditional parking serialize on this app row.
+	if _, err := tx.Exec(ctx, `select id from apps where id=$1::uuid for update`, appID); err != nil {
+		t.Fatal(err)
+	}
+	secondID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `insert into deployments (id, app_id, image_digest, status, created_at) values ($1::uuid,$2::uuid,'sha256:new-generation','pending',clock_timestamp())`, secondID, appID); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := store.BeginAppParkTransitionIfDeployment(ctx, appID, state.AppActive, firstID)
+		result <- err
+	}()
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale park: %v", err)
+	}
+	app, err := store.AppByID(ctx, appID)
+	if err != nil || app.Status != state.AppActive {
+		t.Fatalf("new generation was parked: %s %v", app.Status, err)
+	}
+	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, appID, state.AppActive, secondID); err != nil || !changed {
+		t.Fatalf("current park: changed=%v err=%v", changed, err)
+	}
+	if _, _, err := store.BeginAppParkTransitionIfDeployment(ctx, appID, state.AppEvictedCold, firstID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale retry: %v", err)
 	}
 }

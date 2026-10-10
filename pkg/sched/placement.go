@@ -259,9 +259,15 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 				best = n
 			}
 		}
+		// A node that already caches the snapshot restores it locally; any
+		// other node first streams memory, vmstate and the padded app layer
+		// from object storage, which production measured at 6-60 s against
+		// ~0.4 s for a local restore. So locality yields only to a peer with
+		// at least twice the CPU headroom, not to every small imbalance; an
+		// idle peer still wins over a crowded snapshot node.
 		if restorePressureCanSelect(best, candidates, scoreRequest) &&
 			(r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
-				cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
+				2*cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 			return placementForNode(best, usedMB[best.ID]), nil
 		}
 	}

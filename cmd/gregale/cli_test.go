@@ -26,6 +26,8 @@ import (
 // --- apiBase / tokenPath / saveToken / loadToken ----------------------------
 
 func TestAPIBase_Default(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_API", "")
 	if got := apiBase(); got != defaultAPIBase {
 		t.Errorf("apiBase() = %q, want %q", got, defaultAPIBase)

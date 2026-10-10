@@ -5,7 +5,7 @@
 import type { AutomationSimulationMockAttempt } from './AutomationSimulationMockAttempt.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
+ * Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation.
  */
 export type SimulateAutomationRequest = {
   definition: WorkflowSpec;
@@ -22,7 +22,11 @@ export type SimulateAutomationRequest = {
    */
   mock_item_outputs?: Record<string, Array<any>>;
   /**
-   * Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+   * Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for failed items when continuing.
+   */
+  mock_item_attempts?: Record<string, Record<string, Array<AutomationSimulationMockAttempt>>>;
+  /**
+   * Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
    */
   mock_attempts?: Record<string, Array<AutomationSimulationMockAttempt>>;
 };

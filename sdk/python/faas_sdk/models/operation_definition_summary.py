@@ -24,6 +24,10 @@ from ..models.operation_definition_summary_recovery import (
     OperationDefinitionSummaryRecovery,
     check_operation_definition_summary_recovery,
 )
+from ..models.operation_definition_summary_transaction_receipt import (
+    OperationDefinitionSummaryTransactionReceipt,
+    check_operation_definition_summary_transaction_receipt,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -60,6 +64,12 @@ class OperationDefinitionSummary:
     http_transaction_version: OperationDefinitionSummaryHttpTransactionVersion | Unset = UNSET
     """Opt-in customer-owned HTTP transaction protocol. Absence means ordinary HTTP execution."""
     release_id: UUID | Unset = UNSET
+    job: str | Unset = UNSET
+    """Discovered account-owned single-task batch Job; accepted work retains its execution snapshot."""
+    workflow: str | Unset = UNSET
+    """Workflow execution selected by this discoverable Operations definition."""
+    transaction_receipt: OperationDefinitionSummaryTransactionReceipt | Unset = UNSET
+    """Discovered customer transaction receipt contract for atomic HTTP completion."""
     completion_webhook_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -111,6 +121,14 @@ class OperationDefinitionSummary:
         if not isinstance(self.release_id, Unset):
             release_id = str(self.release_id)
 
+        job = self.job
+
+        workflow = self.workflow
+
+        transaction_receipt: str | Unset = UNSET
+        if not isinstance(self.transaction_receipt, Unset):
+            transaction_receipt = self.transaction_receipt
+
         completion_webhook_id: str | Unset = UNSET
         if not isinstance(self.completion_webhook_id, Unset):
             completion_webhook_id = str(self.completion_webhook_id)
@@ -143,6 +161,12 @@ class OperationDefinitionSummary:
             field_dict["http_transaction_version"] = http_transaction_version
         if release_id is not UNSET:
             field_dict["release_id"] = release_id
+        if job is not UNSET:
+            field_dict["job"] = job
+        if workflow is not UNSET:
+            field_dict["workflow"] = workflow
+        if transaction_receipt is not UNSET:
+            field_dict["transaction_receipt"] = transaction_receipt
         if completion_webhook_id is not UNSET:
             field_dict["completion_webhook_id"] = completion_webhook_id
 
@@ -212,6 +236,17 @@ class OperationDefinitionSummary:
         else:
             release_id = UUID(_release_id)
 
+        job = d.pop("job", UNSET)
+
+        workflow = d.pop("workflow", UNSET)
+
+        _transaction_receipt = d.pop("transaction_receipt", UNSET)
+        transaction_receipt: OperationDefinitionSummaryTransactionReceipt | Unset
+        if isinstance(_transaction_receipt, Unset):
+            transaction_receipt = UNSET
+        else:
+            transaction_receipt = check_operation_definition_summary_transaction_receipt(_transaction_receipt)
+
         _completion_webhook_id = d.pop("completion_webhook_id", UNSET)
         completion_webhook_id: UUID | Unset
         if isinstance(_completion_webhook_id, Unset):
@@ -237,6 +272,9 @@ class OperationDefinitionSummary:
             subject=subject,
             http_transaction_version=http_transaction_version,
             release_id=release_id,
+            job=job,
+            workflow=workflow,
+            transaction_receipt=transaction_receipt,
             completion_webhook_id=completion_webhook_id,
         )
 

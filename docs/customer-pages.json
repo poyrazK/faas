@@ -7,6 +7,7 @@
     {"path": "alerts", "source": "docs/alerts.md"},
     {"path": "api-hosting", "source": "docs/api-hosting-roadmap.md"},
     {"path": "api-hosting-openapi", "source": "docs/api-hosting-openapi.md"},
+    {"path": "api-monetization", "source": "docs/api-monetization.md"},
     {"path": "apps", "source": "docs/apps.md"},
     {"path": "auth", "source": "docs/auth.md"},
     {"path": "billing", "source": "docs/billing.md"},

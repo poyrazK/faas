@@ -465,7 +465,7 @@ func (h *Handler) proxyAttempt(
 	// An authenticated candidate smoke owns its retry loop in imaged. The
 	// generic picker can select the currently serving sibling revision and
 	// must never replay a candidate probe there under the original identity.
-	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" {
+	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" || isRouteProbe(r.Context()) {
 		forward(w, r, target)
 		return
 	}

@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationSubmissionScope } from './OperationSubmissionScope.js';
+import type { OperationTenantIdentity } from './OperationTenantIdentity.js';
 /**
  * Submission owned by the authenticated platform tenant.
  */
@@ -11,5 +13,7 @@ export type OperationStartRequest = {
    * JSON input matching the pinned definition.
    */
   input: any;
+  expected_identity?: OperationTenantIdentity;
+  expected_scope?: OperationSubmissionScope;
 };
 

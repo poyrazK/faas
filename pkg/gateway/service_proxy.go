@@ -232,6 +232,11 @@ type ServiceProxyDeploymentValidator func(ctx context.Context, appID, deployment
 // authorized internal service call.
 type ServiceProxyChaosResolver func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
 
+// ServiceProxyChaosObserver receives a matched request or connection. Its
+// implementation must be fast and non-blocking because the proxy invokes it
+// on the fault path.
+type ServiceProxyChaosObserver func(runID, callerAppID, generation string, rule chaos.Rule)
+
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
 // small handler factory so selection and retry behavior can be exercised
@@ -261,6 +266,7 @@ type ServiceProxyConfig struct {
 	// fails closed when the override header is present.
 	ValidateDeployment ServiceProxyDeploymentValidator
 	ResolveChaos       ServiceProxyChaosResolver
+	ObserveChaosMatch  ServiceProxyChaosObserver
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
@@ -314,6 +320,7 @@ type ServiceProxy struct {
 	wakeDeployment        ServiceProxyDeploymentWaker
 	validateDeployment    ServiceProxyDeploymentValidator
 	resolveChaos          ServiceProxyChaosResolver
+	observeChaosMatch     ServiceProxyChaosObserver
 	observeRequest        func(*http.Request, ServiceRequestObservation)
 	metrics               *Metrics
 	endpointTTL           time.Duration
@@ -414,6 +421,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		wakeDeployment:        cfg.WakeDeployment,
 		validateDeployment:    cfg.ValidateDeployment,
 		resolveChaos:          cfg.ResolveChaos,
+		observeChaosMatch:     cfg.ObserveChaosMatch,
 		observeRequest:        cfg.ObserveRequest,
 		metrics:               cfg.Metrics,
 		endpointTTL:           ttl,
@@ -801,6 +809,9 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
 			return true
 		}
+		if rule.IsTCP() {
+			continue
+		}
 		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {
 			continue
 		}
@@ -809,6 +820,9 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			attribute.String("gregale.chaos.kind", rule.Kind),
 		)
 		p.metrics.ObserveServiceChaosInjection(rule.Kind)
+		if p.observeChaosMatch != nil {
+			p.observeChaosMatch(runID, callerAppID, lease.Generation, rule)
+		}
 		w.Header().Set("X-Gregale-Chaos-Injected", rule.Kind)
 		switch rule.Kind {
 		case chaos.KindLatency:
@@ -1194,6 +1208,31 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID s
 	p.invalidateEndpoints(appID)
 	endpoints, err := p.endpoints(ctx, appID)
 	return serviceEndpointsForDeployment(endpoints, deploymentID), err
+}
+
+// ErrNoServiceTarget reports that an app has no routable instance even after
+// a wake.
+var ErrNoServiceTarget = errors.New("gateway: no routable instance after wake")
+
+// WakeTarget returns one routable instance of appID, waking the app when none
+// is running, addressed at the given guest port. The ADR-741 debugger tunnel
+// uses it to reach a developer app's inspector port through the same
+// endpoint registry and wake path as internal service calls.
+func (p *ServiceProxy) WakeTarget(ctx context.Context, appID string, port int) (Target, error) {
+	endpoints, err := p.endpoints(ctx, appID)
+	if err != nil {
+		return Target{}, err
+	}
+	if endpoints = serviceEndpointsForDeployment(endpoints, ""); len(endpoints) == 0 {
+		if endpoints, err = p.wakeAndRefresh(ctx, appID, ""); err != nil {
+			return Target{}, err
+		}
+	}
+	if len(endpoints) == 0 {
+		return Target{}, ErrNoServiceTarget
+	}
+	endpoint := endpoints[0]
+	return Target{AppID: appID, NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, DeploymentID: endpoint.DeploymentID, Port: port}, nil
 }
 
 func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {

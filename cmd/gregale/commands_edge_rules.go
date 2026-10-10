@@ -884,7 +884,7 @@ func cmdEdgeRulesRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--yes]", "edge-rules")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {

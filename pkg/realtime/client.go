@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -117,6 +119,17 @@ func (c *Client) Send(ctx context.Context, connectionID string, message Message)
 	}, nil)
 }
 
+// SendToPrincipal queues a live-only message for every active connection
+// matching the endpoint and verified principal on this realtime node.
+func (c *Client) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message Message) (PrincipalSendStatus, error) {
+	var status PrincipalSendStatus
+	err := c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/principals:send", api.ManagedRealtimePrincipalMessageRequest{
+		Principal: request.Principal, DataBase64: encodeMessage(message), Binary: message.Binary,
+		MessageID: request.MessageID, RequestReceipt: request.RequestReceipt, Delivery: request.Delivery,
+	}, &status)
+	return status, err
+}
+
 // CloseConnection closes one live connection.
 func (c *Client) CloseConnection(ctx context.Context, connectionID, reason string) error {
 	return c.do(ctx, http.MethodPost, "/internal/connections/"+pathPart(connectionID)+":close", struct {
@@ -206,6 +219,14 @@ func (c *Client) PublishRetainedWithStatus(ctx context.Context, endpointID, chan
 		status.Subscribers = response.Queued
 	}
 	return status, err
+}
+
+// BroadcastEphemeral queues one transient v2 presence or signal event to local
+// v2 subscribers. The frame is not written to retained channel history.
+func (c *Client) BroadcastEphemeral(ctx context.Context, endpointID, channel string, frame EphemeralFrame) error {
+	return c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/channels/"+pathPart(channel)+":ephemeral", struct {
+		Frame EphemeralFrame `json:"frame"`
+	}{Frame: frame}, nil)
 }
 
 // Connections returns the local connection registry.

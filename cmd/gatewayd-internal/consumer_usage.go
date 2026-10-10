@@ -86,6 +86,7 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 					Audit:              audit,
 					DiscoveredRoute:    event.DiscoveredRoute,
 					DiscoveredAtUnixMs: event.DiscoveredAtUnixMs,
+					BillingRoute:       event.BillingRoute,
 				})
 				cancel()
 				if err == nil && receipt == nil {

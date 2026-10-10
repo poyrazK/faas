@@ -425,6 +425,8 @@ func run(args []string) (status int) {
 		return cmdFlags(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
+	case "consumers":
+		return cmdConsumers(args[1:])
 	case "edge-rules":
 		// PR 2 of Edge Rules rollout: customer CLI wrapper around the
 		// /v1/apps/{slug}/edge-rules CRUD surface (PR 1 #799). Sub-
@@ -773,7 +775,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
-	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		usage += " <" + command.subcommandChoice() + ">"
 	}
 	for _, positional := range command.Positionals {

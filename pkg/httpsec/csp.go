@@ -105,7 +105,9 @@ func buildCSP(nonce string) string {
 		b.WriteString(" ")
 		b.WriteString(h)
 	}
-	b.WriteString("'")
+	// Host sources stay unquoted. A trailing quote here once made every
+	// browser log "invalid source: 'https://*.stripe.com''" and drop the
+	// Stripe form-action host (production hunt #8, H8-27).
 	return b.String()
 }
 

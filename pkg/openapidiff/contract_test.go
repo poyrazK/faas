@@ -1,6 +1,7 @@
 package openapidiff
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -92,6 +93,168 @@ paths:
 	message := (&GateError{Diff: diff}).Error()
 	if !strings.Contains(message, "type_change") || !strings.Contains(message, "get /v1/users 200") {
 		t.Fatalf("gate error = %q, want stable break anchor", message)
+	}
+}
+
+func TestCompareSnapshotsBlocksChangedResponseUnionAsIncomplete(t *testing.T) {
+	load := func(schema string) json.RawMessage {
+		t.Helper()
+		spec, err := LoadBytes([]byte(schema))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _, err := MarshalSnapshot(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	baseline := load(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string","enum":["alpha","beta"]},{"type":"integer"}]}}}}}}}}}`)
+	proposed := load(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string","enum":["alpha","gamma"]},{"type":"integer"}]}}}}}}}}}`)
+	if strings.Contains(string(baseline), "alpha") || strings.Contains(string(baseline), "beta") {
+		t.Fatalf("snapshot leaked raw enum values: %s", baseline)
+	}
+
+	diff, err := CompareSnapshots(baseline, proposed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Breaks) != 0 || len(diff.Unknowns) != 1 || !diff.Blocking() {
+		t.Fatalf("diff = %+v, want one blocking unknown and no confirmed break", diff)
+	}
+	message := (&GateError{Diff: diff}).Error()
+	if !strings.Contains(message, "incomplete comparison") || !strings.Contains(message, "unsupported_union_change") {
+		t.Fatalf("gate error = %q, want an explicit incomplete comparison", message)
+	}
+}
+
+func TestCompareSnapshotsMarksLegacyUnionBaselineIncomplete(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string","enum":["alpha","beta"]},{"type":"integer"}]}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := MarshalSnapshot(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyValue any
+	if err := json.Unmarshal(current, &legacyValue); err != nil {
+		t.Fatal(err)
+	}
+	var removeMarkers func(any)
+	removeMarkers = func(value any) {
+		switch value := value.(type) {
+		case map[string]any:
+			delete(value, "unsupported_facets_sha256")
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		case []any:
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		}
+	}
+	removeMarkers(legacyValue)
+	legacy, err := json.Marshal(legacyValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := CompareSnapshots(legacy, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Blocking() || len(diff.Breaks) != 0 || len(diff.Unknowns) != 1 ||
+		diff.Unknowns[0].Code != SchemaUnknownUnionBaselineIncomplete {
+		t.Fatalf("legacy diff = %+v, want union_baseline_incomplete", diff)
+	}
+}
+
+func TestCompareSnapshotsMarksLegacyUnsupportedSchemaBaselineIncomplete(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"state":{"type":"string","enum":["ready","failed"]}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := MarshalSnapshot(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyValue any
+	if err := json.Unmarshal(current, &legacyValue); err != nil {
+		t.Fatal(err)
+	}
+	var removeMarkers func(any)
+	removeMarkers = func(value any) {
+		switch value := value.(type) {
+		case map[string]any:
+			delete(value, "unsupported_facets_sha256")
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		case []any:
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		}
+	}
+	removeMarkers(legacyValue)
+	legacy, err := json.Marshal(legacyValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := CompareSnapshots(legacy, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Blocking() || len(diff.Breaks) != 0 || len(diff.Unknowns) != 1 ||
+		diff.Unknowns[0].PathInSchema != "" ||
+		diff.Unknowns[0].Code != SchemaUnknownSchemaBaselineIncomplete {
+		t.Fatalf("legacy schema diff = %+v, want schema_baseline_incomplete", diff)
+	}
+}
+
+func TestCompareSnapshotsMarksLegacySimpleSchemaBaselineIncomplete(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"string"}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := MarshalSnapshot(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyValue any
+	if err := json.Unmarshal(current, &legacyValue); err != nil {
+		t.Fatal(err)
+	}
+	var removeMarkers func(any)
+	removeMarkers = func(value any) {
+		switch value := value.(type) {
+		case map[string]any:
+			delete(value, "unsupported_facets_sha256")
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		case []any:
+			for _, child := range value {
+				removeMarkers(child)
+			}
+		}
+	}
+	removeMarkers(legacyValue)
+	legacy, err := json.Marshal(legacyValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := CompareSnapshots(legacy, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Blocking() || len(diff.Breaks) != 0 || len(diff.Unknowns) != 1 ||
+		diff.Unknowns[0].Code != SchemaUnknownSchemaBaselineIncomplete {
+		t.Fatalf("legacy simple schema diff = %+v, want schema_baseline_incomplete", diff)
 	}
 }
 
@@ -229,5 +392,32 @@ paths:
 	check, err := CheckPromotion(t.Context(), store, app.ID, "pending", "prod")
 	if !errors.Is(err, ErrSnapshotBaselineMissing) || check.HasBaseline {
 		t.Fatalf("CheckPromotion = check=%+v err=%v, want pre-import baseline reset", check, err)
+	}
+}
+
+func TestCompareSnapshotsFindsIncompleteNestedFacetFingerprint(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{"openapi":"3.1.0","paths":{"/items":{"get":{"responses":{"200":{"content":{"application/json":{"schema":{"type":"object","properties":{"value":{"type":"string","enum":["a","b"]}}}}}}}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := MarshalSnapshot(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := UnmarshalSnapshot(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline.Paths["/items"].Methods["get"].Responses["200"].Content["application/json"].Properties["value"].UnsupportedFacetsSHA256 = ""
+	partial, _, err := MarshalSnapshot(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := CompareSnapshots(partial, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Blocking() || len(diff.Unknowns) != 1 || diff.Unknowns[0].PathInSchema != "properties.value" || diff.Unknowns[0].Code != SchemaUnknownSchemaBaselineIncomplete {
+		t.Fatalf("missing nested fingerprint must remain incomplete even with a complete parent: %+v", diff)
 	}
 }

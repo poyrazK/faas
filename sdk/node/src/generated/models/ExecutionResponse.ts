@@ -26,11 +26,11 @@ export type ExecutionResponse = {
   packages?: Record<string, string>;
   id: string;
   /**
-   * Caller-generated workflow grouping id
+   * Caller-generated workflow grouping id, when assigned.
    */
   workflow_id?: string;
   /**
-   * Optional step label
+   * Optional step label, when assigned.
    */
   step_label?: string;
   status: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled';
@@ -41,7 +41,7 @@ export type ExecutionResponse = {
    */
   artifacts?: Array<ExecutionArtifact>;
   /**
-   * Terminal JSON result
+   * Terminal JSON result, omitted when unavailable.
    */
   result?: any;
   stdout?: string;

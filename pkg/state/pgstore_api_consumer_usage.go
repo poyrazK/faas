@@ -99,6 +99,19 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	if err != nil {
 		return false, err
 	}
+	if route := billingRouteFor(event); route != "" {
+		_, err = tx.Exec(ctx, `
+			insert into api_consumer_route_usage_minutes
+			       (account_id, app_id, consumer_key, route, window_start, billable_units)
+			values ($1::uuid, $2::uuid, $3, $4, $5, $6)
+			on conflict (account_id, app_id, consumer_key, window_start, route) do update
+			set billable_units = api_consumer_route_usage_minutes.billable_units + excluded.billable_units,
+			    updated_at = now()`,
+			event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart.UTC(), event.BillableUnits)
+		if err != nil {
+			return false, err
+		}
+	}
 	if event.Audit != nil {
 		if err := insertRequestAuditTx(ctx, tx, event); err != nil {
 			return false, err
@@ -113,6 +126,32 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 		return false, err
 	}
 	return inserted, nil
+}
+
+func (s *PgStore) ListAPIConsumerRouteUsage(ctx context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerRouteUsageBucket, error) {
+	if accountID == "" || appID == "" || consumerKey == "" || !until.After(since) {
+		return nil, ErrNotFound
+	}
+	rows, err := s.pool.Query(ctx, `
+		select window_start, route, billable_units
+		  from api_consumer_route_usage_minutes
+		 where account_id = $1::uuid and app_id = $2::uuid and consumer_key = $3
+		   and window_start >= $4 and window_start < $5
+		 order by window_start, route`, accountID, appID, consumerKey, since.UTC(), until.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIConsumerRouteUsageBucket
+	for rows.Next() {
+		var bucket APIConsumerRouteUsageBucket
+		if err := rows.Scan(&bucket.WindowStart, &bucket.Route, &bucket.BillableUnits); err != nil {
+			return nil, err
+		}
+		bucket.WindowStart = bucket.WindowStart.UTC()
+		out = append(out, bucket)
+	}
+	return out, rows.Err()
 }
 
 // insertRequestAuditTx is idempotent but refuses a reused event ID from a

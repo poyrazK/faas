@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -66,9 +68,17 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	positions := make(map[string]map[int]bool)
 	workflowStates := make(map[string][]string)
 	workflowTerminalStates := make(map[string][]string)
+	workflowEscalations := make(map[string]map[string]api.OperationWorkflowBlockerEscalationPolicy)
+	workflowStateSLA := make(map[string]map[string]int64)
+	workflowStateSLAWarnings := make(map[string]map[string]int64)
 	workflowStateStaleAfter := make(map[string]map[string]int64)
 	workflowTransitions := make(map[string][]api.OperationWorkflowTransition)
+	workflowTransitionsDeclared := make(map[string]bool)
+	workflowVersions := make(map[string]int)
 	for i := range spec.WorkflowSteps {
+		if spec.WorkflowSteps[i].Version < 0 || spec.WorkflowSteps[i].Version > api.OperationWorkflowContractVersionMax {
+			return fmt.Errorf("operation workflow contract version is invalid")
+		}
 		states := append([]string(nil), spec.WorkflowSteps[i].States...)
 		if len(states) > api.OperationWorkflowStatesMax {
 			return fmt.Errorf("operation workflow state list exceeds its limit")
@@ -97,6 +107,32 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			terminalSet[state] = true
 		}
 		spec.WorkflowSteps[i].TerminalStates = terminalStates
+		budgets := spec.WorkflowSteps[i].StateSLABudgetSeconds
+		if len(budgets) > api.OperationWorkflowStatesMax {
+			return fmt.Errorf("workflow SLA budget list exceeds its limit")
+		}
+		for state, seconds := range budgets {
+			if api.ValidateOperationWorkflowStateName(state) != nil || !stateSet[state] || terminalSet[state] || seconds < 1 || seconds > api.OperationWorkflowStateSLAMaxSeconds {
+				return fmt.Errorf("workflow SLA budget is invalid or references a terminal or undeclared state")
+			}
+		}
+		spec.WorkflowSteps[i].StateSLABudgetSeconds = maps.Clone(budgets)
+		if len(budgets) == 0 {
+			spec.WorkflowSteps[i].StateSLABudgetSeconds = nil
+		}
+		warnings := spec.WorkflowSteps[i].StateSLAWarningPercent
+		if len(warnings) > api.OperationWorkflowStatesMax {
+			return fmt.Errorf("workflow SLA warning list exceeds its limit")
+		}
+		for state, percent := range warnings {
+			if budgets[state] < 1 || percent < api.OperationWorkflowStateSLAWarningMinPercent || percent > api.OperationWorkflowStateSLAWarningMaxPercent {
+				return fmt.Errorf("workflow SLA warning requires a budgeted state and a whole percentage from 1 to 99")
+			}
+		}
+		spec.WorkflowSteps[i].StateSLAWarningPercent = maps.Clone(warnings)
+		if len(warnings) == 0 {
+			spec.WorkflowSteps[i].StateSLAWarningPercent = nil
+		}
 		staleAfter := spec.WorkflowSteps[i].StateStaleAfterSeconds
 		if len(staleAfter) > api.OperationWorkflowStatesMax {
 			return fmt.Errorf("operation workflow state staleness threshold list exceeds its limit")
@@ -112,9 +148,94 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			canonicalStaleAfter = nil
 		}
 		spec.WorkflowSteps[i].StateStaleAfterSeconds = canonicalStaleAfter
+		if err := ValidateWorkflowBlockerEscalations(spec.WorkflowSteps[i].BlockerEscalations); err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].BlockerEscalations = maps.Clone(spec.WorkflowSteps[i].BlockerEscalations)
+		if len(spec.WorkflowSteps[i].BlockerEscalations) == 0 {
+			spec.WorkflowSteps[i].BlockerEscalations = nil
+		}
 		transitions := append([]api.OperationWorkflowTransition(nil), spec.WorkflowSteps[i].Transitions...)
 		if len(transitions) > api.OperationWorkflowTransitionsMax {
 			return fmt.Errorf("operation workflow transition list exceeds its limit")
+		}
+		for j := range transitions {
+			if transitions[j].RequiredDependencyWorkflows != nil {
+				workflows := append([]string{}, (*transitions[j].RequiredDependencyWorkflows)...)
+				if len(workflows) > 16 {
+					return fmt.Errorf("transition prerequisite workflow list exceeds limit")
+				}
+				sort.Strings(workflows)
+				for k, workflow := range workflows {
+					if api.ValidateOperationWorkflowName(workflow) != nil || k > 0 && workflows[k-1] == workflow {
+						return fmt.Errorf("transition prerequisite workflows must be valid and unique")
+					}
+				}
+				transitions[j].RequiredDependencyWorkflows = &workflows
+			}
+			effects, err := api.CanonicalOperationWorkflowEffects(transitions[j].RequiredEffects)
+			if err != nil {
+				return err
+			}
+			transitions[j].RequiredEffects = effects
+			for _, effect := range effects {
+				if spec.Milestones[effect.Milestone] == nil {
+					return fmt.Errorf("effect requires a declared milestone")
+				}
+			}
+			invariants, err := api.CanonicalOperationWorkflowInvariants(transitions[j].RequiredInvariants)
+			if err != nil {
+				return err
+			}
+			transitions[j].RequiredInvariants = invariants
+			for _, invariant := range invariants {
+				if spec.Milestones[invariant.Milestone] == nil {
+					return fmt.Errorf("invariant requires a declared milestone")
+				}
+			}
+			policies, err := api.CanonicalOperationWorkflowPolicies(transitions[j].RequiredPolicies)
+			if err != nil {
+				return err
+			}
+			transitions[j].RequiredPolicies = policies
+			for _, effect := range effects {
+				for _, policy := range policies {
+					if effect.Milestone == policy.Milestone {
+						return fmt.Errorf("effect and policy evidence require distinct milestones")
+					}
+				}
+				for _, invariant := range invariants {
+					if effect.Milestone == invariant.Milestone {
+						return fmt.Errorf("effect and invariant evidence require distinct milestones")
+					}
+				}
+			}
+			for _, policy := range policies {
+				for _, invariant := range invariants {
+					if policy.Milestone == invariant.Milestone {
+						return fmt.Errorf("a milestone cannot supply both policy and invariant evidence")
+					}
+				}
+			}
+			for _, policy := range policies {
+				if spec.Milestones[policy.Milestone] == nil {
+					return fmt.Errorf("policy requires a declared milestone")
+				}
+			}
+			required := append([]string(nil), transitions[j].RequiredMilestones...)
+			if len(required) > api.OperationWorkflowTransitionEvidenceMax {
+				return fmt.Errorf("operation workflow transition evidence list exceeds its limit")
+			}
+			sort.Strings(required)
+			for k, name := range required {
+				if !operationName.MatchString(name) || spec.Milestones[name] == nil || k > 0 && required[k-1] == name {
+					return fmt.Errorf("operation workflow transition requires an invalid, duplicate, or undeclared milestone")
+				}
+			}
+			if len(required) == 0 {
+				required = nil
+			}
+			transitions[j].RequiredMilestones = required
 		}
 		sort.Slice(transitions, func(a, b int) bool {
 			if transitions[a].From != transitions[b].From {
@@ -124,7 +245,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		})
 		for j, transition := range transitions {
 			if api.ValidateOperationWorkflowStateName(transition.From) != nil || api.ValidateOperationWorkflowStateName(transition.To) != nil ||
-				!stateSet[transition.From] || !stateSet[transition.To] || j > 0 && transitions[j-1] == transition {
+				!stateSet[transition.From] || !stateSet[transition.To] || j > 0 && transitions[j-1].From == transition.From && transitions[j-1].To == transition.To {
 				return fmt.Errorf("operation workflow transition is invalid, duplicated, or references an undeclared state")
 			}
 			if terminalSet[transition.From] {
@@ -161,14 +282,28 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		} else {
 			workflowStates[step.Workflow] = append([]string(nil), step.States...)
 		}
-		if prior, exists := workflowTransitions[step.Workflow]; exists {
-			if len(prior) != len(step.Transitions) {
+		version := step.Version
+		if version == 0 {
+			version = 1
+		}
+		if prior, exists := workflowVersions[step.Workflow]; exists {
+			if prior != version {
+				return fmt.Errorf("operation workflow contract versions must match across steps")
+			}
+		} else {
+			workflowVersions[step.Workflow] = version
+		}
+		transitionsDeclared := step.TransitionsDeclared || len(step.Transitions) > 0
+		if prior, exists := workflowTransitionsDeclared[step.Workflow]; exists {
+			if prior != transitionsDeclared {
 				return fmt.Errorf("operation workflow transition declarations must match across steps")
 			}
-			for i := range prior {
-				if prior[i] != step.Transitions[i] {
-					return fmt.Errorf("operation workflow transition declarations must match across steps")
-				}
+		} else {
+			workflowTransitionsDeclared[step.Workflow] = transitionsDeclared
+		}
+		if prior, exists := workflowTransitions[step.Workflow]; exists {
+			if !sameWorkflowTransitions(prior, step.Transitions) {
+				return fmt.Errorf("operation workflow transition declarations must match across steps")
 			}
 		} else {
 			workflowTransitions[step.Workflow] = append([]api.OperationWorkflowTransition(nil), step.Transitions...)
@@ -184,6 +319,27 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			}
 		} else {
 			workflowTerminalStates[step.Workflow] = append([]string(nil), step.TerminalStates...)
+		}
+		if prior, exists := workflowEscalations[step.Workflow]; exists {
+			if !maps.Equal(prior, step.BlockerEscalations) {
+				return fmt.Errorf("workflow blocker escalation policies must match across steps")
+			}
+		} else {
+			workflowEscalations[step.Workflow] = step.BlockerEscalations
+		}
+		if prior, exists := workflowStateSLA[step.Workflow]; exists {
+			if !maps.Equal(prior, step.StateSLABudgetSeconds) {
+				return fmt.Errorf("workflow SLA budgets must match across steps")
+			}
+		} else {
+			workflowStateSLA[step.Workflow] = maps.Clone(step.StateSLABudgetSeconds)
+		}
+		if prior, exists := workflowStateSLAWarnings[step.Workflow]; exists {
+			if !maps.Equal(prior, step.StateSLAWarningPercent) {
+				return fmt.Errorf("workflow SLA warning thresholds must match across steps")
+			}
+		} else {
+			workflowStateSLAWarnings[step.Workflow] = maps.Clone(step.StateSLAWarningPercent)
 		}
 		if prior, exists := workflowStateStaleAfter[step.Workflow]; exists {
 			if !sameWorkflowStateStaleAfter(prior, step.StateStaleAfterSeconds) {
@@ -214,6 +370,26 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		return left.Step < right.Step
 	})
 	return nil
+}
+
+func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
+			return false
+		}
+		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {
+			return false
+		}
+		for j := range left[i].RequiredMilestones {
+			if left[i].RequiredMilestones[j] != right[i].RequiredMilestones[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func cloneWorkflowStateStaleAfter(values map[string]int64) map[string]int64 {
@@ -325,8 +501,99 @@ func (c *Contract) CanonicalMilestone(report api.OperationMilestoneRequest) (api
 	}
 	report.Payload = data
 	report.OccurredAt = report.OccurredAt.UTC().Truncate(time.Microsecond)
-	if _, err := WorkflowStepsForMilestone(c.Spec, report.Name, report.Payload); err != nil {
+	steps, err := WorkflowStepsForMilestone(c.Spec, report.Name, report.Payload)
+	if err != nil {
 		return report, fmt.Errorf("milestone payload must contain a valid workflow instance ID")
+	}
+	decision, err := api.ParseOperationBusinessDecision(report.Payload)
+	if err != nil {
+		return report, err
+	}
+	if decision != nil {
+		matched := false
+		for _, step := range steps {
+			if step.Workflow == decision.Workflow && step.InstanceID == decision.InstanceID {
+				matched = true
+			}
+		}
+		if !matched {
+			return report, fmt.Errorf("business decision must match a declared workflow step and instance")
+		}
+	}
+	reconciliation, err := api.ParseOperationWorkflowReconciliation(report.Payload)
+	if err != nil {
+		return report, err
+	}
+	if reconciliation != nil {
+		matched := false
+		for _, step := range steps {
+			if step.Workflow == reconciliation.Workflow && step.InstanceID == reconciliation.InstanceID && (step.Version == reconciliation.ContractVersion || step.Version == 0 && reconciliation.ContractVersion == 1) {
+				matched = true
+			}
+		}
+		if !matched {
+			return report, fmt.Errorf("reconciliation must match a declared workflow, instance, and contract version")
+		}
+	}
+	invariant, err := api.ParseOperationBusinessInvariant(report.Payload)
+	if err != nil {
+		return report, err
+	}
+	if invariant != nil {
+		matched := false
+		for _, step := range steps {
+			if step.Workflow != invariant.Workflow || step.InstanceID != invariant.InstanceID {
+				continue
+			}
+			for _, state := range step.States {
+				if state == invariant.State {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			return report, fmt.Errorf("invariant report must match a declared workflow, instance, and state")
+		}
+	}
+	effect, err := api.ParseOperationBusinessEffect(report.Payload)
+	if err != nil {
+		return report, err
+	}
+	if effect != nil {
+		matched := false
+		for _, step := range steps {
+			if step.Workflow != effect.Workflow || step.InstanceID != effect.InstanceID {
+				continue
+			}
+			for _, state := range step.States {
+				if state == effect.State {
+					matched = true
+				}
+			}
+		}
+		if !matched || effect.Operation != c.Spec.Name {
+			return report, fmt.Errorf("effect must match its reporting Operation and declared workflow, instance, and state")
+		}
+	}
+	compensation, err := api.ParseOperationBusinessCompensation(report.Payload)
+	if err != nil {
+		return report, err
+	}
+	if compensation != nil {
+		matched := false
+		for _, step := range steps {
+			if step.Workflow != compensation.Workflow || step.InstanceID != compensation.InstanceID {
+				continue
+			}
+			for _, state := range step.States {
+				if state == compensation.State {
+					matched = true
+				}
+			}
+		}
+		if !matched || compensation.Operation != c.Spec.Name {
+			return report, fmt.Errorf("compensation must match its reporting Operation and declared workflow, instance, and state")
+		}
 	}
 	return report, nil
 }
@@ -345,21 +612,41 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 		return report, "", fmt.Errorf("workflow state requires a business reference and valid workflow, instance and state")
 	}
 	declared, transitionsDeclared, transitionAllowed := false, false, false
+	allowReconciliation := false
+	contractVersion := 0
+	var requiredMilestones []string
 	for _, step := range c.Spec.WorkflowSteps {
 		if step.Workflow != report.Workflow || step.InstanceIDFrom == "" {
 			continue
 		}
+		allowReconciliation = allowReconciliation || step.AllowReconciliation
 		for _, state := range step.States {
 			if state == report.State {
 				declared = true
 				break
 			}
 		}
-		if len(step.Transitions) > 0 {
+		if contractVersion == 0 {
+			contractVersion = step.Version
+			if contractVersion == 0 {
+				contractVersion = 1
+			}
+		}
+		if step.TransitionsDeclared || len(step.Transitions) > 0 {
 			transitionsDeclared = true
 			for _, transition := range step.Transitions {
 				if transition.From == report.FromState && transition.To == report.State {
 					transitionAllowed = true
+					requiredMilestones = append([]string(nil), transition.RequiredMilestones...)
+					for _, effect := range transition.RequiredEffects {
+						requiredMilestones = append(requiredMilestones, effect.Milestone)
+					}
+					for _, invariant := range transition.RequiredInvariants {
+						requiredMilestones = append(requiredMilestones, invariant.Milestone)
+					}
+					for _, policy := range transition.RequiredPolicies {
+						requiredMilestones = append(requiredMilestones, policy.Milestone)
+					}
 					break
 				}
 			}
@@ -368,14 +655,231 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	if !declared {
 		return report, "", fmt.Errorf("workflow state is not declared for this Operation")
 	}
-	if transitionsDeclared && (!transitionAllowed || report.FromState == "") {
+	if contractVersion < 1 || report.ContractVersion != 0 && report.ContractVersion != contractVersion {
+		return report, "", fmt.Errorf("workflow state contract version does not match the pinned definition")
+	}
+	report.ContractVersion = contractVersion
+
+	if len(report.DependsOn) > 16 {
+		return report, "", fmt.Errorf("workflow dependencies exceed their limit")
+	}
+	dependencies := append([]api.OperationWorkflowDependency(nil), report.DependsOn...)
+	seenDependencies := map[string]bool{}
+	for _, dependency := range dependencies {
+		key := dependency.SubjectType + "\x00" + dependency.SubjectID + "\x00" + dependency.Workflow + "\x00" + dependency.InstanceID
+		if api.ValidateOperationSubject(api.OperationSubject{Type: dependency.SubjectType, ID: dependency.SubjectID}) != nil || api.ValidateOperationWorkflowName(dependency.Workflow) != nil || api.ValidateOperationWorkflowInstanceID(dependency.InstanceID) != nil || dependency.RequiredOutcomeCode != "" && (len(dependency.RequiredOutcomeCode) > 64 || !operationName.MatchString(dependency.RequiredOutcomeCode)) || seenDependencies[key] {
+			return report, "", fmt.Errorf("workflow dependency requires a valid unique business reference, workflow and instance")
+		}
+		seenDependencies[key] = true
+	}
+	sort.Slice(dependencies, func(i, j int) bool {
+		a, b := dependencies[i], dependencies[j]
+		if a.SubjectType != b.SubjectType {
+			return a.SubjectType < b.SubjectType
+		}
+		if a.SubjectID != b.SubjectID {
+			return a.SubjectID < b.SubjectID
+		}
+		if a.Workflow != b.Workflow {
+			return a.Workflow < b.Workflow
+		}
+		return a.InstanceID < b.InstanceID
+	})
+	report.DependsOn = dependencies
+	if report.DependenciesOnly && (report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly) {
+		return report, "", fmt.Errorf("choose one metadata update kind")
+	}
+	if report.OutcomeCode != "" || report.OutcomeDescription != "" || report.OutcomeOnly {
+		if report.OutcomeCode == "" || len(report.OutcomeCode) > 64 || !operationName.MatchString(report.OutcomeCode) || report.OutcomeDescription == "" || len(report.OutcomeDescription) > 512 || !utf8.ValidString(report.OutcomeDescription) || strings.ContainsFunc(report.OutcomeDescription, func(r rune) bool { return r < 0x20 || r == 0x7f }) || !OperationWorkflowStateIsTerminal(c.Spec, report.Workflow, report.State) {
+			return report, "", fmt.Errorf("workflow outcome requires a valid public code/description and a declared terminal state")
+		}
+	}
+	if report.OutcomeOnly && (report.BlockersOnly || report.DeadlineOnly) {
+		return report, "", fmt.Errorf("choose one metadata update kind")
+	}
+	if report.DeadlineAt != "" {
+		due, err := time.Parse(time.RFC3339Nano, report.DeadlineAt)
+		if err != nil || due.UTC().Year() < 1 || due.UTC().Year() > 9999 {
+			return report, "", fmt.Errorf("workflow deadline must be a finite RFC3339 timestamp")
+		}
+		report.DeadlineAt = due.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	}
+	if report.DeadlineOnly && report.BlockersOnly {
+		return report, "", fmt.Errorf("choose one metadata update kind")
+	}
+	if len(report.Blockers) > 16 {
+		return report, "", fmt.Errorf("workflow blockers exceed their limit")
+	}
+	blockers := append([]api.OperationWorkflowBlocker(nil), report.Blockers...)
+	seenBlockers := make(map[string]bool, len(blockers))
+	for i, blocker := range blockers {
+		switch blocker.Priority {
+		case "", "low", "normal", "high", "urgent":
+		default:
+			return report, "", fmt.Errorf("invalid workflow blocker priority")
+		}
+		if !validWorkflowBlockerText(blocker.BusinessImpact, api.OperationWorkflowBlockerImpactMaxBytes) {
+			return report, "", fmt.Errorf("invalid public workflow blocker business impact")
+		}
+
+		if !validWorkflowBlockerText(blocker.Owner, api.OperationWorkflowBlockerActorMaxBytes) || !validWorkflowBlockerText(blocker.NextAction, api.OperationWorkflowBlockerActionMaxBytes) {
+			return report, "", fmt.Errorf("workflow blocker owner or next action has invalid public fields")
+		}
+		if blocker.FirstObservedAt != "" {
+			first, err := time.Parse(time.RFC3339Nano, blocker.FirstObservedAt)
+			if err != nil || first.UTC().Year() < 1 || first.UTC().Year() > 9999 || first.After(report.OccurredAt) {
+				return report, "", fmt.Errorf("blocker first observation must be a valid timestamp at or before the report")
+			}
+			blockers[i].FirstObservedAt = first.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+
+		if !validWorkflowBlockerText(blocker.AcknowledgedBy, api.OperationWorkflowBlockerActorMaxBytes) || (blocker.AcknowledgedAt == "") != (blocker.AcknowledgedBy == "") || blocker.FollowUpAt != "" && blocker.AcknowledgedAt == "" {
+			return report, "", fmt.Errorf("invalid blocker acknowledgement or follow-up")
+		}
+		var acknowledged time.Time
+		if blocker.AcknowledgedAt != "" {
+			var err error
+			acknowledged, err = time.Parse(time.RFC3339Nano, blocker.AcknowledgedAt)
+			first, _ := time.Parse(time.RFC3339Nano, blocker.FirstObservedAt)
+			if err != nil || acknowledged.UTC().Year() < 1 || acknowledged.UTC().Year() > 9999 || !first.IsZero() && acknowledged.Before(first) || acknowledged.After(report.OccurredAt) {
+				return report, "", fmt.Errorf("invalid blocker acknowledgement time")
+			}
+			blockers[i].AcknowledgedAt = acknowledged.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+		if blocker.FollowUpAt != "" {
+			due, err := time.Parse(time.RFC3339Nano, blocker.FollowUpAt)
+			if err != nil || due.UTC().Year() < 1 || due.UTC().Year() > 9999 || due.Before(acknowledged) {
+				return report, "", fmt.Errorf("follow-up must be at or after acknowledgement")
+			}
+			blockers[i].FollowUpAt = due.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		}
+		key := blocker.Operation + "\x00" + blocker.Code
+		if len(blocker.Code) == 0 || len(blocker.Code) > 64 || !operationName.MatchString(blocker.Code) ||
+			len(blocker.Operation) == 0 || len(blocker.Operation) > api.OperationNameMaxBytes || !operationName.MatchString(blocker.Operation) ||
+			len(blocker.Description) == 0 || len(blocker.Description) > 512 || !utf8.ValidString(blocker.Description) ||
+			strings.ContainsFunc(blocker.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) || seenBlockers[key] {
+			return report, "", fmt.Errorf("workflow blocker has invalid public fields or duplicate target/code")
+		}
+		seenBlockers[key] = true
+	}
+	sort.Slice(blockers, func(i, j int) bool {
+		if blockers[i].Operation != blockers[j].Operation {
+			return blockers[i].Operation < blockers[j].Operation
+		}
+		return blockers[i].Code < blockers[j].Code
+	})
+	report.Blockers = blockers
+
+	if len(report.BlockerResolutions) > 16 {
+		return report, "", fmt.Errorf("workflow blocker resolutions exceed their limit")
+	}
+	resolutions := append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...)
+	seenResolutions := make(map[string]bool, len(resolutions))
+	for _, resolution := range resolutions {
+		if !validWorkflowBlockerText(resolution.VerificationOwner, api.OperationWorkflowBlockerActorMaxBytes) || (resolution.VerificationMilestoneID == "") != (resolution.VerificationMilestoneName == "") || resolution.VerificationMilestoneID == "" && (resolution.VerificationOperationID != "" || resolution.VerificationOwner != "") {
+			return report, "", fmt.Errorf("invalid resolution verification requirement")
+		}
+		if resolution.VerificationMilestoneID != "" {
+			if len(resolution.VerificationMilestoneName) > api.OperationNameMaxBytes || !operationName.MatchString(resolution.VerificationMilestoneName) {
+				return report, "", fmt.Errorf("invalid resolution verification milestone name")
+			}
+			for _, value := range []string{resolution.VerificationMilestoneID, resolution.VerificationOperationID} {
+				if value == "" {
+					continue
+				}
+				id, err := uuid.Parse(value)
+				if err != nil || id == uuid.Nil || id.String() != value {
+					return report, "", fmt.Errorf("invalid resolution verification identity")
+				}
+			}
+		}
+
+		if !validWorkflowBlockerText(resolution.ResolvedBy, api.OperationWorkflowBlockerActorMaxBytes) {
+			return report, "", fmt.Errorf("workflow resolution attribution has invalid public fields")
+		}
+		sourceOperation, opErr := uuid.Parse(resolution.BlockerOperationID)
+		sourceReport, reportErr := uuid.Parse(resolution.BlockerReportID)
+		key := resolution.Operation + "\x00" + resolution.Code
+		if opErr != nil || reportErr != nil || sourceOperation == uuid.Nil || sourceReport == uuid.Nil || sourceOperation.String() != resolution.BlockerOperationID || sourceReport.String() != resolution.BlockerReportID ||
+			resolution.BlockerRevision < 1 || resolution.BlockerRevision > 9007199254740991 || resolution.BlockerRevision >= report.Revision ||
+			resolution.Code == "" || len(resolution.Code) > 64 || !operationName.MatchString(resolution.Code) || resolution.Operation == "" || len(resolution.Operation) > api.OperationNameMaxBytes || !operationName.MatchString(resolution.Operation) ||
+			resolution.Description == "" || len(resolution.Description) > 512 || !utf8.ValidString(resolution.Description) || strings.ContainsFunc(resolution.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) || seenResolutions[key] || seenBlockers[key] {
+			return report, "", fmt.Errorf("workflow resolution requires valid public fields, a prior report identity/revision, and a cleared unique blocker target/code")
+		}
+		seenResolutions[key] = true
+	}
+	sort.Slice(resolutions, func(i, j int) bool {
+		if resolutions[i].Operation != resolutions[j].Operation {
+			return resolutions[i].Operation < resolutions[j].Operation
+		}
+		return resolutions[i].Code < resolutions[j].Code
+	})
+	report.BlockerResolutions = resolutions
+	if report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
+		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 {
+			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain no transition evidence")
+		}
+		requiredMilestones = nil
+	}
+	reconciliationSnapshot := allowReconciliation && report.FromState == "" && len(report.EvidenceMilestones) == 1
+	if !reconciliationSnapshot && !report.BlockersOnly && !report.DeadlineOnly && !report.OutcomeOnly && !report.DependenciesOnly && transitionsDeclared && (!transitionAllowed || report.FromState == "") {
 		return report, "", fmt.Errorf("workflow state transition is not declared for this Operation")
 	}
-	if !transitionsDeclared && report.FromState != "" {
+	if !report.BlockersOnly && !report.DeadlineOnly && !report.OutcomeOnly && !report.DependenciesOnly && !transitionsDeclared && report.FromState != "" {
 		return report, "", fmt.Errorf("workflow transition is not enabled for this Operation")
 	}
+	if len(report.EvidenceMilestones) > api.OperationWorkflowStateEvidenceMax {
+		return report, "", fmt.Errorf("workflow state evidence list exceeds its limit")
+	}
+	evidence := append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)
+	seenEvidenceIDs := make(map[string]bool, len(evidence))
+	seenEvidenceNames := make(map[string]bool, len(evidence))
+	for _, milestone := range evidence {
+		id, parseErr := uuid.Parse(milestone.ID)
+		if parseErr != nil || id == uuid.Nil || id.String() != milestone.ID || len(milestone.Name) == 0 || len(milestone.Name) > api.OperationNameMaxBytes || !operationName.MatchString(milestone.Name) ||
+			seenEvidenceIDs[milestone.ID] || seenEvidenceNames[milestone.Name] {
+			return report, "", fmt.Errorf("workflow state evidence contains an invalid or duplicate milestone reference")
+		}
+		seenEvidenceIDs[milestone.ID], seenEvidenceNames[milestone.Name] = true, true
+	}
+	if report.FromState == "" && len(evidence) > 0 && !reconciliationSnapshot {
+		return report, "", fmt.Errorf("workflow state evidence is only valid for a declared transition")
+	}
+	sort.Slice(evidence, func(i, j int) bool {
+		if evidence[i].Name != evidence[j].Name {
+			return evidence[i].Name < evidence[j].Name
+		}
+		return evidence[i].ID < evidence[j].ID
+	})
+	report.EvidenceMilestones = evidence
+	for _, required := range requiredMilestones {
+		if !seenEvidenceNames[required] {
+			return report, "", fmt.Errorf("workflow transition is missing required milestone evidence %q", required)
+		}
+	}
 	report.OccurredAt = report.OccurredAt.Truncate(time.Microsecond)
-	raw, _ := json.Marshal(report)
+	// The resolved contract version is server-derived and must not invalidate
+	// idempotent replays created before this field existed.
+	fingerprintReport := report
+	fingerprintReport.ContractVersion = 0
+	raw, _ := json.Marshal(fingerprintReport)
 	fingerprint, err := InputFingerprint(raw)
 	return report, fingerprint, err
+}
+
+// Optional assignment fields are public observations, not platform principals.
+func validWorkflowBlockerText(value string, maxBytes int) bool {
+	return len(value) <= maxBytes && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
+func ValidateWorkflowBlockerEscalations(policies map[string]api.OperationWorkflowBlockerEscalationPolicy) error {
+	if len(policies) > api.OperationWorkflowBlockerEscalationsMax {
+		return fmt.Errorf("workflow blocker escalation policy count exceeds its limit")
+	}
+	for code, policy := range policies {
+		if api.ValidateOperationWorkflowStateName(code) != nil || policy.AfterSeconds < 1 || policy.AfterSeconds > api.OperationWorkflowBlockerEscalationMaxSeconds || policy.Owner == "" || !validWorkflowBlockerText(policy.Owner, api.OperationWorkflowBlockerActorMaxBytes) {
+			return fmt.Errorf("invalid workflow blocker escalation policy")
+		}
+	}
+	return nil
 }

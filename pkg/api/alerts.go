@@ -103,6 +103,17 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
+	"event_recovery_notification_admission_overdue_jobs",
+	"event_recovery_notification_admission_dead_jobs",
+	"event_recovery_notification_admission_unknown_jobs",
+	"event_recovery_notification_admission_no_receivers_jobs",
+	"event_recovery_notification_execution_overdue_jobs",
+	"event_recovery_notification_execution_dead_jobs",
+	"event_recovery_notification_execution_unknown_jobs",
+	"event_recovery_notification_execution_no_receivers_jobs",
+
+	"event_retention_expiring_receipts",
+	"event_storage_utilization_pct",
 	"event_execution_dead_letters",
 	"event_execution_dead_letter_rate_per_second",
 	"event_handler_failure_pct",
@@ -110,6 +121,10 @@ var AllowedAlertRuleMetrics = []string{
 
 	"event_recovery_stalled_jobs",
 	"event_recovery_expiring_jobs",
+	"event_recovery_execution_waiting_jobs",
+	"event_recovery_execution_prolonged_wait_jobs",
+	"event_recovery_execution_unknown_jobs",
+	"event_recovery_execution_retention_risk_jobs",
 	"event_recovery_capacity_wait_jobs",
 	"event_pending_recipients",
 	"event_oldest_pending_seconds",
@@ -210,7 +225,7 @@ func IsEdgeSecurityAlertMetric(metric string) bool {
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
+	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"

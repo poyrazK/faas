@@ -30,9 +30,10 @@ class EventRecoveryJob:
     coverage: EventRecoveryJobCoverage
     selection: EventRecoveryRequest
     """Select routing failures (default) or the latest replayable retained execution per application event
-    consumer. Execution mode includes publication and materialized backfill recipients, excludes workflows and
-    object notifications, and requires retained admission and execution records. Creation freezes its own selection;
-    preview is advisory."""
+    consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence
+    has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes
+    publication and materialized backfill recipients, excludes workflows and object notifications, and requires
+    retained admission and execution records. Creation freezes its own selection; preview is advisory."""
     state: EventRecoveryJobState
     selected_count: int
     pending_count: int
@@ -42,12 +43,16 @@ class EventRecoveryJob:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     expires_at: datetime.datetime
+    execution_finished_at: datetime.datetime | Unset = UNSET
+    """Time the scheduler captured confirmed terminal results for all queued deliveries of an eligible new
+    execution recovery. Omitted while unresolved or for historical jobs; does not imply success or webhook
+    acknowledgement."""
     paused_at: datetime.datetime | Unset = UNSET
     """Start time of the current pause; present only while paused."""
     execution: EventRecoveryExecutionSummary | Unset = UNSET
-    """Current observations of admitted execution-mode items, including legacy admissions as unknown. Counts sum to
-    tracked_count and are separate from job admission state. Omitted for routing recovery. Retention can turn a
-    previously known outcome into unknown."""
+    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
+    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission
+    state. Omitted for routing recovery. Saved results share recovery job retention."""
     completed_at: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +83,10 @@ class EventRecoveryJob:
         updated_at = self.updated_at.isoformat()
 
         expires_at = self.expires_at.isoformat()
+
+        execution_finished_at: str | Unset = UNSET
+        if not isinstance(self.execution_finished_at, Unset):
+            execution_finished_at = self.execution_finished_at.isoformat()
 
         paused_at: str | Unset = UNSET
         if not isinstance(self.paused_at, Unset):
@@ -111,6 +120,8 @@ class EventRecoveryJob:
                 "expires_at": expires_at,
             }
         )
+        if execution_finished_at is not UNSET:
+            field_dict["execution_finished_at"] = execution_finished_at
         if paused_at is not UNSET:
             field_dict["paused_at"] = paused_at
         if execution is not UNSET:
@@ -154,6 +165,13 @@ class EventRecoveryJob:
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _execution_finished_at = d.pop("execution_finished_at", UNSET)
+        execution_finished_at: datetime.datetime | Unset
+        if isinstance(_execution_finished_at, Unset):
+            execution_finished_at = UNSET
+        else:
+            execution_finished_at = datetime.datetime.fromisoformat(_execution_finished_at)
+
         _paused_at = d.pop("paused_at", UNSET)
         paused_at: datetime.datetime | Unset
         if isinstance(_paused_at, Unset):
@@ -190,6 +208,7 @@ class EventRecoveryJob:
             created_at=created_at,
             updated_at=updated_at,
             expires_at=expires_at,
+            execution_finished_at=execution_finished_at,
             paused_at=paused_at,
             execution=execution,
             completed_at=completed_at,

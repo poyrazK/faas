@@ -37,6 +37,18 @@ func (s *server) renderAppCustomerOperations(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if id == "performance" {
+		s.renderAppWorkflowPerformance(w, r, log, acct, app)
+		return
+	}
+	if id == "outcomes" {
+		s.renderAppWorkflowOutcomes(w, r, log, acct, app)
+		return
+	}
+	if id == "attention" {
+		s.renderAppWorkflowAttention(w, r, log, acct, app)
+		return
+	}
 	store, ok := s.operationStore(w)
 	if !ok {
 		return

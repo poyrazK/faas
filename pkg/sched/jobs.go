@@ -110,17 +110,28 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		_ = e.store.JobTaskCancel(ctx, runID, taskIndex)
 		return JobWakeResult{}, ErrJobNotActive
 	}
+	operationOwned := false
+	if adapter, ok := e.store.(state.JobOperationStore); ok {
+		op, owned, err := adapter.OperationForJobRun(ctx, runID)
+		if err != nil {
+			return JobWakeResult{}, err
+		}
+		operationOwned = owned
+		if owned && (op.JobRunID != runID || op.CancellationRequested) {
+			return JobWakeResult{}, state.ErrOperationStaleAttempt
+		}
+	}
 	imageKey := job.ImageStorageKey
 	if run.ImageRefSnapshot != "" {
 		imageKey = run.ImageStorageKeySnapshot
 	}
-	if job.ImageMaterializationStatus != "ready" || imageKey == "" {
+	if (!operationOwned && job.ImageMaterializationStatus != "ready") || imageKey == "" {
 		// The dispatch query normally filters these tasks before WakeJob is
 		// called. Keep the guard here as defense in depth for direct callers
 		// and stale queue snapshots; no VM or admission slot is created.
 		return JobWakeResult{}, ErrJobImageNotReady
 	}
-	if run.ImageStorageKeySnapshot != "" && job.ImageStorageKey != run.ImageStorageKeySnapshot {
+	if !operationOwned && run.ImageStorageKeySnapshot != "" && job.ImageStorageKey != run.ImageStorageKeySnapshot {
 		return JobWakeResult{}, ErrJobImageNotReady
 	}
 
@@ -142,6 +153,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, errors.Join(ErrPermanentWake, account.InactiveProblem())
 	}
 	plan := account.Plan
+	if operationOwned && !plan.JobsAllowed() {
+		return JobWakeResult{}, state.ErrConflict
+	}
 	if plan == api.PlanFree {
 		// Free plans return 404 at apid; if a row sneaks through
 		// (corrupted state) we still treat it as a Hobby-equivalent
@@ -153,6 +167,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	ramMB := job.RAMMB
 	if run.RAMMBSnapshot != nil {
 		ramMB = *run.RAMMBSnapshot
+	}
+	if operationOwned && (ramMB > api.JobRAMMB[planIdx] || run.TaskTimeoutS == nil || *run.TaskTimeoutS > api.JobTaskTimeoutSec[planIdx]) {
+		return JobWakeResult{}, state.ErrConflict
 	}
 	if ramMB > api.JobRAMMB[planIdx] {
 		ramMB = api.JobRAMMB[planIdx]
@@ -201,7 +218,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	// default to 5 minutes (300s) so a misconfigured job doesn't
 	// pin a tenant-RAM slot forever.
 	ttl := time.Duration(taskTimeoutSec) * time.Second
-	ttl += 90 * time.Second
+	ttl += time.Duration(api.OperationJobDispatchGraceSeconds) * time.Second
 	leaseExpires := time.Now().Add(ttl)
 	if e.jobLeaser == nil {
 		// Keep the compatibility path fail-closed if a test or degraded
@@ -240,6 +257,14 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
 
+	operationEnv := map[string]string{}
+	if adapter, ok := e.store.(state.JobOperationStore); ok {
+		operationEnv, err = adapter.OperationJobDispatchEnv(ctx, runID, instanceID, string(tok))
+		if err != nil {
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_operation_context_invalid", "operation execution context unavailable")
+			return JobWakeResult{}, err
+		}
+	}
 	// 5. vmmd RPC. The engine validates that vmmd acknowledges the same
 	// instance and node selected during admission; a mismatched response is
 	// treated as a failed boot and all host-side resources are released.
@@ -270,6 +295,17 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	// These values identify the actual task and attempt, so customer-supplied
 	// job/run environment entries must never be able to replace them.
+	for key := range env {
+		if strings.HasPrefix(key, "GREGALE_CUSTOMER_OPERATION_") {
+			delete(env, key)
+		}
+	}
+	for key, value := range operationEnv {
+		env[key] = value
+	}
+	if len(operationEnv) > 0 {
+		env["GREGALE_CUSTOMER_OPERATION_JOB_INSTANCE_ID"] = instanceID
+	}
 	partitionIndex, partitionCount := e.jobPartition(ctx, run, task)
 	env["GREGALE_RUN_ID"] = run.ID
 	env["GREGALE_TASK_INDEX"] = strconv.Itoa(partitionIndex)

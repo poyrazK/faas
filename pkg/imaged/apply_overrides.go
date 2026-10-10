@@ -20,8 +20,22 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// imageEntrypointForCmdOverride prepares a registry image's argv for a
+// cmd-only override. oci.ManifestFromConfig collapses ENTRYPOINT+CMD into one
+// argv, so appending the override kept the image CMD: busybox (CMD ["sh"])
+// with cmd ["sh","-c",…] ran `sh sh -c …` (H8-19). Like `docker run IMAGE
+// CMD…`, the override replaces the image CMD and keeps its ENTRYPOINT.
+func imageEntrypointForCmdOverride(manifest api.AppManifest, cfg oci.ImageConfig, dep state.Deployment) api.AppManifest {
+	if len(dep.OverrideCmd) == 0 || len(dep.OverrideEntrypoint) > 0 || dep.Handler != "" {
+		return manifest
+	}
+	manifest.Entrypoint = append([]string(nil), cfg.Entrypoint...)
+	return manifest
+}
 
 // applyOverrides layers dep's six issue #460 / ADR-053 override columns onto
 // the OCI-derived manifest in place, returning the mutated copy. Errors come

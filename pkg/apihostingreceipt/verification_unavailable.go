@@ -28,6 +28,8 @@ func (e *VerificationUnavailableError) Error() string {
 		return "public route returned an error without authenticated candidate evidence"
 	case SmokeErrorDeploymentMismatch:
 		return "public route reached a different candidate deployment"
+	case SmokeErrorContractUnavailable:
+		return "API contract evidence is temporarily unavailable"
 	default:
 		return "public route did not prove a response from the candidate application"
 	}
@@ -52,7 +54,8 @@ func VerificationRecoveryCode(err error) string {
 func IsVerificationRecoveryCode(code string) bool {
 	switch code {
 	case SmokeErrorAuthorizationUnavailable, SmokeErrorGatewayUnavailable,
-		SmokeErrorTransportUnavailable, SmokeErrorDeploymentMismatch, SmokeErrorResponseUnproven:
+		SmokeErrorTransportUnavailable, SmokeErrorDeploymentMismatch, SmokeErrorResponseUnproven,
+		SmokeErrorContractUnavailable:
 		return true
 	default:
 		return false

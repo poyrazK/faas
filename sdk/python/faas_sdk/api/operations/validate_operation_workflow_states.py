@@ -22,7 +22,7 @@ def _get_kwargs(
     x_gregale_operation_capability: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["X-Faas-Invocation-Id"] = x_faas_invocation_id
+    headers["X-Faas-Invocation-Id"] = str(x_faas_invocation_id)
 
     headers["X-Gregale-Operation-Attempt"] = str(x_gregale_operation_attempt)
 
@@ -109,9 +109,10 @@ def sync_detailed(
 ) -> Response[OperationWorkflowStateValidationResponse | Problem]:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
@@ -155,9 +156,10 @@ def sync(
 ) -> OperationWorkflowStateValidationResponse | Problem | None:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
@@ -196,9 +198,10 @@ async def asyncio_detailed(
 ) -> Response[OperationWorkflowStateValidationResponse | Problem]:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
@@ -240,9 +243,10 @@ async def asyncio(
 ) -> OperationWorkflowStateValidationResponse | Problem | None:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):

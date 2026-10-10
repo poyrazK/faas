@@ -1,4 +1,4 @@
-// Package templates ships the twenty `gregale deploy --template <name>`
+// Package templates ships the built-in Gregale
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -11,10 +11,10 @@
 //
 // Note on Go templates: the templates ship WITHOUT a go.mod because Go's
 // //go:embed refuses to descend into a directory that contains one —
-// it treats the file as a module boundary. Materialize writes one for the
-// hello-go app because it is also the local app-shape marker. function-go must
-// remain marker-free so a later zero-config deploy sees handler.go as a
-// function; the CLI adds its module file only to the upload archive.
+// it treats the file as a module boundary. Materialize writes one for HTTP
+// apps (hello-go and mcp-go). function-go must remain marker-free so a later
+// zero-config deploy sees handler.go as a function; the CLI adds its module
+// file only to the upload archive.
 package templates
 
 import (
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node data-api
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -71,13 +71,23 @@ var Names = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-go",
+	"mcp-python",
+	"customer-operation-export",
+	"customer-operation-job-export",
+	"customer-operation-workflow-export",
 	"data-api",
+	"data-api-starter",
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"data-api-starter": {
+		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
+		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
+	},
 	// production-us hunt #4: tools/ holds owner-machine scripts that need an
 	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
 	// them and told users to store FAAS_TOKEN as an app secret.
@@ -86,6 +96,73 @@ var generatedDotfiles = map[string]map[string]string{
 			"# credential. They never run in the app (the Dockerfile copies app/\n" +
 			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
 			"/tools/\n",
+	},
+}
+
+// generatedTemplateFiles maps source files kept under non-Go suffixes in the
+// repository to their output names. The MCP Go server itself is a real Go
+// package after materialization, but its source must not be compiled as part
+// of Gregale's repository module.
+var generatedTemplateFiles = map[string]map[string]string{
+	"mcp-go": {
+		"main.go.tmpl":      "main.go",
+		"main_test.go.tmpl": "main_test.go",
+		"auth.go.tmpl":      "auth.go",
+		"tasks.go.tmpl":     "tasks.go",
+	},
+}
+
+// mcpGoModuleRequirements mirrors the Go SDK's pruned module graph so a fresh
+// mcp-go starter can run without a preliminary `go mod tidy`.
+const mcpGoModuleRequirements = `
+require github.com/modelcontextprotocol/go-sdk v1.8.0
+require (
+	github.com/jackc/pgx/v5 v5.11.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/yosida95/uritemplate/v3 v3.0.2
+)
+
+require (
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+`
+
+func goModuleContent(name string) []byte {
+	content := fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)
+	if name == "mcp-go" {
+		content += mcpGoModuleRequirements
+	}
+	return []byte(content)
+}
+
+// Workflow sources remain visible to go:embed. Scaffold their conventional
+// hidden destinations when init materializes the project.
+var generatedTemplateCopies = map[string]map[string]string{
+	"data-api-starter": {
+		".github/workflows/data-api-client.yml":  "ci/client.yml",
+		".github/workflows/data-api-preview.yml": "ci/preview.yml",
+	},
+}
+
+// Share the runtime catalog implementation with the owner-side permission tool.
+var sharedTemplateCopies = map[string]map[string]string{
+	"data-api-starter": {
+		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
+		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
 	},
 }
 
@@ -125,6 +202,11 @@ func Materialize(name, dest string) error {
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
 	}
+	for source, output := range generatedTemplateFiles[name] {
+		if err := os.Rename(filepath.Join(dest, source), filepath.Join(dest, output)); err != nil {
+			return err
+		}
+	}
 	for file, content := range generatedDotfiles[name] {
 		target := filepath.Join(dest, file)
 		if _, err := os.Stat(target); os.IsNotExist(err) {
@@ -133,13 +215,41 @@ func Materialize(name, dest string) error {
 			}
 		}
 	}
-	// hello-go is an HTTP app and needs its module marker. function-go stays
-	// marker-free so a later zero-config deploy detects handler.go as a
-	// function; the packer adds its build module to the upload archive.
-	if name == "hello-go" {
+	for target, source := range generatedTemplateCopies[name] {
+		content, err := fs.ReadFile(subFS, source)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(dest, target)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return err
+		}
+	}
+	for target, source := range sharedTemplateCopies[name] {
+		content, err := fs.ReadFile(FS, source)
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Join(dest, target)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(targetPath, content, 0o644); err != nil {
+			return err
+		}
+	}
+	// HTTP Go apps need a module marker. function-go stays marker-free so a
+	// later zero-config deploy detects handler.go as a function; the packer
+	// adds its build module to the upload archive.
+	if name == "hello-go" || name == "mcp-go" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
-			_ = os.WriteFile(modPath, []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)), 0o644)
+			if err := os.WriteFile(modPath, goModuleContent(name), 0o644); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -192,7 +302,11 @@ func TarGz(name, dest string) error {
 		if err != nil {
 			return err
 		}
-		hdr.Name = name + "/" + filepath.ToSlash(p)
+		archivePath := p
+		if output, ok := generatedTemplateFiles[name][p]; ok {
+			archivePath = output
+		}
+		hdr.Name = name + "/" + filepath.ToSlash(archivePath)
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -203,8 +317,26 @@ func TarGz(name, dest string) error {
 			return err
 		}
 	}
-	if name == "hello-go" || name == "function-go" {
-		modContent := []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion))
+	var shared []string
+	for target := range sharedTemplateCopies[name] {
+		shared = append(shared, target)
+	}
+	sort.Strings(shared)
+	for _, target := range shared {
+		content, err := fs.ReadFile(FS, sharedTemplateCopies[name][target])
+		if err != nil {
+			return err
+		}
+		hdr := &tar.Header{Name: name + "/" + target, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(content); err != nil {
+			return err
+		}
+	}
+	if name == "hello-go" || name == "function-go" || name == "mcp-go" {
+		modContent := goModuleContent(name)
 		hdr := &tar.Header{
 			Name:     name + "/go.mod",
 			Mode:     0o644,
@@ -281,16 +413,18 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api":
+	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
-	case "mcp-node":
+	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"
+	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
+		return "operations"
 	}
 	return ""
 }
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations"}

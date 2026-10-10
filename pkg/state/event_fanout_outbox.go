@@ -405,11 +405,54 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 	if limit <= 0 {
 		return 0, nil
 	}
-	return sqlc.New().EventReplayBackfillPruneEnvelopes(ctx, s.pool, sqlc.EventReplayBackfillPruneEnvelopesParams{
-		BeforeAt:    pgtypeFromTime(before.UTC()),
-		JobCutoffAt: pgtypeFromTime(before.Add(PublishedEventIdentityRetention - api.EventReplayBackfillJobRetention).UTC()),
-		PageLimit:   int32(limit),
+	q := sqlc.New()
+	now := before.Add(PublishedEventIdentityRetention).UTC()
+	cutoff := now.Add(-api.EventReplayBackfillJobRetention)
+	accounts, err := q.EventReplayBackfillPruneAccounts(ctx, s.pool, sqlc.EventReplayBackfillPruneAccountsParams{
+		BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
 	})
+	if err != nil {
+		return 0, fmt.Errorf("select receipt pruning accounts: %w", err)
+	}
+	var removed int64
+	for _, account := range accounts {
+		if removed >= int64(limit) {
+			break
+		}
+		n, err := s.pruneEventReceiptsForAccount(ctx, q, sqlc.EventReplayBackfillPruneEnvelopesParams{
+			AccountID: account, BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
+		})
+		if err != nil {
+			return removed, err
+		}
+		removed += n
+	}
+	return removed, nil
+}
+
+func (s *PgStore) pruneEventReceiptsForAccount(ctx context.Context, q *sqlc.Queries, params sqlc.EventReplayBackfillPruneEnvelopesParams) (int64, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	acquired, err := q.EventReplayBackfillTryLockAccountRange(ctx, tx, params.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	if !acquired {
+		return 0, nil
+	}
+	// Acquire before taking the deletion snapshot; creation cannot add a hold
+	// between this statement and commit while the account range lock is held.
+	removed, err := q.EventReplayBackfillPruneEnvelopes(ctx, tx, params)
+	if err != nil {
+		return 0, fmt.Errorf("prune account event receipts: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return removed, nil
 }
 
 // ListEventFanoutFailuresForApp returns failed recipient outcomes newest
@@ -850,12 +893,14 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.Time, limit int) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	holds := m.eventRecoveryReceiptHoldsLocked("", before.Add(PublishedEventIdentityRetention))
 	var pruned int64
 	for key, work := range m.eventFanout {
 		if int(pruned) >= limit {
 			break
 		}
-		if work.Delivered && work.DeliveredAt.Before(before) {
+		_, held := holds[work.ID]
+		if work.Delivered && work.DeliveredAt.Before(before) && !held {
 			delete(m.eventFanout, key)
 			for receiptKey, receipt := range m.webhookAutomationReceipts {
 				if receipt.outboxID == work.ID {

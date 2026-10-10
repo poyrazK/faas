@@ -14,5 +14,9 @@ export type UpsertDevSessionRequest = {
    */
   workspace_id?: string;
   postgres?: DevPostgresRequest;
+  /**
+   * How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
+   */
+  lease_seconds?: number;
 };
 

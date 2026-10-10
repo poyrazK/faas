@@ -117,6 +117,114 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 	if jsonMode {
 		return json.NewEncoder(out).Encode(page)
 	}
+	if instance := page.WorkflowInstance; instance != nil && instance.Decision != nil {
+		d := instance.Decision
+		if _, err := fmt.Fprintf(out, "workflow-decision\t%s\tinstance=%s\treason=%s\tattention=%t\trevision=%d\t%s\n", instance.Workflow, instance.InstanceID, d.Reason, d.NeedsAttention, d.StateRevision, d.Explanation); err != nil {
+			return err
+		}
+
+		for _, blocker := range d.Blockers {
+			if _, err := fmt.Fprintf(out, "workflow-blocker\toperation=%s\tcode=%s\t%s\n", blocker.Operation, blocker.Code, blocker.Description); err != nil {
+				return err
+			}
+		}
+		for _, action := range d.NextActions {
+			if _, err := fmt.Fprintf(out, "workflow-next-action\toperation=%s\tfrom=%s\tto=%s\trequired-milestones=%s\n", action.Operation, action.From, action.To, strings.Join(action.RequiredMilestones, ",")); err != nil {
+				return err
+			}
+		}
+	}
+	if instance := page.WorkflowInstance; instance != nil {
+		if instance.State != nil {
+			if err := printWorkflowSLA(out, instance.State.SLA); err != nil {
+				return err
+			}
+		}
+		if err := printWorkflowBottlenecks(out, instance.Bottlenecks); err != nil {
+			return err
+		}
+		if err := printResolutionVerifications(out, instance.ResolutionVerifications, instance.AwaitingVerificationCount, instance.ResolutionVerificationCount); err != nil {
+			return err
+		}
+		if overview := instance.Readiness; overview != nil {
+			for _, item := range overview.Items {
+				if _, err := fmt.Fprintf(out, "workflow-readiness\toperation=%s\tfrom=%s\tto=%s\tdeclared=%t\tready=%t\trevision=%d\treasons=%s\tmissing-milestones=%s\tadvisories=%s\n", item.Transition.Operation, item.Transition.From, item.Transition.To, item.Declared, item.Ready, item.StateRevision, strings.Join(item.Reasons, ","), strings.Join(item.MissingMilestones, ","), strings.Join(item.Advisories, ",")); err != nil {
+					return err
+				}
+				for _, unmet := range item.UnmetEffects {
+					if _, err := fmt.Fprintf(out, "workflow-effect-required\toperation=%s\tmilestone=%s\tcode=%s\tversion=%s\treason=%s\n", item.Transition.Operation, unmet.Requirement.Milestone, unmet.Requirement.Code, unmet.Requirement.Version, unmet.Reason); err != nil {
+						return err
+					}
+				}
+				for _, unmet := range item.UnmetInvariants {
+					if _, err := fmt.Fprintf(out, "workflow-invariant-required\toperation=%s\tmilestone=%s\tcode=%s\tversion=%s\treason=%s\n", item.Transition.Operation, unmet.Requirement.Milestone, unmet.Requirement.Code, unmet.Requirement.Version, unmet.Reason); err != nil {
+						return err
+					}
+				}
+				for _, blocker := range item.InvariantBlockers {
+					if _, err := fmt.Fprintf(out, "workflow-invariant-blocker\toperation=%s\tcode=%s\tdescription=%s\n", blocker.Operation, blocker.Code, blocker.Description); err != nil {
+						return err
+					}
+				}
+				for _, workflow := range item.MissingDependencyWorkflows {
+					if _, err := fmt.Fprintf(out, "workflow-prerequisite-required\toperation=%s\tworkflow=%s\n", item.Transition.Operation, workflow); err != nil {
+						return err
+					}
+				}
+				for _, policy := range item.MissingPolicies {
+					if _, err := fmt.Fprintf(out, "workflow-policy-required\toperation=%s\tmilestone=%s\trule=%s\tversion=%s\tcode=%s\n", item.Transition.Operation, policy.Milestone, policy.RuleID, policy.RuleVersion, policy.Code); err != nil {
+						return err
+					}
+				}
+
+			}
+		}
+		if trace := instance.DependencyTrace; trace != nil {
+			if _, err := fmt.Fprintf(out, "workflow-trace\tvisited=%d\texamined-dependencies=%d\ttruncated=%t\tlimits=%s\n", trace.VisitedWorkflowCount, trace.ExaminedDependencyCount, trace.Truncated, strings.Join(trace.LimitsReached, ",")); err != nil {
+				return err
+			}
+			for _, finding := range trace.Findings {
+				if _, err := fmt.Fprintf(out, "workflow-root-cause\tkind=%s\tlimit=%s\t%s\n", finding.Kind, finding.Limit, finding.Explanation); err != nil {
+					return err
+				}
+				for position, reference := range finding.Path {
+					if _, err := fmt.Fprintf(out, "  trace-step\tposition=%d\tsubject=%s:%s\tworkflow=%s\tinstance=%s\trequired-outcome=%s\n", position, reference.SubjectType, reference.SubjectID, reference.Workflow, reference.InstanceID, reference.RequiredOutcomeCode); err != nil {
+						return err
+					}
+				}
+				if finding.State != nil {
+					state := finding.State
+					if _, err := fmt.Fprintf(out, "  trace-state\tstate=%s\trevision=%d\toutcome=%s\tdue-at=%s\n", state.State, state.Revision, state.OutcomeCode, state.DeadlineAt); err != nil {
+						return err
+					}
+					for _, blocker := range state.Blockers {
+						if _, err := fmt.Fprintf(out, "  trace-blocker\toperation=%s\tcode=%s\t%s\n", blocker.Operation, blocker.Code, blocker.Description); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+		if impact := instance.DependencyImpact; impact != nil {
+			if _, err := fmt.Fprintf(out, "workflow-impact\tdependents=%d\taffected=%d\tshown=%d\thas-more=%t\n", impact.WorkflowCount, impact.ImpactedWorkflowCount, len(impact.Items), impact.HasMore); err != nil {
+				return err
+			}
+			for _, dependent := range impact.Items {
+				if _, err := fmt.Fprintf(out, "workflow-dependent\tsubject=%s:%s\tworkflow=%s\tinstance=%s\tstate=%s\trevision=%d\tprerequisite-status=%s\trequired-outcome=%s\taffected=%t\toperation=%s\n", dependent.Subject.Type, dependent.Subject.ID, dependent.State.Workflow, dependent.State.InstanceID, dependent.State.State, dependent.State.Revision, dependent.DependencyStatus, dependent.RequiredOutcomeCode, dependent.NeedsAttention, dependent.State.OperationID); err != nil {
+					return err
+				}
+			}
+		}
+		for _, related := range instance.RelatedWorkflows {
+			state, outcome := "", ""
+			if related.State != nil {
+				state, outcome = related.State.State, related.State.OutcomeCode
+			}
+			if _, err := fmt.Fprintf(out, "workflow-dependency\tsubject=%s:%s\tworkflow=%s\tinstance=%s\tstatus=%s\trequired-outcome=%s\tstate=%s\toutcome=%s\n", related.Dependency.SubjectType, related.Dependency.SubjectID, related.Dependency.Workflow, related.Dependency.InstanceID, related.Status, related.Dependency.RequiredOutcomeCode, state, outcome); err != nil {
+				return err
+			}
+		}
+	}
 	for _, state := range page.WorkflowStates {
 		status := "active"
 		if state.Terminal {
@@ -125,6 +233,16 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		if _, err := fmt.Fprintf(out, "workflow-state\t%s\tinstance=%s\tstatus=%s\trevision=%d\tupdated=%s\n", state.Workflow, state.InstanceID, status,
 			state.Revision, state.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999999Z")); err != nil {
 			return err
+		}
+		if state.OutcomeCode != "" {
+			if _, err := fmt.Fprintf(out, "workflow-outcome\t%s\tinstance=%s\trevision=%d\tcode=%s\t%s\n", state.Workflow, state.InstanceID, state.Revision, state.OutcomeCode, state.OutcomeDescription); err != nil {
+				return err
+			}
+		}
+		if state.DeadlineAt != "" {
+			if _, err := fmt.Fprintf(out, "workflow-deadline\t%s\tinstance=%s\tdue-at=%s\toverdue=%t\toverdue-seconds=%d\n", state.Workflow, state.InstanceID, state.DeadlineAt, state.Overdue, state.OverdueSeconds); err != nil {
+				return err
+			}
 		}
 		staleAfter := "none"
 		if state.StaleAfterSeconds > 0 {
@@ -136,7 +254,45 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		var pending int64
+		for _, v := range transition.ResolutionVerifications {
+			if v.Status == "awaiting_verification" {
+				pending++
+			}
+		}
+		if err := printResolutionVerifications(out, transition.ResolutionVerifications, pending, int64(len(transition.ResolutionVerifications))); err != nil {
+			return err
+		}
+		for _, resolution := range transition.BlockerResolutions {
+			if _, err := fmt.Fprintf(out, "workflow-blocker-resolution\t%s\tinstance=%s\trevision=%d\treport=%s\treported-by=%s\ttarget-operation=%s\tcode=%s\tblocker-revision=%d\tblocker-report=%s\tblocker-operation=%s\toccurred=%s\tpublished=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, transition.ID, transition.OperationID, resolution.Operation, resolution.Code, resolution.BlockerRevision, resolution.BlockerReportID, resolution.BlockerOperationID, transition.OccurredAt.UTC().Format(time.RFC3339Nano), transition.PublishedAt.UTC().Format(time.RFC3339Nano), resolution.Description); err != nil {
+				return err
+			}
+		}
+		if transition.DependenciesOnly {
+			if _, err := fmt.Fprintf(out, "workflow-dependencies-update\t%s\tinstance=%s\trevision=%d\tdependencies=%d\n", transition.Workflow, transition.InstanceID, transition.Revision, len(transition.DependsOn)); err != nil {
+				return err
+			}
+			continue
+		}
+		if transition.OutcomeOnly {
+			if _, err := fmt.Fprintf(out, "workflow-outcome-update\t%s\tinstance=%s\trevision=%d\tstate=%s\tcode=%s\treport=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, transition.State, transition.OutcomeCode, transition.ID, transition.OutcomeDescription); err != nil {
+				return err
+			}
+			continue
+		}
+		if transition.DeadlineOnly {
+			if _, err := fmt.Fprintf(out, "workflow-deadline-update\t%s\tinstance=%s\trevision=%d\tstate=%s\tdue-at=%s\n", transition.Workflow, transition.InstanceID, transition.Revision, transition.State, transition.DeadlineAt); err != nil {
+				return err
+			}
+			continue
+		}
 		from := ""
+		if transition.BlockersOnly {
+			if _, err := fmt.Fprintf(out, "workflow-blocker-update\t%s\tinstance=%s\trevision=%d\tstate=%s\tblockers=%d\n", transition.Workflow, transition.InstanceID, transition.Revision, transition.State, len(transition.Blockers)); err != nil {
+				return err
+			}
+			continue
+		}
 		if transition.FromState != "" {
 			from = "\tfrom=" + transition.FromState
 		}
@@ -169,6 +325,31 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 	if page.NextWorkflowStateCursor != "" {
 		_, err := fmt.Fprintf(out, "Next workflow state page: --workflow-state-cursor %s\n", page.NextWorkflowStateCursor)
 		return err
+	}
+	return nil
+}
+
+func printWorkflowBottlenecks(out io.Writer, b *api.OperationWorkflowBottlenecks) error {
+	if b == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "workflow-bottlenecks\tcomplete=%t\treports=%d\tstate-seconds=%d\tblocked-seconds=%d\tverification-wait-seconds=%d\tunknown-verification-starts=%d\tincomplete=%s\thistory-truncated=%t\tstates-truncated=%t\tblockers-truncated=%t\tverification-owners-truncated=%t\n", b.HistoryComplete, b.ReportsInWindow, b.StateSeconds, b.BlockedSeconds, b.VerificationWaitSeconds, b.VerificationUnknownStartCount, strings.Join(b.IncompleteReasons, ","), b.HistoryTruncated, b.StatesTruncated, b.BlockersTruncated, b.VerificationOwnersTruncated); err != nil {
+		return err
+	}
+	for _, g := range b.States {
+		if _, err := fmt.Fprintf(out, "workflow-state-duration\tversion=%d\tstate=%s\tseconds=%d\tongoing=%t\n", g.ContractVersion, g.State, g.ObservedSeconds, g.Ongoing); err != nil {
+			return err
+		}
+	}
+	for _, g := range b.Blockers {
+		if _, err := fmt.Fprintf(out, "workflow-blocker-duration\tversion=%d\toperation=%s\tcode=%s\towner=%s\tseconds=%d\tongoing=%t\n", g.ContractVersion, g.Operation, g.Code, g.Owner, g.ObservedSeconds, g.Ongoing); err != nil {
+			return err
+		}
+	}
+	for _, g := range b.VerificationOwners {
+		if _, err := fmt.Fprintf(out, "workflow-verification-duration\towner=%s\tseconds=%d\tresolutions=%d\tpending=%d\tunknown-starts=%d\n", g.Owner, g.ObservedSeconds, g.ResolutionCount, g.PendingCount, g.UnknownStartCount); err != nil {
+			return err
+		}
 	}
 	return nil
 }

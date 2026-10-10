@@ -41,13 +41,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: mcp
           POSTGRES_DB: mcp
@@ -71,7 +74,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: mcp
           POSTGRES_DB: mcp
@@ -151,7 +154,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: mcp
           POSTGRES_DB: mcp

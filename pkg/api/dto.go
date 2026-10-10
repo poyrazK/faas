@@ -74,6 +74,25 @@ type PublishEventResponse struct {
 	AccountID     string    `json:"account_id,omitempty"`
 }
 
+// PublishEventBatchRequest accepts independent envelopes in input order.
+type PublishEventBatchRequest struct {
+	Events []PublishEventRequest `json:"events"`
+}
+
+// PublishEventBatchResult uses a zero-based input index. Unknown acceptance
+// must be retried with the original identity, never a newly generated id.
+type PublishEventBatchResult struct {
+	Index     int                   `json:"index"`
+	Status    string                `json:"status"`
+	Retryable bool                  `json:"retryable"`
+	Receipt   *PublishEventResponse `json:"receipt,omitempty"`
+	Problem   *Problem              `json:"problem,omitempty"`
+}
+
+type PublishEventBatchResponse struct {
+	Results []PublishEventBatchResult `json:"results"`
+}
+
 // PlatformTenantPublishEventResponse confirms tenant-scoped event acceptance.
 // It omits account identity because the tenant API is authenticated by its
 // linked tenant token rather than an account token.
@@ -778,6 +797,35 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	// LeaseSeconds chooses how long the environment survives after its
+	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
+	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
+	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
+}
+
+// DevPatchPreview reports whether one developer sync could have been applied
+// as a live source patch to the deployment that was live when it was uploaded
+// (ADR-740 phase 1). Reason is one of the DevPatchReason* values.
+type DevPatchPreview struct {
+	Eligible     bool   `json:"eligible"`
+	Reason       string `json:"reason,omitempty"`
+	ChangedPaths int    `json:"changed_paths"`
+	PatchBytes   int64  `json:"patch_bytes"`
+	// Generation is set when this sync published a live patch; poll
+	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
+	Generation int64 `json:"generation,omitempty"`
+}
+
+// DevPatchStatusResponse reports whether a published live patch reached the
+// running developer environment (ADR-740). State is pending until an instance
+// acknowledges it, then applied, or failed with ErrorCode.
+type DevPatchStatusResponse struct {
+	Generation int64      `json:"generation"`
+	State      string     `json:"state"`
+	CreatedAt  time.Time  `json:"created_at"`
+	AppliedAt  *time.Time `json:"applied_at,omitempty"`
+	ApplyMS    int64      `json:"apply_ms,omitempty"`
+	ErrorCode  string     `json:"error_code,omitempty"`
 }
 
 // DevPostgresRequest opts a developer session into an isolated managed
@@ -818,7 +866,7 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded request faults on service
+// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
 // calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
@@ -826,20 +874,35 @@ type InjectScenarioTestChaosRequest struct {
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From       string `json:"from,omitempty"`
-	To         string `json:"to"`
-	Kind       string `json:"kind"`
-	Percent    int    `json:"percent"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Seed       uint64 `json:"seed"`
+	From             string `json:"from,omitempty"`
+	To               string `json:"to"`
+	Kind             string `json:"kind"`
+	Percent          int    `json:"percent"`
+	LatencyMS        int64  `json:"latency_ms,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Seed             uint64 `json:"seed"`
+	Port             int    `json:"port,omitempty"`
+	Direction        string `json:"direction,omitempty"`
+	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	RulesInstalled int       `json:"rules_installed"`
+	Generation     string    `json:"generation"`
+}
+
+type ScenarioTestChaosMatchesResponse struct {
+	Generation string                   `json:"generation,omitempty"`
+	Matches    []ScenarioTestChaosMatch `json:"matches"`
+}
+
+type ScenarioTestChaosMatch struct {
+	RuleID string `json:"rule_id"`
+	Count  int64  `json:"count"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
@@ -1275,21 +1338,46 @@ type APIConsumerUsageResponse struct {
 // price. If effective_from is omitted, the server starts the card at the next
 // UTC minute so no partial minute is priced under two different cards.
 type CreateAPIConsumerRateCardRequest struct {
-	Currency               string     `json:"currency"`
-	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
-	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+	Currency               string `json:"currency"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
+	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// flat price and allowance; price_millicents_per_unit is then ignored.
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights counts each request on a listed "METHOD /template" route
+	// as that many units (ADR-846); unlisted routes count 1.
+	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// empty prices the app default plan.
+	PlanID        string     `json:"plan_id,omitempty"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder. Units whose
+// position in the consumer's UTC month is below up_to (and at or above the
+// previous step's up_to) cost price_millicents_per_unit; a null up_to is the
+// unbounded last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 }
 
 // APIConsumerRateCardResponse is the owner-facing representation of one
 // immutable app-level request price.
 type APIConsumerRateCardResponse struct {
-	ID                     string    `json:"id"`
-	AppID                  string    `json:"app_id"`
-	Currency               string    `json:"currency"`
-	Unit                   string    `json:"unit"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	EffectiveFrom          time.Time `json:"effective_from"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                     string                    `json:"id"`
+	AppID                  string                    `json:"app_id"`
+	Currency               string                    `json:"currency"`
+	Unit                   string                    `json:"unit"`
+	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
+	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
+	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	PlanID                 string                    `json:"plan_id,omitempty"`
+	EffectiveFrom          time.Time                 `json:"effective_from"`
+	CreatedAt              time.Time                 `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1306,7 +1394,12 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1339,17 +1432,28 @@ type APIConsumerUsageStatementBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance. An adjustment may charge units it
+	// does not add when late usage exhausted the allowance sooner.
+	ChargedUnits int64 `json:"charged_units"`
+	// TierUnits splits billable_units across a tiered card's steps. In an
+	// adjustment, entries and amount_millicents can be negative when late
+	// usage moved billed units into a cheaper step; the revision total
+	// never is.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
 // snapshot that can be exported to a customer's payment system through the
-// usage_statement.finalized webhook.
+// usage_statement.finalized webhook. Revision orders the snapshots of one
+// period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
 	PeriodEnd        time.Time                                 `json:"period_end"`
+	Revision         int                                       `json:"revision"`
 	Status           string                                    `json:"status"`
 	Currency         string                                    `json:"currency,omitempty"`
 	BillableUnits    int64                                     `json:"billable_units"`
@@ -2946,8 +3050,12 @@ type ListDeploymentAuditResponse struct {
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
 	StageState json.RawMessage `json:"stage_state,omitempty"`
-	ID         string          `json:"id"`
-	AppID      string          `json:"app_id"`
+	// DevPatch is set only on the response to a developer source upload
+	// (`gregale dev`). It reports whether the sync could have been applied as
+	// a live source patch (ADR-740 phase 1, measurement only).
+	DevPatch *DevPatchPreview `json:"dev_patch,omitempty"`
+	ID       string           `json:"id"`
+	AppID    string           `json:"app_id"`
 	// Revision (ADR-198) is the per-app deployment number rendered as
 	// `v42` by the CLI and dashboard, and accepted anywhere this API
 	// takes a deployment id. It is the same N that appears in the
@@ -3343,13 +3451,17 @@ type SetDeploymentAliasRequest struct {
 // deployment-alias API. Revision is included as the readable vN handle for
 // the immutable target; Host and URL expose its stable public route.
 type DeploymentAliasResponse struct {
-	Name         string    `json:"name"`
-	DeploymentID string    `json:"deployment_id"`
-	Revision     int       `json:"revision"`
-	Host         string    `json:"host,omitempty"`
-	URL          string    `json:"url,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	Name         string `json:"name"`
+	DeploymentID string `json:"deployment_id"`
+	Revision     int    `json:"revision"`
+	// DeploymentStatus is the target deployment's lifecycle status. An alias
+	// whose deployment is not live (superseded by a rollback or redeploy, or
+	// failed) no longer serves traffic.
+	DeploymentStatus string    `json:"deployment_status,omitempty"`
+	Host             string    `json:"host,omitempty"`
+	URL              string    `json:"url,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // DeploymentAliasListResponse is the bounded per-app alias list shape.
@@ -3658,9 +3770,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped response from
 // GET /v1/capabilities. Enabled is fail-closed for unknown plans.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -12196,4 +12310,253 @@ type AppHealthChangedWebhookPayload struct {
 	LatestDeploymentID   string   `json:"latest_deployment_id,omitempty"`
 	ServingDeploymentIDs []string `json:"serving_deployment_ids"`
 	HistoryPath          string   `json:"history_path"`
+}
+
+// Event publication and recovery notification wire contracts.
+type AppEventPublicationVerification struct {
+	Acceptance         string                `json:"acceptance,omitempty"`
+	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
+	AppID              string                `json:"app_id"`
+	Source             string                `json:"source"`
+	EventID            string                `json:"event_id"`
+	ObservedAt         time.Time             `json:"observed_at"`
+	Status             string                `json:"status"`
+	Reason             string                `json:"reason,omitempty"`
+	ReceiptURL         string                `json:"receipt_url"`
+	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
+}
+
+type AppEventPublishStatusResponse struct {
+	Acceptance         string                `json:"acceptance,omitempty"`
+	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
+	AppID              string                `json:"app_id"`
+	Source             string                `json:"source"`
+	EventID            string                `json:"event_id"`
+	ObservedAt         time.Time             `json:"observed_at"`
+	Status             string                `json:"status"`
+	Reason             string                `json:"reason,omitempty"`
+	ReceiptURL         string                `json:"receipt_url"`
+	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
+	Evidence           *EventReceiptResponse `json:"evidence,omitempty"`
+}
+
+type AppPublishEventRequest struct {
+	Key           string          `json:"key"`
+	Type          string          `json:"type"`
+	Data          json.RawMessage `json:"data"`
+	Time          *time.Time      `json:"time,omitempty"`
+	SchemaVersion string          `json:"schemaversion,omitempty"`
+}
+
+type AppPublishEventResponse struct {
+	AppID     string               `json:"app_id"`
+	Source    string               `json:"source"`
+	Duplicate bool                 `json:"duplicate"`
+	Receipt   PublishEventResponse `json:"receipt"`
+}
+
+type EventRecoveryNotification struct {
+	Kind                   string                              `json:"kind"`
+	Event                  string                              `json:"event,omitempty"`
+	EventID                string                              `json:"event_id,omitempty"`
+	CaptureStatus          string                              `json:"capture_status"`
+	CapturedAt             *time.Time                          `json:"captured_at,omitempty"`
+	EvidenceSource         string                              `json:"evidence_source"`
+	RecipientsKnown        bool                                `json:"recipients_known"`
+	SelectedRecipientCount *int64                              `json:"selected_recipient_count,omitempty"`
+	CountsComplete         bool                                `json:"counts_complete"`
+	AcknowledgementStatus  string                              `json:"acknowledgement_status"`
+	PendingCount           int64                               `json:"pending_count"`
+	InFlightCount          int64                               `json:"in_flight_count"`
+	SucceededCount         int64                               `json:"succeeded_count"`
+	FailedCount            int64                               `json:"failed_count"`
+	DeadCount              int64                               `json:"dead_count"`
+	AwaitingRelayCount     int64                               `json:"awaiting_relay_count"`
+	UnknownCount           int64                               `json:"unknown_count"`
+	Receivers              []EventRecoveryNotificationReceiver `json:"receivers"`
+}
+
+type EventRecoveryNotificationHealthCounts struct {
+	CountsComplete  bool  `json:"counts_complete"`
+	OverdueJobs     int64 `json:"overdue_jobs"`
+	DeadJobs        int64 `json:"dead_jobs"`
+	UnknownJobs     int64 `json:"unknown_jobs"`
+	NoReceiversJobs int64 `json:"no_receivers_jobs"`
+}
+
+type EventRecoveryNotificationJobHealth struct {
+	JobID                    string     `json:"job_id"`
+	Kind                     string     `json:"kind"`
+	Event                    string     `json:"event,omitempty"`
+	CaptureStatus            string     `json:"capture_status"`
+	AcknowledgementStatus    string     `json:"acknowledgement_status"`
+	EvidenceSource           string     `json:"evidence_source"`
+	CapturedAt               *time.Time `json:"captured_at,omitempty"`
+	UnacknowledgedAgeSeconds *float64   `json:"unacknowledged_age_seconds,omitempty"`
+	Overdue                  bool       `json:"overdue"`
+	Dead                     bool       `json:"dead"`
+	Unknown                  bool       `json:"unknown"`
+	NoReceivers              bool       `json:"no_receivers"`
+}
+
+type EventRecoveryNotificationReceiver struct {
+	WebhookID         string     `json:"webhook_id"`
+	ReceiverAvailable bool       `json:"receiver_available"`
+	DeliveryID        string     `json:"delivery_id,omitempty"`
+	Status            string     `json:"status"`
+	Attempt           int        `json:"attempt"`
+	ReplayGeneration  int        `json:"replay_generation"`
+	LastResponseCode  int        `json:"last_response_code"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	DeliveredAt       *time.Time `json:"delivered_at,omitempty"`
+	AttemptsPath      string     `json:"attempts_path,omitempty"`
+	RetryPath         string     `json:"retry_path,omitempty"`
+}
+
+type EventRecoveryNotificationRetryBacklog struct {
+	AppID        string                                         `json:"app_id"`
+	ObservedAt   time.Time                                      `json:"observed_at"`
+	JobsScanned  int                                            `json:"jobs_scanned"`
+	CountsScope  string                                         `json:"counts_scope"`
+	Totals       EventRecoveryNotificationRetryHistoryTotals    `json:"totals"`
+	MatchedCount int                                            `json:"matched_count"`
+	Requests     []EventRecoveryNotificationRetryBacklogRequest `json:"requests"`
+	NextCursor   string                                         `json:"next_cursor,omitempty"`
+}
+
+type EventRecoveryNotificationRetryBacklogRequest struct {
+	JobID            string                                        `json:"job_id"`
+	JobCreatedAt     time.Time                                     `json:"job_created_at"`
+	Summary          EventRecoveryNotificationRetryDecisionSummary `json:"summary"`
+	DetailPath       string                                        `json:"detail_path"`
+	RetryPreviewPath string                                        `json:"retry_preview_path"`
+}
+
+type EventRecoveryNotificationRetryCandidate struct {
+	Kind             string `json:"kind"`
+	WebhookID        string `json:"webhook_id"`
+	DeliveryID       string `json:"delivery_id,omitempty"`
+	ReplayGeneration int    `json:"replay_generation"`
+	Status           string `json:"status"`
+	Eligible         bool   `json:"eligible"`
+	Reason           string `json:"reason,omitempty"`
+}
+
+type EventRecoveryNotificationRetryDecision struct {
+	Target                  EventRecoveryNotificationRetryTarget `json:"target"`
+	State                   string                               `json:"state"`
+	Reason                  string                               `json:"reason,omitempty"`
+	ReplayGeneration        *int                                 `json:"replay_generation,omitempty"`
+	RetryOutcome            string                               `json:"retry_outcome"`
+	RetainedAttemptCount    int                                  `json:"retained_attempt_count"`
+	AttemptCountComplete    bool                                 `json:"attempt_count_complete"`
+	CompletedAt             *time.Time                           `json:"completed_at,omitempty"`
+	CurrentDeliveryStatus   string                               `json:"current_delivery_status"`
+	CurrentReplayGeneration *int                                 `json:"current_replay_generation,omitempty"`
+}
+
+type EventRecoveryNotificationRetryDecisionDetail struct {
+	JobID                   string                                   `json:"job_id"`
+	AppID                   string                                   `json:"app_id"`
+	RequestID               string                                   `json:"request_id"`
+	DecidedAt               time.Time                                `json:"decided_at"`
+	CurrentStatusObservedAt time.Time                                `json:"current_status_observed_at"`
+	Decisions               []EventRecoveryNotificationRetryDecision `json:"decisions"`
+}
+
+type EventRecoveryNotificationRetryDecisionSummary struct {
+	RequestID        string     `json:"request_id"`
+	DecidedAt        time.Time  `json:"decided_at"`
+	TargetCount      int        `json:"target_count"`
+	QueuedCount      int        `json:"queued_count"`
+	SkippedCount     int        `json:"skipped_count"`
+	SucceededCount   int        `json:"succeeded_count"`
+	FailedCount      int        `json:"failed_count"`
+	PendingCount     int        `json:"pending_count"`
+	UnknownCount     int        `json:"unknown_count"`
+	Status           string     `json:"status"`
+	EvidenceComplete bool       `json:"evidence_complete"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+}
+
+type EventRecoveryNotificationRetryHistory struct {
+	JobID        string                                          `json:"job_id"`
+	AppID        string                                          `json:"app_id"`
+	ObservedAt   time.Time                                       `json:"observed_at"`
+	Decisions    []EventRecoveryNotificationRetryDecisionSummary `json:"decisions"`
+	MatchedCount int                                             `json:"matched_count"`
+	Totals       EventRecoveryNotificationRetryHistoryTotals     `json:"totals"`
+}
+
+type EventRecoveryNotificationRetryHistoryTotals struct {
+	RequestCount            int `json:"request_count"`
+	SucceededCount          int `json:"succeeded_count"`
+	FailedCount             int `json:"failed_count"`
+	PendingCount            int `json:"pending_count"`
+	InconclusiveCount       int `json:"inconclusive_count"`
+	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+type EventRecoveryNotificationRetryPreview struct {
+	JobID          string                                    `json:"job_id"`
+	AppID          string                                    `json:"app_id"`
+	ObservedAt     time.Time                                 `json:"observed_at"`
+	CountsComplete bool                                      `json:"counts_complete"`
+	Receivers      []EventRecoveryNotificationRetryCandidate `json:"receivers"`
+}
+
+type EventRecoveryNotificationRetryRequest struct {
+	RequestID string                                 `json:"request_id"`
+	Targets   []EventRecoveryNotificationRetryTarget `json:"targets"`
+}
+
+type EventRecoveryNotificationRetryResponse struct {
+	JobID     string                                 `json:"job_id"`
+	AppID     string                                 `json:"app_id"`
+	RequestID string                                 `json:"request_id"`
+	DecidedAt time.Time                              `json:"decided_at"`
+	Results   []EventRecoveryNotificationRetryResult `json:"results"`
+}
+
+type EventRecoveryNotificationRetryResult struct {
+	Target           EventRecoveryNotificationRetryTarget `json:"target"`
+	State            string                               `json:"state"`
+	Reason           string                               `json:"reason,omitempty"`
+	ReplayGeneration *int                                 `json:"replay_generation,omitempty"`
+}
+
+type EventRecoveryNotificationRetryTarget struct {
+	Kind                     string `json:"kind"`
+	WebhookID                string `json:"webhook_id"`
+	DeliveryID               string `json:"delivery_id"`
+	ExpectedReplayGeneration *int   `json:"expected_replay_generation"`
+}
+
+type EventRecoveryNotifications struct {
+	JobID         string                      `json:"job_id"`
+	AppID         string                      `json:"app_id"`
+	AppSlug       string                      `json:"app_slug"`
+	ObservedAt    time.Time                   `json:"observed_at"`
+	ReceiverLimit int                         `json:"receiver_limit"`
+	Notifications []EventRecoveryNotification `json:"notifications"`
+}
+
+type EventRecoveryNotificationsHealth struct {
+	Coverage            string                                `json:"coverage"`
+	ObservedJobs        int64                                 `json:"observed_jobs"`
+	CountsComplete      bool                                  `json:"counts_complete"`
+	JobLimit            int                                   `json:"job_limit"`
+	OverdueGraceSeconds int64                                 `json:"overdue_grace_seconds"`
+	Admission           EventRecoveryNotificationHealthCounts `json:"admission"`
+	Execution           EventRecoveryNotificationHealthCounts `json:"execution"`
+	Jobs                []EventRecoveryNotificationJobHealth  `json:"jobs"`
+}
+
+type EventRecoveryNotificationRetryBacklogTotals struct {
+	RequestCount            int `json:"request_count"`
+	SucceededCount          int `json:"succeeded_count"`
+	FailedCount             int `json:"failed_count"`
+	PendingCount            int `json:"pending_count"`
+	InconclusiveCount       int `json:"inconclusive_count"`
+	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
 }

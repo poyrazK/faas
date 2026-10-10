@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -232,7 +233,14 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
-func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
+func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
+	// production-us hunt #8: push-to-deploy needs githubd to reach this
+	// apid's build-enqueue bridge. With no bridge socket configured githubd
+	// falls back to a stub that refuses every enqueue, yet the capability
+	// was advertised because githubd itself answered /readyz.
+	if strings.TrimSpace(bridgeSock) == "" {
+		return func(context.Context) bool { return false }
+	}
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
 		base = "http://127.0.0.1:8083"
@@ -742,6 +750,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
 		go srv.runManagedRealtimeHistoryReaper(ctx)
+		go srv.runManagedRealtimeEntityExpirations(ctx)
+		go srv.runManagedRealtimeSchedules(ctx)
+		go srv.runManagedRealtimeFallbacks(ctx)
+		go srv.runManagedRealtimePush(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.runDurableEntityAlarms(ctx)
@@ -1431,7 +1443,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
-		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)
 	}
@@ -1730,6 +1742,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	// ADR-847: synthetic route probes stay off unless the public origin the
+	// probes enter through is configured.
+	if origin := strings.TrimSpace(deps.getenv("FAAS_ROUTE_PROBE_URL")); origin != "" {
+		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
+	}
 	go srv.runStatusEvaluator(ctx)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
@@ -2001,6 +2018,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	go srv.runAutomaticRouteCheckWorker(ctx)
 	go srv.runRouteMonitorWorker(ctx)
+	go srv.runRouteProbeWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2240,7 +2258,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ingest := newIngestGate(api.TelemetryIngestDBConcurrency)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtimeOwner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2261,7 +2279,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, srv.realtimeOwner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2347,7 +2365,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, srv.realtimeOwner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2855,7 +2873,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest ingestGate) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest ingestGate, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -2879,6 +2897,11 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// compute-only realtimed nodes in split-box deployments.
 	if !isUnixSocketPath(target) {
 		registerRealtimeHistoryReceiver(srv, store)
+		if len(fleetRouter) > 0 {
+			registerRealtimeFleetReceiver(srv, store, fleetRouter[0])
+		} else {
+			registerRealtimeFleetReceiver(srv, store, nil)
+		}
 	}
 	// Split-box deployments reuse the same private mTLS listener for both
 	// gateway telemetry services. Single-box deployments use the dedicated
@@ -2908,7 +2931,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest ingestGate) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest ingestGate, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -2917,6 +2940,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
 	// Single-box realtimed reaches apid through this DAC-protected socket.
 	registerRealtimeHistoryReceiver(srv, store)
+	if len(fleetRouter) > 0 {
+		registerRealtimeFleetReceiver(srv, store, fleetRouter[0])
+	} else {
+		registerRealtimeFleetReceiver(srv, store, nil)
+	}
 	return srv, lis, nil
 }
 

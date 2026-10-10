@@ -210,7 +210,7 @@ $$;
 CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
- SELECT coalesce(jsonb_agg(definition ORDER BY definition->>'name'),'[]'::jsonb)
+ SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
  FROM (
   SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
   WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
@@ -1034,6 +1034,33 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_event_recovery_invocation_result(uuid, uuid, uuid, timestamp with time zone, bigint, text, text, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_invocation_result(p_invocation uuid, p_account uuid, p_app uuid, p_created timestamp with time zone, p_generation bigint, p_state text, p_outcome text, p_attempts integer, p_completed timestamp with time zone) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ observed timestamptz := clock_timestamp();
+ terminal text := CASE p_state WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed'
+  WHEN 'dead_letter' THEN 'dead_lettered' WHEN 'expired' THEN 'expired'
+  WHEN 'cancelled' THEN 'cancelled' WHEN 'superseded' THEN 'superseded' END;
+BEGIN
+ IF terminal IS NULL OR p_outcome='uncertain' OR p_created>observed
+  OR p_completed>observed OR p_completed<p_created THEN RETURN; END IF;
+ INSERT INTO event_recovery_execution_results(job_id,position,replay_invocation_id,replay_generation,replay_created_at,
+  state,attempts,completed_at,recorded_at,evidence_source)
+ SELECT item.job_id,item.position,p_invocation,p_generation,p_created,terminal,p_attempts,p_completed,observed,'invocation'
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ WHERE item.state='queued' AND job.selection->>'mode'='execution' AND job.account_id=p_account AND job.app_id=p_app
+  AND item.replay_invocation_id=p_invocation AND item.replay_generation=p_generation AND item.replay_created_at=p_created
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
 
 
 --
@@ -3440,6 +3467,37 @@ $$;
 
 
 --
+-- Name: event_receipt_retention_hold(uuid, bigint, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT event_receipt_retention_hold(p_account,p_outbox,p_accepted,p_job_cutoff,CURRENT_TIMESTAMP);
+$$;
+
+
+--
+-- Name: event_receipt_retention_hold(uuid, bigint, timestamp with time zone, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone, p_now timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE
+ WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='running'
+  AND p_accepted>=j.from_at AND p_accepted<j.cutoff_at) THEN 'backfill_running'
+ WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='completed_with_failures'
+  AND j.completed_at>=p_job_cutoff AND EXISTS (SELECT 1 FROM event_replay_job_items i
+   WHERE i.job_id=j.id AND i.outbox_id=p_outbox AND i.state='failed' AND i.retryable)) THEN 'backfill_retryable'
+ WHEN EXISTS (SELECT 1 FROM event_recovery_items i JOIN event_recovery_jobs j ON j.id=i.job_id
+  WHERE i.outbox_id=p_outbox AND i.state='pending' AND j.account_id=p_account
+   AND j.selection->'protect_receipts'='true'::jsonb AND j.state IN ('running','paused') AND j.expires_at>p_now) THEN 'recovery_pending'
+ ELSE '' END;
+$$;
+
+
+--
 -- Name: event_recipient_delivery_deadline(jsonb, timestamp with time zone, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3624,6 +3682,80 @@ $$;
 
 
 --
+-- Name: faas_advance_realtime_inbox_cursor(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint;
+BEGIN
+ SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+ WHERE endpoint_id=ep AND principal=pk AND subscription=device AND channel=pk FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ current_seq:=faas_advance_realtime_inbox_cursor_before_push(ep,pk,device,requested);
+ UPDATE managed_realtime_push_deliveries SET status='cancelled',code='acknowledged',updated_at=clock_timestamp(),lease=NULL,lease_until=NULL
+ WHERE endpoint_id=ep AND principal=pk AND sequence>previous AND sequence<=current_seq AND status IN ('pending','sending');
+ RETURN current_seq;
+END $$;
+
+
+--
+-- Name: faas_advance_realtime_inbox_cursor_before_fallback(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor_before_fallback(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint; mid text; floor_seq bigint;
+BEGIN
+  SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+    WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk FOR UPDATE;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  current_seq := greatest(previous, requested);
+  SELECT greatest(h.oldest_sequence, coalesce((SELECT max(m.sequence) + 1
+    FROM managed_realtime_inbox_messages m WHERE m.endpoint_id = ep AND m.channel = pk
+      AND m.created_at < clock_timestamp() - interval '24 hours'), 1))
+    INTO floor_seq FROM managed_realtime_inbox_heads h WHERE h.endpoint_id = ep AND h.channel = pk;
+  UPDATE managed_realtime_inbox_cursors SET sequence = current_seq, updated_at = clock_timestamp(),
+    gap_reported = CASE WHEN current_seq >= floor_seq - 1 THEN false ELSE gap_reported END
+    WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk;
+  IF current_seq > previous THEN
+    SELECT target_message_id INTO mid FROM managed_realtime_inbox_messages
+      WHERE endpoint_id = ep AND channel = pk AND sequence = current_seq;
+    PERFORM faas_capture_realtime_inbox_webhook(ep, pk, device, 'realtime.inbox.acknowledged',
+      jsonb_build_object('previous_sequence', previous, 'sequence', current_seq, 'message_id', mid));
+  END IF;
+  RETURN current_seq;
+END $$;
+
+
+--
+-- Name: faas_advance_realtime_inbox_cursor_before_push(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_advance_realtime_inbox_cursor_before_push(ep uuid, pk text, device text, requested bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous bigint; current_seq bigint; pending record;
+BEGIN
+ SELECT sequence INTO previous FROM managed_realtime_inbox_cursors
+   WHERE endpoint_id = ep AND principal = pk AND subscription = device AND channel = pk FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ current_seq := faas_advance_realtime_inbox_cursor_before_fallback(ep,pk,device,requested);
+ IF current_seq > previous THEN
+   FOR pending IN SELECT sequence FROM managed_realtime_inbox_fallbacks
+     WHERE endpoint_id = ep AND principal = pk AND sequence > previous AND sequence <= current_seq
+     ORDER BY deadline, sequence FOR UPDATE
+   LOOP
+     DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id = ep AND principal = pk AND sequence = pending.sequence;
+   END LOOP;
+ END IF;
+ RETURN current_seq;
+END $$;
+
+
+--
 -- Name: faas_capture_app_webhook_dead_letter_event(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3751,6 +3883,27 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: faas_capture_realtime_inbox_webhook(uuid, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_capture_realtime_inbox_webhook(ep uuid, principal_key text, consumer text, event_name text, details jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a uuid; account uuid; recipients uuid[]; eid uuid := gen_random_uuid();
+BEGIN
+  SELECT app_id, account_id INTO a, account FROM managed_realtime_endpoints WHERE id = ep;
+  SELECT array_agg(id ORDER BY id) INTO recipients FROM app_webhooks
+    WHERE app_id = a AND account_id = account AND scope = 'app' AND enabled
+      AND (cardinality(event_filter) = 0 OR event_name = ANY(event_filter));
+  IF coalesce(cardinality(recipients), 0) = 0 THEN RETURN; END IF;
+  INSERT INTO app_webhook_event_outbox(id, account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+    VALUES(eid, account, a, event_name, eid,
+      details || jsonb_build_object('event_id', eid, 'app_id', a, 'endpoint_id', ep,
+        'principal_key', principal_key, 'consumer', consumer, 'occurred_at', clock_timestamp()), recipients);
+END $$;
 
 
 --
@@ -3898,6 +4051,468 @@ $$;
 
 
 --
+-- Name: faas_drain_realtime_inbox_fallbacks(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at,collapse_key,not_before,next_attempt,code)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,greatest(clock_timestamp()+interval '24 hours',f.not_before+interval '1 hour')),f.expires_at,f.collapse_key,f.not_before,greatest(clock_timestamp(),f.not_before),case when f.not_before>clock_timestamp() then 'scheduled' else '' end FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   -- Endpoint queue advisory lock serializes collapse decisions with insertion.
+   -- Sequence defines freshness even when fallback timers drain out of order.
+   IF f.collapse_key<>'' AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     UPDATE managed_realtime_push_deliveries older
+       SET status='cancelled',code='superseded',lease=NULL,lease_until=NULL,updated_at=clock_timestamp()
+       WHERE older.endpoint_id=f.endpoint_id AND older.principal=f.principal
+         AND older.collapse_key=f.collapse_key AND older.category=f.category AND older.priority=f.priority
+         AND older.status IN ('pending','sending')
+         AND EXISTS(SELECT 1 FROM managed_realtime_push_deliveries newer
+           WHERE newer.endpoint_id=older.endpoint_id AND newer.principal=older.principal
+             AND newer.device=older.device AND newer.collapse_key=older.collapse_key
+             AND newer.category=older.category AND newer.priority=older.priority
+             AND newer.sequence>older.sequence);
+   END IF;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline,'notification_not_before',f.not_before),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_collapse(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_collapse(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,clock_timestamp()+interval '24 hours'),f.expires_at FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_digests(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_digests(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_preferences(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_preferences(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_priority(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_priority(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_push(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_push(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; processed integer := 0; eid uuid;
+BEGIN
+ FOR f IN
+   SELECT pending.*, ep.app_id, ep.account_id, hooks.recipients FROM managed_realtime_inbox_fallbacks pending
+   JOIN managed_realtime_endpoints ep ON ep.id = pending.endpoint_id
+   CROSS JOIN LATERAL (
+     SELECT array_agg(h.id ORDER BY h.id) AS recipients FROM app_webhooks h
+     WHERE h.app_id = ep.app_id AND h.account_id = ep.account_id
+       AND h.scope = 'app' AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR 'realtime.inbox.fallback_required' = ANY(h.event_filter))
+   ) hooks
+   WHERE pending.deadline <= clock_timestamp() AND cardinality(hooks.recipients) > 0
+   ORDER BY pending.deadline, pending.endpoint_id, pending.principal, pending.sequence
+   LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   eid := gen_random_uuid();
+   INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+   VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+     jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,
+       'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),
+       'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),f.recipients);
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id = f.endpoint_id AND principal = f.principal AND sequence = f.sequence;
+   processed := processed + 1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_schedule(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_schedule(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority,expires_at,hard_expires_at,collapse_key)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority,coalesce(f.expires_at,clock_timestamp()+interval '24 hours'),f.expires_at,f.collapse_key FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   -- Endpoint queue advisory lock serializes collapse decisions with insertion.
+   -- Sequence defines freshness even when fallback timers drain out of order.
+   IF f.collapse_key<>'' AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     UPDATE managed_realtime_push_deliveries older
+       SET status='cancelled',code='superseded',lease=NULL,lease_until=NULL,updated_at=clock_timestamp()
+       WHERE older.endpoint_id=f.endpoint_id AND older.principal=f.principal
+         AND older.collapse_key=f.collapse_key AND older.category=f.category AND older.priority=f.priority
+         AND older.status IN ('pending','sending')
+         AND EXISTS(SELECT 1 FROM managed_realtime_push_deliveries newer
+           WHERE newer.endpoint_id=older.endpoint_id AND newer.principal=older.principal
+             AND newer.device=older.device AND newer.collapse_key=older.collapse_key
+             AND newer.category=older.category AND newer.priority=older.priority
+             AND newer.sequence>older.sequence);
+   END IF;
+   IF coalesce(cardinality(recipients),0)>0 AND (f.expires_at IS NULL OR f.expires_at>clock_timestamp()) THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_drain_realtime_inbox_fallbacks_before_ttl(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_drain_realtime_inbox_fallbacks_before_ttl(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
+BEGIN
+ FOR f IN SELECT pending.*,ep.app_id,ep.account_id FROM managed_realtime_inbox_fallbacks pending
+ JOIN managed_realtime_endpoints ep ON ep.id=pending.endpoint_id AND ep.enabled
+ WHERE pending.deadline<=clock_timestamp() AND (
+ EXISTS(SELECT 1 FROM app_webhooks h WHERE h.app_id=ep.app_id AND h.account_id=ep.account_id AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter)))
+ OR EXISTS(SELECT 1 FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled))
+ AND (SELECT count(*) FROM managed_realtime_push_deliveries j WHERE j.endpoint_id=ep.id AND j.status IN ('pending','sending'))
+   +(SELECT count(*) FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider) WHERE d.endpoint_id=ep.id AND d.principal=pending.principal AND d.enabled AND p.enabled)<=4096
+ ORDER BY pending.deadline,pending.endpoint_id,pending.principal,pending.sequence
+ LIMIT batch_size FOR UPDATE OF pending SKIP LOCKED
+ LOOP
+   -- A separate advisory lock serializes queue capacity without locking endpoint
+   -- rows after inbox/fallback rows (append acquires these in the opposite order).
+   IF NOT pg_try_advisory_xact_lock(hashtextextended('realtime-push:'||f.endpoint_id::text,0)) THEN CONTINUE; END IF;
+   SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+   WHERE h.app_id=f.app_id AND h.account_id=f.account_id AND h.scope='app' AND h.enabled
+   AND (cardinality(h.event_filter)=0 OR 'realtime.inbox.fallback_required'=ANY(h.event_filter));
+   SELECT coalesce(jsonb_agg(jsonb_build_object('device',d.device,'provider',d.provider,'version',d.version)),'[]'::jsonb) INTO devices
+   FROM managed_realtime_push_devices d JOIN managed_realtime_push_providers p USING(endpoint_id,provider)
+   WHERE d.endpoint_id=f.endpoint_id AND d.principal=f.principal AND d.enabled AND p.enabled;
+   IF coalesce(cardinality(recipients),0)=0 AND jsonb_array_length(devices)=0 THEN CONTINUE; END IF;
+   SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+   IF total+jsonb_array_length(devices)>4096 THEN
+     DELETE FROM managed_realtime_push_deliveries WHERE id IN (
+       SELECT id FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id AND status IN ('sent','failed','cancelled')
+       ORDER BY updated_at,id LIMIT total+jsonb_array_length(devices)-4096 FOR UPDATE SKIP LOCKED);
+     SELECT count(*) INTO total FROM managed_realtime_push_deliveries WHERE endpoint_id=f.endpoint_id;
+     IF total+jsonb_array_length(devices)>4096 THEN CONTINUE; END IF;
+   END IF;
+   INSERT INTO managed_realtime_push_deliveries(endpoint_id,principal,device,provider,version,message_id,sequence,category,group_key,group_label,priority)
+   SELECT f.endpoint_id,f.principal,x->>'device',x->>'provider',(x->>'version')::bigint,f.message_id,f.sequence,f.category,f.group_key,f.group_label,f.priority FROM jsonb_array_elements(devices) x
+   ON CONFLICT(endpoint_id,principal,sequence,device) DO NOTHING;
+   IF coalesce(cardinality(recipients),0)>0 THEN
+     eid:=gen_random_uuid();
+     INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+     VALUES(eid,f.account_id,f.app_id,'realtime.inbox.fallback_required',eid,
+       jsonb_build_object('event_id',eid,'app_id',f.app_id,'endpoint_id',f.endpoint_id,'principal_key',f.principal,'consumer','','occurred_at',clock_timestamp(),'message_id',f.message_id,'sequence',f.sequence,'deadline',f.deadline),recipients);
+   END IF;
+   DELETE FROM managed_realtime_inbox_fallbacks WHERE endpoint_id=f.endpoint_id AND principal=f.principal AND sequence=f.sequence;
+   processed:=processed+1;
+ END LOOP;
+ RETURN processed;
+END $$;
+
+
+--
+-- Name: faas_emit_notification_outcome(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_emit_notification_outcome() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE event_name text; recipients uuid[]; eid uuid; app uuid; account uuid;
+BEGIN
+ IF NEW.status NOT IN ('sent','failed','cancelled') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND OLD.status=NEW.status THEN RETURN NEW; END IF;
+ event_name:=CASE WHEN NEW.status='sent' THEN 'realtime.notification.sent'
+  WHEN NEW.status='failed' THEN 'realtime.notification.failed'
+  WHEN NEW.code IN ('expired','quiet_hours_expired') THEN 'realtime.notification.expired'
+  WHEN NEW.code='superseded' THEN 'realtime.notification.superseded'
+  ELSE 'realtime.notification.cancelled' END;
+ SELECT app_id,account_id INTO app,account FROM managed_realtime_endpoints WHERE id=NEW.endpoint_id;
+ IF app IS NULL THEN RETURN NEW; END IF;
+ SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+  WHERE h.app_id=app AND h.account_id=account AND h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR event_name=ANY(h.event_filter));
+ IF coalesce(cardinality(recipients),0)=0 THEN RETURN NEW; END IF;
+ eid:=gen_random_uuid();
+ INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+ VALUES(eid,account,app,event_name,eid,jsonb_build_object('event_id',eid,'app_id',app,'endpoint_id',NEW.endpoint_id,'principal_key',NEW.principal,'consumer','','occurred_at',clock_timestamp(),'delivery_id',NEW.id,'message_id',NEW.message_id,'sequence',NEW.sequence,'device',NEW.device,'provider',NEW.provider,'status',NEW.status,'reason',NEW.code,'attempts',NEW.attempts,'status_code',NEW.status_code,'category',NEW.category,'priority',NEW.priority,'digest_id',coalesce(NEW.digest_id::text,'')),recipients);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3918,6 +4533,56 @@ $$;
 
 
 --
+-- Name: faas_realtime_message_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_realtime_message_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.message_event = 'created' THEN NEW.target_message_id := coalesce(NEW.idempotency_key,''); END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: faas_record_notification_timeline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_record_notification_timeline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE eid uuid; pk text; mid text; event_name text;
+BEGIN
+ eid:=CASE WHEN TG_OP='DELETE' THEN OLD.endpoint_id ELSE NEW.endpoint_id END;
+ IF NOT EXISTS(SELECT 1 FROM managed_realtime_endpoints WHERE id=eid) THEN
+   IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+ END IF;
+ IF TG_TABLE_NAME='managed_realtime_push_deliveries' THEN
+   IF TG_OP='UPDATE' AND ROW(OLD.status,OLD.code,OLD.attempts,OLD.status_code,OLD.not_before,OLD.next_attempt)
+       IS NOT DISTINCT FROM ROW(NEW.status,NEW.code,NEW.attempts,NEW.status_code,NEW.not_before,NEW.next_attempt) THEN RETURN NEW; END IF;
+   eid:=NEW.endpoint_id; pk:=NEW.principal; mid:=NEW.message_id;
+   INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,device,delivery_id,event,reason,attempts,status_code,not_before,next_attempt)
+    VALUES(eid,pk,mid,NEW.device,NEW.id::text,NEW.status,NEW.code,NEW.attempts,NEW.status_code,NEW.not_before,NEW.next_attempt);
+ ELSE
+   IF TG_OP='DELETE' THEN
+    eid:=OLD.endpoint_id; pk:=OLD.principal; mid:=OLD.message_id;event_name:='fallback_removed';
+    INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,event,not_before,next_attempt) VALUES(eid,pk,mid,event_name,OLD.not_before,OLD.deadline);
+   ELSE
+    IF TG_OP='UPDATE' AND OLD.not_before IS NOT DISTINCT FROM NEW.not_before THEN RETURN NEW; END IF;
+    eid:=NEW.endpoint_id;pk:=NEW.principal;mid:=NEW.message_id;
+    event_name:=CASE WHEN TG_OP='INSERT' THEN 'fallback_scheduled' ELSE 'fallback_rescheduled' END;
+    INSERT INTO managed_realtime_notification_timeline(endpoint_id,principal,message_id,event,not_before,next_attempt) VALUES(eid,pk,mid,event_name,NEW.not_before,NEW.deadline);
+   END IF;
+ END IF;
+ -- Bounded diagnostic history; no payloads or credential columns are copied.
+ DELETE FROM managed_realtime_notification_timeline WHERE endpoint_id=eid AND (occurred_at<clock_timestamp()-interval '7 days' OR id<=coalesce((SELECT id FROM managed_realtime_notification_timeline WHERE endpoint_id=eid ORDER BY id DESC OFFSET 8192 LIMIT 1),0));
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3932,6 +4597,40 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: faas_scan_realtime_inbox_gaps(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_scan_realtime_inbox_gaps(batch_size integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c record; processed integer := 0;
+BEGIN
+  FOR c IN
+    SELECT cur.*, h.next_sequence - 1 AS latest,
+      greatest(h.oldest_sequence, coalesce(expired.floor, 1)) AS oldest
+    FROM managed_realtime_inbox_cursors cur
+    JOIN managed_realtime_inbox_heads h ON h.endpoint_id = cur.endpoint_id AND h.channel = cur.channel
+    LEFT JOIN LATERAL (
+      SELECT max(sequence) + 1 AS floor FROM managed_realtime_inbox_messages m
+      WHERE m.endpoint_id = cur.endpoint_id AND m.channel = cur.channel
+        AND m.created_at < clock_timestamp() - interval '24 hours'
+    ) expired ON true
+    WHERE NOT cur.gap_reported AND cur.updated_at >= clock_timestamp() - interval '30 days'
+      AND cur.sequence < greatest(h.oldest_sequence, coalesce(expired.floor, 1)) - 1
+    ORDER BY cur.updated_at, cur.endpoint_id, cur.principal, cur.subscription
+    LIMIT batch_size FOR UPDATE OF cur SKIP LOCKED
+  LOOP
+    PERFORM faas_capture_realtime_inbox_webhook(c.endpoint_id, c.principal, c.subscription, 'realtime.inbox.gap',
+      jsonb_build_object('sequence', c.sequence, 'oldest_sequence', c.oldest, 'latest_sequence', c.latest));
+    UPDATE managed_realtime_inbox_cursors SET gap_reported = true
+      WHERE endpoint_id = c.endpoint_id AND principal = c.principal AND subscription = c.subscription AND channel = c.channel;
+    processed := processed + 1;
+  END LOOP;
+  RETURN processed;
+END $$;
 
 
 --
@@ -6496,6 +7195,36 @@ $$;
 
 
 --
+-- Name: guard_production_lifecycle(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_production_lifecycle() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE gate canary_route_gates%ROWTYPE; fence jsonb;
+BEGIN
+ IF NEW.status<>'live' OR NEW.traffic_percent<=0 OR coalesce(nullif(NEW.scope,''),'default') NOT IN ('default','prod','production') OR
+ (TG_OP='UPDATE' AND OLD.status='live' AND NEW.traffic_percent<=OLD.traffic_percent AND NEW.app_id=OLD.app_id AND NEW.scope IS NOT DISTINCT FROM OLD.scope) THEN RETURN NEW; END IF;
+ PERFORM 1 FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ SELECT * INTO gate FROM canary_route_gates WHERE app_id=NEW.app_id;
+
+ SELECT value INTO fence FROM jsonb_array_elements(coalesce(nullif(current_setting('faas.lifecycle_fences',true),''),'[]')::jsonb)
+ WHERE value->>'deployment_id'=NEW.id::text LIMIT 1;
+ IF coalesce(gate.mode,'report')='enforce' AND (fence IS NULL OR fence->>'scope' IS DISTINCT FROM coalesce(nullif(NEW.scope,''),'default') OR fence->'inputs' IS DISTINCT FROM lifecycle_traffic_inputs(NEW.app_id)) THEN
+ RAISE EXCEPTION 'production lifecycle review required' USING ERRCODE='23514',CONSTRAINT='production_lifecycle_required'; END IF;
+ -- Expiry and capture invalidation are rechecked at the actual traffic write.
+ PERFORM 1 FROM route_lifecycle_approvals r WHERE r.id::text IN (SELECT jsonb_array_elements_text(coalesce(nullif(fence->'approval_ids','null'::jsonb),'[]'::jsonb))) ORDER BY r.id FOR SHARE;
+ IF coalesce(gate.mode,'report')='enforce' AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(nullif(fence->'approval_ids','null'::jsonb),'[]'::jsonb)) x(id)
+ WHERE NOT EXISTS(SELECT 1 FROM route_lifecycle_approvals r WHERE r.id::text=x.id AND r.app_id=NEW.app_id
+ AND r.invalidated_at IS NULL AND r.valid_until>clock_timestamp()
+ AND r.successor_snapshot=lifecycle_approval_successor_bindings(r.app_id,r.receipt))) THEN
+ RAISE EXCEPTION 'production lifecycle receipt expired or invalidated' USING ERRCODE='23514',CONSTRAINT='production_lifecycle_required'; END IF;
+ INSERT INTO production_lifecycle_reviews(app_id,deployment_id,decision,recovery,scope,evidence) VALUES(NEW.app_id,NEW.id,coalesce(fence->'decision',jsonb_build_object('mode','report','status','report_only','reasons',jsonb_build_array('lifecycle_transaction_review_unavailable'))),coalesce((fence->>'recovery')::boolean,false),coalesce(nullif(NEW.scope,''),'default'),lifecycle_history_evidence(NEW.app_id,NEW.id,coalesce(fence->'decision','{}'::jsonb)));
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_queue_binding_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6648,6 +7377,63 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_route_removal_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_route_removal_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p app_route_removal_policies%ROWTYPE; result jsonb; fence jsonb;
+BEGIN
+ IF NEW.status<>'live' OR NEW.traffic_percent<=0 OR
+ (TG_OP='UPDATE' AND OLD.status='live' AND NEW.traffic_percent<=OLD.traffic_percent AND NEW.scope IS NOT DISTINCT FROM OLD.scope AND NEW.app_id=OLD.app_id) THEN RETURN NEW; END IF;
+ -- Policy setters and deployment activation already take the app lock. This
+ -- additionally fences direct SQL/worker/canary transitions with the policy.
+ PERFORM 1 FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ SELECT * INTO p FROM app_route_removal_policies WHERE app_id=NEW.app_id;
+ SELECT value INTO fence FROM jsonb_array_elements(coalesce(nullif(current_setting('faas.route_removal_fences',true),''),'[]')::jsonb)
+ WHERE value->>'deployment_id'=NEW.id::text LIMIT 1;
+ -- Captures update the policy observation clock after locking their document.
+ -- Keep that document-before-policy order while holding the application lock.
+ IF fence IS NOT NULL THEN
+ PERFORM 1 FROM deployment_openapi_docs WHERE deployment_id IN (NEW.id,p.baseline_deployment_id) ORDER BY deployment_id FOR SHARE;
+ PERFORM 1 FROM deployment_openapi_snapshots WHERE deployment_id IN (NEW.id,p.baseline_deployment_id) ORDER BY deployment_id FOR SHARE;
+ END IF;
+ SELECT * INTO p FROM app_route_removal_policies WHERE app_id=NEW.app_id FOR UPDATE;
+ IF coalesce(nullif(NEW.scope,''),'default') NOT IN ('default','prod','production') THEN RETURN NEW; END IF;
+ IF NOT FOUND THEN
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(nullif(current_setting('faas.route_removal_fences',true),''),'[]')::jsonb) WHERE value->>'deployment_id'=NEW.id::text) THEN
+ RAISE EXCEPTION 'route removal policy disappeared after contract preflight' USING ERRCODE='23514',CONSTRAINT='route_removal_required'; END IF;
+ RETURN NEW; END IF;
+ PERFORM lock_route_removal_coverage(NEW.app_id);
+ result:=route_removal_check(NEW.id,coalesce(NEW.scope,''),NEW.app_id);
+ SELECT value INTO fence FROM jsonb_array_elements(coalesce(nullif(current_setting('faas.route_removal_fences',true),''),'[]')::jsonb)
+ WHERE value->>'deployment_id'=NEW.id::text LIMIT 1;
+ IF fence IS NOT NULL AND (p.mode<>'enforce' OR result->>'status'<>'passed' OR
+ p.revision::text IS DISTINCT FROM fence->>'policy_revision' OR
+ p.baseline_deployment_id::text IS DISTINCT FROM fence->>'baseline_deployment_id' OR
+ result->>'approval_id' IS DISTINCT FROM fence->>'approval_id' OR
+ result->>'baseline_contract_sha256' IS DISTINCT FROM fence->>'baseline_sha256' OR
+ result->>'candidate_contract_sha256' IS DISTINCT FROM fence->>'candidate_sha256') THEN
+ RAISE EXCEPTION 'route removal approval changed after contract preflight' USING ERRCODE='23514',CONSTRAINT='route_removal_required';
+ END IF;
+ IF fence IS NOT NULL AND (
+ (coalesce(fence->>'baseline_snapshot_sha256','')<>'' AND NOT EXISTS(SELECT 1 FROM deployment_openapi_snapshots WHERE deployment_id=p.baseline_deployment_id AND sha256=fence->>'baseline_snapshot_sha256')) OR
+ (coalesce(fence->>'candidate_snapshot_sha256','')<>'' AND (EXISTS(SELECT 1 FROM deployment_openapi_snapshots WHERE deployment_id=NEW.id AND sha256 IS DISTINCT FROM fence->>'candidate_snapshot_sha256') OR (TG_OP='UPDATE' AND OLD.status='live' AND NOT EXISTS(SELECT 1 FROM deployment_openapi_snapshots WHERE deployment_id=NEW.id AND sha256=fence->>'candidate_snapshot_sha256'))))) THEN
+ RAISE EXCEPTION 'route removal contract snapshot changed after preflight' USING ERRCODE='23514',CONSTRAINT='route_removal_required'; END IF;
+ IF p.mode='enforce' AND result->>'status'='blocked' THEN
+ RAISE EXCEPTION 'route removal blocked' USING ERRCODE='23514',CONSTRAINT='route_removal_required',DETAIL=result::text;
+ END IF;
+ -- Keep a durable baseline even if callers zero/supersede its row first.
+ -- Partial canaries keep the original baseline until a full cutover.
+ IF NEW.traffic_percent=100 AND p.baseline_deployment_id IS DISTINCT FROM NEW.id THEN
+ UPDATE app_route_removal_policies SET baseline_deployment_id=NEW.id,baseline_since=clock_timestamp() WHERE app_id=NEW.app_id;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -7351,6 +8137,61 @@ $$;
 
 
 --
+-- Name: invalidate_lifecycle_project_successors(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invalidate_lifecycle_project_successors() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ -- A generation change is permanent, even if the old graph is reactivated.
+ -- Include retained receipts so neither rollback nor restore revives them.
+ UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp()
+ WHERE r.invalidated_at IS NULL AND r.successor_snapshot IS DISTINCT FROM lifecycle_approval_successor_bindings(r.app_id,r.receipt);
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: invalidate_lifecycle_successor_routes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invalidate_lifecycle_successor_routes() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE oldrow jsonb; newrow jsonb; affected uuid; owner uuid; hostname text;
+BEGIN
+ IF TG_OP<>'INSERT' THEN oldrow:=to_jsonb(OLD); END IF;
+ IF TG_OP<>'DELETE' THEN newrow:=to_jsonb(NEW); END IF;
+ IF TG_TABLE_NAME='tenant_hostnames' THEN
+  UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE split_part(m->>'successor_url','/',3) IN (oldrow->>'hostname',newrow->>'hostname'));
+  RETURN NULL;
+ END IF;
+ FOR affected IN SELECT DISTINCT id FROM (VALUES(coalesce(oldrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN oldrow->>'id' END)::uuid),(coalesce(newrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN newrow->>'id' END)::uuid)) ids(id) WHERE id IS NOT NULL LOOP
+  SELECT account_id INTO owner FROM apps WHERE id=affected;
+  PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+  UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND
+   ((TG_TABLE_NAME<>'deployments' AND r.app_id=affected) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_app_id'=affected::text AND (TG_TABLE_NAME<>'deployments' OR affected<>r.app_id)));
+ END LOOP;
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: invalidate_route_lifecycle_approvals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invalidate_route_lifecycle_approvals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp()
+ WHERE r.invalidated_at IS NULL AND ((r.app_id=OLD.app_id AND (r.baseline_deployment_id=OLD.deployment_id OR r.candidate_deployment_id=OLD.deployment_id)) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_deployment_id'=OLD.deployment_id::text));
+ RETURN NULL;
+END $$;
+
+
+--
 -- Name: invocation_done_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7465,6 +8306,154 @@ BEGIN
   NEW.status := 'superseded';
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: lifecycle_approval_successor_bindings(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_approval_successor_bindings(source uuid, receipt jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT lifecycle_successor_bindings(source,coalesce((SELECT jsonb_agg(m || jsonb_build_object('candidate_deployment_id',receipt->>'candidate_deployment_id')) FROM jsonb_array_elements(receipt->'mappings') m),'[]'::jsonb))
+$$;
+
+
+--
+-- Name: lifecycle_configuration(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_configuration(app uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('app',jsonb_build_object('id',a.id,'account',a.account_id,'slug',a.slug,
+ 'consumer_auth_mode',a.consumer_auth_mode,'maintenance_mode',a.maintenance_mode,
+ 'manifest',a.manifest,'ram_mb',a.ram_mb,'max_concurrency',a.max_concurrency,'idle_timeout_s',a.idle_timeout_s,'type',a.type,'cpu_millicores',a.cpu_millicores,'scaling_policy',a.scaling_policy,'request_rate_limit_rps',a.request_rate_limit_rps,'request_rate_limit_burst',a.request_rate_limit_burst),
+ 'account',jsonb_build_object('plan',c.plan,'status',c.status,'past_due_at',c.past_due_at,'abuse_hold_at',c.abuse_hold_at),
+ 'rules',coalesce((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM edge_rules r WHERE r.app_id=a.id),'[]'::jsonb))
+ FROM apps a JOIN accounts c ON c.id=a.account_id WHERE a.id=app
+$$;
+
+
+--
+-- Name: lifecycle_history_evidence(uuid, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_history_evidence(app uuid, deployment uuid, decision jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ WITH candidates AS (SELECT r.*,coalesce(decision->'lifecycle_approval_ids','[]'::jsonb) ? r.id::text used
+ FROM route_lifecycle_approvals r WHERE r.app_id=app AND r.candidate_deployment_id=deployment),
+ chosen AS (SELECT * FROM candidates ORDER BY used DESC,approved_at DESC,id DESC LIMIT 20),
+ captures AS (
+ SELECT d.deployment_id::text id,encode(d.doc_sha256,'hex') sha FROM deployment_openapi_docs d JOIN deployments dep ON dep.id=d.deployment_id
+ WHERE d.app_id=app AND (dep.id=deployment OR (dep.status='live' AND dep.traffic_percent>0 AND coalesce(nullif(dep.scope,''),'default') IN ('default','prod','production')))
+ UNION SELECT baseline_deployment_id::text,receipt->>'baseline_contract_sha256' FROM chosen
+ UNION SELECT m->>'successor_deployment_id',m->>'successor_contract_sha256' FROM chosen,LATERAL jsonb_array_elements(receipt->'mappings') m WHERE nullif(m->>'successor_deployment_id','') IS NOT NULL)
+ SELECT jsonb_build_object(
+ 'truncated',(SELECT count(*)>20 FROM candidates) OR (SELECT count(*)>64 FROM captures) OR EXISTS(SELECT 1 FROM chosen WHERE jsonb_array_length(coalesce(successor_snapshot,'[]'::jsonb))>64),
+ 'captures',coalesce((SELECT jsonb_agg(jsonb_build_object('deployment_id',id,'sha256',sha) ORDER BY id,sha) FROM (SELECT * FROM captures ORDER BY id,sha LIMIT 64) c),'[]'::jsonb),
+ 'graph_ids',coalesce((SELECT jsonb_agg(rs.id::text ORDER BY rs.id) FROM project_release_sets rs JOIN apps a ON a.project_id=rs.project_id AND a.account_id=rs.account_id WHERE a.id=app AND rs.active AND rs.environment_slug='production'),'[]'::jsonb),
+ 'approvals',coalesce((SELECT jsonb_agg(jsonb_build_object('id',id,'used',used,'baseline_deployment_id',baseline_deployment_id,'candidate_deployment_id',candidate_deployment_id,'baseline_contract_sha256',receipt->>'baseline_contract_sha256','candidate_contract_sha256',receipt->>'candidate_contract_sha256','configuration_sha256',receipt->>'configuration_sha256','valid_until',valid_until,'graph_ids',lifecycle_history_graph_ids(successor_snapshot)) ORDER BY used DESC,approved_at DESC,id DESC) FROM chosen),'[]'::jsonb))
+$$;
+
+
+--
+-- Name: lifecycle_history_graph_ids(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_history_graph_ids(snapshot jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(jsonb_agg(id ORDER BY id),'[]'::jsonb) FROM (
+ SELECT DISTINCT g->>'id' id FROM jsonb_array_elements(coalesce(snapshot,'[]'::jsonb)) b,
+ LATERAL jsonb_array_elements(coalesce(nullif(b#>'{project,graphs}','null'::jsonb),'[]'::jsonb)) g
+ WHERE g->>'id' IS NOT NULL ORDER BY id LIMIT 64) graphs
+$$;
+
+
+--
+-- Name: lifecycle_project_successor(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_project_successor(app uuid, deployment uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('graphs',coalesce((SELECT jsonb_agg(to_jsonb(rs)||jsonb_build_object('members',coalesce((SELECT jsonb_agg(to_jsonb(m) ORDER BY m.app_id) FROM project_release_members m WHERE m.release_id=rs.id),'[]'::jsonb)) ORDER BY rs.id) FROM project_release_sets rs WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active),'[]'::jsonb),
+ 'spec',(SELECT to_jsonb(s)||jsonb_build_object('settings_raw',s.settings::text,'environment',to_jsonb(e)) FROM project_environment_workload_deployment_specs p JOIN project_environment_workload_specs s ON s.id=p.spec_id JOIN project_environments e ON e.id=s.environment_id WHERE p.deployment_id=deployment AND s.app_id=a.id AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug='production'),
+ 'live',EXISTS(SELECT 1 FROM deployments d WHERE d.id=deployment AND d.app_id=a.id AND d.status='live' AND d.scope='production'))
+ FROM apps a WHERE a.id=app AND a.project_id IS NOT NULL
+$$;
+
+
+--
+-- Name: lifecycle_successor_bindings(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_successor_bindings(source uuid, mappings jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(jsonb_agg(item||jsonb_build_object('project',lifecycle_project_successor((item->>'app')::uuid,coalesce(nullif(item#>>'{mapping,successor_deployment_id}','')::uuid,nullif(item#>>'{mapping,candidate_deployment_id}','')::uuid))) ORDER BY item#>>'{mapping,method}',item#>>'{mapping,path}'),'[]'::jsonb)
+ FROM jsonb_array_elements(lifecycle_successor_bindings_v736(source,mappings)) item
+$$;
+
+
+--
+-- Name: lifecycle_successor_bindings_v736(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_successor_bindings_v736(source uuid, mappings jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(jsonb_agg(jsonb_build_object('mapping',m,'app',a.id,'status',a.status,'visibility',a.visibility,'org_id',a.org_id,'project_id',a.project_id,'only_declared_routes',a.only_declared_routes,'declared_routes',a.declared_routes,
+ 'configuration',lifecycle_configuration(a.id),
+ 'domain', (SELECT jsonb_build_object('domain',d.domain,'app_id',d.app_id,'environment_id',d.environment_id,'verified_at',d.verified_at) FROM custom_domains d WHERE d.domain::text=split_part(split_part(m->>'successor_url','/',3),':',1)),
+ 'claimed',EXISTS(SELECT 1 FROM tenant_hostnames h WHERE h.hostname::text=split_part(split_part(m->>'successor_url','/',3),':',1)),
+ 'capture',(SELECT jsonb_build_object('sha',encode(c.doc_sha256,'hex'),'document_sha',encode(sha256(convert_to(c.doc::text,'UTF8')),'hex'),'truncated',c.truncated,'captured_at',c.captured_at,'updated_at',c.updated_at) FROM deployment_openapi_docs c WHERE c.deployment_id=coalesce(nullif(m->>'successor_deployment_id','')::uuid, nullif(m->>'candidate_deployment_id','')::uuid) AND c.app_id=a.id),
+ 'routes',CASE WHEN a.id=source THEN '[]'::jsonb ELSE coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'scope',d.scope,'status',d.status,'traffic',d.traffic_percent) ORDER BY d.id) FROM deployments d WHERE d.app_id=a.id AND d.status='live' AND d.traffic_percent>0 AND coalesce(nullif(d.scope,''),'default') IN ('default','prod','production')),'[]'::jsonb) END) ORDER BY m->>'method',m->>'path'),'[]'::jsonb)
+ FROM jsonb_array_elements(mappings) m LEFT JOIN apps a ON a.id=coalesce(nullif(m->>'successor_app_id','')::uuid,source)
+$$;
+
+
+--
+-- Name: lifecycle_traffic_inputs(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lifecycle_traffic_inputs(app uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('configuration',lifecycle_configuration(app),
+ 'gate',coalesce((SELECT to_jsonb(g) FROM canary_route_gates g WHERE g.app_id=app),'{}'::jsonb),
+ 'requirements',coalesce((SELECT to_jsonb(s) FROM saved_route_requirements s WHERE s.app_id=app),'{}'::jsonb),
+ 'removal',coalesce((SELECT to_jsonb(p)-'baseline_since'-'baseline_deployment_id' FROM app_route_removal_policies p WHERE p.app_id=app),'{}'::jsonb),
+ 'captures',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.deployment_id,'sha',encode(d.doc_sha256,'hex'),'document_sha',encode(sha256(convert_to(d.doc::text,'UTF8')),'hex'),'truncated',d.truncated,'captured_at',d.captured_at,'updated_at',d.updated_at) ORDER BY d.deployment_id) FROM deployment_openapi_docs d WHERE d.app_id=app),'[]'::jsonb))
+$$;
+
+
+--
+-- Name: lock_route_removal_coverage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_route_removal_coverage() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM compute_nodes ORDER BY name FOR SHARE;
+ PERFORM 1 FROM request_telemetry_coverage ORDER BY node_name FOR SHARE;
+END $$;
+
+
+--
+-- Name: lock_route_removal_coverage(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_route_removal_coverage(target_app uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM lock_route_removal_coverage();
+ PERFORM 1 FROM request_telemetry_app_gaps WHERE app_id=target_app ORDER BY node_name FOR SHARE;
 END $$;
 
 
@@ -7619,6 +8608,24 @@ BEGIN
         PERFORM pg_notify('app_changed', NEW.app_id::text);
     END IF;
     RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: notify_deployment_lifecycle_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_deployment_lifecycle_capture_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM pg_notify('app_openapi_doc_changed', json_build_object('app_id', OLD.app_id, 'deployment_id', OLD.deployment_id)::text);
+    RETURN OLD;
+  END IF;
+  PERFORM pg_notify('app_openapi_doc_changed', json_build_object('app_id', NEW.app_id, 'deployment_id', NEW.deployment_id)::text);
+  RETURN NEW;
 END;
 $$;
 
@@ -9448,6 +10455,50 @@ $$;
 
 
 --
+-- Name: record_event_recovery_admitted_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_admitted_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state<>'queued' OR NEW.replay_invocation_id IS NULL THEN RETURN NEW; END IF;
+ PERFORM capture_event_recovery_invocation_result(inv.id,inv.account_id,inv.app_id,inv.created_at,inv.replay_generation,
+  inv.state,inv.outcome,inv.attempts,inv.completed_at)
+ FROM invocations inv JOIN event_recovery_jobs job ON job.id=NEW.job_id
+ WHERE job.selection->>'mode'='execution' AND inv.id=NEW.replay_invocation_id AND inv.account_id=job.account_id
+  AND inv.app_id=job.app_id AND inv.replay_generation=NEW.replay_generation AND inv.created_at=NEW.replay_created_at;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: record_event_recovery_invocation_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_invocation_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+   OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation)
+   IS DISTINCT FROM (NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation) THEN
+   PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+    OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  END IF;
+ END IF;
+ PERFORM capture_event_recovery_invocation_result(NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation,
+  NEW.state,NEW.outcome,NEW.attempts,NEW.completed_at);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9576,6 +10627,64 @@ BEGIN
     PERFORM pg_notify('app_changed', app_uuid::text);
 END;
 $$;
+
+
+--
+-- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone) RETURNS void
+    LANGUAGE sql
+    AS $$
+ SELECT record_telemetry_coverage(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,false,0,'[]'::jsonb)
+$$;
+
+
+--
+-- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone, boolean, bigint, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record;
+BEGIN
+ IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR (NOT scoped AND jsonb_array_length(app_gaps)>0) THEN
+ RAISE EXCEPTION 'invalid app telemetry coverage' USING ERRCODE='22023'; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) WHERE app_id IS NULL OR app_id='00000000-0000-0000-0000-000000000000'::uuid OR dropped_count IS NULL OR dropped_count<0 OR pending_count IS NULL OR pending_count<0) OR
+ EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid) GROUP BY app_id HAVING count(*)>1) THEN
+ RAISE EXCEPTION 'invalid or duplicated app telemetry gap' USING ERRCODE='22023'; END IF;
+ SELECT coalesce(sum(pending_count),0),coalesce(sum(dropped_count),0) INTO attributed_pending,attributed_losses FROM jsonb_to_recordset(app_gaps) g(pending_count integer,dropped_count bigint);
+ IF attributed_pending>pending THEN RAISE EXCEPTION 'invalid attributed backlog' USING ERRCODE='22023'; END IF;
+ IF source_stamp>stamp+interval '5 seconds' OR source_stamp<stamp-interval '30 seconds' THEN
+ RAISE EXCEPTION 'telemetry coverage clock is stale or in the future' USING ERRCODE='22023'; END IF;
+ -- FK app locks precede the node lock, matching promotion's app-before-node
+ -- ordering. The writer cannot hold a node while waiting on a promotion app.
+ PERFORM 1 FROM apps a WHERE a.id IN (SELECT app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid)) ORDER BY a.id FOR KEY SHARE;
+ INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count)
+ VALUES(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,stamp,
+ CASE WHEN is_enabled AND sampling=10000 AND (CASE WHEN scoped THEN unattributed_drops=0 AND pending=attributed_pending ELSE drops=0 AND pending=0 END) THEN stamp END,
+ scoped,unattributed_drops,(pending-attributed_pending)::integer)
+ ON CONFLICT(node_name) DO UPDATE SET boot_id=excluded.boot_id,sequence=excluded.sequence,enabled=excluded.enabled,sampling_basis_points=excluded.sampling_basis_points,
+ dropped_total=excluded.dropped_total,pending_count=excluded.pending_count,source_at=excluded.source_at,received_at=excluded.received_at,
+ app_scoped=excluded.app_scoped,unattributed_dropped_total=excluded.unattributed_dropped_total,unattributed_pending_count=excluded.unattributed_pending_count,
+ healthy_since=CASE WHEN NOT excluded.enabled OR excluded.sampling_basis_points<>10000 OR (CASE WHEN excluded.app_scoped THEN excluded.unattributed_pending_count ELSE excluded.pending_count END)<>0 THEN NULL
+ WHEN old.boot_id<>excluded.boot_id OR old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
+ (excluded.app_scoped AND excluded.dropped_total-old.dropped_total>attributed_losses+greatest(excluded.unattributed_dropped_total-old.unattributed_dropped_total,0)) OR (CASE WHEN excluded.app_scoped THEN old.unattributed_dropped_total<>excluded.unattributed_dropped_total ELSE old.dropped_total<>excluded.dropped_total END) THEN stamp
+ ELSE coalesce(old.healthy_since,stamp) END
+ WHERE excluded.source_at>old.source_at AND (old.boot_id<>excluded.boot_id OR excluded.sequence>old.sequence);
+ IF NOT FOUND THEN RAISE EXCEPTION 'telemetry coverage replay or out-of-order heartbeat' USING ERRCODE='22023'; END IF;
+ -- Omitted apps have no current backlog. Recovery starts at this receipt,
+ -- never at the previous unhealthy heartbeat.
+ UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ FOR gap IN SELECT * FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) ORDER BY app_id LOOP
+ IF (gap.dropped_count>0 OR gap.pending_count>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
+ INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending_count,gap.dropped_count,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
+ END IF;
+ END LOOP;
+END $$;
 
 
 --
@@ -9778,6 +10887,23 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: reset_route_removal_observation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reset_route_removal_observation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR TG_OP='INSERT' OR NEW.doc_sha256 IS DISTINCT FROM OLD.doc_sha256 OR NEW.truncated IS DISTINCT FROM OLD.truncated THEN
+ UPDATE app_route_removal_policies SET baseline_since=clock_timestamp()
+ WHERE baseline_deployment_id=CASE WHEN TG_OP='DELETE' THEN OLD.deployment_id ELSE NEW.deployment_id END;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -10006,6 +11132,131 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: route_removal_check(uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_check(target_id uuid, proposed_scope text DEFAULT NULL::text, proposed_app_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p app_route_removal_policies%ROWTYPE; d deployments%ROWTYPE;
+ b deployment_openapi_docs%ROWTYPE; c deployment_openapi_docs%ROWTYPE;
+ approval route_removal_approvals%ROWTYPE; removed jsonb := '[]'; blockers jsonb := '[]'; stamp timestamptz := clock_timestamp(); earliest timestamptz;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=target_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'deployment not found'; END IF;
+ IF proposed_scope IS NOT NULL THEN d.scope:=proposed_scope; END IF;
+ IF proposed_app_id IS NOT NULL THEN d.app_id:=proposed_app_id; END IF;
+ SELECT * INTO p FROM app_route_removal_policies WHERE app_id=d.app_id;
+ IF NOT FOUND THEN RETURN jsonb_build_object('status','not_configured','removed',removed,'blockers',blockers); END IF;
+ IF coalesce(nullif(d.scope,''),'default') NOT IN ('default','prod','production') OR p.baseline_deployment_id IS NULL OR p.baseline_deployment_id=d.id THEN
+ RETURN jsonb_build_object('status','not_required','removed',removed,'blockers',blockers); END IF;
+ SELECT * INTO b FROM deployment_openapi_docs WHERE deployment_id=p.baseline_deployment_id AND app_id=d.app_id AND account_id=p.account_id;
+ SELECT * INTO c FROM deployment_openapi_docs WHERE deployment_id=d.id AND app_id=d.app_id AND account_id=p.account_id;
+ IF b.deployment_id IS NULL OR c.deployment_id IS NULL OR b.truncated OR c.truncated OR
+ coalesce(b.doc->>'openapi','') NOT LIKE '3.%' OR coalesce(c.doc->>'openapi','') NOT LIKE '3.%' OR
+ jsonb_typeof(b.doc->'paths') IS DISTINCT FROM 'object' OR jsonb_typeof(c.doc->'paths') IS DISTINCT FROM 'object' THEN
+ blockers := jsonb_build_array('contract_unavailable');
+ ELSIF EXISTS(SELECT 1 FROM jsonb_each(b.doc->'paths') x WHERE jsonb_typeof(x.value)<>'object' OR x.value ? '$ref' OR x.key NOT LIKE '/%') OR
+ EXISTS(SELECT 1 FROM jsonb_each(c.doc->'paths') x WHERE jsonb_typeof(x.value)<>'object' OR x.value ? '$ref' OR x.key NOT LIKE '/%') THEN
+ blockers := jsonb_build_array('path_reference_or_invalid_item');
+ ELSIF EXISTS(SELECT 1 FROM jsonb_each(b.doc->'paths') item CROSS JOIN LATERAL jsonb_each(item.value) o WHERE lower(o.key) IN ('get','put','post','delete','options','head','patch','trace') AND jsonb_typeof(o.value)<>'object') OR
+ EXISTS(SELECT 1 FROM jsonb_each(c.doc->'paths') item CROSS JOIN LATERAL jsonb_each(item.value) o WHERE lower(o.key) IN ('get','put','post','delete','options','head','patch','trace') AND jsonb_typeof(o.value)<>'object') THEN
+ blockers:=jsonb_build_array('invalid_operation');
+ ELSE
+ SELECT coalesce(jsonb_agg(jsonb_build_object('method',x.method,'path',x.path) ORDER BY x.method,x.path),'[]') INTO removed
+ FROM (SELECT * FROM route_removal_operations(b.doc) EXCEPT SELECT * FROM route_removal_operations(c.doc)) x;
+ IF jsonb_array_length(removed)>0 THEN
+ earliest:=date_trunc('minute',greatest(p.baseline_since,b.captured_at))+make_interval(secs=>p.grace_seconds)+interval '3 minutes';
+ blockers:=blockers||route_removal_coverage_blockers(p.app_id,date_trunc('minute',stamp-interval '2 minutes')-make_interval(secs=>p.grace_seconds),date_trunc('minute',stamp-interval '2 minutes'));
+ SELECT greatest(earliest,date_trunc('minute',max(healthy_since))+make_interval(secs=>p.grace_seconds)+interval '3 minutes') INTO earliest FROM request_telemetry_coverage cv JOIN compute_nodes n ON n.name=cv.node_name WHERE n.active;
+ SELECT greatest(earliest,date_trunc('minute',max(g.last_gap_at))+make_interval(secs=>p.grace_seconds)+interval '3 minutes') INTO earliest FROM request_telemetry_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=p.app_id;
+ IF stamp < earliest THEN
+ blockers:=blockers||jsonb_build_array('grace_period_not_elapsed'); END IF;
+ SELECT * INTO approval FROM route_removal_approvals a WHERE a.app_id=p.app_id AND a.account_id=p.account_id AND
+ a.policy_revision=p.revision AND a.baseline_deployment_id=p.baseline_deployment_id AND a.candidate_deployment_id=d.id AND
+ a.baseline_sha256=b.doc_sha256 AND a.candidate_sha256=c.doc_sha256 AND p.baseline_since<=a.observation_from AND a.valid_until>stamp AND
+ a.approved_at>=stamp-make_interval(secs=>p.max_approval_age_seconds) AND
+ a.observation_from<=a.observation_until-make_interval(secs=>p.grace_seconds) AND
+ a.observation_until>=stamp-make_interval(secs=>p.max_approval_age_seconds)-interval '3 minutes' AND
+ NOT EXISTS (SELECT 1 FROM jsonb_array_elements(removed) r WHERE NOT EXISTS
+ (SELECT 1 FROM jsonb_array_elements(a.mappings) m WHERE m->>'method'=r->>'method' AND m->>'path'=r->>'path'))
+ ORDER BY a.approved_at DESC LIMIT 1;
+ IF NOT FOUND THEN blockers:=blockers||jsonb_build_array('fresh_authenticated_approval_required');
+ ELSE
+ blockers:=blockers||route_removal_coverage_blockers(p.app_id,approval.observation_from,date_trunc('minute',stamp-interval '2 minutes'));
+ IF EXISTS (SELECT 1 FROM request_telemetry rt JOIN deployments td ON td.id=rt.deployment_id
+ JOIN jsonb_array_elements(removed) r ON rt.method=r->>'method' AND rt.route IN (r->>'path',(r->>'method')||' '||(r->>'path'))
+ WHERE rt.app_id=p.app_id AND rt.account_id=p.account_id AND coalesce(nullif(td.scope,''),'default') IN ('default','prod','production')
+ AND rt.received_at>=approval.observation_from AND rt.count>0) THEN
+ blockers:=blockers||jsonb_build_array('old_route_observed'); END IF;
+ END IF;
+ END IF;
+ END IF;
+ SELECT coalesce(jsonb_agg(DISTINCT x),'[]') INTO blockers FROM jsonb_array_elements(blockers) x;
+ RETURN jsonb_strip_nulls(jsonb_build_object('status',CASE WHEN jsonb_array_length(blockers)>0 THEN 'blocked' WHEN jsonb_array_length(removed)>0 THEN 'passed' ELSE 'not_required' END,
+ 'removed',removed,'blockers',blockers,'approval_id',coalesce(approval.id::text,''),
+ 'earliest_approval_at',earliest,'approval_valid_until',approval.valid_until,
+ 'baseline_contract_sha256',encode(b.doc_sha256,'hex'),'candidate_contract_sha256',encode(c.doc_sha256,'hex')));
+END $_$;
+
+
+--
+-- Name: route_removal_coverage_blockers(timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_coverage_blockers(window_from timestamp with time zone, window_until timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE blockers jsonb:='[]'; stamp timestamptz:=clock_timestamp();
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes WHERE active) OR EXISTS(SELECT 1 FROM compute_nodes n LEFT JOIN request_telemetry_coverage c ON c.node_name=n.name WHERE n.active AND c.node_name IS NULL) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_coverage_missing'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND c.received_at<stamp-interval '30 seconds') THEN
+ blockers:=blockers||jsonb_build_array('telemetry_coverage_stale'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND NOT c.enabled) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_disabled'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND c.sampling_basis_points<>10000) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_sampled'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND ((CASE WHEN c.app_scoped THEN c.unattributed_pending_count ELSE c.pending_count END)>0 OR c.source_at<window_until)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_coverage c JOIN compute_nodes n ON n.name=c.node_name WHERE n.active AND (c.healthy_since IS NULL OR c.healthy_since>window_from)) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_window_incomplete'); END IF;
+ RETURN blockers;
+END $$;
+
+
+--
+-- Name: route_removal_coverage_blockers(uuid, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_coverage_blockers(target_app uuid, window_from timestamp with time zone, window_until timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE blockers jsonb:=route_removal_coverage_blockers(window_from,window_until);
+BEGIN
+ IF EXISTS(SELECT 1 FROM request_telemetry_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.pending_count>0) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_ingestion_pending'); END IF;
+ IF EXISTS(SELECT 1 FROM request_telemetry_app_gaps g JOIN compute_nodes n ON n.name=g.node_name WHERE n.active AND g.app_id=target_app AND g.last_gap_at>window_from) THEN
+ blockers:=blockers||jsonb_build_array('telemetry_window_incomplete'); END IF;
+ SELECT coalesce(jsonb_agg(DISTINCT x),'[]') INTO blockers FROM jsonb_array_elements(blockers) x;
+ RETURN blockers;
+END $$;
+
+
+--
+-- Name: route_removal_operations(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_operations(document jsonb) RETURNS TABLE(method text, path text)
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT upper(o.key),p.key FROM jsonb_each(document->'paths') p
+ CROSS JOIN LATERAL jsonb_each(p.value) o
+ WHERE lower(o.key) IN ('get','put','post','delete','options','head','patch','trace')
 $$;
 
 
@@ -11373,7 +12624,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -11428,18 +12679,89 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
+    CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
+    CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
     CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
 );
+
+
+--
+-- Name: api_consumer_plan_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_admissions (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    minute_start timestamp with time zone NOT NULL,
+    minute_used bigint DEFAULT 0 NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    month_used bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT api_consumer_plan_admissions_used_chk CHECK (((minute_used >= 0) AND (month_used >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_admissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_admissions IS 'Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.';
+
+
+--
+-- Name: api_consumer_plan_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    plan_id uuid,
+    effective_from timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_plan_assignments_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_assignments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_assignments IS 'Append-only, minute-effective plan assignments; a NULL plan_id returns the consumer to the default plan.';
+
+
+--
+-- Name: api_consumer_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    max_requests_per_minute bigint DEFAULT 0 NOT NULL,
+    max_units_per_month bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
+    CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: TABLE api_consumer_plans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).';
 
 
 --
@@ -11455,11 +12777,72 @@ CREATE TABLE public.api_consumer_rate_cards (
     price_millicents_per_unit bigint NOT NULL,
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    plan_id uuid,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
+    CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
     CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = 'request'::text))
 );
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.included_units_per_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.included_units_per_month IS 'Free request units per consumer per UTC calendar month, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.plan_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.plan_id IS 'Plan whose price history this card belongs to; NULL is the app default plan.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.route_weights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.route_weights IS 'Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.';
+
+
+--
+-- Name: COLUMN api_consumer_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.';
+
+
+--
+-- Name: api_consumer_route_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_route_usage_minutes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_key text NOT NULL,
+    route text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    billable_units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_route_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT api_consumer_route_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_route_usage_minutes_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT api_consumer_route_usage_minutes_units_chk CHECK ((billable_units >= 0))
+);
+
+
+--
+-- Name: TABLE api_consumer_route_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
 
 
 --
@@ -11550,13 +12933,22 @@ CREATE TABLE public.api_consumer_usage_statements (
     as_of timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
+    revision integer DEFAULT 1 NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
-    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = 'draft'::text) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
+    CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
-    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text]))),
+    CONSTRAINT api_consumer_usage_statements_revision_chk CHECK ((revision > 0)),
+    CONSTRAINT api_consumer_usage_statements_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text, 'superseded'::text]))),
     CONSTRAINT api_consumer_usage_statements_totals_chk CHECK (((billable_units >= 0) AND (unpriced_units >= 0) AND (amount_millicents >= 0)))
 );
+
+
+--
+-- Name: COLUMN api_consumer_usage_statements.revision; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_usage_statements.revision IS 'Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.';
 
 
 --
@@ -12177,6 +13569,27 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_route_removal_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_removal_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    mode text NOT NULL,
+    revision integer NOT NULL,
+    grace_seconds bigint NOT NULL,
+    max_approval_age_seconds bigint NOT NULL,
+    baseline_deployment_id uuid,
+    baseline_since timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_removal_policies_grace_seconds_check CHECK (((grace_seconds >= 3600) AND (grace_seconds <= 7776000))),
+    CONSTRAINT app_route_removal_policies_max_approval_age_seconds_check CHECK (((max_approval_age_seconds >= 60) AND (max_approval_age_seconds <= 259200))),
+    CONSTRAINT app_route_removal_policies_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT app_route_removal_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
 -- Name: app_runtime_config_changes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12602,7 +14015,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -13006,7 +14419,9 @@ CREATE TABLE public.build_provenance (
     finished_at timestamp with time zone NOT NULL,
     sbom_storage_key text,
     framework_version text,
-    runtime_base_ref text DEFAULT ''::text NOT NULL
+    runtime_base_ref text DEFAULT ''::text NOT NULL,
+    dev_patch jsonb,
+    CONSTRAINT build_provenance_dev_patch_check CHECK (((dev_patch IS NULL) OR ((jsonb_typeof(dev_patch) = 'object'::text) AND (octet_length((dev_patch)::text) <= 65536))))
 );
 
 
@@ -13667,7 +15082,7 @@ CREATE TABLE public.customer_operation_definitions (
     spec jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     workflow_snapshot jsonb,
-    CONSTRAINT customer_operation_definition_target CHECK (((((NOT (spec ? 'workflow'::text)) AND (workflow_snapshot IS NULL)) OR ((jsonb_typeof((spec -> 'workflow'::text)) = 'object'::text) AND (NOT ((spec ? 'method'::text) OR (spec ? 'path'::text))) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'name'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'name'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'result_step'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'result_step'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'progress_stage'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'progress_stage'::text) <> ''::text) AND (jsonb_typeof(workflow_snapshot) = 'object'::text) AND ((workflow_snapshot ->> 'name'::text) = ((spec -> 'workflow'::text) ->> 'name'::text)) AND (jsonb_typeof((workflow_snapshot -> 'steps'::text)) = 'array'::text))) IS TRUE)),
+    CONSTRAINT customer_operation_definition_target CHECK (((((NOT (spec ? 'workflow'::text)) AND (workflow_snapshot IS NULL)) OR ((jsonb_typeof((spec -> 'workflow'::text)) = 'string'::text) AND ((spec ->> 'workflow'::text) <> ''::text) AND (jsonb_typeof(workflow_snapshot) = 'object'::text) AND ((workflow_snapshot ->> 'name'::text) = (spec ->> 'workflow'::text)) AND (jsonb_typeof((workflow_snapshot -> 'steps'::text)) = 'array'::text))) IS TRUE)),
     CONSTRAINT customer_operation_definitions_check CHECK (((spec ->> 'name'::text) = name)),
     CONSTRAINT customer_operation_definitions_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_definitions_revision_check CHECK ((revision ~ '^[0-9a-f]{64}$'::text)),
@@ -13709,7 +15124,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -13754,6 +15169,23 @@ CREATE TABLE public.customer_operation_idempotency (
 
 
 --
+-- Name: customer_operation_job_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_job_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_job_executions_check CHECK ((NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_job_executions_check1 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_job_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_job_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+--
 -- Name: customer_operation_milestones; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13785,6 +15217,8 @@ CREATE TABLE public.customer_operation_recoveries (
     fingerprint text NOT NULL,
     request jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
+    decision jsonb,
+    CONSTRAINT customer_operation_recoveries_decision_check CHECK (((decision IS NULL) OR (jsonb_typeof(decision) = 'object'::text))),
     CONSTRAINT customer_operation_recoveries_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_recoveries_recovery_id_check CHECK (((octet_length(recovery_id) >= 1) AND (octet_length(recovery_id) <= 128))),
     CONSTRAINT customer_operation_recoveries_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
@@ -13816,7 +15250,7 @@ CREATE TABLE public.customer_operation_result_blobs (
     operation_id uuid NOT NULL,
     account_id uuid NOT NULL,
     generation integer NOT NULL,
-    execution_id uuid NOT NULL,
+    execution_id uuid,
     attempt integer NOT NULL,
     report_id text NOT NULL,
     fingerprint text NOT NULL,
@@ -13827,13 +15261,17 @@ CREATE TABLE public.customer_operation_result_blobs (
     next_attempt_at timestamp with time zone NOT NULL,
     lease_token text DEFAULT ''::text NOT NULL,
     lease_until timestamp with time zone,
+    workflow_run_id uuid,
+    workflow_step text,
+    job_run_id uuid,
     CONSTRAINT customer_operation_result_blobs_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT customer_operation_result_blobs_check CHECK ((storage_key = ((((('operation-results/'::text || (account_id)::text) || '/'::text) || (operation_id)::text) || '/'::text) || (id)::text))),
     CONSTRAINT customer_operation_result_blobs_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_result_blobs_generation_check CHECK ((generation > 0)),
     CONSTRAINT customer_operation_result_blobs_report_id_check CHECK (((octet_length(report_id) >= 1) AND (octet_length(report_id) <= 128))),
     CONSTRAINT customer_operation_result_blobs_size_bytes_check CHECK ((size_bytes >= 0)),
-    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text])))
+    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text]))),
+    CONSTRAINT operation_blob_execution_family CHECK ((((execution_id IS NOT NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NULL)) OR ((execution_id IS NULL) AND (workflow_run_id IS NOT NULL) AND (workflow_step IS NOT NULL) AND (job_run_id IS NULL) AND ((octet_length(workflow_step) >= 1) AND (octet_length(workflow_step) <= 128))) OR ((execution_id IS NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NOT NULL))))
 );
 
 
@@ -13855,6 +15293,8 @@ CREATE TABLE public.customer_operations (
     current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
     execution_kind text GENERATED ALWAYS AS (COALESCE((record ->> 'execution_kind'::text), 'http'::text)) STORED NOT NULL,
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
+    workflow_run_id uuid,
+    job_run_id uuid,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
     CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
     CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
@@ -13865,8 +15305,11 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check4 CHECK (((record ->> 'platform_tenant_id'::text) = (platform_tenant_id)::text)),
     CONSTRAINT customer_operations_check5 CHECK (((record ->> 'definition_id'::text) = (definition_id)::text)),
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
+    CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
+    CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
 
@@ -13967,6 +15410,25 @@ CREATE TABLE public.customer_operation_workflow_claims (
 
 
 --
+-- Name: customer_operation_workflow_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_workflow_executions_check CHECK (((resume_count >= 0) AND (generation = (resume_count + 1)))),
+    CONSTRAINT customer_operation_workflow_executions_check1 CHECK ((NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_workflow_executions_check2 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_workflow_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+--
 -- Name: customer_operation_workflow_guest_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14009,7 +15471,24 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     created_at timestamp with time zone NOT NULL,
     fingerprint text NOT NULL,
     from_state text DEFAULT ''::text NOT NULL,
+    contract_version integer DEFAULT 1 NOT NULL,
+    evidence_milestones jsonb DEFAULT '[]'::jsonb NOT NULL,
+    blockers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    blockers_only boolean DEFAULT false NOT NULL,
+    blocker_resolutions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    deadline_at text DEFAULT ''::text NOT NULL,
+    deadline_only boolean DEFAULT false NOT NULL,
+    outcome_code text DEFAULT ''::text NOT NULL,
+    outcome_description text DEFAULT ''::text NOT NULL,
+    outcome_only boolean DEFAULT false NOT NULL,
+    depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
+    dependencies_only boolean DEFAULT false NOT NULL,
+    CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
+    CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
+    CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
+    CONSTRAINT customer_operation_workflow_state_reports_blockers_check CHECK (((jsonb_typeof(blockers) = 'array'::text) AND (jsonb_array_length(blockers) <= 16))),
     CONSTRAINT customer_operation_workflow_state_reports_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT customer_operation_workflow_state_reports_depends_on_check CHECK (((jsonb_typeof(depends_on) = 'array'::text) AND (jsonb_array_length(depends_on) <= 16))),
     CONSTRAINT customer_operation_workflow_state_reports_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_workflow_state_reports_from_state_check CHECK (((from_state = ''::text) OR (from_state ~ '^[a-z][a-z0-9-]{0,63}$'::text))),
     CONSTRAINT customer_operation_workflow_state_reports_instance_id_check CHECK ((((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 256)) AND (instance_id !~ '[\x00-\x1f\x7f]'::text))),
@@ -14665,6 +16144,50 @@ CREATE TABLE public.dev_bridge_webhook_replays (
     CONSTRAINT dev_bridge_webhook_replays_http_status_check CHECK (((http_status = 0) OR ((http_status >= 100) AND (http_status <= 599)))),
     CONSTRAINT dev_bridge_webhook_replays_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 64))),
     CONSTRAINT dev_bridge_webhook_replays_state_check CHECK ((state = ANY (ARRAY['dispatching'::text, 'completed'::text, 'uncertain'::text])))
+);
+
+
+--
+-- Name: dev_source_manifests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_source_manifests (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_root text DEFAULT ''::text NOT NULL,
+    manifest jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dev_source_manifests_manifest_check CHECK (((jsonb_typeof(manifest) = 'object'::text) AND (octet_length((manifest)::text) <= 4194304))),
+    CONSTRAINT dev_source_manifests_source_root_check CHECK ((octet_length(source_root) <= 512))
+);
+
+
+--
+-- Name: dev_source_patches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_source_patches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    base_deployment_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    image_dir text NOT NULL,
+    archive bytea NOT NULL,
+    deleted jsonb DEFAULT '[]'::jsonb NOT NULL,
+    digest text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    applied_at timestamp with time zone,
+    apply_ms integer,
+    apply_error text,
+    CONSTRAINT dev_source_patches_apply_error_check CHECK (((apply_error IS NULL) OR (apply_error ~ '^[a-z][a-z0-9_]{0,63}$'::text))),
+    CONSTRAINT dev_source_patches_apply_ms_check CHECK (((apply_ms IS NULL) OR ((apply_ms >= 0) AND (apply_ms <= 600000)))),
+    CONSTRAINT dev_source_patches_archive_check CHECK ((octet_length(archive) <= 16777216)),
+    CONSTRAINT dev_source_patches_check CHECK ((expires_at > created_at)),
+    CONSTRAINT dev_source_patches_deleted_check CHECK ((jsonb_typeof(deleted) = 'array'::text)),
+    CONSTRAINT dev_source_patches_digest_check CHECK ((digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT dev_source_patches_generation_check CHECK ((generation > 0)),
+    CONSTRAINT dev_source_patches_image_dir_check CHECK ((image_dir = '/app'::text))
 );
 
 
@@ -15594,6 +17117,31 @@ CREATE TABLE public.event_fanout_recipients (
 
 
 --
+-- Name: event_recovery_execution_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_execution_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    replay_generation bigint NOT NULL,
+    replay_created_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    attempts integer NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    evidence_source text NOT NULL,
+    CONSTRAINT event_recovery_execution_results_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_recovery_execution_results_check CHECK ((recorded_at >= replay_created_at)),
+    CONSTRAINT event_recovery_execution_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= replay_created_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_execution_results_evidence_source_check CHECK ((evidence_source = ANY (ARRAY['invocation'::text, 'attempt_history'::text]))),
+    CONSTRAINT event_recovery_execution_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_execution_results_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT event_recovery_execution_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead_lettered'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
+);
+
+
+--
 -- Name: event_recovery_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15693,16 +17241,27 @@ CREATE TABLE public.event_recovery_jobs (
     capacity_scope text DEFAULT ''::text NOT NULL,
     capacity_wait_started_at timestamp with time zone,
     capacity_wait_observed_at timestamp with time zone,
+    execution_notification_captured boolean DEFAULT false NOT NULL,
+    execution_finished_at timestamp with time zone,
+    execution_notification_next_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id uuid,
+    notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
+    CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
     CONSTRAINT event_recovery_jobs_completion_chk CHECK (((state = ANY (ARRAY['running'::text, 'paused'::text])) = (completed_at IS NULL))),
     CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text]) = '{}'::jsonb))),
     CONSTRAINT event_recovery_jobs_pause_chk CHECK (((state = 'paused'::text) = (paused_at IS NOT NULL))),
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
     CONSTRAINT event_recovery_jobs_wait_reason_check CHECK ((wait_reason = ANY (ARRAY[''::text, 'capacity'::text, 'legacy_claim'::text]))),
-    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100)))
+    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
+    CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
+    CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
 );
 
 
@@ -18220,6 +19779,25 @@ CREATE TABLE public.managed_postgres_usage_imports (
 
 
 --
+-- Name: managed_realtime_channel_batches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_batches (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    batch_id text NOT NULL,
+    payload_hash bytea NOT NULL,
+    first_sequence bigint NOT NULL,
+    message_count integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_channel_batches_batch_id_check CHECK (((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 128))),
+    CONSTRAINT managed_realtime_channel_batches_first_sequence_check CHECK ((first_sequence >= 1)),
+    CONSTRAINT managed_realtime_channel_batches_message_count_check CHECK (((message_count >= 1) AND (message_count <= 32))),
+    CONSTRAINT managed_realtime_channel_batches_payload_hash_check CHECK ((octet_length(payload_hash) = 32))
+);
+
+
+--
 -- Name: managed_realtime_channel_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18246,9 +19824,37 @@ CREATE TABLE public.managed_realtime_channel_messages (
     is_binary boolean DEFAULT false NOT NULL,
     idempotency_key text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    target_message_id text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    message_event text DEFAULT 'created'::text NOT NULL,
+    deleted boolean DEFAULT false NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT managed_realtime_channel_messages_data_check CHECK ((octet_length(data) <= 4096)),
     CONSTRAINT managed_realtime_channel_messages_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128)))),
-    CONSTRAINT managed_realtime_channel_messages_sequence_check CHECK ((sequence > 0))
+    CONSTRAINT managed_realtime_channel_messages_message_event_check CHECK ((message_event = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT managed_realtime_channel_messages_metadata_check CHECK (((jsonb_typeof(metadata) = 'object'::text) AND (octet_length((metadata)::text) <= 4096))),
+    CONSTRAINT managed_realtime_channel_messages_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT managed_realtime_channel_messages_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: managed_realtime_channel_reducers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_reducers (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    entities json NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    entity_versions json DEFAULT '{}'::json NOT NULL,
+    entity_expirations json DEFAULT '{}'::json NOT NULL,
+    next_expiry timestamp with time zone,
+    CONSTRAINT managed_realtime_channel_reducers_entities_check CHECK (((json_typeof(entities) = 'object'::text) AND (octet_length((entities)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_entity_expirations_check CHECK (((json_typeof(entity_expirations) = 'object'::text) AND (octet_length((entity_expirations)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_entity_versions_check CHECK (((json_typeof(entity_versions) = 'object'::text) AND (octet_length((entity_versions)::text) <= 65536))),
+    CONSTRAINT managed_realtime_channel_reducers_sequence_check CHECK ((sequence >= 0))
 );
 
 
@@ -18318,6 +19924,23 @@ CREATE TABLE public.managed_realtime_channel_routes (
 
 
 --
+-- Name: managed_realtime_channel_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_channel_snapshots (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (clock_timestamp() + '24:00:00'::interval) NOT NULL,
+    CONSTRAINT managed_realtime_channel_snapshots_data_check CHECK ((octet_length(data) <= 65536)),
+    CONSTRAINT managed_realtime_channel_snapshots_sequence_check CHECK ((sequence >= 0))
+);
+
+
+--
 -- Name: managed_realtime_connection_owners; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18330,6 +19953,45 @@ CREATE TABLE public.managed_realtime_connection_owners (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT managed_realtime_owner_connection_id_chk CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 256))),
     CONSTRAINT managed_realtime_owner_token_chk CHECK (((length(lease_token) >= 1) AND (length(lease_token) <= 128)))
+);
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_direct_message_deliveries (
+    endpoint_id uuid NOT NULL,
+    message_id text NOT NULL,
+    connection_id text NOT NULL,
+    node_id uuid NOT NULL,
+    ack_supported boolean NOT NULL,
+    queue_status text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    queued_at timestamp with time zone,
+    acknowledged_at timestamp with time zone,
+    CONSTRAINT managed_realtime_direct_message_deliveries_check CHECK (((acknowledged_at IS NULL) OR ack_supported)),
+    CONSTRAINT managed_realtime_direct_message_deliveries_connection_id_check CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 128))),
+    CONSTRAINT managed_realtime_direct_message_deliveries_queue_status_check CHECK ((queue_status = ANY (ARRAY['pending'::text, 'queued'::text, 'unsupported'::text, 'queue_full'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_direct_message_receipts (
+    endpoint_id uuid NOT NULL,
+    message_id text NOT NULL,
+    payload_fingerprint bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    dispatch_lease_until timestamp with time zone NOT NULL,
+    dispatch_complete boolean DEFAULT false NOT NULL,
+    summary jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT managed_realtime_direct_message_recei_payload_fingerprint_check CHECK ((octet_length(payload_fingerprint) = 32)),
+    CONSTRAINT managed_realtime_direct_message_receipts_message_id_check CHECK (((length(message_id) >= 1) AND (length(message_id) <= 128))),
+    CONSTRAINT managed_realtime_direct_message_receipts_summary_check CHECK ((jsonb_typeof(summary) = 'object'::text))
 );
 
 
@@ -18374,6 +20036,24 @@ CREATE TABLE public.managed_realtime_drain_operations (
 
 
 --
+-- Name: managed_realtime_durable_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_durable_cursors (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    subscription text NOT NULL,
+    channel text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_durable_cursors_channel_check CHECK (((length(channel) >= 1) AND (length(channel) <= 256))),
+    CONSTRAINT managed_realtime_durable_cursors_principal_check CHECK (((length(principal) >= 1) AND (length(principal) <= 256))),
+    CONSTRAINT managed_realtime_durable_cursors_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_durable_cursors_subscription_check CHECK (((length(subscription) >= 1) AND (length(subscription) <= 128)))
+);
+
+
+--
 -- Name: managed_realtime_endpoints; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18408,6 +20088,395 @@ CREATE TABLE public.managed_realtime_endpoints (
     CONSTRAINT managed_realtime_paths_len_chk CHECK ((((length(connect_path) >= 1) AND (length(connect_path) <= 256)) AND ((length(message_path) >= 1) AND (length(message_path) <= 256)) AND ((length(disconnect_path) >= 1) AND (length(disconnect_path) <= 256)))),
     CONSTRAINT managed_realtime_paths_shape_chk CHECK ((("left"(connect_path, 1) = '/'::text) AND ("left"(message_path, 1) = '/'::text) AND ("left"(disconnect_path, 1) = '/'::text))),
     CONSTRAINT managed_realtime_tokens_len_chk CHECK (((octet_length(callback_auth_token_sealed) <= 4096) AND (octet_length(auth_token_sealed) <= 4096) AND (octet_length(auth_token_previous_sealed) <= 4096)))
+);
+
+
+--
+-- Name: managed_realtime_event_schemas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_event_schemas (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    event_type text NOT NULL,
+    version integer NOT NULL,
+    schema json NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_event_schemas_channel_check CHECK (((octet_length(channel) >= 1) AND (octet_length(channel) <= 256))),
+    CONSTRAINT managed_realtime_event_schemas_event_type_check CHECK ((event_type ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_event_schemas_schema_check CHECK ((octet_length((schema)::text) <= 16384)),
+    CONSTRAINT managed_realtime_event_schemas_version_check CHECK (((version >= 1) AND (version <= 1000000)))
+);
+
+
+--
+-- Name: managed_realtime_inbox_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_cursors (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    subscription text NOT NULL,
+    channel text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    gap_reported boolean DEFAULT false NOT NULL,
+    CONSTRAINT managed_realtime_inbox_cursors_channel_check CHECK ((channel ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_cursors_check CHECK ((principal = channel)),
+    CONSTRAINT managed_realtime_inbox_cursors_principal_check CHECK (((length(principal) >= 1) AND (length(principal) <= 256))),
+    CONSTRAINT managed_realtime_inbox_cursors_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_inbox_cursors_subscription_check CHECK (((length(subscription) >= 1) AND (length(subscription) <= 128)))
+);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_fallbacks (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    sequence bigint NOT NULL,
+    message_id text NOT NULL,
+    deadline timestamp with time zone NOT NULL,
+    category text DEFAULT 'notifications'::text NOT NULL,
+    group_key text DEFAULT ''::text NOT NULL,
+    group_label text DEFAULT ''::text NOT NULL,
+    priority text DEFAULT 'normal'::text NOT NULL,
+    expires_at timestamp with time zone,
+    collapse_key text DEFAULT ''::text NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_inbox_fallbacks_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_message_id_check CHECK (((length(message_id) >= 1) AND (length(message_id) <= 128))),
+    CONSTRAINT managed_realtime_inbox_fallbacks_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_fallbacks_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_inbox_fallbacks_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: managed_realtime_inbox_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_heads (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    next_sequence bigint DEFAULT 1 NOT NULL,
+    oldest_sequence bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT managed_realtime_inbox_heads_channel_check CHECK ((channel ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_heads_check CHECK (((oldest_sequence > 0) AND (oldest_sequence <= next_sequence))),
+    CONSTRAINT managed_realtime_inbox_heads_next_sequence_check CHECK ((next_sequence > 0))
+);
+
+
+--
+-- Name: managed_realtime_inbox_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_inbox_messages (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    sequence bigint NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    idempotency_key text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    fallback_after_seconds integer DEFAULT 0 NOT NULL,
+    target_message_id text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    message_event text DEFAULT 'created'::text NOT NULL,
+    deleted boolean DEFAULT false NOT NULL,
+    notification_category text DEFAULT 'notifications'::text NOT NULL,
+    notification_group_key text DEFAULT ''::text NOT NULL,
+    notification_group_label text DEFAULT ''::text NOT NULL,
+    notification_priority text DEFAULT 'normal'::text NOT NULL,
+    notification_ttl_seconds integer DEFAULT 0 NOT NULL,
+    notification_collapse_key text DEFAULT ''::text NOT NULL,
+    notification_not_before text DEFAULT ''::text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT managed_realtime_inbox_messages_data_check CHECK ((octet_length(data) <= 4096)),
+    CONSTRAINT managed_realtime_inbox_messages_fallback_after_seconds_check CHECK (((fallback_after_seconds >= 0) AND (fallback_after_seconds <= 86400))),
+    CONSTRAINT managed_realtime_inbox_messages_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128))),
+    CONSTRAINT managed_realtime_inbox_messages_message_event_check CHECK ((message_event = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT managed_realtime_inbox_messages_metadata_check CHECK (((jsonb_typeof(metadata) = 'object'::text) AND (octet_length((metadata)::text) <= 4096))),
+    CONSTRAINT managed_realtime_inbox_messages_notification_category_check CHECK ((notification_category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_collapse_key_check CHECK ((octet_length(notification_collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_group_key_check CHECK ((octet_length(notification_group_key) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_group_label_check CHECK ((octet_length(notification_group_label) <= 128)),
+    CONSTRAINT managed_realtime_inbox_messages_notification_priority_check CHECK ((notification_priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_inbox_messages_notification_ttl_seconds_check CHECK (((notification_ttl_seconds >= 0) AND (notification_ttl_seconds <= 259200))),
+    CONSTRAINT managed_realtime_inbox_messages_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT managed_realtime_inbox_messages_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: managed_realtime_notification_timeline; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_notification_timeline (
+    id bigint NOT NULL,
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    message_id text NOT NULL,
+    device text DEFAULT ''::text NOT NULL,
+    delivery_id text DEFAULT ''::text NOT NULL,
+    event text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    status_code integer DEFAULT 0 NOT NULL,
+    occurred_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    next_attempt timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: managed_realtime_notification_timeline_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_realtime_notification_timeline ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.managed_realtime_notification_timeline_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: managed_realtime_presence_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_presence_leases (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    node_id uuid NOT NULL,
+    connection_id text NOT NULL,
+    member_id text NOT NULL,
+    principal text DEFAULT ''::text NOT NULL,
+    state jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    state_updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_presence_leases_channel_check CHECK (((length(channel) >= 1) AND (length(channel) <= 256))),
+    CONSTRAINT managed_realtime_presence_leases_connection_id_check CHECK (((length(connection_id) >= 1) AND (length(connection_id) <= 128))),
+    CONSTRAINT managed_realtime_presence_leases_member_id_check CHECK (((length(member_id) >= 1) AND (length(member_id) <= 128))),
+    CONSTRAINT managed_realtime_presence_leases_principal_check CHECK ((length(principal) <= 256)),
+    CONSTRAINT managed_realtime_presence_leases_state_check CHECK ((jsonb_typeof(state) = 'object'::text))
+);
+
+
+--
+-- Name: managed_realtime_push_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_deliveries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    device text NOT NULL,
+    provider text NOT NULL,
+    version bigint NOT NULL,
+    message_id text NOT NULL,
+    sequence bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    status_code integer DEFAULT 0 NOT NULL,
+    code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    next_attempt timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease uuid,
+    lease_until timestamp with time zone,
+    category text DEFAULT 'notifications'::text NOT NULL,
+    expires_at timestamp with time zone DEFAULT (clock_timestamp() + '24:00:00'::interval) NOT NULL,
+    group_key text DEFAULT ''::text NOT NULL,
+    group_label text DEFAULT ''::text NOT NULL,
+    digest_id uuid,
+    digest_count integer DEFAULT 0 NOT NULL,
+    digest_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    priority text DEFAULT 'normal'::text NOT NULL,
+    hard_expires_at timestamp with time zone,
+    collapse_key text DEFAULT ''::text NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    CONSTRAINT managed_realtime_push_deliveries_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
+    CONSTRAINT managed_realtime_push_deliveries_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
+    CONSTRAINT managed_realtime_push_deliveries_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
+    CONSTRAINT managed_realtime_push_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'sent'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_device_version; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.managed_realtime_push_device_version
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: managed_realtime_push_devices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_devices (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    device text NOT NULL,
+    provider text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    version bigint DEFAULT nextval('public.managed_realtime_push_device_version'::regclass) NOT NULL,
+    fingerprint text NOT NULL,
+    sealed bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_devices_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_push_devices_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_push_devices_provider_check CHECK ((provider = ANY (ARRAY['fcm'::text, 'apns'::text, 'webpush'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_preferences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_preferences (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    preferences jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_preferences_preferences_check CHECK ((jsonb_typeof(preferences) = 'object'::text)),
+    CONSTRAINT managed_realtime_push_preferences_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: managed_realtime_push_providers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_providers (
+    endpoint_id uuid NOT NULL,
+    provider text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    sealed bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_push_providers_provider_check CHECK ((provider = ANY (ARRAY['fcm'::text, 'apns'::text, 'webpush'::text])))
+);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_push_rate_reservations (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    digest_id uuid NOT NULL,
+    reserved_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: managed_realtime_read_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_read_progress (
+    endpoint_id uuid NOT NULL,
+    principal text NOT NULL,
+    stream text NOT NULL,
+    inbox boolean NOT NULL,
+    sequence bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_realtime_read_progress_check CHECK (((NOT inbox) OR (stream = principal))),
+    CONSTRAINT managed_realtime_read_progress_principal_check CHECK ((principal ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_realtime_read_progress_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_read_progress_stream_check CHECK (((length(stream) >= 1) AND (length(stream) <= 256)))
+);
+
+
+--
+-- Name: managed_realtime_schedule_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_schedule_history (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    schedule_id text NOT NULL,
+    version bigint NOT NULL,
+    event text NOT NULL,
+    status text NOT NULL,
+    attempts bigint NOT NULL,
+    cycle_attempts integer NOT NULL,
+    deliver_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone,
+    failure_code text DEFAULT ''::text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    occurrence bigint DEFAULT 1 NOT NULL,
+    completed_occurrences bigint DEFAULT 0 NOT NULL,
+    skipped_occurrences bigint DEFAULT 0 NOT NULL,
+    skip_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_realtime_schedule_history_event_check CHECK ((event = ANY (ARRAY['baseline'::text, 'created'::text, 'rescheduled'::text, 'canceled'::text, 'manual_retry'::text, 'attempt_failed'::text, 'published'::text, 'paused'::text, 'resumed'::text, 'skipped'::text]))),
+    CONSTRAINT managed_realtime_schedule_history_version_check CHECK ((version >= 1))
+);
+
+
+--
+-- Name: managed_realtime_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_schedules (
+    endpoint_id uuid NOT NULL,
+    channel text NOT NULL,
+    schedule_id text NOT NULL,
+    data bytea NOT NULL,
+    is_binary boolean DEFAULT false NOT NULL,
+    metadata json DEFAULT '{}'::json NOT NULL,
+    deliver_at timestamp with time zone NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    sequence bigint DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    max_attempts integer DEFAULT 1 NOT NULL,
+    backoff_seconds integer DEFAULT 5 NOT NULL,
+    attempts bigint DEFAULT 0 NOT NULL,
+    cycle_attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    last_attempt_at timestamp with time zone,
+    interval_seconds integer DEFAULT 0 NOT NULL,
+    max_occurrences bigint DEFAULT 0 NOT NULL,
+    end_at timestamp with time zone,
+    initial_deliver_at timestamp with time zone NOT NULL,
+    occurrence bigint DEFAULT 1 NOT NULL,
+    completed_occurrences bigint DEFAULT 0 NOT NULL,
+    conditions json,
+    on_condition_failure text DEFAULT ''::text NOT NULL,
+    skipped_occurrences bigint DEFAULT 0 NOT NULL,
+    skip_reason text DEFAULT ''::text NOT NULL,
+    schedule_group text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_realtime_schedule_group_chk CHECK (((octet_length(schedule_group) <= 128) AND (schedule_group = btrim(schedule_group)) AND (schedule_group !~ '[\r\n]'::text))),
+    CONSTRAINT managed_realtime_schedules_attempts_check CHECK (((attempts >= 0) AND (attempts <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_backoff_seconds_check CHECK (((backoff_seconds >= 5) AND (backoff_seconds <= 3600))),
+    CONSTRAINT managed_realtime_schedules_completed_occurrences_check CHECK (((completed_occurrences >= 0) AND (completed_occurrences <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_conditions_check CHECK (((conditions IS NULL) OR ((json_typeof(conditions) = 'array'::text) AND (octet_length((conditions)::text) <= 4096)))),
+    CONSTRAINT managed_realtime_schedules_cycle_attempts_check CHECK (((cycle_attempts >= 0) AND (cycle_attempts <= 10))),
+    CONSTRAINT managed_realtime_schedules_data_check CHECK ((octet_length(data) <= 4096)),
+    CONSTRAINT managed_realtime_schedules_interval_seconds_check CHECK (((interval_seconds = 0) OR ((interval_seconds >= 5) AND (interval_seconds <= 2592000)))),
+    CONSTRAINT managed_realtime_schedules_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 10))),
+    CONSTRAINT managed_realtime_schedules_max_occurrences_check CHECK (((max_occurrences >= 0) AND (max_occurrences <= 1000000))),
+    CONSTRAINT managed_realtime_schedules_occurrence_check CHECK (((occurrence >= 1) AND (occurrence <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_on_condition_failure_check CHECK ((on_condition_failure = ANY (ARRAY[''::text, 'skip'::text, 'retry'::text]))),
+    CONSTRAINT managed_realtime_schedules_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT managed_realtime_schedules_skipped_occurrences_check CHECK (((skipped_occurrences >= 0) AND (skipped_occurrences <= '9007199254740991'::bigint))),
+    CONSTRAINT managed_realtime_schedules_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'paused'::text, 'published'::text, 'canceled'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT managed_realtime_schedules_version_check CHECK (((version >= 1) AND (version <= '9007199254740991'::bigint)))
 );
 
 
@@ -20448,6 +22517,170 @@ CREATE VIEW public.production_dead_letter_events AS
 
 
 --
+-- Name: production_lifecycle_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.production_lifecycle_reviews (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    reviewed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    decision jsonb NOT NULL,
+    recovery boolean DEFAULT false NOT NULL,
+    scope text,
+    evidence jsonb,
+    CONSTRAINT production_lifecycle_reviews_decision_check CHECK ((jsonb_typeof(decision) = 'object'::text))
+);
+
+
+--
+-- Name: production_lifecycle_reviews_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.production_lifecycle_reviews ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.production_lifecycle_reviews_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: profile_canary_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_canary_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    canary_step integer NOT NULL,
+    canary_step_started_at timestamp with time zone NOT NULL,
+    policy_revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT profile_canary_checks_attempts_check CHECK (((attempts >= 0) AND (attempts <= 5))),
+    CONSTRAINT profile_canary_checks_canary_step_check CHECK ((canary_step >= 0)),
+    CONSTRAINT profile_canary_checks_check CHECK (((status = 'running'::text) = ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT profile_canary_checks_check1 CHECK (((status = ANY (ARRAY['queued'::text, 'running'::text])) = ((completed_at IS NULL) AND (next_attempt_at IS NOT NULL)))),
+    CONSTRAINT profile_canary_checks_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 98304))),
+    CONSTRAINT profile_canary_checks_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_canary_checks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: profile_deployment_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_deployment_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    investigation_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT profile_deployment_checks_attempts_check CHECK (((attempts >= 0) AND (attempts <= 5))),
+    CONSTRAINT profile_deployment_checks_check CHECK (((status = 'running'::text) = ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT profile_deployment_checks_check1 CHECK (((status = ANY (ARRAY['queued'::text, 'running'::text])) = ((completed_at IS NULL) AND (next_attempt_at IS NOT NULL)))),
+    CONSTRAINT profile_deployment_checks_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 8192))),
+    CONSTRAINT profile_deployment_checks_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_deployment_checks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: profile_deployment_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_deployment_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    enabled boolean NOT NULL,
+    config jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT profile_deployment_policies_config_check CHECK (((jsonb_typeof(config) = 'object'::text) AND (octet_length((config)::text) <= 8192))),
+    CONSTRAINT profile_deployment_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: profile_investigations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_investigations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    investigation jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    assessment jsonb,
+    CONSTRAINT profile_investigations_assessment_check CHECK (((assessment IS NULL) OR ((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'status'::text) IS NOT NULL) AND ((assessment ->> 'status'::text) = ANY (ARRAY['regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text])) AND (octet_length((assessment)::text) <= 131072)))),
+    CONSTRAINT profile_investigations_investigation_check CHECK (((jsonb_typeof(investigation) = 'object'::text) AND (octet_length((investigation)::text) <= 131072))),
+    CONSTRAINT profile_investigations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: profile_periodic_monitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_periodic_monitors (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    route text NOT NULL,
+    data jsonb NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_periodic_monitors_attempts_check CHECK (((attempts >= 0) AND (attempts <= 6))),
+    CONSTRAINT profile_periodic_monitors_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT profile_periodic_monitors_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 262144))),
+    CONSTRAINT profile_periodic_monitors_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_periodic_monitors_route_check CHECK ((length(route) > 0))
+);
+
+
+--
+-- Name: profile_route_alert_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_route_alert_state (
+    context_key text NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    state jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_route_alert_state_context_key_check CHECK ((length(context_key) = 64))
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22128,6 +24361,54 @@ CREATE TABLE public.request_telemetry_202612 (
 
 
 --
+-- Name: request_telemetry_app_gaps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_app_gaps (
+    node_name text NOT NULL,
+    app_id uuid NOT NULL,
+    last_gap_at timestamp with time zone NOT NULL,
+    pending_count integer NOT NULL,
+    dropped_total bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT request_telemetry_app_gaps_check CHECK ((last_gap_at <= updated_at)),
+    CONSTRAINT request_telemetry_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
+    CONSTRAINT request_telemetry_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_telemetry_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+);
+
+
+--
+-- Name: request_telemetry_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_coverage (
+    node_name text NOT NULL,
+    boot_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    enabled boolean NOT NULL,
+    sampling_basis_points integer NOT NULL,
+    dropped_total bigint NOT NULL,
+    pending_count integer NOT NULL,
+    source_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone NOT NULL,
+    healthy_since timestamp with time zone,
+    app_scoped boolean DEFAULT false NOT NULL,
+    unattributed_dropped_total bigint DEFAULT 0 NOT NULL,
+    unattributed_pending_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT request_telemetry_coverage_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT request_telemetry_coverage_check CHECK (((healthy_since IS NULL) OR (healthy_since <= received_at))),
+    CONSTRAINT request_telemetry_coverage_dropped_total_check CHECK ((dropped_total >= 0)),
+    CONSTRAINT request_telemetry_coverage_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_telemetry_coverage_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT request_telemetry_coverage_sampling_basis_points_check CHECK (((sampling_basis_points >= 0) AND (sampling_basis_points <= 10000))),
+    CONSTRAINT request_telemetry_coverage_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT request_telemetry_coverage_unattributed_dropped_total_check CHECK ((unattributed_dropped_total >= 0)),
+    CONSTRAINT request_telemetry_coverage_unattributed_pending_count_check CHECK ((unattributed_pending_count >= 0))
+);
+
+
+--
 -- Name: request_telemetry_default; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22335,6 +24616,27 @@ CREATE TABLE public.route_health_notification_state (
 
 
 --
+-- Name: route_lifecycle_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_lifecycle_approvals (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    baseline_deployment_id uuid NOT NULL,
+    candidate_deployment_id uuid NOT NULL,
+    receipt jsonb NOT NULL,
+    approved_at timestamp with time zone NOT NULL,
+    valid_until timestamp with time zone NOT NULL,
+    invalidated_at timestamp with time zone,
+    configuration_snapshot jsonb,
+    successor_snapshot jsonb,
+    CONSTRAINT route_lifecycle_approvals_check CHECK ((valid_until > approved_at)),
+    CONSTRAINT route_lifecycle_approvals_check1 CHECK ((baseline_deployment_id <> candidate_deployment_id))
+);
+
+
+--
 -- Name: route_monitor_incidents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22376,11 +24678,13 @@ CREATE TABLE public.route_monitors (
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
+    on_violation text DEFAULT 'report'::text NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
     CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT route_monitors_on_violation_check CHECK ((on_violation = ANY (ARRAY['report'::text, 'rollback'::text]))),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
     CONSTRAINT route_monitors_updated_at_check CHECK (isfinite(updated_at))
@@ -22402,6 +24706,85 @@ CREATE TABLE public.route_policy_receipts (
     CONSTRAINT route_policy_receipts_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 200))),
     CONSTRAINT route_policy_receipts_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
     CONSTRAINT route_policy_receipts_request_sha256_check CHECK ((request_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: route_probe_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_observations (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    server_errors bigint DEFAULT 0 NOT NULL,
+    unauthenticated bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT route_probe_observations_check CHECK (((server_errors + unauthenticated) <= requests)),
+    CONSTRAINT route_probe_observations_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT route_probe_observations_path_check CHECK (((octet_length(path) >= 1) AND (octet_length(path) <= 240))),
+    CONSTRAINT route_probe_observations_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT route_probe_observations_server_errors_check CHECK ((server_errors >= 0)),
+    CONSTRAINT route_probe_observations_unauthenticated_check CHECK ((unauthenticated >= 0)),
+    CONSTRAINT route_probe_observations_window_start_check CHECK (isfinite(window_start))
+);
+
+
+--
+-- Name: route_probe_rounds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_probe_rounds (
+    app_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT route_probe_rounds_claimed_at_check CHECK (isfinite(claimed_at)),
+    CONSTRAINT route_probe_rounds_window_start_check CHECK (isfinite(window_start))
+);
+
+
+--
+-- Name: route_removal_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_removal_approvals (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_revision integer NOT NULL,
+    baseline_deployment_id uuid NOT NULL,
+    candidate_deployment_id uuid NOT NULL,
+    baseline_sha256 bytea NOT NULL,
+    candidate_sha256 bytea NOT NULL,
+    mapping_sha256 text NOT NULL,
+    mappings jsonb NOT NULL,
+    approved_by text NOT NULL,
+    approved_at timestamp with time zone NOT NULL,
+    valid_until timestamp with time zone NOT NULL,
+    observation_from timestamp with time zone NOT NULL,
+    observation_until timestamp with time zone NOT NULL,
+    receipt jsonb NOT NULL,
+    CONSTRAINT route_removal_approvals_baseline_sha256_check CHECK ((octet_length(baseline_sha256) = 32)),
+    CONSTRAINT route_removal_approvals_candidate_sha256_check CHECK ((octet_length(candidate_sha256) = 32)),
+    CONSTRAINT route_removal_approvals_check CHECK (((observation_from < observation_until) AND (observation_until <= approved_at) AND (approved_at < valid_until))),
+    CONSTRAINT route_removal_approvals_mapping_sha256_check CHECK ((mapping_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT route_removal_approvals_mappings_check CHECK (((jsonb_typeof(mappings) = 'array'::text) AND ((jsonb_array_length(mappings) >= 1) AND (jsonb_array_length(mappings) <= 2000))))
+);
+
+
+--
+-- Name: route_removal_policy_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_removal_policy_history (
+    app_id uuid NOT NULL,
+    revision integer NOT NULL,
+    changed_by text NOT NULL,
+    changed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    policy jsonb NOT NULL
 );
 
 
@@ -23100,9 +25483,28 @@ CREATE TABLE public.scenario_test_members (
     app_id uuid NOT NULL,
     chaos_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
     chaos_expires_at timestamp with time zone,
+    chaos_generation uuid,
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: scenario_test_chaos_matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_test_chaos_matches (
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    caller_app_id uuid NOT NULL,
+    generation uuid NOT NULL,
+    rule_id text NOT NULL,
+    matches bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT scenario_test_chaos_matches_matches_check CHECK ((matches >= 0)),
+    CONSTRAINT scenario_test_chaos_matches_rule_id_check CHECK ((rule_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT scenario_test_chaos_matches_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text))
 );
 
 
@@ -23893,6 +26295,100 @@ CREATE TABLE public.workflow_automation_definitions (
 
 
 --
+-- Name: workflow_automation_failure_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_guards (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    monitoring_since timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    paused_at timestamp with time zone,
+    CONSTRAINT workflow_automation_failure_guards_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT workflow_automation_failure_guards_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128)))
+);
+
+
+--
+-- Name: workflow_automation_failure_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    generation bigint NOT NULL,
+    state text NOT NULL,
+    reason text NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    failures bigint NOT NULL,
+    completed_runs bigint NOT NULL,
+    policy_version bigint NOT NULL,
+    actor_account_id uuid,
+    CONSTRAINT workflow_automation_failure_history_check CHECK ((completed_runs >= failures)),
+    CONSTRAINT workflow_automation_failure_history_failures_check CHECK ((failures >= 0)),
+    CONSTRAINT workflow_automation_failure_history_generation_check CHECK ((generation > 0)),
+    CONSTRAINT workflow_automation_failure_history_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_failure_history_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_automation_failure_history_reason_check CHECK ((reason = ANY (ARRAY['failure_threshold'::text, 'operator_resume'::text]))),
+    CONSTRAINT workflow_automation_failure_history_state_check CHECK ((state = ANY (ARRAY['paused'::text, 'resumed'::text])))
+);
+
+
+--
+-- Name: workflow_automation_failure_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_policies (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    failure_threshold integer NOT NULL,
+    min_completed_runs integer NOT NULL,
+    window_seconds integer NOT NULL,
+    CONSTRAINT workflow_automation_failure_policies_failure_threshold_check CHECK (((failure_threshold >= 1) AND (failure_threshold <= 10000))),
+    CONSTRAINT workflow_automation_failure_policies_min_completed_runs_check CHECK (((min_completed_runs >= 1) AND (min_completed_runs <= 10000))),
+    CONSTRAINT workflow_automation_failure_policies_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_failure_policies_version_check CHECK ((version > 0)),
+    CONSTRAINT workflow_automation_failure_policies_window_seconds_check CHECK (((window_seconds >= 60) AND (window_seconds <= 86400)))
+);
+
+
+--
+-- Name: workflow_automation_publish_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_publish_policies (
+    app_id uuid NOT NULL,
+    mode text NOT NULL,
+    version bigint NOT NULL,
+    CONSTRAINT workflow_automation_publish_policies_mode_check CHECK ((mode = ANY (ARRAY['optional'::text, 'scenarios'::text, 'coverage'::text]))),
+    CONSTRAINT workflow_automation_publish_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: workflow_automation_publish_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_publish_receipts (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    account_id uuid NOT NULL,
+    api_key_id text DEFAULT ''::text NOT NULL,
+    token_hash text NOT NULL,
+    policy_version bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    evidence jsonb NOT NULL,
+    CONSTRAINT workflow_automation_publish_receipts_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT workflow_automation_publish_receipts_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0)),
+    CONSTRAINT workflow_automation_publish_receipts_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: workflow_automation_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23905,6 +26401,7 @@ CREATE TABLE public.workflow_automation_revisions (
     legacy_snapshot boolean DEFAULT false NOT NULL,
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
+    check_evidence jsonb,
     CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
@@ -24161,7 +26658,7 @@ CREATE TABLE public.workflow_webhook_receipts (
     accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT workflow_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
     CONSTRAINT workflow_webhook_receipts_check CHECK ((((status = 'accepted'::text) AND (recipient_id IS NOT NULL) AND (ignored_reason IS NULL)) OR ((status = 'ignored'::text) AND (recipient_id IS NULL) AND (ignored_reason IS NOT NULL)))),
-    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
+    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'automation_failure_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
     CONSTRAINT workflow_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
     CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
     CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
@@ -24401,11 +26898,51 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
--- Name: api_consumer_rate_cards api_consumer_rate_cards_app_effective_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.api_consumer_rate_cards
-    ADD CONSTRAINT api_consumer_rate_cards_app_effective_uniq UNIQUE (app_id, effective_from);
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_consumer_effective_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_consumer_effective_uniq UNIQUE (consumer_id, effective_from);
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_id_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_id_uniq UNIQUE (app_id, id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_pkey PRIMARY KEY (id);
 
 
 --
@@ -24414,6 +26951,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_rate_cards
     ADD CONSTRAINT api_consumer_rate_cards_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
 
 
 --
@@ -24465,11 +27010,11 @@ ALTER TABLE ONLY public.api_consumer_usage_statement_handoffs
 
 
 --
--- Name: api_consumer_usage_statements api_consumer_usage_statements_period_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: api_consumer_usage_statements api_consumer_usage_statements_period_revision_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.api_consumer_usage_statements
-    ADD CONSTRAINT api_consumer_usage_statements_period_uniq UNIQUE (app_id, consumer_id, period_start, period_end);
+    ADD CONSTRAINT api_consumer_usage_statements_period_revision_uniq UNIQUE (app_id, consumer_id, period_start, period_end, revision);
 
 
 --
@@ -24742,6 +27287,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_route_removal_policies app_route_removal_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_removal_policies
+    ADD CONSTRAINT app_route_removal_policies_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -25329,6 +27882,22 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 
 --
+-- Name: customer_operation_job_executions customer_operation_job_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_key UNIQUE (run_id);
+
+
+--
 -- Name: customer_operation_milestones customer_operation_milestones_operation_id_event_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25393,6 +27962,22 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 
 --
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_resume_count_key UNIQUE (run_id, resume_count);
+
+
+--
 -- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25417,11 +28002,27 @@ ALTER TABLE ONLY public.customer_operation_workflow_states
 
 
 --
+-- Name: customer_operations customer_operations_job_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_key UNIQUE (job_run_id);
+
+
+--
 -- Name: customer_operations customer_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_key UNIQUE (workflow_run_id);
 
 
 --
@@ -25678,6 +28279,30 @@ ALTER TABLE ONLY public.dev_bridge_webhook_replays
 
 ALTER TABLE ONLY public.dev_bridge_webhook_replays
     ADD CONSTRAINT dev_bridge_webhook_replays_session_id_idempotency_key_key UNIQUE (session_id, idempotency_key);
+
+
+--
+-- Name: dev_source_manifests dev_source_manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: dev_source_patches dev_source_patches_base_deployment_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_base_deployment_id_generation_key UNIQUE (base_deployment_id, generation);
+
+
+--
+-- Name: dev_source_patches dev_source_patches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_pkey PRIMARY KEY (id);
 
 
 --
@@ -26046,6 +28671,14 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
+-- Name: event_recovery_execution_results event_recovery_execution_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_pkey PRIMARY KEY (job_id, "position");
 
 
 --
@@ -27065,6 +29698,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 
 --
+-- Name: managed_realtime_channel_batches managed_realtime_channel_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_batches
+    ADD CONSTRAINT managed_realtime_channel_batches_pkey PRIMARY KEY (endpoint_id, channel, batch_id);
+
+
+--
 -- Name: managed_realtime_channel_heads managed_realtime_channel_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27078,6 +29719,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_pkey PRIMARY KEY (endpoint_id, channel, sequence);
+
+
+--
+-- Name: managed_realtime_channel_reducers managed_realtime_channel_reducers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_reducers
+    ADD CONSTRAINT managed_realtime_channel_reducers_pkey PRIMARY KEY (endpoint_id, channel);
 
 
 --
@@ -27121,11 +29770,35 @@ ALTER TABLE ONLY public.managed_realtime_channel_routes
 
 
 --
+-- Name: managed_realtime_channel_snapshots managed_realtime_channel_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_snapshots
+    ADD CONSTRAINT managed_realtime_channel_snapshots_pkey PRIMARY KEY (endpoint_id, channel);
+
+
+--
 -- Name: managed_realtime_connection_owners managed_realtime_connection_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_realtime_connection_owners
     ADD CONSTRAINT managed_realtime_connection_owners_pkey PRIMARY KEY (connection_id);
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries managed_realtime_direct_message_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_deliveries
+    ADD CONSTRAINT managed_realtime_direct_message_deliveries_pkey PRIMARY KEY (endpoint_id, message_id, connection_id);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts managed_realtime_direct_message_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_receipts
+    ADD CONSTRAINT managed_realtime_direct_message_receipts_pkey PRIMARY KEY (endpoint_id, message_id);
 
 
 --
@@ -27137,11 +29810,147 @@ ALTER TABLE ONLY public.managed_realtime_drain_operations
 
 
 --
+-- Name: managed_realtime_durable_cursors managed_realtime_durable_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_durable_cursors
+    ADD CONSTRAINT managed_realtime_durable_cursors_pkey PRIMARY KEY (endpoint_id, principal, subscription, channel);
+
+
+--
 -- Name: managed_realtime_endpoints managed_realtime_endpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_realtime_endpoints
     ADD CONSTRAINT managed_realtime_endpoints_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_event_schemas managed_realtime_event_schemas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_event_schemas
+    ADD CONSTRAINT managed_realtime_event_schemas_pkey PRIMARY KEY (endpoint_id, channel, event_type, version);
+
+
+--
+-- Name: managed_realtime_inbox_cursors managed_realtime_inbox_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_cursors
+    ADD CONSTRAINT managed_realtime_inbox_cursors_pkey PRIMARY KEY (endpoint_id, principal, subscription, channel);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_inbox_fallbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_fallbacks
+    ADD CONSTRAINT managed_realtime_inbox_fallbacks_pkey PRIMARY KEY (endpoint_id, principal, sequence);
+
+
+--
+-- Name: managed_realtime_inbox_heads managed_realtime_inbox_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_heads
+    ADD CONSTRAINT managed_realtime_inbox_heads_pkey PRIMARY KEY (endpoint_id, channel);
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_messages
+    ADD CONSTRAINT managed_realtime_inbox_messages_pkey PRIMARY KEY (endpoint_id, channel, sequence);
+
+
+--
+-- Name: managed_realtime_notification_timeline managed_realtime_notification_timeline_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_notification_timeline
+    ADD CONSTRAINT managed_realtime_notification_timeline_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_pkey PRIMARY KEY (endpoint_id, channel, node_id, connection_id);
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliver_endpoint_id_principal_sequenc_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliver_endpoint_id_principal_sequenc_key UNIQUE (endpoint_id, principal, sequence, device);
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_realtime_push_devices managed_realtime_push_devices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_devices
+    ADD CONSTRAINT managed_realtime_push_devices_pkey PRIMARY KEY (endpoint_id, principal, device);
+
+
+--
+-- Name: managed_realtime_push_preferences managed_realtime_push_preferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_preferences
+    ADD CONSTRAINT managed_realtime_push_preferences_pkey PRIMARY KEY (endpoint_id, principal);
+
+
+--
+-- Name: managed_realtime_push_providers managed_realtime_push_providers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_providers
+    ADD CONSTRAINT managed_realtime_push_providers_pkey PRIMARY KEY (endpoint_id, provider);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations managed_realtime_push_rate_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_rate_reservations
+    ADD CONSTRAINT managed_realtime_push_rate_reservations_pkey PRIMARY KEY (endpoint_id, principal, digest_id);
+
+
+--
+-- Name: managed_realtime_read_progress managed_realtime_read_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_read_progress
+    ADD CONSTRAINT managed_realtime_read_progress_pkey PRIMARY KEY (endpoint_id, principal, stream, inbox);
+
+
+--
+-- Name: managed_realtime_schedule_history managed_realtime_schedule_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedule_history
+    ADD CONSTRAINT managed_realtime_schedule_history_pkey PRIMARY KEY (endpoint_id, channel, schedule_id, version);
+
+
+--
+-- Name: managed_realtime_schedules managed_realtime_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedules
+    ADD CONSTRAINT managed_realtime_schedules_pkey PRIMARY KEY (endpoint_id, channel, schedule_id);
 
 
 --
@@ -28161,6 +30970,70 @@ ALTER TABLE ONLY public.private_networks
 
 
 --
+-- Name: production_lifecycle_reviews production_lifecycle_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_lifecycle_reviews
+    ADD CONSTRAINT production_lifecycle_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_pkey PRIMARY KEY (deployment_id, canary_step, canary_step_started_at, policy_revision);
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: profile_investigations profile_investigations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_deployment_id_policy_revision_rou_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_deployment_id_policy_revision_rou_key UNIQUE (deployment_id, policy_revision, route);
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_pkey PRIMARY KEY (context_key);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28969,6 +31842,22 @@ ALTER TABLE ONLY public.request_telemetry_202612
 
 
 --
+-- Name: request_telemetry_app_gaps request_telemetry_app_gaps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_app_gaps
+    ADD CONSTRAINT request_telemetry_app_gaps_pkey PRIMARY KEY (node_name, app_id);
+
+
+--
+-- Name: request_telemetry_coverage request_telemetry_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_coverage
+    ADD CONSTRAINT request_telemetry_coverage_pkey PRIMARY KEY (node_name);
+
+
+--
 -- Name: request_telemetry_default request_telemetry_default_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29057,6 +31946,14 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 
 --
+-- Name: route_lifecycle_approvals route_lifecycle_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_lifecycle_approvals
+    ADD CONSTRAINT route_lifecycle_approvals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: route_monitor_incidents route_monitor_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29086,6 +31983,38 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 ALTER TABLE ONLY public.route_policy_receipts
     ADD CONSTRAINT route_policy_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_probe_observations route_probe_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_pkey PRIMARY KEY (app_id, deployment_id, method, path, window_start);
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_pkey PRIMARY KEY (app_id, window_start);
+
+
+--
+-- Name: route_removal_approvals route_removal_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_approvals
+    ADD CONSTRAINT route_removal_approvals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_removal_policy_history route_removal_policy_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_policy_history
+    ADD CONSTRAINT route_removal_policy_history_pkey PRIMARY KEY (app_id, revision);
 
 
 --
@@ -29409,6 +32338,14 @@ ALTER TABLE ONLY public.scenario_test_members
 
 
 --
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_pkey PRIMARY KEY (account_id, run_id, caller_app_id, generation, rule_id);
+
+
+--
 -- Name: schedule_occurrences schedule_occurrences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29718,6 +32655,54 @@ ALTER TABLE ONLY public.webhook_deliveries
 
 ALTER TABLE ONLY public.workflow_automation_definitions
     ADD CONSTRAINT workflow_automation_definitions_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_failure_guards workflow_automation_failure_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_guards
+    ADD CONSTRAINT workflow_automation_failure_guards_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_app_id_name_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_app_id_name_generation_key UNIQUE (app_id, name, generation);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_automation_failure_policies workflow_automation_failure_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_policies
+    ADD CONSTRAINT workflow_automation_failure_policies_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_publish_policies workflow_automation_publish_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_policies
+    ADD CONSTRAINT workflow_automation_publish_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_pkey PRIMARY KEY (app_id, name, account_id, api_key_id);
 
 
 --
@@ -30037,10 +33022,31 @@ CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) W
 
 
 --
+-- Name: api_consumer_plan_assignments_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_plan_assignments_lookup_idx ON public.api_consumer_plan_assignments USING btree (account_id, app_id, consumer_id, effective_from DESC);
+
+
+--
 -- Name: api_consumer_rate_cards_account_app_effective_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX api_consumer_rate_cards_account_app_effective_idx ON public.api_consumer_rate_cards USING btree (account_id, app_id, effective_from);
+
+
+--
+-- Name: api_consumer_rate_cards_default_effective_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, effective_from) WHERE (plan_id IS NULL);
+
+
+--
+-- Name: api_consumer_rate_cards_plan_effective_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
 
 
 --
@@ -31353,10 +34359,24 @@ CREATE INDEX customer_operation_workflow_claim_expiry_idx ON public.customer_ope
 
 
 --
+-- Name: customer_operation_workflow_dependency_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_dependency_lookup ON public.customer_operation_workflow_state_reports USING gin (depends_on jsonb_path_ops) WHERE (jsonb_array_length(depends_on) > 0);
+
+
+--
 -- Name: customer_operation_workflow_guest_instance_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX customer_operation_workflow_guest_instance_idx ON public.customer_operation_workflow_guest_claims USING btree (instance_id) WHERE (instance_id IS NOT NULL);
+
+
+--
+-- Name: customer_operation_workflow_states_attention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_states_attention_idx ON public.customer_operation_workflow_states USING btree (account_id, app_id, scope, updated_at DESC);
 
 
 --
@@ -31745,6 +34765,13 @@ CREATE INDEX deployments_pending_priority_idx ON public.deployments USING btree 
 
 
 --
+-- Name: deployments_profile_completed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_profile_completed_idx ON public.deployments USING btree (app_id, scope, rollout_completed_at DESC, id DESC) WHERE ((status = ANY (ARRAY['live'::text, 'superseded'::text])) AND (rollout_state = 'complete'::text) AND (deleted_at IS NULL));
+
+
+--
 -- Name: deployments_rollback_on_5xx_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -31770,6 +34797,20 @@ CREATE INDEX deployments_snapshot_backoff_idx ON public.deployments USING btree 
 --
 
 CREATE INDEX dev_bridge_sessions_account_expiry ON public.dev_bridge_sessions USING btree (account_id, expires_at);
+
+
+--
+-- Name: dev_source_manifests_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_source_manifests_app_created_idx ON public.dev_source_manifests USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: dev_source_patches_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_source_patches_app_idx ON public.dev_source_patches USING btree (app_id);
 
 
 --
@@ -32011,6 +35052,13 @@ CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_out
 
 
 --
+-- Name: event_fanout_outbox_account_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_retention_idx ON public.event_fanout_outbox USING btree (account_id, delivered_at, id) WHERE (state = 'delivered'::text);
+
+
+--
 -- Name: event_fanout_outbox_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32074,6 +35122,20 @@ CREATE INDEX event_recipient_delivery_deadline_idx ON public.event_fanout_recipi
 
 
 --
+-- Name: event_recovery_child_request_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_recovery_jobs USING btree (account_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
+-- Name: event_recovery_execution_notification_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_execution_notification_pending_idx ON public.event_recovery_jobs USING btree (execution_notification_next_at, id) WHERE ((NOT execution_notification_captured) AND (state = ANY (ARRAY['completed'::text, 'cancelled'::text])) AND ((selection ->> 'mode'::text) = 'execution'::text));
+
+
+--
 -- Name: event_recovery_history_job_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -32081,10 +35143,24 @@ CREATE INDEX event_recovery_history_job_idx ON public.event_recovery_history USI
 
 
 --
+-- Name: event_recovery_items_execution_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_execution_identity_idx ON public.event_recovery_items USING btree (replay_invocation_id, replay_generation, replay_created_at) WHERE ((state = 'queued'::text) AND (replay_invocation_id IS NOT NULL));
+
+
+--
 -- Name: event_recovery_items_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USING btree (job_id, "position") WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_receipt_hold_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
 
 
 --
@@ -32109,10 +35185,24 @@ CREATE INDEX event_recovery_jobs_due_idx ON public.event_recovery_jobs USING btr
 
 
 --
+-- Name: event_recovery_jobs_execution_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_jobs_execution_health_idx ON public.event_recovery_jobs USING btree (account_id, app_id, completed_at, id) WHERE ((state = ANY (ARRAY['completed'::text, 'cancelled'::text])) AND ((selection ->> 'mode'::text) = 'execution'::text) AND (execution_finished_at IS NULL));
+
+
+--
 -- Name: event_recovery_jobs_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX event_recovery_jobs_expiry_idx ON public.event_recovery_jobs USING btree (expires_at, id) WHERE (state = ANY (ARRAY['running'::text, 'paused'::text]));
+
+
+--
+-- Name: event_recovery_jobs_notification_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_jobs_notification_health_idx ON public.event_recovery_jobs USING btree (account_id, app_id, completed_at, id) WHERE (state = ANY (ARRAY['completed'::text, 'cancelled'::text]));
 
 
 --
@@ -33614,6 +36704,13 @@ CREATE INDEX managed_postgres_usage_account_period_idx ON public.managed_postgre
 
 
 --
+-- Name: managed_realtime_channel_batches_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_realtime_channel_batches USING btree (endpoint_id, created_at);
+
+
+--
 -- Name: managed_realtime_channel_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33625,6 +36722,13 @@ CREATE INDEX managed_realtime_channel_messages_created_at_idx ON public.managed_
 --
 
 CREATE UNIQUE INDEX managed_realtime_channel_messages_idempotency_idx ON public.managed_realtime_channel_messages USING btree (endpoint_id, channel, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_channel_messages_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_messages_target_idx ON public.managed_realtime_channel_messages USING btree (endpoint_id, channel, target_message_id, sequence DESC);
 
 
 --
@@ -33656,6 +36760,20 @@ CREATE INDEX managed_realtime_connection_owners_node_idx ON public.managed_realt
 
 
 --
+-- Name: managed_realtime_direct_message_deliveries_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_direct_message_deliveries_node_idx ON public.managed_realtime_direct_message_deliveries USING btree (endpoint_id, message_id, node_id);
+
+
+--
+-- Name: managed_realtime_direct_message_receipts_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_direct_message_receipts_expiry_idx ON public.managed_realtime_direct_message_receipts USING btree (expires_at);
+
+
+--
 -- Name: managed_realtime_drain_operations_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33670,6 +36788,13 @@ CREATE INDEX managed_realtime_drain_operations_worker_idx ON public.managed_real
 
 
 --
+-- Name: managed_realtime_durable_cursors_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_durable_cursors_expiry_idx ON public.managed_realtime_durable_cursors USING btree (updated_at, endpoint_id);
+
+
+--
 -- Name: managed_realtime_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33681,6 +36806,160 @@ CREATE INDEX managed_realtime_endpoints_account_idx ON public.managed_realtime_e
 --
 
 CREATE INDEX managed_realtime_endpoints_app_idx ON public.managed_realtime_endpoints USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: managed_realtime_inbox_cursors_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_cursors_expiry_idx ON public.managed_realtime_inbox_cursors USING btree (updated_at, endpoint_id);
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_fallbacks_due_idx ON public.managed_realtime_inbox_fallbacks USING btree (deadline);
+
+
+--
+-- Name: managed_realtime_inbox_gap_candidates_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON public.managed_realtime_inbox_cursors USING btree (updated_at, endpoint_id) WHERE (NOT gap_reported);
+
+
+--
+-- Name: managed_realtime_inbox_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_messages_created_at_idx ON public.managed_realtime_inbox_messages USING btree (created_at);
+
+
+--
+-- Name: managed_realtime_inbox_messages_idempotency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_inbox_messages_idempotency_idx ON public.managed_realtime_inbox_messages USING btree (endpoint_id, channel, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_inbox_messages_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_messages_target_idx ON public.managed_realtime_inbox_messages USING btree (endpoint_id, channel, target_message_id, sequence DESC);
+
+
+--
+-- Name: managed_realtime_notification_timeline_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_cleanup_idx ON public.managed_realtime_notification_timeline USING btree (occurred_at);
+
+
+--
+-- Name: managed_realtime_notification_timeline_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_endpoint_idx ON public.managed_realtime_notification_timeline USING btree (endpoint_id, id DESC);
+
+
+--
+-- Name: managed_realtime_notification_timeline_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_notification_timeline_lookup_idx ON public.managed_realtime_notification_timeline USING btree (endpoint_id, principal, message_id, id DESC);
+
+
+--
+-- Name: managed_realtime_presence_leases_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_presence_leases_expiry_idx ON public.managed_realtime_presence_leases USING btree (expires_at);
+
+
+--
+-- Name: managed_realtime_presence_principal_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_presence_principal_idx ON public.managed_realtime_presence_leases USING btree (endpoint_id, channel, principal, updated_at DESC) WHERE (principal <> ''::text);
+
+
+--
+-- Name: managed_realtime_push_collapse_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_collapse_idx ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, device, category, priority, collapse_key, sequence) WHERE (collapse_key <> ''::text);
+
+
+--
+-- Name: managed_realtime_push_digest_members; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_digest_members ON public.managed_realtime_push_deliveries USING btree (digest_id, id) WHERE (digest_id IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_push_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_due ON public.managed_realtime_push_deliveries USING btree (next_attempt) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]));
+
+
+--
+-- Name: managed_realtime_push_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_expiry ON public.managed_realtime_push_deliveries USING btree (updated_at) WHERE (status = ANY (ARRAY['sent'::text, 'failed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: managed_realtime_push_group_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_group_pending ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, device, version, category, group_key) WHERE ((digest_id IS NULL) AND (status = ANY (ARRAY['pending'::text, 'sending'::text])));
+
+
+--
+-- Name: managed_realtime_push_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_history ON public.managed_realtime_push_deliveries USING btree (endpoint_id, principal, created_at DESC);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_rate_reservations_cleanup_idx ON public.managed_realtime_push_rate_reservations USING btree (reserved_at);
+
+
+--
+-- Name: managed_realtime_push_rate_reservations_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_push_rate_reservations_window_idx ON public.managed_realtime_push_rate_reservations USING btree (endpoint_id, principal, reserved_at);
+
+
+--
+-- Name: managed_realtime_reducer_next_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_reducer_next_expiry_idx ON public.managed_realtime_channel_reducers USING btree (next_expiry, endpoint_id, channel) WHERE (next_expiry IS NOT NULL);
+
+
+--
+-- Name: managed_realtime_schedule_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_schedule_due_idx ON public.managed_realtime_schedules USING btree (COALESCE(next_attempt_at, deliver_at), endpoint_id, channel, schedule_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: managed_realtime_schedule_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_schedule_group_idx ON public.managed_realtime_schedules USING btree (endpoint_id, channel, schedule_group, schedule_id);
 
 
 --
@@ -34426,6 +37705,83 @@ CREATE INDEX private_networks_account_idx ON public.private_networks USING btree
 
 
 --
+-- Name: production_lifecycle_reviews_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX production_lifecycle_reviews_app ON public.production_lifecycle_reviews USING btree (app_id, reviewed_at DESC);
+
+
+--
+-- Name: production_lifecycle_reviews_cursor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX production_lifecycle_reviews_cursor ON public.production_lifecycle_reviews USING btree (app_id, id DESC);
+
+
+--
+-- Name: profile_canary_checks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks USING btree (next_attempt_at, created_at, deployment_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: profile_canary_checks_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_deployment_checks_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_app_created_idx ON public.profile_deployment_checks USING btree (app_id, created_at DESC, deployment_id);
+
+
+--
+-- Name: profile_deployment_checks_completed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_completed_idx ON public.profile_deployment_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_deployment_checks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_due_idx ON public.profile_deployment_checks USING btree (next_attempt_at, deployment_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: profile_investigations_app_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_investigations_app_updated_idx ON public.profile_investigations USING btree (app_id, updated_at DESC, id);
+
+
+--
+-- Name: profile_periodic_monitors_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_periodic_monitors_app_idx ON public.profile_periodic_monitors USING btree (app_id, updated_at DESC, id);
+
+
+--
+-- Name: profile_periodic_monitors_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_periodic_monitors_due_idx ON public.profile_periodic_monitors USING btree (next_attempt_at, id);
+
+
+--
+-- Name: profile_route_alert_state_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_state USING btree (app_id);
+
+
+--
 -- Name: project_environment_approvals_id_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34916,6 +38272,13 @@ CREATE INDEX request_telemetry_202612_trace_id_idx ON public.request_telemetry_2
 
 
 --
+-- Name: request_telemetry_app_gaps_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_app_gaps_app_idx ON public.request_telemetry_app_gaps USING btree (app_id);
+
+
+--
 -- Name: request_telemetry_default_account_id_platform_tenant_id_rec_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35021,6 +38384,13 @@ CREATE INDEX route_health_history_deployment_idx ON public.route_health_history 
 
 
 --
+-- Name: route_lifecycle_approvals_candidate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_lifecycle_approvals_candidate ON public.route_lifecycle_approvals USING btree (app_id, baseline_deployment_id, candidate_deployment_id, approved_at DESC) WHERE (invalidated_at IS NULL);
+
+
+--
 -- Name: route_monitor_incidents_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35039,6 +38409,27 @@ CREATE UNIQUE INDEX route_monitor_incidents_one_open_idx ON public.route_monitor
 --
 
 CREATE INDEX route_monitors_due_idx ON public.route_monitors USING btree (next_check_at, app_id) WHERE enabled;
+
+
+--
+-- Name: route_probe_observations_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_observations_window_idx ON public.route_probe_observations USING btree (window_start);
+
+
+--
+-- Name: route_probe_rounds_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_probe_rounds_window_idx ON public.route_probe_rounds USING btree (window_start);
+
+
+--
+-- Name: route_removal_approval_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_removal_approval_lookup ON public.route_removal_approvals USING btree (app_id, candidate_deployment_id, valid_until);
 
 
 --
@@ -35130,6 +38521,13 @@ CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verific
 --
 
 CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING btree (account_id, run_id);
+
+
+--
+-- Name: scenario_test_chaos_matches_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_test_chaos_matches_run_idx ON public.scenario_test_chaos_matches USING btree (account_id, run_id, generation);
 
 
 --
@@ -35620,6 +39018,13 @@ CREATE INDEX warm_hint_node_id_idx ON public.warm_hint USING btree (node_id);
 --
 
 CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING btree (expires_at);
+
+
+--
+-- Name: workflow_automation_failure_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_automation_failure_finished_idx ON public.workflow_runs USING btree (app_id, workflow_name, finished_at) WHERE ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead'::text])) AND (cancelled_at IS NULL) AND (operation_id IS NULL));
 
 
 --
@@ -37030,6 +40435,13 @@ CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status O
 
 
 --
+-- Name: deployment_openapi_docs deployment_lifecycle_capture_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_lifecycle_capture_changed AFTER INSERT OR DELETE OR UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.notify_deployment_lifecycle_capture_changed();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -37037,10 +40449,38 @@ CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON publi
 
 
 --
+-- Name: deployments deployment_production_lifecycle_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_production_lifecycle_guard BEFORE UPDATE OF status, traffic_percent, scope, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_production_lifecycle();
+
+
+--
+-- Name: deployments deployment_production_lifecycle_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_production_lifecycle_insert_guard AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_production_lifecycle();
+
+
+--
 -- Name: deployments deployment_recovery_lineage_capture; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER deployment_recovery_lineage_capture AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_deployment_recovery_lineage();
+
+
+--
+-- Name: deployments deployment_route_removal_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_route_removal_guard BEFORE UPDATE OF status, traffic_percent, scope, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_route_removal_traffic();
+
+
+--
+-- Name: deployments deployment_route_removal_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_route_removal_insert_guard AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_route_removal_traffic();
 
 
 --
@@ -37345,6 +40785,20 @@ CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipi
 
 
 --
+-- Name: event_recovery_items event_recovery_admitted_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_admitted_result AFTER INSERT OR UPDATE OF state, replay_invocation_id, replay_generation, replay_created_at ON public.event_recovery_items FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_admitted_result();
+
+
+--
+-- Name: invocations event_recovery_invocation_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE OF state, attempts, replay_generation, completed_at, outcome ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_invocation_result();
+
+
+--
 -- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -37569,6 +41023,13 @@ CREATE TRIGGER instances_worker_admission_identity BEFORE UPDATE OF state, mode 
 
 
 --
+-- Name: deployment_openapi_docs invalidate_route_lifecycle_approvals; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invalidate_route_lifecycle_approvals AFTER DELETE OR UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.invalidate_route_lifecycle_approvals();
+
+
+--
 -- Name: invocations invocation_attempt_history_transition; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -37688,6 +41149,76 @@ CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON public.jobs FOR EACH ROW 
 
 
 --
+-- Name: apps lifecycle_successor_apps; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_apps AFTER DELETE OR UPDATE OF status, slug, manifest, visibility, org_id, project_id, account_id, only_declared_routes, declared_routes, consumer_auth_mode, maintenance_mode ON public.apps FOR EACH ROW EXECUTE FUNCTION public.invalidate_lifecycle_successor_routes();
+
+
+--
+-- Name: deployments lifecycle_successor_deployments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_deployments AFTER INSERT OR DELETE OR UPDATE OF app_id, status, traffic_percent, scope ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.invalidate_lifecycle_successor_routes();
+
+
+--
+-- Name: custom_domains lifecycle_successor_domains; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_domains AFTER INSERT OR DELETE OR UPDATE OF app_id, domain, environment_id, verified_at ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.invalidate_lifecycle_successor_routes();
+
+
+--
+-- Name: project_environments lifecycle_successor_environments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_environments AFTER DELETE OR UPDATE ON public.project_environments FOR EACH STATEMENT EXECUTE FUNCTION public.invalidate_lifecycle_project_successors();
+
+
+--
+-- Name: project_release_members lifecycle_successor_release_members; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH STATEMENT EXECUTE FUNCTION public.invalidate_lifecycle_project_successors();
+
+
+--
+-- Name: project_release_sets lifecycle_successor_release_sets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_release_sets AFTER INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH STATEMENT EXECUTE FUNCTION public.invalidate_lifecycle_project_successors();
+
+
+--
+-- Name: edge_rules lifecycle_successor_rules; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_rules AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules FOR EACH ROW EXECUTE FUNCTION public.invalidate_lifecycle_successor_routes();
+
+
+--
+-- Name: tenant_hostnames lifecycle_successor_tenant_hosts; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_tenant_hosts AFTER INSERT OR DELETE OR UPDATE OF hostname, surface_id, verified_at ON public.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION public.invalidate_lifecycle_successor_routes();
+
+
+--
+-- Name: project_environment_workload_deployment_specs lifecycle_successor_workload_pins; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_workload_pins AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH STATEMENT EXECUTE FUNCTION public.invalidate_lifecycle_project_successors();
+
+
+--
+-- Name: project_environment_workload_specs lifecycle_successor_workload_specs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lifecycle_successor_workload_specs AFTER DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH STATEMENT EXECUTE FUNCTION public.invalidate_lifecycle_project_successors();
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliation_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -37779,6 +41310,13 @@ CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE O
 
 
 --
+-- Name: managed_realtime_channel_messages managed_realtime_channel_message_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_channel_message_identity BEFORE INSERT ON public.managed_realtime_channel_messages FOR EACH ROW EXECUTE FUNCTION public.faas_realtime_message_identity();
+
+
+--
 -- Name: compute_nodes managed_realtime_channel_route_targets_compute_nodes_update_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -37853,6 +41391,34 @@ CREATE TRIGGER managed_realtime_channel_route_targets_overflow_write_trg AFTER I
 --
 
 CREATE TRIGGER managed_realtime_channel_route_targets_routes_trg AFTER INSERT OR DELETE OR UPDATE ON public.managed_realtime_channel_routes FOR EACH ROW EXECUTE FUNCTION public.managed_realtime_channel_route_targets_notify();
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_fallback_timeline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_fallback_timeline AFTER INSERT OR DELETE OR UPDATE ON public.managed_realtime_inbox_fallbacks FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_message_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_inbox_message_identity BEFORE INSERT ON public.managed_realtime_inbox_messages FOR EACH ROW EXECUTE FUNCTION public.faas_realtime_message_identity();
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_notification_outcome; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_emit_notification_outcome();
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_timeline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
 
 
 --
@@ -38731,6 +42297,13 @@ CREATE TRIGGER route_policy_rule_changed AFTER INSERT OR DELETE OR UPDATE ON pub
 
 
 --
+-- Name: deployment_openapi_docs route_removal_capture_observation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_removal_capture_observation AFTER INSERT OR DELETE OR UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.reset_route_removal_observation();
+
+
+--
 -- Name: automatic_route_checks route_requirements_findings_changed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39452,6 +43025,70 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_admissions api_consumer_plan_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_admissions
+    ADD CONSTRAINT api_consumer_plan_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_assignments api_consumer_plan_assignments_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_assignments
+    ADD CONSTRAINT api_consumer_plan_assignments_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_rate_cards api_consumer_rate_cards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39465,6 +43102,30 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_rate_cards
     ADD CONSTRAINT api_consumer_rate_cards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_rate_cards api_consumer_rate_cards_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_rate_cards
+    ADD CONSTRAINT api_consumer_rate_cards_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_route_usage_minutes api_consumer_route_usage_minutes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_route_usage_minutes
+    ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -40041,6 +43702,30 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_removal_policies app_route_removal_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_removal_policies
+    ADD CONSTRAINT app_route_removal_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_removal_policies app_route_removal_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_removal_policies
+    ADD CONSTRAINT app_route_removal_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_removal_policies app_route_removal_policies_baseline_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_removal_policies
+    ADD CONSTRAINT app_route_removal_policies_baseline_deployment_id_fkey FOREIGN KEY (baseline_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -40860,6 +44545,22 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 
 --
+-- Name: customer_operation_job_executions customer_operation_job_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operation_milestones customer_operation_milestones_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40921,6 +44622,22 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --
@@ -41020,11 +44737,27 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_operations customer_operations_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operations customer_operations_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --
@@ -41428,6 +45161,38 @@ ALTER TABLE ONLY public.dev_bridge_webhook_replays
 
 
 --
+-- Name: dev_source_manifests dev_source_manifests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_manifests dev_source_manifests_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_patches dev_source_patches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_patches dev_source_patches_base_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_base_deployment_id_fkey FOREIGN KEY (base_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41809,6 +45574,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_execution_results event_recovery_execution_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --
@@ -43076,6 +46849,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 
 --
+-- Name: managed_realtime_channel_batches managed_realtime_channel_batches_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_batches
+    ADD CONSTRAINT managed_realtime_channel_batches_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_channel_heads managed_realtime_channel_heads_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43089,6 +46870,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_channel_reducers managed_realtime_channel_reducers_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_reducers
+    ADD CONSTRAINT managed_realtime_channel_reducers_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
 
 
 --
@@ -43132,6 +46921,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_routes
 
 
 --
+-- Name: managed_realtime_channel_snapshots managed_realtime_channel_snapshots_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_channel_snapshots
+    ADD CONSTRAINT managed_realtime_channel_snapshots_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_connection_owners managed_realtime_connection_owners_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43145,6 +46942,22 @@ ALTER TABLE ONLY public.managed_realtime_connection_owners
 
 ALTER TABLE ONLY public.managed_realtime_connection_owners
     ADD CONSTRAINT managed_realtime_connection_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_direct_message_deliveries managed_realtime_direct_message_del_endpoint_id_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_deliveries
+    ADD CONSTRAINT managed_realtime_direct_message_del_endpoint_id_message_id_fkey FOREIGN KEY (endpoint_id, message_id) REFERENCES public.managed_realtime_direct_message_receipts(endpoint_id, message_id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_direct_message_receipts managed_realtime_direct_message_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_direct_message_receipts
+    ADD CONSTRAINT managed_realtime_direct_message_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -43172,6 +46985,14 @@ ALTER TABLE ONLY public.managed_realtime_drain_operations
 
 
 --
+-- Name: managed_realtime_durable_cursors managed_realtime_durable_cursors_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_durable_cursors
+    ADD CONSTRAINT managed_realtime_durable_cursors_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_endpoints managed_realtime_endpoints_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43185,6 +47006,134 @@ ALTER TABLE ONLY public.managed_realtime_endpoints
 
 ALTER TABLE ONLY public.managed_realtime_endpoints
     ADD CONSTRAINT managed_realtime_endpoints_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_event_schemas managed_realtime_event_schemas_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_event_schemas
+    ADD CONSTRAINT managed_realtime_event_schemas_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_cursors managed_realtime_inbox_cursors_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_cursors
+    ADD CONSTRAINT managed_realtime_inbox_cursors_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_fallbacks managed_realtime_inbox_fallbacks_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_fallbacks
+    ADD CONSTRAINT managed_realtime_inbox_fallbacks_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_heads managed_realtime_inbox_heads_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_heads
+    ADD CONSTRAINT managed_realtime_inbox_heads_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_inbox_messages managed_realtime_inbox_messages_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_inbox_messages
+    ADD CONSTRAINT managed_realtime_inbox_messages_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_inbox_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_notification_timeline managed_realtime_notification_timeline_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_notification_timeline
+    ADD CONSTRAINT managed_realtime_notification_timeline_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_presence_leases managed_realtime_presence_leases_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_presence_leases
+    ADD CONSTRAINT managed_realtime_presence_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_deliveries managed_realtime_push_deliveries_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_deliveries
+    ADD CONSTRAINT managed_realtime_push_deliveries_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_devices managed_realtime_push_devices_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_devices
+    ADD CONSTRAINT managed_realtime_push_devices_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_preferences managed_realtime_push_preferences_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_preferences
+    ADD CONSTRAINT managed_realtime_push_preferences_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_providers managed_realtime_push_providers_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_providers
+    ADD CONSTRAINT managed_realtime_push_providers_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_push_rate_reservations managed_realtime_push_rate_reservations_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_push_rate_reservations
+    ADD CONSTRAINT managed_realtime_push_rate_reservations_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_read_progress managed_realtime_read_progress_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_read_progress
+    ADD CONSTRAINT managed_realtime_read_progress_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_schedule_history managed_realtime_schedule_his_endpoint_id_channel_schedule_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedule_history
+    ADD CONSTRAINT managed_realtime_schedule_his_endpoint_id_channel_schedule_fkey FOREIGN KEY (endpoint_id, channel, schedule_id) REFERENCES public.managed_realtime_schedules(endpoint_id, channel, schedule_id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_schedules managed_realtime_schedules_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_schedules
+    ADD CONSTRAINT managed_realtime_schedules_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -44329,6 +48278,158 @@ ALTER TABLE ONLY public.private_network_peerings
 
 ALTER TABLE ONLY public.private_networks
     ADD CONSTRAINT private_networks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: production_lifecycle_reviews production_lifecycle_reviews_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_lifecycle_reviews
+    ADD CONSTRAINT production_lifecycle_reviews_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: production_lifecycle_reviews production_lifecycle_reviews_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_lifecycle_reviews
+    ADD CONSTRAINT production_lifecycle_reviews_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_investigation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_investigation_id_fkey FOREIGN KEY (investigation_id) REFERENCES public.profile_investigations(id) ON DELETE SET NULL;
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_investigations profile_investigations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_investigations profile_investigations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -45500,6 +49601,30 @@ ALTER TABLE ONLY public.request_id_journal
 
 
 --
+-- Name: request_telemetry_app_gaps request_telemetry_app_gaps_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_app_gaps
+    ADD CONSTRAINT request_telemetry_app_gaps_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: request_telemetry_app_gaps request_telemetry_app_gaps_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_app_gaps
+    ADD CONSTRAINT request_telemetry_app_gaps_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
+
+
+--
+-- Name: request_telemetry_coverage request_telemetry_coverage_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_coverage
+    ADD CONSTRAINT request_telemetry_coverage_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45620,6 +49745,38 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 
 --
+-- Name: route_lifecycle_approvals route_lifecycle_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_lifecycle_approvals
+    ADD CONSTRAINT route_lifecycle_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_lifecycle_approvals route_lifecycle_approvals_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_lifecycle_approvals
+    ADD CONSTRAINT route_lifecycle_approvals_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_lifecycle_approvals route_lifecycle_approvals_baseline_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_lifecycle_approvals
+    ADD CONSTRAINT route_lifecycle_approvals_baseline_deployment_id_fkey FOREIGN KEY (baseline_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_lifecycle_approvals route_lifecycle_approvals_candidate_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_lifecycle_approvals
+    ADD CONSTRAINT route_lifecycle_approvals_candidate_deployment_id_fkey FOREIGN KEY (candidate_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: route_monitor_incidents route_monitor_incidents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45689,6 +49846,62 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 ALTER TABLE ONLY public.route_policy_receipts
     ADD CONSTRAINT route_policy_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_observations route_probe_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_observations
+    ADD CONSTRAINT route_probe_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_probe_rounds route_probe_rounds_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_probe_rounds
+    ADD CONSTRAINT route_probe_rounds_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_removal_approvals route_removal_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_approvals
+    ADD CONSTRAINT route_removal_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_removal_approvals route_removal_approvals_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_approvals
+    ADD CONSTRAINT route_removal_approvals_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_removal_approvals route_removal_approvals_baseline_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_approvals
+    ADD CONSTRAINT route_removal_approvals_baseline_deployment_id_fkey FOREIGN KEY (baseline_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_removal_approvals route_removal_approvals_candidate_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_approvals
+    ADD CONSTRAINT route_removal_approvals_candidate_deployment_id_fkey FOREIGN KEY (candidate_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_removal_policy_history route_removal_policy_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_removal_policy_history
+    ADD CONSTRAINT route_removal_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -46028,6 +50241,22 @@ ALTER TABLE ONLY public.scenario_test_members
 
 
 --
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_caller_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_caller_app_id_fkey FOREIGN KEY (caller_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: schedule_occurrences schedule_occurrences_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46348,6 +50577,62 @@ ALTER TABLE ONLY public.workflow_automation_definitions
 
 
 --
+-- Name: workflow_automation_failure_guards workflow_automation_failure_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_guards
+    ADD CONSTRAINT workflow_automation_failure_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_actor_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_actor_account_id_fkey FOREIGN KEY (actor_account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_failure_policies workflow_automation_failure_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_policies
+    ADD CONSTRAINT workflow_automation_failure_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_policies workflow_automation_publish_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_policies
+    ADD CONSTRAINT workflow_automation_publish_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_automation_revisions workflow_automation_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46597,110 +50882,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
-CREATE TABLE public.profile_investigations (
-    id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    revision bigint NOT NULL,
-    investigation jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    assessment jsonb,
-    CONSTRAINT profile_investigations_assessment_check CHECK (((assessment IS NULL) OR ((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'status'::text) IS NOT NULL) AND ((assessment ->> 'status'::text) = ANY (ARRAY['regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text])) AND (octet_length((assessment)::text) <= 131072)))),
-    CONSTRAINT profile_investigations_investigation_check CHECK (((jsonb_typeof(investigation) = 'object'::text) AND (octet_length((investigation)::text) <= 131072))),
-    CONSTRAINT profile_investigations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
-);
-ALTER TABLE ONLY public.profile_investigations
-    ADD CONSTRAINT profile_investigations_pkey PRIMARY KEY (id);
-ALTER TABLE ONLY public.profile_investigations
-    ADD CONSTRAINT profile_investigations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.profile_investigations
-    ADD CONSTRAINT profile_investigations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-CREATE INDEX profile_investigations_app_updated_idx ON public.profile_investigations USING btree (app_id, updated_at DESC, id);
-
-CREATE TABLE public.profile_deployment_policies (
-    app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
-    enabled boolean NOT NULL,
-    config jsonb NOT NULL CHECK (jsonb_typeof(config) = 'object' AND octet_length(config::text) <= 8192),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE public.profile_deployment_checks (
-    deployment_id uuid PRIMARY KEY REFERENCES public.deployments(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
-    data jsonb NOT NULL CHECK (jsonb_typeof(data) = 'object' AND octet_length(data::text) <= 8192),
-    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'regressed', 'no_regression_detected', 'inconclusive', 'cancelled')),
-    reason text NOT NULL DEFAULT '',
-    attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
-    next_attempt_at timestamptz,
-    lease_token uuid,
-    lease_until timestamptz,
-    investigation_id uuid REFERENCES public.profile_investigations(id) ON DELETE SET NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    completed_at timestamptz,
-    CHECK ((status = 'running') = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
-    CHECK ((status IN ('queued', 'running')) = (completed_at IS NULL AND next_attempt_at IS NOT NULL))
-);
-CREATE INDEX profile_deployment_checks_due_idx ON public.profile_deployment_checks (next_attempt_at, deployment_id) WHERE status IN ('queued', 'running');
-CREATE INDEX profile_deployment_checks_app_created_idx ON public.profile_deployment_checks (app_id, created_at DESC, deployment_id);
-CREATE INDEX profile_deployment_checks_completed_idx ON public.profile_deployment_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
-
-CREATE TABLE public.profile_canary_checks (
-    deployment_id uuid NOT NULL REFERENCES public.deployments(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    canary_step integer NOT NULL CHECK (canary_step >= 0),
-    canary_step_started_at timestamp with time zone NOT NULL,
-    policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
-    data jsonb NOT NULL CHECK (jsonb_typeof(data) = 'object' AND octet_length(data::text) <= 98304),
-    status text DEFAULT 'queued'::text NOT NULL CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])),
-    reason text DEFAULT ''::text NOT NULL,
-    attempts integer DEFAULT 0 NOT NULL CHECK (attempts BETWEEN 0 AND 5),
-    next_attempt_at timestamp with time zone,
-    lease_token uuid,
-    lease_until timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    CONSTRAINT profile_canary_checks_pkey PRIMARY KEY (deployment_id, canary_step, canary_step_started_at, policy_revision),
-    CONSTRAINT profile_canary_checks_lease_chk CHECK ((status = 'running'::text) = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
-    CONSTRAINT profile_canary_checks_schedule_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text])) = (completed_at IS NULL AND next_attempt_at IS NOT NULL))
-);
-CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks (next_attempt_at, created_at, deployment_id) WHERE status = ANY (ARRAY['queued'::text, 'running'::text]);
-CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
-
-CREATE TABLE public.profile_route_alert_state (
- context_key text PRIMARY KEY CHECK (length(context_key)=64),
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
- deployment_id uuid NOT NULL REFERENCES public.deployments(id) ON DELETE CASCADE,
- state jsonb NOT NULL,
- updated_at timestamptz NOT NULL
-);
-CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_state(app_id);
-
-CREATE TABLE public.profile_periodic_monitors (
- id uuid PRIMARY KEY,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
- policy_revision bigint NOT NULL CHECK (policy_revision BETWEEN 1 AND 9007199254740991),
- route text NOT NULL CHECK (length(route)>0),
- data jsonb NOT NULL CHECK (jsonb_typeof(data)='object' AND octet_length(data::text)<=262144),
- next_attempt_at timestamptz NOT NULL,
- attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6),
- lease_token uuid,
- lease_until timestamptz,
- updated_at timestamptz NOT NULL,
- UNIQUE(deployment_id,policy_revision,route),
- CHECK ((lease_token IS NULL)=(lease_until IS NULL))
-);
-CREATE INDEX profile_periodic_monitors_due_idx ON public.profile_periodic_monitors(next_attempt_at,id);
-CREATE INDEX profile_periodic_monitors_app_idx ON public.profile_periodic_monitors(app_id,updated_at DESC,id);
-
-CREATE INDEX deployments_profile_completed_idx ON public.deployments (app_id, scope, rollout_completed_at DESC, id DESC)
-    WHERE status IN ('live', 'superseded') AND rollout_state = 'complete' AND deleted_at IS NULL;

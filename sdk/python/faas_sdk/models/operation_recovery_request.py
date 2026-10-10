@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
 from ..models.operation_recovery_request_resolution import (
     OperationRecoveryRequestResolution,
@@ -23,9 +22,11 @@ class OperationRecoveryRequest:
     expected_generation: int
     resolution: OperationRecoveryRequestResolution
     evidence: str
+    expected_inspection_revision: str | Unset = UNSET
+    """Optional durable recovery inspection fence, rechecked before a new decision and ignored for an identical
+    accepted receipt replay."""
     result: Any | Unset = UNSET
     """Required typed output for succeeded."""
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         recovery_id = self.recovery_id
@@ -36,10 +37,12 @@ class OperationRecoveryRequest:
 
         evidence = self.evidence
 
+        expected_inspection_revision = self.expected_inspection_revision
+
         result = self.result
 
         field_dict: dict[str, Any] = {}
-        field_dict.update(self.additional_properties)
+
         field_dict.update(
             {
                 "recovery_id": recovery_id,
@@ -48,6 +51,8 @@ class OperationRecoveryRequest:
                 "evidence": evidence,
             }
         )
+        if expected_inspection_revision is not UNSET:
+            field_dict["expected_inspection_revision"] = expected_inspection_revision
         if result is not UNSET:
             field_dict["result"] = result
 
@@ -64,6 +69,8 @@ class OperationRecoveryRequest:
 
         evidence = d.pop("evidence")
 
+        expected_inspection_revision = d.pop("expected_inspection_revision", UNSET)
+
         result = d.pop("result", UNSET)
 
         operation_recovery_request = cls(
@@ -71,24 +78,8 @@ class OperationRecoveryRequest:
             expected_generation=expected_generation,
             resolution=resolution,
             evidence=evidence,
+            expected_inspection_revision=expected_inspection_revision,
             result=result,
         )
 
-        operation_recovery_request.additional_properties = d
         return operation_recovery_request
-
-    @property
-    def additional_keys(self) -> list[str]:
-        return list(self.additional_properties.keys())
-
-    def __getitem__(self, key: str) -> Any:
-        return self.additional_properties[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.additional_properties[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.additional_properties[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.additional_properties

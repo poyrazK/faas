@@ -1389,6 +1389,19 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	if iface := os.Getenv("FAAS_PUBLIC_IFACE"); iface != "" {
 		env = append(env, "FAAS_PUBLIC_IFACE="+iface)
 	}
+	// vmmd tuning knobs a benchmark or acceptance run may set explicitly
+	// (prepared networks, restore concurrency/prefetch, a private resource
+	// journal on a shared host). Unset keeps vmmd's own defaults.
+	for _, name := range []string{
+		"FAAS_PREPARED_NETWORKS",
+		"FAAS_RESTORE_CONCURRENCY",
+		"FAAS_RESTORE_PREFETCH",
+		"FAAS_VMMD_RESOURCE_JOURNAL_DIR",
+	} {
+		if v := os.Getenv(name); v != "" {
+			env = append(env, name+"="+v)
+		}
+	}
 	return env
 }
 
@@ -2022,6 +2035,7 @@ func (s *safeBuffer) String() string {
 func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
 	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
+	argv = append(argv, daemonConfigArgs(name, env)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
@@ -2031,6 +2045,24 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 		t.Fatalf("e2etest: start %s: %v", name, err)
 	}
 	return cmd
+}
+
+// daemonConfigArgs is a harness-only launch selector. It supplies the real
+// operator TOML flag on initial startup and restart; it grants no admission.
+func daemonConfigArgs(name string, env []string) []string {
+	if name != "apid" {
+		return nil
+	}
+	var path string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_CONFIG="); ok {
+			path = value
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	return []string{"--config", path}
 }
 
 // requireDaemonsAlive fails the test immediately if a daemon this harness

@@ -109,6 +109,7 @@ type OpenAPIContractDiffResponse struct {
 	BaselineCapturedAt   *time.Time                `json:"baseline_captured_at,omitempty"`
 	Blocking             bool                      `json:"blocking"`
 	Breaks               []OpenAPIContractBreak    `json:"breaks"`
+	Unknowns             []OpenAPIContractUnknown  `json:"unknowns"`
 	Additions            []OpenAPIContractAddition `json:"additions"`
 }
 
@@ -120,6 +121,17 @@ type OpenAPIContractBreak struct {
 	PathInSchema string      `json:"path_in_schema,omitempty"`
 	Before       interface{} `json:"before,omitempty"`
 	After        interface{} `json:"after,omitempty"`
+}
+
+// OpenAPIContractUnknown is a changed unsupported response-schema feature or
+// incomplete baseline that the current comparator cannot classify as
+// breaking or additive.
+type OpenAPIContractUnknown struct {
+	Path         string `json:"path"`
+	Method       string `json:"method"`
+	Status       string `json:"status,omitempty"`
+	PathInSchema string `json:"path_in_schema,omitempty"`
+	Code         string `json:"code"`
 }
 
 type OpenAPIContractAddition struct {

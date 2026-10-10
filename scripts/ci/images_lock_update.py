@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -270,6 +271,11 @@ def resolve_via_registry_api(repo: str, tag: str, platform: str) -> str | None:
     with response:
         raw = response.read()
         response_digest = response.headers.get("Docker-Content-Digest")
+    if not response_digest:
+        # Public ECR omits Docker-Content-Digest on some manifest responses.
+        # Registry manifest digests are the SHA-256 of the exact response
+        # bytes, so retain the same lock semantics when resolving through it.
+        response_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
     try:
         manifest = json.loads(raw)
     except (json.JSONDecodeError, TypeError):

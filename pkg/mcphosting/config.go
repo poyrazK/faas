@@ -54,11 +54,18 @@ type Config struct {
 type TasksConfig struct {
 	Enabled                *bool  `json:"enabled"`
 	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
+	EncryptionKeysEnv      string `json:"encryption_keys_env,omitempty"`
 	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
 	NamespaceEnv           string `json:"namespace_env,omitempty"`
 	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
+	ShutdownTimeoutMS      int    `json:"shutdown_timeout_ms,omitempty"`
 	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
+	MaxAttempts            int    `json:"max_attempts,omitempty"`
+	RetryBaseDelayMS       int    `json:"retry_base_delay_ms,omitempty"`
+	RetryMaxDelayMS        int    `json:"retry_max_delay_ms,omitempty"`
 	WorkerConcurrency      int    `json:"worker_concurrency,omitempty"`
+	MaxRunning             int    `json:"max_running,omitempty"`
+	MaxRunningPerOwner     int    `json:"max_running_per_owner,omitempty"`
 	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
 	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
 }
@@ -261,6 +268,14 @@ func (c *TasksConfig) validate() error {
 			return fmt.Errorf("tasks.%s must name an uppercase environment variable", field.name)
 		}
 	}
+	if c.EncryptionKeysEnv != "" {
+		if !taskEnvName.MatchString(c.EncryptionKeysEnv) {
+			return fmt.Errorf("tasks.encryption_keys_env must name an uppercase environment variable")
+		}
+		if c.EncryptionKeysEnv == c.DatabaseURLEnv || c.EncryptionKeysEnv == c.OwnerKeyEnv || c.EncryptionKeysEnv == c.NamespaceEnv {
+			return fmt.Errorf("tasks encryption keys must use a distinct environment variable")
+		}
+	}
 	if c.DatabaseURLEnv == c.OwnerKeyEnv || c.DatabaseURLEnv == c.NamespaceEnv || c.OwnerKeyEnv == c.NamespaceEnv {
 		return fmt.Errorf("tasks database, owner key, and namespace must use distinct environment variables")
 	}
@@ -270,8 +285,37 @@ func (c *TasksConfig) validate() error {
 	if c.PollIntervalMS != 0 && (c.PollIntervalMS < 500 || c.PollIntervalMS > 30_000) {
 		return fmt.Errorf("tasks.poll_interval_ms must be between 500 and 30000")
 	}
+	if c.ShutdownTimeoutMS != 0 && (c.ShutdownTimeoutMS < 1000 || c.ShutdownTimeoutMS > 300_000) {
+		return fmt.Errorf("tasks.shutdown_timeout_ms must be between 1000 and 300000")
+	}
 	if c.WorkerConcurrency != 0 && (c.WorkerConcurrency < 1 || c.WorkerConcurrency > 16) {
 		return fmt.Errorf("tasks.worker_concurrency must be between 1 and 16")
+	}
+	if c.MaxAttempts < 0 || c.MaxAttempts > 10 {
+		return fmt.Errorf("tasks.max_attempts must be between 1 and 10 when specified")
+	}
+	base, maximum := c.RetryBaseDelayMS, c.RetryMaxDelayMS
+	if base == 0 {
+		base = 1000
+	}
+	if maximum == 0 {
+		maximum = 60000
+	}
+	if base < 100 || base > 86400000 || maximum < base || maximum > 86400000 {
+		return fmt.Errorf("task retry delays must be between 100 and 86400000 milliseconds, with maximum at least base")
+	}
+	if c.MaxRunning < 0 || c.MaxRunningPerOwner < 0 {
+		return fmt.Errorf("task running limits must be positive integers when specified")
+	}
+	running, runningOwner := c.MaxRunning, c.MaxRunningPerOwner
+	if running == 0 {
+		running = api.MCPTaskDefaultMaxRunning
+	}
+	if runningOwner == 0 {
+		runningOwner = api.MCPTaskDefaultMaxRunningPerOwner
+	}
+	if runningOwner > running {
+		return fmt.Errorf("tasks.max_running_per_owner must not exceed tasks.max_running")
 	}
 	if c.MaxOutstanding < 0 || c.MaxOutstandingPerOwner < 0 {
 		return fmt.Errorf("task admission limits must be positive integers when specified")

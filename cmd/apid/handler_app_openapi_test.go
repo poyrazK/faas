@@ -754,6 +754,39 @@ func TestGetAppOpenAPIContractDiffProductionBaselineAndBreakingProposal(t *testi
 	}
 }
 
+func TestGetAppOpenAPIContractDiffReportsChangedUnionAsUnknown(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "contract-diff-union")
+	baselineDoc := []byte(`{"openapi":"3.1.0","info":{"title":"sample","version":"1"},"paths":{"/users":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}}}}}}}`)
+	proposedDoc := []byte(`{"openapi":"3.1.0","info":{"title":"sample","version":"2"},"paths":{"/users":{"get":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"oneOf":[{"type":"string"},{"type":"boolean"}]}}}}}}}}}`)
+	seedImport(t, e, app.ID, baselineDoc, 1, "3.1.0")
+	baseline, _, err := openapidiff.SnapshotFromDocument("live-prod", app.ID, "prod", baselineDoc, nil)
+	if err != nil {
+		t.Fatalf("SnapshotFromDocument baseline: %v", err)
+	}
+	baseline.CapturedAt = time.Now().UTC().Add(time.Minute)
+	if err := e.store.UpdateDeploymentOpenAPISnapshot(context.Background(), baseline); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot: %v", err)
+	}
+	seedImport(t, e, app.ID, proposedDoc, 1, "3.1.0")
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "1")
+	rec := e.do(t, http.MethodGet, "/v1/apps/contract-diff-union/openapi/diff?scope=prod", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.OpenAPIContractDiffResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !out.Blocking || len(out.Breaks) != 0 || len(out.Unknowns) != 1 {
+		t.Fatalf("contract diff = %+v, want a blocking unknown without a claimed break", out)
+	}
+	if out.Unknowns[0].Code != string(openapidiff.SchemaUnknownUnsupportedUnionChange) ||
+		out.Unknowns[0].PathInSchema != "" {
+		t.Fatalf("unknown = %+v, want the changed top-level response union", out.Unknowns[0])
+	}
+}
+
 func TestGetAppOpenAPIContractDiffValidatesScopeBeforeFeatureGate(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	seedApp(t, e, "contract-diff-scope")

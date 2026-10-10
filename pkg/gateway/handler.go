@@ -567,6 +567,9 @@ type RequireAuthnAccount struct {
 // mirrors state.APIKey.ID so the wiring site catches drift.
 type RequireAuthnKey struct {
 	ID string
+	// Scopes are the key's authorization scopes. ADR-079: unlocking an app
+	// with a bearer key requires apps:read (or admin) on its account.
+	Scopes []string
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -943,7 +946,10 @@ type Handler struct {
 	accountLimiter *Limiter
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
-	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetStore TenantRequestBudgetStore
+	// consumerPlanStore and its policy cache enforce consumer plans (ADR-847).
+	consumerPlanStore          ConsumerPlanStore
+	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
 	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
@@ -1160,6 +1166,9 @@ type Handler struct {
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
 	routeSets sync.Map // appID(string) → *routeLabelSet
+	// billingRouteSets bounds each app's billing route labels independently
+	// of route metrics, so opting out of metrics never changes billing.
+	billingRouteSets sync.Map // appID(string) → *routeLabelSet
 	// routeSetsPi (ADR-093) deduplicates Metrics.PreInstantiateAppRoute
 	// calls keyed by (appID, routeLabel). The closed `class` set is
 	// written once per app per route; the dedupe map is never
@@ -2115,6 +2124,9 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	if h.rejectKeyWithoutAppScope(w, r, rec, app, acct.ID, key, "instances.authn_scope") {
+		return false
+	}
 	// Phase 3 (ADR-104, issue #881): stamp the resolved API key
 	// id on the request context so applyEdgeRuleThrottle can key
 	// a per-consumer bucket when the matched rule opts into
@@ -2126,6 +2138,42 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	authenticated.APIKeyID = key.ID
 	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return true
+}
+
+// rejectKeyWithoutAppScope enforces ADR-079 §2: a bearer key unlocks an app
+// only when it holds apps:read (or admin) on the owning account.
+// production-us hunt #8 found the scope unchecked - a key minted with only
+// usage:read for billing tooling opened every private app of the account.
+// It writes the 403 and returns true when the key is refused.
+func (h *Handler) rejectKeyWithoutAppScope(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, accountID string, key RequireAuthnKey, auditKind string) bool {
+	if keyHasAnyScope(key.Scopes, api.ScopesReadSurface) {
+		return false
+	}
+	h.emitAuthnAudit(r, app, &accountID, auditKind, map[string]any{
+		"app_id":         app.ID,
+		"slug":           r.Host,
+		"key_id":         key.ID,
+		"key_scopes":     key.Scopes,
+		"required_scope": api.ScopeAppsRead,
+	})
+	rec.status = http.StatusForbidden
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+		"Insufficient scope", "this API key lacks the apps:read scope needed to call the app"))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+	return true
+}
+
+// keyHasAnyScope mirrors the apid scope policy: a key passes when it holds
+// any of the allowed scopes (callers list admin explicitly).
+func keyHasAnyScope(have, allowed []string) bool {
+	for _, want := range allowed {
+		for _, scope := range have {
+			if scope == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emitAuthnAudit is a tiny wrapper around the optional auditor
@@ -4734,6 +4782,9 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	if h.rejectKeyWithoutAppScope(w, r, rec, app, acct.ID, key, "instances.public_auth_scope") {
+		return false
+	}
 	return true
 }
 
@@ -5686,6 +5737,7 @@ haveApp:
 	// Declared-route matching is against the public OpenAPI contract, not the
 	// internal path a rewrite rule may later produce.
 	declaredPath, declaredMethod := r.URL.Path, r.Method
+	r = withLifecycleRequestRoute(r, declaredPath, declaredMethod)
 	requestSpan.SetAttributes(
 		attribute.String("app_id", app.ID),
 		attribute.String("app_plan", string(app.Plan)),
@@ -5693,6 +5745,19 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-847: a route probe pins one live deployment and keeps every customer
+	// auth gate; it is never combined with the smoke bypass.
+	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
+	if deploymentSmoke {
+		probeDeploymentID, probeToken, routeProbe = "", "", false
+	} else if probeHeaders && !routeProbe {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Route probe not authorized", "the probe challenge is unknown or expired on this gateway"))
+		return
+	}
+	if routeProbe {
+		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken))
+	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5785,7 +5850,10 @@ haveApp:
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	// Consumer-attributed traffic always carries a bounded billing route so
+	// rate cards can weight routes (ADR-846); consumer auth ran above.
+	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5795,6 +5863,9 @@ haveApp:
 		preLabel := observedRouteLabel(r.Method, path)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
+		}
+		if consumerAttributed {
+			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
 		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
@@ -6309,6 +6380,7 @@ haveApp:
 					Query:          sortQuery(r.URL.RawQuery),
 					VaryHash:       computeVaryHash(r, rule.VaryOn),
 				}
+				cw.servedDeploymentID = servedDeploymentID
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
 				// The response was uncacheable or came from a warm
@@ -6437,6 +6509,9 @@ haveApp:
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
+	if !h.enforceConsumerPlan(w, r, rec, app, deploymentSmoke) {
+		return
+	}
 	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
 		return
 	}
@@ -6524,6 +6599,13 @@ haveApp:
 		exactUnavailableTitle = "Project release unavailable"
 		exactUnavailableDetail = "the selected release member has no routable target"
 	}
+	if routeProbe {
+		exactDeploymentID = probeDeploymentID
+		exactDeploymentScope = app.Scope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Route probe unavailable"
+		exactUnavailableDetail = "the probed deployment has no routable target"
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -6564,7 +6646,11 @@ haveApp:
 			)
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
-					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
+					if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+						admitErr = notServing
+					} else {
+						admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
+					}
 				}
 				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeWakeError(w, admitErr)
@@ -6597,6 +6683,11 @@ haveApp:
 		}
 	}
 	if exactDeployment && !pick.OK {
+		if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+			api.WriteProblem(w, notServing)
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			exactUnavailableTitle, exactUnavailableDetail))
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
@@ -6861,6 +6952,7 @@ haveApp:
 	defer vmRelease()
 	target := pick.Target
 	servedDeploymentID = target.DeploymentID
+	r = h.applyDeploymentRouteLifecycle(w, r, app, target.DeploymentID, declaredPath, declaredMethod)
 	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
 		w.Header().Set(api.RevisionHeader, target.DeploymentID)
 	}
@@ -6875,6 +6967,10 @@ haveApp:
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
+	} else if routeProbe && target.DeploymentID == probeDeploymentID {
+		// The same upstream-only proof lets the prober attribute a response
+		// to the probed deployment (ADR-847).
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -7525,7 +7621,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	if h.requestTelemetry != nil || h.usageOutbox != nil {
+	// Route probes (ADR-847) record their own results; they never become
+	// customer telemetry or usage.
+	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
@@ -7620,6 +7718,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 			}
+			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
 				// cannot become billable via either the outbox or debugger fallback.
@@ -7629,13 +7728,20 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				if status >= 400 {
 					errorCount = 1
 				}
+				billableUnits := int64(1)
+				if platformFailure {
+					billableUnits = 0
+				}
 				usageEvent := usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
 					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
 					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
 					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
+				}
+				if row.ConsumerID != "" {
+					usageEvent.BillingRoute = billingRouteFrom(r)
 				}
 				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 					usageEvent.DiscoveredRoute = auditRouteFrom(r)
@@ -7691,9 +7797,16 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
+					// The debugger fallback bills every row it writes, so a
+					// platform failure must not reach it.
+					row.UsageOutboxed = platformFailure
 				} else {
 					row.UsageOutboxed = true
 				}
+			} else if platformFailure {
+				// Without an outbox the debugger fallback is the only ledger
+				// writer and bills every row; keep platform failures out of it.
+				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
 				h.requestTelemetry.RecordFromObserve(row)
@@ -8747,6 +8860,33 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 	return cold, admittedWakeID, method, nil
 }
 
+// pinnedDeploymentStatusReader reads an alias-pinned deployment's lifecycle
+// state. It is consulted only on the refusal path, never per request.
+type pinnedDeploymentStatusReader interface {
+	PinnedDeploymentStatus(ctx context.Context, deploymentID string) (serving bool, label, status string, ok bool)
+}
+
+// pinnedDeploymentNotServing explains a refused deployment-alias request
+// whose deployment no longer serves. production-us hunt #8: after a rollback
+// superseded v2, its alias answered "App concurrency reached: max_concurrency
+// is 3; 1 already live" - schedd refuses wakes of non-live deployments as
+// at-capacity, and the gateway rendered that as a concurrency limit.
+func (h *Handler) pinnedDeploymentNotServing(ctx context.Context, app App, deploymentID string) *api.Problem {
+	if deploymentID == "" || app.PinnedDeploymentID != deploymentID {
+		return nil
+	}
+	reader, ok := h.backend.(pinnedDeploymentStatusReader)
+	if !ok {
+		return nil
+	}
+	serving, label, status, found := reader.PinnedDeploymentStatus(ctx, deploymentID)
+	if !found || serving {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment not serving",
+		fmt.Sprintf("deployment %s is %s and no longer serves traffic; point the alias at a live revision with `gregale deployments alias set`", label, status))
+}
+
 func writeWakeError(w http.ResponseWriter, err error) {
 	switch {
 	case isWakeConcurrencyDrop(err):
@@ -8944,8 +9084,8 @@ var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
 func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
-	director := p.Director
-	p.Director = func(req *http.Request) {
+	director := p.Director                 //nolint:staticcheck // SA1019: retain the qualified guest forwarding contract during the compiler patch.
+	p.Director = func(req *http.Request) { //nolint:staticcheck // SA1019: supported API; Rewrite migration needs guest-contract qualification.
 		director(req)
 		req.Header.Del(apihostingreceipt.PlatformSmokeTokenHeader)
 		req.Header.Del(apihostingreceipt.PlatformSmokeDeploymentHeader)
@@ -8956,6 +9096,11 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		for _, name := range []string{"Deprecation", "Sunset"} {
+			if platformOwnsLifecycleHeader(resp.Request.Context(), name) {
+				resp.Header.Del(name)
+			}
+		}
 		stripGuestManagedPlatformCookiesResponseHeader(resp)
 		stampDeploymentSmokeResponse(resp.Request.Context(), resp.Header)
 		return nil

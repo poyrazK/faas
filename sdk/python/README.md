@@ -125,6 +125,15 @@ Things to know:
 
 ## Transactional operation handlers
 
+Customer Operations HTTP definitions explicitly enable
+`transaction_receipt: postgres_v1` with reconciliation recovery. Use
+`customer_operation_request_from_headers` and
+`with_customer_operation_transaction` / `awith_customer_operation_transaction`;
+the callback returns the ordinary JSON result, without managed effects.
+Approved recovery checks a scoped receipt before business code. Install and
+retain `customer_operation_receipt_schema` as the application database owner.
+See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
+
 For managed HTTP operations, build the context with
 `operation_request_from_headers(headers, method, raw_target, raw_body)`, preserving
 repeated headers. Use `with_operation_transaction(connection, operation, callback)`
@@ -136,6 +145,72 @@ Install `operation_receipt_schema` explicitly as the database owner. Send
 `response.body` unchanged as `application/json`; `response.replayed` reports
 recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
 for synchronous and async examples, retention, and uncertain commit handling.
+
+### Customer Operation workflows
+
+For customer Operations, install `customer_operation_receipt_schema` explicitly
+as the database owner. The schema includes the response receipt, milestone
+outbox, and workflow-state revision tables. Use an idle, exclusively leased
+psycopg `AsyncConnection` configured with `autocommit=True`; construct
+`GregaleOperations` once with an `httpx.AsyncClient` that the application owns.
+
+Authorize the request before calling `transaction`, because receipt replay
+skips the callback. Preserve the raw request target and body before framework
+parsing. This FastAPI-style example uses the request's ASGI scope for the exact
+path and query bytes:
+
+```python
+from fastapi import HTTPException, Request, Response
+from faas_sdk import CustomerOperationPublicationError
+
+
+async def fulfill_order(request: Request, connection, operations):
+    raw_body = await request.body()
+    raw_target = request.scope["raw_path"].decode("ascii")
+    query = request.scope.get("query_string", b"")
+    if query:
+        raw_target += "?" + query.decode("ascii")
+    order_id = request.path_params["id"]
+    await authorize_order(request, order_id)
+
+    async def apply(tx):
+        await tx.execute("SELECT status, workflow_instance_id FROM orders WHERE id = %s FOR UPDATE", (order_id,))
+        row = await tx.fetchone()
+        if row is None or row[0] != "fulfillment-in-progress":
+            raise ValueError("order is not ready for fulfillment")
+        workflow_run_id = row[1]
+        await tx.execute("UPDATE orders SET status = %s WHERE id = %s", ("fulfilled", order_id))
+        tx.milestone("order-fulfilled", {"order_id": order_id})
+        tx.workflow_transition(
+            "order-lifecycle", workflow_run_id, "fulfillment-in-progress", "completed"
+        )
+        return {"order_id": order_id, "status": "fulfilled"}
+
+    try:
+        receipt = await operations.transaction(
+            connection, request.headers, request.method, raw_target, raw_body, apply
+        )
+    except CustomerOperationPublicationError as error:
+        # The write committed. A retry with this same Operation identity
+        # replays the saved result and attempts publication again.
+        raise HTTPException(status_code=503, detail="retry the same Operation") from error
+    return Response(receipt.body, media_type="application/json")
+```
+
+Use this path only for requests from Gregale's guest listener; reserved headers
+carry execution context and are not authentication. The SDK validates queued
+facts and transitions before commit, assigns workflow revisions in the same
+transaction, and publishes each saved report under the current request's proof.
+`receipt.replayed` is true when the saved result was returned without running
+the callback. See the [operations guide](../../docs/operations.md) for workflow
+contracts, evidence, and recovery behavior.
+
+Generate typed workflow names and transition helpers directly from your manifest:
+`gregale customer-operations bindings --app orders --plan pro --language python --output workflow_bindings.py`.
+Import the generated helper into the async transaction callback, pass the state
+from the locked business row and its required milestone payloads, and let it
+queue the facts and transition. Add `--check` in CI to reject stale bindings.
+See the [binding guide](../../docs/operations.md#generate-application-workflow-bindings).
 
 ## Login-target observation
 
@@ -301,15 +376,27 @@ If you want to install this client into another project without publishing it (e
 Production Operations submission remains disabled. Generated
 `faas_sdk.api.operations` modules expose typed submission, status, event,
 cancellation, runtime reporting, artifact download and account recovery routes.
+Account `inspect_operation_recovery` and `preview_operation_recovery` expose
+retained execution evidence and a read-only recovery proposal. Preview starts no
+work or file publication; eligibility does not establish that external effects
+can safely repeat. A separate `recover_operation` request can provide the returned
+`inspection_revision` as `expected_inspection_revision` to fence changed evidence.
 
 HTTP handlers can import `GregaleOperations` from
-`faas_sdk.operations_runtime` and use its `run_request(headers)` async context
+`faas_sdk.operations_runtime` and use its `bind_request(headers)` context
 manager around a trusted Gregale guest request. Call `progress(report)` or
 `artifact(report)` with the generated request models and a stable `report_id`.
 The helper fetches fresh workload identity for each report, rejects native
 execution context and isolates authority between concurrent requests. Its public
 `context()` omits the ephemeral capability. The caller owns the injected
 `httpx.AsyncClient` and closes it during shutdown.
+
+`await runtime.control()` reads current cancellation intent, deadline and lease
+with fresh workload identity and the same attempt proof. It creates no report,
+event or renewal. Applications manage their own cooperative scope: subtract read
+latency from the server's observed duration, stop at the earlier lease/deadline,
+and pass cancellation to I/O. Stopping does not undo external effects or certify
+a safe retry; dispatched uncertainty retains its pinned recovery policy.
 
 See [Operations](../../docs/operations.md) for the separate business and webhook
 outcomes, retained result bytes, scoped credentials and rollout status.
@@ -334,3 +421,396 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+## Batch event publication
+
+Use `faas_sdk.api.events.publish_event_batch.sync_detailed` or
+`asyncio_detailed` with `PublishEventBatchRequest(events=[...])`. Batches contain
+1–100 stable-id envelopes in at most 1 MiB. Inspect each parsed result: HTTP 200
+can include rejected or unknown items. Retry with the original source/id/content;
+duplicates retain their original receipt and do not create more deliveries.
+See [batch publication](../../docs/event-driven.md#batch-event-publishing).
+
+## Event retention health
+
+The generated events service exposes `getEventRetentionHealth` (Node) or
+`faas_sdk.api.events.get_event_retention_health` (Python). Filter receipt
+observations by source/app and choose an expiry lookahead; storage utilization
+remains account-wide. Recovery preflight also returns current receipt expiry
+warnings and current retention holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
+
+## Recovery receipt protection
+
+Set `protect_receipts: true` when creating an event recovery job (Go:
+`EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
+items are pending and the job is active, until its original 24-hour expiry.
+Preview reserves nothing. Held receipts continue counting against account
+storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+
+## Durable recovery outcomes
+
+Existing recovery status and item reads prefer saved terminal results for the
+exact admitted replay generation. `execution.source` is `recovery_result`, with
+`recorded_at` and original `evidence_source`; job execution summaries include
+`saved_results`. These results survive execution-history pruning until the
+recovery job is pruned. Uncertain outcomes remain unknown. See
+[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+
+Recovery webhook filters support `event_recovery.execution_finished`, separately
+from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
+contains saved terminal execution counts and `unresolved_count=0`; `all_succeeded`
+refers only to queued executions. Recovery job `execution_finished_at` is capture
+time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
+created execution jobs with queued deliveries qualify. Update strict webhook
+event-enum consumers before API rollout; existing webhook delivery retries and
+dead-letter tools apply. See [ADR-915](../../docs/adr/915-recovery-execution-completion-notifications.md).
+
+Existing recovery preview/create methods accept `parent_job_id` with
+`mode=execution` to select only saved failed/dead-lettered deliveries from a
+retained terminal recovery in the same app. Child creation requires a stable
+`request_id` UUID: repeat it with the same normalized selection to return the same
+retained child. Changed selections conflict, and the original audit reason wins.
+Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
+execution evidence is skipped at admission; newer replays are never substituted.
+See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+
+`get_event_recovery_health` includes optional execution health for the oldest
+retained unresolved terminal-admission jobs. `counts_complete=False` marks
+lower-bound counts; prolonged waits measure time since admission completion.
+See [execution recovery health](../../docs/adr/917-execution-recovery-health-alerts.md).
+
+Use `faas_sdk.api.events.get_event_recovery_notifications` for a read-only report
+of admission/execution capture and each selected receiver's current delivery.
+Missing selection or pruned delivery evidence remains unknown; capture alone
+does not prove acknowledgement. Retained dead deliveries link to independent
+retry. See [notification delivery reports](../../docs/adr/918-recovery-notification-delivery-report.md).
+
+### Recovery notification health
+
+Recovery health responses include `notifications`, with separate admission and execution
+counts for overdue, dead, unknown, and no-receiver jobs. Overdue requires known
+unacknowledged delivery evidence at least 15 minutes after capture. Phase
+`counts_complete` flags cover evidence uncertainty and the 50-job candidate bound;
+partial observations cannot clear alerts. Use the notification report for receiver
+details. New alert metrics are optional and require the notification health migration.
+
+### Selective recovery notification retries
+
+Use the job-scoped notification retry preview to choose receivers explicitly.
+Submit a stable UUID request ID and targets containing kind, webhook ID, delivery
+ID, and expected replay generation. The API revalidates each receiver and saves
+queued or skipped decisions atomically. Repeating identical intent returns the
+original decisions; use a new ID and current evidence for later failures.
+Decisions expire with the recovery job. See the events documentation for limits
+and migration rollout.
+
+### Recovery notification retry history
+
+Use the retry history methods to list saved request summaries or inspect one
+request by ID. Detail preserves each receiver’s original queued or skipped
+decision and shows its current retained delivery status with a separate read
+timestamp. Missing deliveries are reported as unavailable; job pruning removes
+the history.
+
+Retry history detail also exposes `retry_outcome` for the original queued
+generation, `retained_attempt_count`, `attempt_count_complete`, and optional
+`completed_at`. Later retries do not establish an earlier generation's outcome.
+Missing terminal evidence reports unknown; skipped decisions are not applicable.
+
+History list summaries now include succeeded, failed, pending, and unknown
+counts for the originally queued generations, aggregate `status`,
+`evidence_complete`, and optional `completed_at`. Completion time requires
+terminal evidence for every queued target. All-skipped requests are inconclusive;
+later retries never establish an earlier generation's outcome.
+
+Retry history lists accept an optional comma-separated `status` union such as
+`failed,inconclusive`. Statuses must be distinct values from succeeded, failed,
+pending, and inconclusive. The response includes `matched_count` and `totals`;
+totals count all retained requests before filtering, including a separate count
+of requests with incomplete evidence. No matches returns an empty list and
+preserves full totals. Request detail and waiting do not accept this filter.
+
+### App-wide recovery notification retry backlog
+
+Use the notification retry backlog list method to discover original-generation
+retry outcomes across retained recovery jobs for an app. Default statuses are
+failed, pending, and inconclusive; an explicit status union can include succeeded.
+`page_size` counts inspected jobs (default 5, maximum 10), not request rows.
+Totals have `counts_scope: job_page` and cover scanned jobs before filtering.
+Continue with `next_cursor` even when `requests` is empty, retaining the same
+status selection. Each page is a fresh read-only snapshot. Returned detail and
+retry-preview paths use existing recovery inspection endpoints.
+
+Application-scoped producer keys: use `faas_sdk.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.
+
+Read-only producer-key reconciliation: `faas_sdk.api.events.get_app_event_publish_status` accepts the app slug and original exact key. The response contains the retained receipt and paginated consumer evidence. `accepted` means routing settled, not consumer success; `processing` is still durably accepted. `unavailable` remains uncertain and must not automatically trigger publication. Follow `evidence.next_after` using `after`, with up to 200 recipients per page (default 100).
+
+Read-only content verification: call `faas_sdk.api.events.verify_app_event_publication` with the original `AppPublishEventRequest`. It returns match/conflict/unavailable, comparing normalized type, schema version and semantic JSON data rather than occurrence time or trace metadata. Match and conflict include the retained acceptance receipt. No publish or retention refresh occurs, and missing evidence remains uncertain.
+
+Acceptance guards: pass `expected_accepted_at` as the exact RFC3339 string from the saved receipt to status or verification. Query parameters deliberately use strings to preserve nanosecond precision rather than converting through Python's microsecond datetime. The independent acceptance result is same_acceptance/replacement_acceptance/unavailable. Replacement content may still match; never assign its consumer outcomes to the expected acceptance. Reconciliation remains read-only.
+### Workflow blockers
+
+Inside the customer Operation transaction callback, use `tx.workflow_blockers(workflow, instance_id, locked_row_state, [OperationWorkflowBlocker(code="payment-pending", description="Payment confirmation is pending.", operation="fulfill-order")])` to replace
+the public blockers while preserving the current state. Check customer authorization
+and read that state from the locked business row. An empty list clears blockers;
+a later normal state report without blockers also clears them. Propagate errors
+out of the callback. `workflow_instance.decision.blockers` exposes the latest
+reported list alongside declared next actions. These reports do not enforce
+business rules or grant execution authority.
+
+Before upgrading, reinstall the SDK's additive customer Operation database schema
+to add the blocker outbox columns. See [the Operations guide](../../docs/operations.md#report-workflow-blockers)
+for bounds, replacement, revision, and publication semantics.
+
+### Workflow attention queue
+
+Use `list_account_workflow_attention.asyncio("orders", client=client, scope="production", reason="blocked")` from `faas_sdk.api.operations` to read one page of current retained blocked or stale workflows.
+The response includes public business references, workflow snapshots, blocker
+reasons and a continuation cursor. Workflow and target Operation filters narrow
+the queue; customer routes use identity from credentials. Continue with the same
+filters and `next_cursor`; refresh the first page for the latest view. See
+[the Operations guide](../../docs/operations.md#find-workflows-needing-attention).
+
+### Explain a cleared blocker
+
+Use `tx.workflow_blockers(workflow, instance_id, locked_state, remaining_blockers, resolutions=[resolution])` to attach an explicit public resolution fact to the transactional
+blocker replacement. `OperationWorkflowBlockerResolution` includes the target
+Operation, blocker code, explanation, and exact source Operation/report IDs and
+revision. Current snapshots expose `operation_id`, `report_id`, and `revision`
+for these references. The source must be a retained report within the same
+customer, business reference, workflow run, environment and contract version;
+it must contain the named blocker, which cannot remain in the replacement list.
+
+Resolution facts survive outbox replay and remain in retained state history even
+after a later snapshot replaces them. Reinstall the SDK's additive customer
+Operation database schema before upgrading the adapter. See
+[the Operations guide](../../docs/operations.md#explain-blocker-resolutions)
+for bounds, source retention, publication recovery, and history reads.
+
+#### Attention summaries and blocker age
+
+```python
+from faas_sdk.api.operations import summarize_platform_tenant_self_workflow_attention
+summary = await summarize_platform_tenant_self_workflow_attention.asyncio(
+    client=client, app_id=app_id, scope="production", group_by="blocker_code",
+)
+```
+
+`summarize_account_workflow_attention` also offers sync/async methods.
+Group by `workflow`, `blocker_code`, `target_operation`, or account-only `customer`.
+Both queues and summaries accept `blocker_code`. Totals cover all matching
+workflows independently of group pagination.
+
+Install the updated `customer_operation_receipt_schema` before upgrading writers.
+`OperationWorkflowBlocker.first_observed_at` is an optional RFC3339 string.
+Transactional writers preserve it across repeats until the target/code clears.
+Legacy or unobserved continuity retains unknown age. Applications may supply
+a known original observation timestamp; upgrade all writers for reliable
+continuity. Summary models expose oldest known ages and unknown-age counts.
+
+#### Business deadlines
+
+Call `tx.workflow_deadline(workflow, instance_id, state, due_at)` inside the
+business transaction. A finite RFC3339 string sets/updates it; `""` clears.
+The SDK preserves current blockers and inherits due times on subsequent state,
+transition, and blocker reports. Install the updated application receipt schema
+and upgrade every writer. Attention queue and summary endpoints accept
+`reason="overdue"`; state models expose due times and overdue duration.
+Terminal workflows do not count as overdue.
+
+#### Explicit business outcomes
+
+Call `tx.workflow_outcome(workflow, instance_id, terminal_state, code, description)`
+after the terminal transition and required milestones inside the business
+transaction. The SDK preserves blockers and deadline. Subsequent reports of the
+same state inherit the outcome; state changes remove it. Install the updated
+receipt schema and upgrade every writer.
+
+The `list_account_workflow_outcomes`, `list_platform_tenant_self_workflow_outcomes`,
+`summarize_account_workflow_outcomes`, and
+`summarize_platform_tenant_self_workflow_outcomes` endpoint modules offer sync and
+async methods. Filter by `workflow` or `code`; summary `group_by` supports
+`outcome`, `workflow`, or account-only `customer`. Counts cover latest retained
+terminal instances with explicit outcomes once each, independently of pagination.
+
+### Workflow prerequisites
+
+Use `tx.workflow_dependencies(workflow, instance_id, state, [OperationWorkflowDependency(...)])` inside the business transaction to replace up to 16 direct workflow dependencies. Pass an empty list to clear them. Links stay within the same customer/application/environment; an optional required outcome distinguishes successful prerequisites from other terminal results. Other reports inherit current links. Apply the updated customer schema and upgrade all writers first. The existing workflow instance response includes `related_workflows` with retained states and explicit resolution statuses. See [workflow dependencies](../../docs/operations.md#workflow-dependencies) for complete examples and retention semantics.
+
+### Dependency attention
+
+Attention requests support `dependency_status="waiting", required_outcome_code="paid"` and the `dependency` reason. The response includes `dependency_attention` references/statuses and summary counts `dependency_workflow_count` / `dependency_count`. Summaries also support `dependency_status` and `required_outcome_code` grouping. Both dependency filters must match the same unresolved reference. See [dependency-aware attention](../../docs/operations.md#dependency-aware-attention).
+
+### Reverse dependency impact
+
+Existing business milestones responses now include typed `workflow_instance.dependency_impact`: retained dependent workflows, required outcomes, prerequisite statuses, and affected-workflow counts. The list shows up to 100 items, affected sources first; counts cover all matches and `has_more` signals truncation. Unknown account-side prerequisites require an explicit customer; self reads always use the authenticated customer. See [reverse dependency impact](../../docs/operations.md#reverse-dependency-impact).
+
+### Dependency root-cause tracing
+
+Business milestones responses include typed `workflow_instance.dependency_trace` findings with linked reference paths and observed states. The trace follows unmet prerequisites, distinguishes cycles from shared workflows, and exposes missing reports, blockers, mismatched outcomes, staleness, and missed deadlines. Traversal is bounded; inspect `truncated` / `limits_reached` before treating coverage as complete. See [dependency root-cause tracing](../../docs/operations.md#dependency-root-cause-tracing).
+
+### Workflow transition readiness
+
+Use an authenticated operations reader to check a proposed transition:
+
+```python
+from faas_sdk.api.operations import check_platform_tenant_self_workflow_readiness
+from faas_sdk.models import OperationWorkflowReadinessRequest, OperationSubject
+result = check_platform_tenant_self_workflow_readiness.sync(client=client, body=OperationWorkflowReadinessRequest(
+    app_id=app_id, scope="production", subject=OperationSubject(type_="order", id=order_id),
+    workflow="fulfillment", instance_id=run_id, operation="ship-order",
+    from_state="waiting", to_state="shipping", milestones=["shipment-created"],
+    state_revision=revision, contract_version=1,
+))
+```
+
+Inspect `readiness.ready`, denial reasons, missing milestones, unmet prerequisites, and advisories. Account readers use the account readiness endpoint with an explicit customer selector. Planned names are not committed evidence; business-row checks, authorization, and transaction-time workflow/milestone validation still apply. See [workflow transition readiness](../../docs/operations.md#workflow-transition-readiness).
+
+### Guard a transition inside the business transaction
+
+After locking the business row, call
+`await tx.guarded_workflow_transition(request, [("approved", payload)], check)`
+before writing. `request` is an `OperationWorkflowReadinessRequest` with the matching
+app, scope, subject, operation, workflow instance, locked source state, proposed
+state, positive locked state revision, and contract version. `check` is an async
+callable returning `OperationWorkflowReadinessResponse` through the self readiness
+endpoint, authenticated as the transaction's customer.
+
+`CustomerOperationReadinessError` from `faas_sdk.customer_operations` exposes
+`.response`. All guard failures prevent commit even if caught. Await guards
+sequentially in the callback. Existing contract and actual payload validation still
+runs before commit.
+
+### Business decision evidence
+
+`tx.business_decision("approval-decided", OperationBusinessDecision(workflow="order-approval", instance_id=run_id, code="manual-review-approved", description="An authorized reviewer approved the order.", rule_id="manual-approval", rule_version="2026-10"))` (import the model from `faas_sdk.business_decisions`) queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
+
+### Versioned policy requirements
+
+Workflow transitions can declare `requires_policies` with a milestone, rule ID, exact rule version, and decision code. Transactional readiness guards derive planned decisions from actual milestone payloads, and precommit validation requires matching evidence for the same workflow instance. See [policy requirements](../../docs/operations.md#versioned-business-policy-requirements).
+
+### Business state reconciliation
+
+Reconciliation transaction helpers compare the locked application row with customer-scoped workflow history and queue a fresh explicit snapshot plus discrepancy evidence when needed. Business revisions stay separate from SDK report counters. Ahead/version conflicts record diagnostics without refreshing state. Declare the reconciliation milestone schema and bind its step to `/reconciliation/instance_id`. See [reconciliation usage](../../docs/operations.md#business-state-reconciliation).
+
+### Transition-specific prerequisites
+
+Declare `requires_dependencies` on a transition to select workflow names from the current instance's reported links. Omitted selects all links; `[]` selects none. Missing required links are structured readiness failures. SDK guards apply the selected edge's requirements. See [prerequisite usage](../../docs/operations.md#transition-specific-business-prerequisites).
+
+### Business action previews
+
+Read-only action preview helpers return current-state candidates with revision/version and all transition requirements. Candidates use an empty evidence plan. Use the transaction readiness guard with actual facts and locked business rows before performing an action. See [preview usage](../../docs/operations.md#business-action-previews).
+
+### Business invariant reports
+
+Invariant helpers queue a typed check fact and targeted blocker update with the business transaction. Failed and unknown checks block their target Operations; passed checks clear only their stable invariant code. Supply the complete locked blocker head and chain returned blockers for multiple checks. Guards also consider pending invariant blockers. See [invariant usage](../../docs/operations.md#business-invariant-reports).
+
+### Required invariant evidence
+
+Transitions may declare `requires_invariants` with a milestone, stable code, and exact version. Guards derive check plans from actual invariant payloads. Passing evidence must match the source state, instance, and target action and accompany the transaction. See [required invariants](../../docs/operations.md#required-invariant-evidence-per-transition).
+
+### Business effect evidence
+
+Effect helpers record pending, failed, or confirmed business facts with a reference and optional amount/currency. Transition `requires_effects` requirements need matching confirmed evidence. Guards derive plans from actual effect payloads. External effects still need application idempotency and verified confirmation. See [effect usage](../../docs/operations.md#business-effect-evidence).
+
+### Compensation workflows
+
+Compensation helpers record required, pending, failed, or confirmed reversal observations linked to a retained confirmed effect. Source ownership/app/environment are checked before commit and publication. Applications execute reversals and report workflow state explicitly. See [compensation usage](../../docs/operations.md#compensation-workflows).
+
+Workflow final actions expose `upload_workflow_operation_artifact` and
+`reuse_workflow_operation_upload` under `faas_sdk.api.operations`. Supply a current
+workload bearer and the trusted run/step/generation/attempt/capability headers.
+Uploads take a binary `File` plus report ID, filename, exact byte count and SHA-256;
+receipt lookup takes `OperationArtifactUploadRequest`. No source URI or bucket
+writer is needed. Before retrying a lost transfer response, look up the same
+declaration. Only an authorized `available=False` permits another transfer;
+errors never authorize writing. These low-level endpoints do not retry business
+work. Keep report ID and declaration stable across approved resumes: fresh proof
+rebinds a verified receipt without another transfer. Cancellation, deadline expiry
+and stale proof deny upload and reuse. Publication waits for confirmed final-step
+success or operator success reconciliation.
+
+The managed-source `reuse_workflow_operation_artifact` and
+`prepare_workflow_operation_artifact` endpoints remain available with a stable
+`obj://` reference. Reconcile uncertain provider writes before writing again.
+
+Recovery decisions: Generated `faas_sdk.api.operations.recover_operation_with_receipt` returns `OperationRecoveryDecision`. It acknowledges the original explicit
+account-authorized decision, independently of current operation and delivery
+status. Retrying the same decision ID and request never records a second
+recovery. See [receipt-backed operator recovery](../../docs/ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response).
+
+For native batch Job Operations, construct `GregaleJobOperations(api_url, tokenless_async_client)` inside the scheduler-provided task environment. `context.platform_tenant_id` is verified against the control response. Call `await control()` before business entry and between units, `await progress(report)`, and `await prepare_result(result, report_id)` before normal exit. Retrying a lost report acknowledgement must reuse its report ID; never repeat business work automatically. Result preparation requires host-confirmed task exit for business success. Native qualification is pending.
+
+Job file helpers: `await reuse_artifact(declaration)` checks an existing private
+copy before your application bucket writer. Only `available=False` permits a
+new upload; errors do not. After uploading an owned private managed object,
+`await prepare_artifact(declaration)` verifies its exact size and SHA-256 and
+retains an immutable copy. Use `OperationArtifactRequest` with a stable report
+ID and source URI; replay that declaration after a lost acknowledgement.
+Preparation does not publish the file. Host-confirmed success with the typed
+result or explicit account success recovery publishes it. An approved Job
+retry clears old receipts; reconcile uncertain uploads before writing again.
+
+### Blocker responsibility
+
+Workflow blockers accept optional public `owner` and `next_action` fields;
+source-linked resolution facts accept `resolved_by`. Use the existing workflow
+blocker transaction helper to publish the complete replacement list with the
+business write. Assignment is application-authorized and does not grant platform
+permissions. Upgrade all writers to preserve these fields during metadata updates.
+See [blocker ownership](../../docs/operations.md#assign-blocker-ownership-and-a-next-action)
+for byte limits, reassignment, and resolution tracking.
+
+Attention queues support an exact owner or unassigned-only filter, and summaries
+can group by owner. Empty owner-group values represent unassigned work; shared
+workflows may count in several groups. See [owner queues](../../docs/operations.md#find-work-by-owner)
+for filter and count semantics.
+
+Workflow steps can declare versioned `blocker_escalations` policies by blocker
+code, with `after_seconds` and a recommended `owner`. Attention reads support
+`reason=escalated` and return threshold findings and escalated counts; unknown
+ages remain unknown. See [escalation policies](../../docs/operations.md#declare-blocker-escalation-policies).
+
+Blockers also accept application-reported `priority` (`low`, `normal`, `high`,
+`urgent`) and public `business_impact` (at most 512 UTF-8 bytes without control
+characters). Omitted priority counts as normal. Preserve this context on later
+blocker replacements; changing it keeps age and acknowledgement intact.
+Attention queues and summaries accept a priority filter and expose counts per
+owner. Deadline queue sorting uses the workflow's existing `deadline_at`, with
+undated workflows last; update-time ordering remains the default. Summary groups
+retain group-value ordering. Reuse cursors only with the same filters and order.
+
+Resolution verification is opt-in: provide paired `verification_milestone_id` and
+`verification_milestone_name`, optionally `verification_operation_id` (defaults
+to the resolution's Operation) and a public `verification_owner`. Exact retained
+proof must match the same app/customer/environment/subject/workflow instance and
+resolution contract version. A name alone cannot verify a resolution.
+Use attention reason `awaiting_verification` and owner summaries for outstanding
+proof. Later state reports and terminal states preserve retained obligations.
+Workflow-instance previews are bounded to 16 findings with exact totals;
+paginated selected-instance history exposes each report's verification findings.
+Verification observes retained evidence and never authorizes or runs an action.
+
+### Workflow bottleneck analytics
+
+The selected workflow milestone snapshot exposes `bottlenecks`: state durations, blocked intervals by code/Operation/owner, and verification wait by owner. Analytics use up to 1,024 retained reports independently of history pagination. Each breakdown shows up to 32 groups; totals cover the full window. Inspect `history_complete`, `incomplete_reasons` and truncation flags before treating durations as complete. Unknown verification starts are counted without inferred waits. State/blocker time uses application occurrence timestamps; verification uses publication timestamps. Concurrent blocker and verification groups can overlap.
+
+### Compare workflow performance
+
+The workflow performance summary endpoints require an explicit app, environment and workflow. Account readers can optionally select a customer; customer readers inherit ownership from credentials. Completed and ongoing cohorts each select the latest 100 retained instances, with matching/sample/coverage counts. Only complete retained histories enter state, blocker and verification duration distributions. Groups expose nearest-rank p50/p95 and total seconds from one accumulated duration per eligible workflow. Up to 32 groups are ranked by total time. Ongoing durations are elapsed observations, and completed workflows may still await verification. Inspect coverage and truncation before comparing results.
+
+### Investigate performance contributors
+
+The performance instance endpoints list complete-history contributors ranked by observed duration. Select `cohort` and `dimension`; state groups require state/version, blocker groups require Operation/code/version and an exact owner or `unassigned=true`, and verification owner groups require an exact owner or unassigned selection. Overall dimensions reject group selectors. Pass the summary’s `cohort_token` to preserve its evaluation and cohort; changed retained evidence returns `409 workflow_performance_cohort_changed` and requires refreshing the summary. Without a token this evaluates a fresh cohort. Each result exposes the business subject, current blocker ownership/next action and bounded pending verification findings. Historical contributing ownership can differ from current ownership.
+
+### Workflow state SLA budgets
+
+Workflow steps accept `state_sla_budget_seconds`, a map of declared nonterminal states to positive whole-second budgets. Publish a new workflow contract version when changing budgets. The current workflow state exposes optional `sla` data with `within_budget`, `breached`, or `unknown` status; updates that keep the same state preserve the visit clock. Missing or ambiguous retained entry history produces `unknown`.
+
+Use the attention reason `sla_breached` to find known breaches. Performance cohorts expose configured, evaluated, breached, and unknown workflow counts, and state groups expose evaluated and breached visit counts, including visits that ended before completion. Budgets are observational and do not block application operations.
+
+### SLA early warnings
+
+Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
+
+Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.

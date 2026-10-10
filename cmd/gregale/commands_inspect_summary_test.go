@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -236,7 +237,7 @@ func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *te
 			name:     "verifier disabled",
 			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured},
 			want:     "health_verifier_unconfigured",
-			wantNext: "FAAS_API_HOSTING_SMOKE_URL",
+			wantNext: "contact support",
 		},
 		{
 			name:     "health endpoint missing",
@@ -267,6 +268,8 @@ func configureInspectSummaryTest(t *testing.T, apiURL string) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	resetJSONOutput()
 }
 
@@ -347,5 +350,35 @@ func writeInspectSummaryJSON(t *testing.T, w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		t.Errorf("encode response: %v", err)
+	}
+}
+
+// hunt #8 (H8-23): a parked app says why and how to resume it.
+func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
+	for _, tc := range []struct {
+		reason, want string
+	}{
+		{reason: "liveness_exhausted", want: "repeatedly failed liveness checks"},
+		{reason: "admin_park", want: "This app is parked"},
+		{reason: "", want: "This app is parked"},
+	} {
+		recs := inspectRecommendations(inspectSummary{
+			App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: tc.reason},
+			Release: inspectReleaseSummary{Available: true, Status: "live"},
+			Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+		})
+		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale wake demo") {
+			t.Fatalf("reason %q: recommendations = %+v", tc.reason, recs)
+		}
+	}
+	recs := inspectRecommendations(inspectSummary{
+		App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: "security_scan_regressed"},
+		Release: inspectReleaseSummary{Available: true, Status: "live"},
+		Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+	})
+	for _, rec := range recs {
+		if rec.Code == "app_parked" {
+			t.Fatal("a security quarantine must not be told to wake")
+		}
 	}
 }

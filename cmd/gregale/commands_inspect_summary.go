@@ -33,6 +33,7 @@ type inspectAppSummary struct {
 	Slug                   string                        `json:"slug"`
 	URL                    string                        `json:"url"`
 	Status                 string                        `json:"status"`
+	ParkedReason           string                        `json:"parked_reason,omitempty"`
 	DeploymentAvailability api.AppDeploymentAvailability `json:"deployment_availability,omitempty"`
 	Type                   string                        `json:"type"`
 	Runtime                string                        `json:"runtime,omitempty"`
@@ -226,6 +227,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		SchemaVersion: inspectSummarySchemaVersion,
 		App: inspectAppSummary{
 			ID: app.ID, Slug: app.Slug, URL: canonicalAppURL(app), Status: app.Status,
+			ParkedReason:           inspectParkedReason(app),
 			DeploymentAvailability: app.DeploymentAvailability,
 			Type:                   app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
 		},
@@ -471,6 +473,17 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	add := func(code, severity, message, next string) {
 		out = append(out, inspectRecommendation{Code: code, Severity: severity, Message: message, Next: next})
 	}
+	// hunt #8 (H8-23): a parked worker showed only "evicted_cold" and advice
+	// to redeploy, which never restarts a parked app.
+	if summary.App.Status == "evicted_cold" && summary.App.ParkedReason != "security_scan_regressed" {
+		message := "This app is parked; it does not run or wake on its own."
+		next := "Run `gregale wake " + summary.App.Slug + "` to start it again."
+		if summary.App.ParkedReason == "liveness_exhausted" {
+			message = "This app is parked because its instances repeatedly failed liveness checks or crashed."
+			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
+		}
+		add("app_parked", "error", message, next)
+	}
 	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")
 	} else if !summary.Release.Available && !containsString(summary.Unavailable, "deployment") {
@@ -479,7 +492,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		add("deployment_failed", "error", "The latest deployment failed.", "Run `gregale inspect "+summary.App.Slug+" --errors` for the persisted explanation.")
 	} else if summary.Release.Status == "live" && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
-			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "An operator must configure FAAS_API_HOSTING_SMOKE_URL on the compute node and redeploy.")
+			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")
 		} else if summary.Runtime.Health != nil && summary.Runtime.Health.ErrorCode == "smoke_health_path_missing" {
 			add("health_endpoint_missing", "warning", "The application has no configured health endpoint.", "Expose a health endpoint or set an explicit health path, then redeploy.")
 		} else {
@@ -677,4 +690,13 @@ func intOrDash(value int) string {
 		return GlyphEmDash
 	}
 	return fmt.Sprintf("%d", value)
+}
+
+// inspectParkedReason names why an evicted_cold app is parked, when the API
+// reports its latest parked deployment.
+func inspectParkedReason(app api.AppResponse) string {
+	if app.Status != "evicted_cold" || app.ParkedDeployment == nil {
+		return ""
+	}
+	return app.ParkedDeployment.ParkedReason
 }

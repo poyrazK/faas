@@ -4,7 +4,7 @@ import {join} from 'node:path';
 
 // A fresh directory avoids touching an existing source tree or including local credentials.
 const target = await mkdtemp(join(tmpdir(), 'gregale-orders-'));
-for (const file of ['server.mjs', 'orders.mjs', 'setup.mjs', 'schema.sql', 'schemas', 'gregale.yaml', 'package-lock.json']) {
+for (const file of ['server.mjs', 'orders.mjs', 'workflow-bindings.mjs', 'setup.mjs', 'schema.sql', 'schemas', 'gregale.yaml', 'package-lock.json']) {
   await cp(new URL(file, import.meta.url), join(target, file), {recursive: true});
 }
 const manifest = JSON.parse(await readFile(new URL('package.json', import.meta.url), 'utf8'));

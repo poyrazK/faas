@@ -23,6 +23,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			WithHint("Retry in a moment; if it continues, contact support."))
 		return
 	}
+	_, capabilities.ConditionalParking = s.store.(state.ConditionalAppParkTransitionStore)
 	// Entitlement is only one half of availability. A capability must also be
 	// backed by a runtime that is enabled and configured on this control plane;
 	// otherwise clients would advertise a feature whose first request returns
@@ -36,8 +37,14 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			available = s.executionAPIEnabled
 		case "object-storage":
 			available = s.objectStorageProvisioningReady()
-		case "github-deploys":
+		case "github-deploys", "pr-previews":
+			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+		case "custom-domains":
+			// production-us hunt #8: with ADR-520 on-demand TLS off, a
+			// customer hostname can never obtain a certificate or reach
+			// the Cloudflare-fronted edge, yet the feature was advertised.
+			available = api.CustomDomainTLSOnDemand()
 		}
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}

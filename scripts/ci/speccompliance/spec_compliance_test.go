@@ -322,6 +322,15 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"EventRetentionQuery": true, // client-only retention query options; route parameters are the wire contract
+	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowAttentionOptions":           true,
+	"OperationWorkflowAttentionSummaryOptions":    true,
+	"OperationWorkflowOutcomeOptions":             true,
+	"OperationWorkflowOutcomeSummaryOptions":      true,
+	"OperationWorkflowPerformanceOptions":         true,
+	"OperationWorkflowPerformanceInstanceOptions": true,
+
 	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
 	"WorkflowSchedulePreviewInput":   true, // client-side request builder input; the wire parameters are query fields
@@ -1041,6 +1050,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),
+		filepath.Join(root, "pkg", "api", "event_retention.go"),
 		filepath.Join(root, "pkg", "api", "event_routing_retry_policy.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_rollout.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_versions.go"),
@@ -1075,6 +1085,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
 		filepath.Join(root, "pkg", "api", "automations.go"),
 		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
+		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
+		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
+		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
 		filepath.Join(root, "pkg", "api", "workflow_join.go"),
@@ -1114,6 +1127,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
+		filepath.Join(root, "pkg", "api", "realtime_push.go"),
+		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
+		filepath.Join(root, "pkg", "api", "realtime_schedules.go"),
+		filepath.Join(root, "pkg", "api", "realtime_signals.go"),
+		filepath.Join(root, "pkg", "api", "realtime_reducers.go"),
+		filepath.Join(root, "pkg", "api", "realtime_schemas.go"),
+		filepath.Join(root, "pkg", "api", "realtime_mutations.go"),
+		filepath.Join(root, "pkg", "api", "realtime_read_progress.go"),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", "financial.go"),
@@ -1160,6 +1181,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
+		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-847 consumer plan DTOs
+		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-848 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
@@ -1167,14 +1190,35 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operations_job.go"),
+		filepath.Join(root, "pkg", "api", "operations_recovery.go"),
+		filepath.Join(root, "pkg", "api", "operations_submission.go"),
 		filepath.Join(root, "pkg", "api", "operation_subject.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflows.go"),
 		filepath.Join(root, "pkg", "api", "operation_milestones.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_compensation.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_decisions.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_effects.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_action_preview.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_readiness.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
+		filepath.Join(root, "pkg", "api", "route_removal.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_approval.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_history.go"),
 		filepath.Join(root, "pkg", "api", "route_health.go"),
 		filepath.Join(root, "pkg", "api", "route_monitor.go"),
 		filepath.Join(root, "pkg", "api", "route_client_errors.go"),
@@ -1241,6 +1285,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 	delete(dtos, "EventReplayBackfillItem")
 	dtos["EventReplayBackfillItemResponse"] = backfillItemFields
+
+	// Push metadata schemas retain their public names while Go uses response suffixes.
+	for goName, schemaName := range map[string]string{
+		"ManagedRealtimePushProviderResponse": "ManagedRealtimePushProvider",
+		"ManagedRealtimePushDeviceResponse":   "ManagedRealtimePushDevice",
+		"ManagedRealtimePushDeviceRequest":    "ManagedRealtimePushRegistration",
+		"ManagedRealtimePushDeliveryResponse": "ManagedRealtimePushDelivery",
+	} {
+		dtos[schemaName] = dtos[goName]
+		delete(dtos, goName)
+	}
 
 	var missingInSpec []string
 	for name := range dtos {

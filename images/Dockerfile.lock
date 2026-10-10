@@ -2,103 +2,103 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-10-09T04:31:55Z",
+  "generated_at": "2026-10-09T05:32:54Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "alpine:3.22",
-      "resolved_repo": "docker.io/library/alpine",
+      "alias": "public.ecr.aws/docker/library/alpine:3.22",
+      "resolved_repo": "public.ecr.aws/docker/library/alpine",
       "resolved_tag": "3.22",
       "platform": "linux/amd64",
       "multi_arch": true,
       "digest": "sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce",
-      "pinned_in_dockerfile": "FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.9",
-      "resolved_repo": "docker.io/library/golang",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "resolved_repo": "public.ecr.aws/docker/library/golang",
       "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
       "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.9",
-      "resolved_repo": "docker.io/library/golang",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "resolved_repo": "public.ecr.aws/docker/library/golang",
       "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
       "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.9",
-      "resolved_repo": "docker.io/library/golang",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "resolved_repo": "public.ecr.aws/docker/library/golang",
       "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
       "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
       "instruction": "FROM",
-      "alias": "debian:12-slim",
-      "resolved_repo": "docker.io/library/debian",
+      "alias": "public.ecr.aws/docker/library/debian:12-slim",
+      "resolved_repo": "public.ecr.aws/docker/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
       "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
       "instruction": "FROM",
-      "alias": "busybox:1.37.0-musl",
-      "resolved_repo": "docker.io/library/busybox",
+      "alias": "public.ecr.aws/docker/library/busybox:1.37.0-musl",
+      "resolved_repo": "public.ecr.aws/docker/library/busybox",
       "resolved_tag": "1.37.0-musl",
       "platform": "linux/amd64",
       "multi_arch": true,
       "digest": "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092",
-      "pinned_in_dockerfile": "FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
       "instruction": "FROM",
-      "alias": "debian:12-slim",
-      "resolved_repo": "docker.io/library/debian",
+      "alias": "public.ecr.aws/docker/library/debian:12-slim",
+      "resolved_repo": "public.ecr.aws/docker/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
       "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
       "instruction": "FROM",
-      "alias": "node:22-alpine",
-      "resolved_repo": "docker.io/library/node",
+      "alias": "public.ecr.aws/docker/library/node:22-alpine",
+      "resolved_repo": "public.ecr.aws/docker/library/node",
       "resolved_tag": "22-alpine",
       "platform": "linux/amd64",
       "digest": "sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c",
-      "pinned_in_dockerfile": "FROM node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/node:22-alpine@sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c"
     },
     {
       "dockerfile": "images/runner-python312.Dockerfile",
       "instruction": "FROM",
-      "alias": "python:3.12-slim-bookworm",
-      "resolved_repo": "docker.io/library/python",
+      "alias": "public.ecr.aws/docker/library/python:3.12-slim-bookworm",
+      "resolved_repo": "public.ecr.aws/docker/library/python",
       "resolved_tag": "3.12-slim-bookworm",
       "platform": "linux/amd64",
       "digest": "sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d",
-      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -113,22 +113,22 @@
     {
       "dockerfile": "images/runner-go124-alpine.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.24-alpine",
-      "resolved_repo": "docker.io/library/golang",
+      "alias": "public.ecr.aws/docker/library/golang:1.24-alpine",
+      "resolved_repo": "public.ecr.aws/docker/library/golang",
       "resolved_tag": "1.24-alpine",
       "platform": "linux/amd64",
       "digest": "sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a",
-      "pinned_in_dockerfile": "FROM golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a"
     },
     {
       "dockerfile": "images/runner-node24.Dockerfile",
       "instruction": "FROM",
-      "alias": "node:24-bookworm-slim",
-      "resolved_repo": "docker.io/library/node",
+      "alias": "public.ecr.aws/docker/library/node:24-bookworm-slim",
+      "resolved_repo": "public.ecr.aws/docker/library/node",
       "resolved_tag": "24-bookworm-slim",
       "platform": "linux/amd64",
       "digest": "sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd",
-      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd"
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd"
     },
     {
       "dockerfile": "images/runner-python313.Dockerfile",
@@ -149,6 +149,17 @@
       "platform": "linux/amd64",
       "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
       "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
+    },
+    {
+      "dockerfile": "images/builder-base.Dockerfile",
+      "instruction": "FROM",
+      "alias": "golang:1.26.9",
+      "resolved_repo": "docker.io/library/golang",
+      "resolved_tag": "1.26.9",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build"
     }
   ]
 }

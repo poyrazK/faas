@@ -685,6 +685,12 @@ const (
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
 	//           "expires_at":RFC3339}
 	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
+	// NotifyRouteProbeChallenge carries an ADR-847 route probe token from apid
+	// to every gateway. It is a separate kind from the smoke challenge: it
+	// pins one live deployment but never bypasses customer auth gates.
+	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
+	//           "expires_at":RFC3339}
+	NotifyRouteProbeChallenge = "route_probe_challenge"
 	// NotifyGithubDeploymentChanged is emitted by the deployment status
 	// trigger for githubd's Check Run projector. It is intentionally separate
 	// from NotifyDeploymentChanged so existing scheduler/gateway consumers do
@@ -938,7 +944,9 @@ const (
 	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
-	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go
+	//   Deployment capture triggers also send app_id/deployment_id (ADR-831).
+	//   gatewayd-internal invalidates declaration/lifecycle caches.
+	//   apid listens (cmd/apid/openapi_doc_subscriber.go
 	//   wires it alongside NotifyEdgeRuleChanged); the payload
 	//   flushes the per-app cache entry in pkg/openapidiff.SpecCache.
 	//   PR-A scope: this signal is one of two triggers for the

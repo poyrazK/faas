@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.route_gate_decision_mode import RouteGateDecisionMode, check_route_gate_decision_mode
-from ..models.route_gate_decision_reasons_item import (
-    RouteGateDecisionReasonsItem,
-    check_route_gate_decision_reasons_item,
-)
 from ..models.route_gate_decision_status import RouteGateDecisionStatus, check_route_gate_decision_status
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RouteGateDecision")
 
@@ -28,8 +25,10 @@ class RouteGateDecision:
     revision: int
     deployment_id: UUID
     status: RouteGateDecisionStatus
-    reasons: list[RouteGateDecisionReasonsItem]
+    reasons: list[str]
     check_queued: bool
+    lifecycle_approval_ids: list[UUID] | Unset = UNSET
+    """Exact persisted successor-review receipts accepted inside this advance transaction."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,12 +40,16 @@ class RouteGateDecision:
 
         status: str = self.status
 
-        reasons = []
-        for reasons_item_data in self.reasons:
-            reasons_item: str = reasons_item_data
-            reasons.append(reasons_item)
+        reasons = self.reasons
 
         check_queued = self.check_queued
+
+        lifecycle_approval_ids: list[str] | Unset = UNSET
+        if not isinstance(self.lifecycle_approval_ids, Unset):
+            lifecycle_approval_ids = []
+            for lifecycle_approval_ids_item_data in self.lifecycle_approval_ids:
+                lifecycle_approval_ids_item = str(lifecycle_approval_ids_item_data)
+                lifecycle_approval_ids.append(lifecycle_approval_ids_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -60,6 +63,8 @@ class RouteGateDecision:
                 "check_queued": check_queued,
             }
         )
+        if lifecycle_approval_ids is not UNSET:
+            field_dict["lifecycle_approval_ids"] = lifecycle_approval_ids
 
         return field_dict
 
@@ -74,14 +79,18 @@ class RouteGateDecision:
 
         status = check_route_gate_decision_status(d.pop("status"))
 
-        reasons = []
-        _reasons = d.pop("reasons")
-        for reasons_item_data in _reasons:
-            reasons_item = check_route_gate_decision_reasons_item(reasons_item_data)
-
-            reasons.append(reasons_item)
+        reasons = cast(list[str], d.pop("reasons"))
 
         check_queued = d.pop("check_queued")
+
+        _lifecycle_approval_ids = d.pop("lifecycle_approval_ids", UNSET)
+        lifecycle_approval_ids: list[UUID] | Unset = UNSET
+        if _lifecycle_approval_ids is not UNSET:
+            lifecycle_approval_ids = []
+            for lifecycle_approval_ids_item_data in _lifecycle_approval_ids:
+                lifecycle_approval_ids_item = UUID(lifecycle_approval_ids_item_data)
+
+                lifecycle_approval_ids.append(lifecycle_approval_ids_item)
 
         route_gate_decision = cls(
             mode=mode,
@@ -90,6 +99,7 @@ class RouteGateDecision:
             status=status,
             reasons=reasons,
             check_queued=check_queued,
+            lifecycle_approval_ids=lifecycle_approval_ids,
         )
 
         route_gate_decision.additional_properties = d
