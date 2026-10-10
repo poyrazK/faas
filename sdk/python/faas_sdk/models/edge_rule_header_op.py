@@ -19,6 +19,12 @@ class EdgeRuleHeaderOp:
     name: str
     action: EdgeRuleHeaderOpAction
     value: str | Unset = UNSET
+    template: bool | Unset = UNSET
+    """ADR-967. Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn,
+    request_id, header:<name>, query:<name>, cookie:<name>;
+    $$ is a literal $). Control characters are dropped and each
+    value is capped at 1 KiB. Not allowed with action=remove.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,6 +33,8 @@ class EdgeRuleHeaderOp:
         action: str = self.action
 
         value = self.value
+
+        template = self.template
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -38,6 +46,8 @@ class EdgeRuleHeaderOp:
         )
         if value is not UNSET:
             field_dict["value"] = value
+        if template is not UNSET:
+            field_dict["template"] = template
 
         return field_dict
 
@@ -50,10 +60,13 @@ class EdgeRuleHeaderOp:
 
         value = d.pop("value", UNSET)
 
+        template = d.pop("template", UNSET)
+
         edge_rule_header_op = cls(
             name=name,
             action=action,
             value=value,
+            template=template,
         )
 
         edge_rule_header_op.additional_properties = d

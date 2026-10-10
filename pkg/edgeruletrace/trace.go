@@ -1293,17 +1293,26 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		default:
 			status = http.StatusFound
 		}
-		preview := &ActionPreview{Type: "redirect", StatusCode: status, Location: action.To, RedirectHeaders: action.Headers}
-		return "redirect", fmt.Sprintf("would return HTTP %d redirect to %q", status, action.To), preview
+		location, headers, err := traceRedirectTemplate(*action, input, requestPath)
+		if err != nil {
+			return "unavailable", "redirect template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
+		}
+		preview := &ActionPreview{Type: "redirect", StatusCode: status, Location: location, RedirectHeaders: headers}
+		return "redirect", fmt.Sprintf("would return HTTP %d redirect to %q", status, location), preview
 	case "headers":
 		action, ok := decodeAction[api.EdgeRuleHeadersAction](rule.Action, "headers")
 		if !ok {
 			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		preview := &ActionPreview{
-			Type: "headers", RequestHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.RequestHeaders...),
-			ResponseHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.ResponseHeaders...),
+		requestOps, err := traceHeaderTemplates(action.RequestHeaders, input, requestPath)
+		if err != nil {
+			return "unavailable", "header template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
 		}
+		responseOps, err := traceHeaderTemplates(action.ResponseHeaders, input, requestPath)
+		if err != nil {
+			return "unavailable", "header template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
+		}
+		preview := &ActionPreview{Type: "headers", RequestHeaderOps: requestOps, ResponseHeaderOps: responseOps}
 		return "headers", fmt.Sprintf("would apply %d request-header and %d response-header operation(s)", len(action.RequestHeaders), len(action.ResponseHeaders)), preview
 	case "cors":
 		return previewCORSRule(rule, input)
@@ -2534,6 +2543,56 @@ func traceEdgeRuleLists(expr *api.EdgeRuleMatchExpr, supplied []api.EdgeRuleList
 		}
 	}
 	return out
+}
+
+// traceTemplateInput is the simulated request for ADR-967 templates. The
+// trace takes no query string, so query values expand empty.
+func traceTemplateInput(input Input, requestPath string) api.EdgeRuleTemplateInput {
+	return api.EdgeRuleTemplateInput{
+		Method: input.Method, Host: input.Host, Path: requestPath,
+		EscapedPath: (&url.URL{Path: requestPath}).EscapedPath(), Headers: input.Headers,
+		ClientIP: net.ParseIP(input.ClientIP),
+		Country:  func() string { return input.Country },
+		ASN:      func() uint32 { return input.ASN },
+	}
+}
+
+// traceHeaderTemplates renders templated header ops as the gateway would.
+func traceHeaderTemplates(ops []api.EdgeRuleHeaderOp, input Input, requestPath string) ([]api.EdgeRuleHeaderOp, error) {
+	out := append([]api.EdgeRuleHeaderOp(nil), ops...)
+	for i, op := range out {
+		if !op.Template {
+			continue
+		}
+		t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Value = t.Expand(traceTemplateInput(input, requestPath))
+		out[i].Template = false
+	}
+	return out, nil
+}
+
+// traceRedirectTemplate renders a templated redirect as the gateway would.
+func traceRedirectTemplate(a api.EdgeRuleRedirectAction, input Input, requestPath string) (string, map[string]string, error) {
+	if !a.Template {
+		return a.To, a.Headers, nil
+	}
+	in := traceTemplateInput(input, requestPath)
+	to, err := api.CompileEdgeRuleTemplate(a.To, api.EdgeRuleTemplateRedirect)
+	if err != nil {
+		return "", nil, err
+	}
+	headers := make(map[string]string, len(a.Headers))
+	for name, value := range a.Headers {
+		t, err := api.CompileEdgeRuleTemplate(value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return "", nil, err
+		}
+		headers[name] = t.Expand(in)
+	}
+	return to.Expand(in), headers, nil
 }
 
 // HostMatches is the gateway's match_host comparison (case-insensitive,

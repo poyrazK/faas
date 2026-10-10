@@ -27,6 +27,13 @@ class EdgeRuleRedirectAction:
     to: str
     headers: EdgeRuleRedirectActionHeaders | Unset = UNSET
     """Headers stamped on the redirect response."""
+    template: bool | Unset = UNSET
+    """ADR-967. Expand ${name} request values in `to` and in the
+    header values (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>,
+    cookie:<name>; $$ is a
+    literal $). The target must start with a literal "/" or
+    "http(s)://", and only ${host} may appear before the path.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +45,8 @@ class EdgeRuleRedirectAction:
         if not isinstance(self.headers, Unset):
             headers = self.headers.to_dict()
 
+        template = self.template
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -48,6 +57,8 @@ class EdgeRuleRedirectAction:
         )
         if headers is not UNSET:
             field_dict["headers"] = headers
+        if template is not UNSET:
+            field_dict["template"] = template
 
         return field_dict
 
@@ -67,10 +78,13 @@ class EdgeRuleRedirectAction:
         else:
             headers = EdgeRuleRedirectActionHeaders.from_dict(_headers)
 
+        template = d.pop("template", UNSET)
+
         edge_rule_redirect_action = cls(
             status_code=status_code,
             to=to,
             headers=headers,
+            template=template,
         )
 
         edge_rule_redirect_action.additional_properties = d

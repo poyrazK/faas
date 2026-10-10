@@ -607,7 +607,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 	case state.EdgeRuleKindRedirect:
 		var a api.EdgeRuleRedirectAction
 		if err := json.Unmarshal(raw, &a); err == nil {
-			out.Redirect = &state.EdgeRuleRedirectAction{StatusCode: a.StatusCode, To: a.To, Headers: a.Headers}
+			out.Redirect = &state.EdgeRuleRedirectAction{StatusCode: a.StatusCode, To: a.To, Headers: a.Headers, Template: a.Template}
 		}
 	case state.EdgeRuleKindHeaders:
 		var a api.EdgeRuleHeadersAction
@@ -615,7 +615,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			ops := func(in []api.EdgeRuleHeaderOp) []state.EdgeRuleHeaderOp {
 				out := make([]state.EdgeRuleHeaderOp, len(in))
 				for i, op := range in {
-					out[i] = state.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action}
+					out[i] = state.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action, Template: op.Template}
 				}
 				return out
 			}

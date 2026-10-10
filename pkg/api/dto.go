@@ -8188,6 +8188,9 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	// Template (ADR-967) expands ${name} request values in To and in the
+	// Headers values.
+	Template bool `json:"template,omitempty"`
 }
 
 func (a *EdgeRuleRedirectAction) Validate() *Problem {
@@ -8202,6 +8205,16 @@ func (a *EdgeRuleRedirectAction) Validate() *Problem {
 	if a.To == "" {
 		return ErrValidation("redirect action To is required")
 	}
+	if a.Template {
+		if _, err := CompileEdgeRuleTemplate(a.To, EdgeRuleTemplateRedirect); err != nil {
+			return ErrValidation("redirect action to: " + err.Error())
+		}
+		for name, value := range a.Headers {
+			if _, err := CompileEdgeRuleTemplate(value, EdgeRuleTemplateHeader); err != nil {
+				return ErrValidation(fmt.Sprintf("redirect action header %q: %s", name, err))
+			}
+		}
+	}
 	return nil
 }
 
@@ -8210,6 +8223,8 @@ type EdgeRuleHeaderOp struct {
 	Name   string `json:"name"`
 	Value  string `json:"value,omitempty"`
 	Action string `json:"action"`
+	// Template (ADR-967) expands ${name} request values in Value.
+	Template bool `json:"template,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -8240,6 +8255,14 @@ func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	}
 	if strings.HasPrefix(strings.ToLower(op.Name), "x-faas-") {
 		return ErrHeaderMutationForbidden(op.Name)
+	}
+	if op.Template {
+		if op.Action == "remove" {
+			return ErrValidation("header op template applies only to add and set")
+		}
+		if _, err := CompileEdgeRuleTemplate(op.Value, EdgeRuleTemplateHeader); err != nil {
+			return ErrValidation(fmt.Sprintf("header op %q value: %s", op.Name, err))
+		}
 	}
 	return nil
 }
