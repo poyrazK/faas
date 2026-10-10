@@ -497,3 +497,49 @@ func (v *JailerVMM) bindSourceRefs(path string) int {
 	}
 	return refs
 }
+
+// TestResourceAssetsBindModeIgnoresRecordOfReusedInode reproduces
+// production-us rc.251 (fsn-2): a dead app instance's journal record bound a
+// cache file that was later deleted, the filesystem reused its inode number
+// for a new build drive, and the build VM's cleanup then waited forever on
+// that record as an "unknown owner" (deploys aborted with "vm wait: builderd:
+// destroy: ... bind source mode restoration waits for unknown owner"). A
+// record whose source path and bind target no longer name the inode refers
+// to a different, gone file.
+func TestResourceAssetsBindModeIgnoresRecordOfReusedInode(t *testing.T) {
+	v, j := assetFixture(t)
+	if err := j.begin(journalTestLease(idOther, 1)); err != nil {
+		t.Fatal(err)
+	}
+	drive := filepath.Join(t.TempDir(), "build-drive.ext4")
+	if err := os.WriteFile(drive, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(drive)
+	identity, _ := resourceFileID(info)
+	handle, err := os.Open(drive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	// The stale record's cache file and its jail target are both gone; only
+	// its recorded (device, inode) matches the new drive.
+	deleted := filepath.Join(t.TempDir(), "cache", "deleted-entry")
+	deadTarget := filepath.Join(t.TempDir(), "dead-jail", "root", "layer.ext4")
+	ns := resourceMountIdentity{BootID: idLive, Namespace: 3}
+	if err := j.addAsset(idOther, resourceAsset{Kind: "bind", Path: deadTarget, Source: deleted, SourceFile: &identity, Namespace: &ns, OriginalMode: 0o644}); err != nil {
+		t.Fatal(err)
+	}
+	// Binding added group/other read for the jail user.
+	if err := os.Chmod(drive, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v.bindSourceModes[bindSourceKey{drive, identity}] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
+	if err := v.releaseBindSource(drive, identity); err != nil {
+		t.Fatalf("release waited on a record of a reused inode: %v", err)
+	}
+	info, _ = os.Stat(drive)
+	if info.Mode().Perm() != 0o600 || len(v.bindSourceModes) != 0 {
+		t.Fatalf("drive mode = %o, tracked sources = %d; want 600 restored and released", info.Mode().Perm(), len(v.bindSourceModes))
+	}
+}
