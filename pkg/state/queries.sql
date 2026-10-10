@@ -4197,11 +4197,17 @@ WHERE id = $1;
 -- recreate sweep has restored the destination's snapshot set, OR by
 -- the wake flow on a successful cold boot. Resets the counter and
 -- clears the backoff_until so future wakes don't short-circuit.
+-- Every successful wake calls this; skip rows that are already clear so
+-- the common case writes no tuple and fires none of the deployments
+-- row triggers (measured ~3-8 ms per wake on the publish path).
 UPDATE deployments
 SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
-WHERE id = $1;
+WHERE id = $1
+  AND (snapshot_miss_count <> 0
+       OR snapshot_miss_last_at IS NOT NULL
+       OR snapshot_miss_backoff_until IS NOT NULL);
 
 -- name: DeploymentSnapshotBackoffActive :one
 -- The wake-side gate. Returns the row while a backoff timestamp is
@@ -7329,10 +7335,14 @@ SET last_scale_in_at=CASE WHEN sqlc.arg(direction)::text='in' THEN now() ELSE ru
     last_scale_out_at=CASE WHEN sqlc.arg(direction)::text='out' THEN now() ELSE runtime_environment_scaling_states.last_scale_out_at END;
 
 -- name: ProjectProductionScalingState :exec
+-- Projected on every wake; an unchanged projection writes nothing, so it
+-- fires none of the apps row triggers.
 UPDATE apps a SET last_scale_in_at=scaling.last_scale_in_at,last_scale_out_at=scaling.last_scale_out_at
 FROM runtime_environment_scaling_states scaling
 WHERE a.id=sqlc.arg(app_id)::uuid AND scaling.app_id=a.id AND scaling.environment_key=sqlc.arg(environment_key)::text
-    AND scaling.scope='production';
+    AND scaling.scope='production'
+    AND (a.last_scale_in_at IS DISTINCT FROM scaling.last_scale_in_at
+        OR a.last_scale_out_at IS DISTINCT FROM scaling.last_scale_out_at);
 
 -- name: StampLegacyProductionScaleOut :one
 WITH app_stamp AS (UPDATE apps SET last_scale_out_at=now() WHERE id=$1 RETURNING id,last_scale_out_at),
