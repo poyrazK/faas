@@ -703,6 +703,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
 - [ADR-843: GCS conditional PUT capabilities](843-gcs-conditional-put-capabilities.md)
+- [ADR-911: Bounded batch event publication](911-batch-event-publication.md)
+
+- [ADR-912: Event retention health and expiry warnings](912-event-retention-health.md)
 - [ADR-838: Approved route removal exceptions in the contract gate](838-approved-route-removal-contract-exceptions.md)
 
 - [ADR-839: Telemetry coverage for route removal approvals](839-route-removal-telemetry-coverage.md)

@@ -2909,6 +2909,22 @@
     "kind": "operational"
   },
   {
+    "table": "event_recovery_execution_results",
+    "columns": [
+      "attempts",
+      "completed_at",
+      "evidence_source",
+      "job_id",
+      "position",
+      "recorded_at",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_history",
     "columns": [
       "action",
@@ -2957,12 +2973,18 @@
       "capacity_wait_started_at",
       "completed_at",
       "created_at",
+      "execution_finished_at",
+      "execution_notification_captured",
+      "execution_notification_next_at",
       "expires_at",
       "id",
       "last_progress_at",
       "next_attempt_at",
+      "notification_receipts",
+      "notification_retry_receipts",
       "paused_at",
       "rate_per_second",
+      "request_id",
       "selection",
       "state",
       "updated_at",

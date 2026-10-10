@@ -73,6 +73,25 @@ type PublishEventResponse struct {
 	AccountID     string    `json:"account_id,omitempty"`
 }
 
+// PublishEventBatchRequest accepts independent envelopes in input order.
+type PublishEventBatchRequest struct {
+	Events []PublishEventRequest `json:"events"`
+}
+
+// PublishEventBatchResult uses a zero-based input index. Unknown acceptance
+// must be retried with the original identity, never a newly generated id.
+type PublishEventBatchResult struct {
+	Index     int                   `json:"index"`
+	Status    string                `json:"status"`
+	Retryable bool                  `json:"retryable"`
+	Receipt   *PublishEventResponse `json:"receipt,omitempty"`
+	Problem   *Problem              `json:"problem,omitempty"`
+}
+
+type PublishEventBatchResponse struct {
+	Results []PublishEventBatchResult `json:"results"`
+}
+
 // PlatformTenantPublishEventResponse confirms tenant-scoped event acceptance.
 // It omits account identity because the tenant API is authenticated by its
 // linked tenant token rather than an account token.
@@ -12132,4 +12151,253 @@ type AppHealthChangedWebhookPayload struct {
 	LatestDeploymentID   string   `json:"latest_deployment_id,omitempty"`
 	ServingDeploymentIDs []string `json:"serving_deployment_ids"`
 	HistoryPath          string   `json:"history_path"`
+}
+
+// Event publication and recovery notification wire contracts.
+type AppEventPublicationVerification struct {
+	Acceptance         string                `json:"acceptance,omitempty"`
+	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
+	AppID              string                `json:"app_id"`
+	Source             string                `json:"source"`
+	EventID            string                `json:"event_id"`
+	ObservedAt         time.Time             `json:"observed_at"`
+	Status             string                `json:"status"`
+	Reason             string                `json:"reason,omitempty"`
+	ReceiptURL         string                `json:"receipt_url"`
+	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
+}
+
+type AppEventPublishStatusResponse struct {
+	Acceptance         string                `json:"acceptance,omitempty"`
+	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
+	AppID              string                `json:"app_id"`
+	Source             string                `json:"source"`
+	EventID            string                `json:"event_id"`
+	ObservedAt         time.Time             `json:"observed_at"`
+	Status             string                `json:"status"`
+	Reason             string                `json:"reason,omitempty"`
+	ReceiptURL         string                `json:"receipt_url"`
+	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
+	Evidence           *EventReceiptResponse `json:"evidence,omitempty"`
+}
+
+type AppPublishEventRequest struct {
+	Key           string          `json:"key"`
+	Type          string          `json:"type"`
+	Data          json.RawMessage `json:"data"`
+	Time          *time.Time      `json:"time,omitempty"`
+	SchemaVersion string          `json:"schemaversion,omitempty"`
+}
+
+type AppPublishEventResponse struct {
+	AppID     string               `json:"app_id"`
+	Source    string               `json:"source"`
+	Duplicate bool                 `json:"duplicate"`
+	Receipt   PublishEventResponse `json:"receipt"`
+}
+
+type EventRecoveryNotification struct {
+	Kind                   string                              `json:"kind"`
+	Event                  string                              `json:"event,omitempty"`
+	EventID                string                              `json:"event_id,omitempty"`
+	CaptureStatus          string                              `json:"capture_status"`
+	CapturedAt             *time.Time                          `json:"captured_at,omitempty"`
+	EvidenceSource         string                              `json:"evidence_source"`
+	RecipientsKnown        bool                                `json:"recipients_known"`
+	SelectedRecipientCount *int64                              `json:"selected_recipient_count,omitempty"`
+	CountsComplete         bool                                `json:"counts_complete"`
+	AcknowledgementStatus  string                              `json:"acknowledgement_status"`
+	PendingCount           int64                               `json:"pending_count"`
+	InFlightCount          int64                               `json:"in_flight_count"`
+	SucceededCount         int64                               `json:"succeeded_count"`
+	FailedCount            int64                               `json:"failed_count"`
+	DeadCount              int64                               `json:"dead_count"`
+	AwaitingRelayCount     int64                               `json:"awaiting_relay_count"`
+	UnknownCount           int64                               `json:"unknown_count"`
+	Receivers              []EventRecoveryNotificationReceiver `json:"receivers"`
+}
+
+type EventRecoveryNotificationHealthCounts struct {
+	CountsComplete  bool  `json:"counts_complete"`
+	OverdueJobs     int64 `json:"overdue_jobs"`
+	DeadJobs        int64 `json:"dead_jobs"`
+	UnknownJobs     int64 `json:"unknown_jobs"`
+	NoReceiversJobs int64 `json:"no_receivers_jobs"`
+}
+
+type EventRecoveryNotificationJobHealth struct {
+	JobID                    string     `json:"job_id"`
+	Kind                     string     `json:"kind"`
+	Event                    string     `json:"event,omitempty"`
+	CaptureStatus            string     `json:"capture_status"`
+	AcknowledgementStatus    string     `json:"acknowledgement_status"`
+	EvidenceSource           string     `json:"evidence_source"`
+	CapturedAt               *time.Time `json:"captured_at,omitempty"`
+	UnacknowledgedAgeSeconds *float64   `json:"unacknowledged_age_seconds,omitempty"`
+	Overdue                  bool       `json:"overdue"`
+	Dead                     bool       `json:"dead"`
+	Unknown                  bool       `json:"unknown"`
+	NoReceivers              bool       `json:"no_receivers"`
+}
+
+type EventRecoveryNotificationReceiver struct {
+	WebhookID         string     `json:"webhook_id"`
+	ReceiverAvailable bool       `json:"receiver_available"`
+	DeliveryID        string     `json:"delivery_id,omitempty"`
+	Status            string     `json:"status"`
+	Attempt           int        `json:"attempt"`
+	ReplayGeneration  int        `json:"replay_generation"`
+	LastResponseCode  int        `json:"last_response_code"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	DeliveredAt       *time.Time `json:"delivered_at,omitempty"`
+	AttemptsPath      string     `json:"attempts_path,omitempty"`
+	RetryPath         string     `json:"retry_path,omitempty"`
+}
+
+type EventRecoveryNotificationRetryBacklog struct {
+	AppID        string                                         `json:"app_id"`
+	ObservedAt   time.Time                                      `json:"observed_at"`
+	JobsScanned  int                                            `json:"jobs_scanned"`
+	CountsScope  string                                         `json:"counts_scope"`
+	Totals       EventRecoveryNotificationRetryHistoryTotals    `json:"totals"`
+	MatchedCount int                                            `json:"matched_count"`
+	Requests     []EventRecoveryNotificationRetryBacklogRequest `json:"requests"`
+	NextCursor   string                                         `json:"next_cursor,omitempty"`
+}
+
+type EventRecoveryNotificationRetryBacklogRequest struct {
+	JobID            string                                        `json:"job_id"`
+	JobCreatedAt     time.Time                                     `json:"job_created_at"`
+	Summary          EventRecoveryNotificationRetryDecisionSummary `json:"summary"`
+	DetailPath       string                                        `json:"detail_path"`
+	RetryPreviewPath string                                        `json:"retry_preview_path"`
+}
+
+type EventRecoveryNotificationRetryCandidate struct {
+	Kind             string `json:"kind"`
+	WebhookID        string `json:"webhook_id"`
+	DeliveryID       string `json:"delivery_id,omitempty"`
+	ReplayGeneration int    `json:"replay_generation"`
+	Status           string `json:"status"`
+	Eligible         bool   `json:"eligible"`
+	Reason           string `json:"reason,omitempty"`
+}
+
+type EventRecoveryNotificationRetryDecision struct {
+	Target                  EventRecoveryNotificationRetryTarget `json:"target"`
+	State                   string                               `json:"state"`
+	Reason                  string                               `json:"reason,omitempty"`
+	ReplayGeneration        *int                                 `json:"replay_generation,omitempty"`
+	RetryOutcome            string                               `json:"retry_outcome"`
+	RetainedAttemptCount    int                                  `json:"retained_attempt_count"`
+	AttemptCountComplete    bool                                 `json:"attempt_count_complete"`
+	CompletedAt             *time.Time                           `json:"completed_at,omitempty"`
+	CurrentDeliveryStatus   string                               `json:"current_delivery_status"`
+	CurrentReplayGeneration *int                                 `json:"current_replay_generation,omitempty"`
+}
+
+type EventRecoveryNotificationRetryDecisionDetail struct {
+	JobID                   string                                   `json:"job_id"`
+	AppID                   string                                   `json:"app_id"`
+	RequestID               string                                   `json:"request_id"`
+	DecidedAt               time.Time                                `json:"decided_at"`
+	CurrentStatusObservedAt time.Time                                `json:"current_status_observed_at"`
+	Decisions               []EventRecoveryNotificationRetryDecision `json:"decisions"`
+}
+
+type EventRecoveryNotificationRetryDecisionSummary struct {
+	RequestID        string     `json:"request_id"`
+	DecidedAt        time.Time  `json:"decided_at"`
+	TargetCount      int        `json:"target_count"`
+	QueuedCount      int        `json:"queued_count"`
+	SkippedCount     int        `json:"skipped_count"`
+	SucceededCount   int        `json:"succeeded_count"`
+	FailedCount      int        `json:"failed_count"`
+	PendingCount     int        `json:"pending_count"`
+	UnknownCount     int        `json:"unknown_count"`
+	Status           string     `json:"status"`
+	EvidenceComplete bool       `json:"evidence_complete"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+}
+
+type EventRecoveryNotificationRetryHistory struct {
+	JobID        string                                          `json:"job_id"`
+	AppID        string                                          `json:"app_id"`
+	ObservedAt   time.Time                                       `json:"observed_at"`
+	Decisions    []EventRecoveryNotificationRetryDecisionSummary `json:"decisions"`
+	MatchedCount int                                             `json:"matched_count"`
+	Totals       EventRecoveryNotificationRetryHistoryTotals     `json:"totals"`
+}
+
+type EventRecoveryNotificationRetryHistoryTotals struct {
+	RequestCount            int `json:"request_count"`
+	SucceededCount          int `json:"succeeded_count"`
+	FailedCount             int `json:"failed_count"`
+	PendingCount            int `json:"pending_count"`
+	InconclusiveCount       int `json:"inconclusive_count"`
+	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+type EventRecoveryNotificationRetryPreview struct {
+	JobID          string                                    `json:"job_id"`
+	AppID          string                                    `json:"app_id"`
+	ObservedAt     time.Time                                 `json:"observed_at"`
+	CountsComplete bool                                      `json:"counts_complete"`
+	Receivers      []EventRecoveryNotificationRetryCandidate `json:"receivers"`
+}
+
+type EventRecoveryNotificationRetryRequest struct {
+	RequestID string                                 `json:"request_id"`
+	Targets   []EventRecoveryNotificationRetryTarget `json:"targets"`
+}
+
+type EventRecoveryNotificationRetryResponse struct {
+	JobID     string                                 `json:"job_id"`
+	AppID     string                                 `json:"app_id"`
+	RequestID string                                 `json:"request_id"`
+	DecidedAt time.Time                              `json:"decided_at"`
+	Results   []EventRecoveryNotificationRetryResult `json:"results"`
+}
+
+type EventRecoveryNotificationRetryResult struct {
+	Target           EventRecoveryNotificationRetryTarget `json:"target"`
+	State            string                               `json:"state"`
+	Reason           string                               `json:"reason,omitempty"`
+	ReplayGeneration *int                                 `json:"replay_generation,omitempty"`
+}
+
+type EventRecoveryNotificationRetryTarget struct {
+	Kind                     string `json:"kind"`
+	WebhookID                string `json:"webhook_id"`
+	DeliveryID               string `json:"delivery_id"`
+	ExpectedReplayGeneration *int   `json:"expected_replay_generation"`
+}
+
+type EventRecoveryNotifications struct {
+	JobID         string                      `json:"job_id"`
+	AppID         string                      `json:"app_id"`
+	AppSlug       string                      `json:"app_slug"`
+	ObservedAt    time.Time                   `json:"observed_at"`
+	ReceiverLimit int                         `json:"receiver_limit"`
+	Notifications []EventRecoveryNotification `json:"notifications"`
+}
+
+type EventRecoveryNotificationsHealth struct {
+	Coverage            string                                `json:"coverage"`
+	ObservedJobs        int64                                 `json:"observed_jobs"`
+	CountsComplete      bool                                  `json:"counts_complete"`
+	JobLimit            int                                   `json:"job_limit"`
+	OverdueGraceSeconds int64                                 `json:"overdue_grace_seconds"`
+	Admission           EventRecoveryNotificationHealthCounts `json:"admission"`
+	Execution           EventRecoveryNotificationHealthCounts `json:"execution"`
+	Jobs                []EventRecoveryNotificationJobHealth  `json:"jobs"`
+}
+
+type EventRecoveryNotificationRetryBacklogTotals struct {
+	RequestCount            int `json:"request_count"`
+	SucceededCount          int `json:"succeeded_count"`
+	FailedCount             int `json:"failed_count"`
+	PendingCount            int `json:"pending_count"`
+	InconclusiveCount       int `json:"inconclusive_count"`
+	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
 }

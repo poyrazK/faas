@@ -9441,3 +9441,74 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Event publication batches bound synchronous acceptance work (ADR-911).
+const (
+	EventPublishBatchMaxEvents          = 100
+	EventPublishBatchBodyMaxBytes int64 = 1 << 20
+	EventPublishBatchTimeout            = 30 * time.Second
+)
+
+// Retention observations are bounded read-only snapshots (ADR-912).
+const (
+	EventRetentionDefaultWindow  = 24 * time.Hour
+	EventRetentionMaxWindow      = 30 * 24 * time.Hour
+	EventRetentionSampleMax      = 100
+	EventRetentionSourceMaxBytes = 256
+	EventRetentionRequestTimeout = 15 * time.Second
+)
+
+// Recheck unresolved execution recovery jobs without scanning retained history on every tick.
+const EventRecoveryExecutionNotificationPollInterval = 10 * time.Second
+
+const (
+	EventRecoveryExecutionHealthJobsMax    = 50
+	EventRecoveryExecutionHealthSampleMax  = 3
+	EventRecoveryExecutionWaitWarning      = 15 * time.Minute
+	EventRecoveryExecutionRetentionWarning = 24 * time.Hour
+)
+
+// EventRecoveryNotificationReceiversMax bounds each notification report.
+const EventRecoveryNotificationReceiversMax = 100
+
+const (
+	EventRecoveryNotificationHealthJobsMax   = 50
+	EventRecoveryNotificationHealthSampleMax = 3
+	EventRecoveryNotificationOverdueGrace    = 15 * time.Minute
+)
+
+const (
+	EventRecoveryNotificationRetryTargetsMax   = 100
+	EventRecoveryNotificationRetryReceiptsMax  = 100
+	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
+)
+
+// CLI polling for the immutable requested notification retry generations (ADR-923).
+const (
+	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
+	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
+)
+
+// Bounded job pages for app-wide notification retry evidence (ADR-926).
+const (
+	EventRecoveryNotificationRetryBacklogJobsDefault = 5
+	EventRecoveryNotificationRetryBacklogJobsMax     = 10
+)
+
+// CLI selected notification retry workflow bounds.
+const (
+	EventRecoveryNotificationRetryBatchJobsMax      = 10
+	EventRecoveryNotificationRetryBatchBodyMaxBytes = 1 << 20
+)
+
+// Application-scoped producer-key publication bounds.
+const (
+	AppEventPublishKeyMaxBytes        = 256
+	AppEventPublishBodyMaxBytes int64 = 1 << 20
+)
+
+// App producer-key status uses existing receipt pagination and cursor format.
+const (
+	AppEventPublishStatusRecipientsDefault = 100
+	AppEventPublishStatusCursorMaxBytes    = 8192
+)

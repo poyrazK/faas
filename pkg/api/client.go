@@ -7178,6 +7178,13 @@ func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID,
 
 // PublishEvent durably accepts one tenant-scoped internal event envelope.
 // Matching and delivery are asynchronous consumers of the accepted event.
+// PublishEventBatch returns one result per input; callers inspect each status.
+func (c *Client) PublishEventBatch(ctx context.Context, req PublishEventBatchRequest) (PublishEventBatchResponse, error) {
+	var resp PublishEventBatchResponse
+	err := c.do(ctx, "POST", "/v1/events:publish-batch", req, &resp)
+	return resp, err
+}
+
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
 	var resp PublishEventResponse
 	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)

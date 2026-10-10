@@ -645,8 +645,12 @@ type Querier interface {
 	EventRecoveryCancelItems(ctx context.Context, db DBTX, arg EventRecoveryCancelItemsParams) error
 	EventRecoveryCancelJob(ctx context.Context, db DBTX, arg EventRecoveryCancelJobParams) error
 	EventRecoveryCandidates(ctx context.Context, db DBTX, arg EventRecoveryCandidatesParams) ([]EventRecoveryCandidatesRow, error)
+	EventRecoveryCaptureExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryCaptureExecutionNotificationParams) error
+	EventRecoveryClaimExecutionNotification(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryClaimExecutionNotificationRow, error)
 	EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRecoveryCreateParams) (pgtype.UUID, error)
+	EventRecoveryDeferExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryDeferExecutionNotificationParams) error
 	EventRecoveryEnqueueNotification(ctx context.Context, db DBTX, arg EventRecoveryEnqueueNotificationParams) error
+	EventRecoveryExecutionHealthJobs(ctx context.Context, db DBTX, arg EventRecoveryExecutionHealthJobsParams) ([]EventRecoveryExecutionHealthJobsRow, error)
 	// Exact replay identity and generation, never the latest descendant's outcome.
 	EventRecoveryExecutionObservations(ctx context.Context, db DBTX, arg EventRecoveryExecutionObservationsParams) ([]EventRecoveryExecutionObservationsRow, error)
 	EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecoveryGetParams) (EventRecoveryGetRow, error)
@@ -661,7 +665,24 @@ type Querier interface {
 	EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecoveryLockParams) (EventRecoveryJob, error)
 	EventRecoveryNextItem(ctx context.Context, db DBTX, jobID pgtype.UUID) (EventRecoveryItem, error)
 	EventRecoveryNextJob(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryJob, error)
+	EventRecoveryNotificationDeliveries(ctx context.Context, db DBTX, arg EventRecoveryNotificationDeliveriesParams) ([]EventRecoveryNotificationDeliveriesRow, error)
+	EventRecoveryNotificationEvidence(ctx context.Context, db DBTX, arg EventRecoveryNotificationEvidenceParams) (EventRecoveryNotificationEvidenceRow, error)
+	EventRecoveryNotificationHealthJobs(ctx context.Context, db DBTX, arg EventRecoveryNotificationHealthJobsParams) ([]pgtype.UUID, error)
 	EventRecoveryNotificationJob(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.UUID, error)
+	EventRecoveryNotificationOutbox(ctx context.Context, db DBTX, arg EventRecoveryNotificationOutboxParams) ([]EventRecoveryNotificationOutboxRow, error)
+	EventRecoveryNotificationReceivers(ctx context.Context, db DBTX, arg EventRecoveryNotificationReceiversParams) ([]pgtype.UUID, error)
+	EventRecoveryNotificationRetryBacklogJobs(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryBacklogJobsParams) ([]EventRecoveryNotificationRetryBacklogJobsRow, error)
+	EventRecoveryNotificationRetryDeliveryLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryDeliveryLockParams) (EventRecoveryNotificationRetryDeliveryLockRow, error)
+	EventRecoveryNotificationRetryGenerationOutcome(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryGenerationOutcomeParams) (EventRecoveryNotificationRetryGenerationOutcomeRow, error)
+	EventRecoveryNotificationRetryHistoryOutcomes(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOutcomesParams) ([]EventRecoveryNotificationRetryHistoryOutcomesRow, error)
+	EventRecoveryNotificationRetryHistoryOwner(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOwnerParams) (EventRecoveryNotificationRetryHistoryOwnerRow, error)
+	EventRecoveryNotificationRetryHookLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHookLockParams) (bool, error)
+	EventRecoveryNotificationRetryHooks(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHooksParams) ([]EventRecoveryNotificationRetryHooksRow, error)
+	EventRecoveryNotificationRetryOwner(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryOwnerParams) (EventRecoveryNotificationRetryOwnerRow, error)
+	EventRecoveryNotificationRetryPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	EventRecoveryNotificationRetryPlanLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	EventRecoveryNotificationRetryReset(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryResetParams) (int64, error)
+	EventRecoveryNotificationRetrySave(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetrySaveParams) error
 	EventRecoveryPause(ctx context.Context, db DBTX, arg EventRecoveryPauseParams) error
 	EventRecoveryPreflight(ctx context.Context, db DBTX, arg EventRecoveryPreflightParams) ([]EventRecoveryPreflightRow, error)
 	EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg EventRecoveryPreflightJobParams) (EventRecoveryJob, error)
@@ -670,6 +691,8 @@ type Querier interface {
 	EventRecoveryReadApp(ctx context.Context, db DBTX, arg EventRecoveryReadAppParams) (pgtype.UUID, error)
 	EventRecoveryRecordReplay(ctx context.Context, db DBTX, arg EventRecoveryRecordReplayParams) error
 	EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error
+	EventRecoveryRetryCandidates(ctx context.Context, db DBTX, arg EventRecoveryRetryCandidatesParams) ([]EventRecoveryRetryCandidatesRow, error)
+	EventRecoveryRetryExisting(ctx context.Context, db DBTX, arg EventRecoveryRetryExistingParams) (pgtype.UUID, error)
 	EventRecoverySchedule(ctx context.Context, db DBTX, arg EventRecoveryScheduleParams) error
 	EventRecoveryScheduleTerminalState(ctx context.Context, db DBTX, arg EventRecoveryScheduleTerminalStateParams) (string, error)
 	EventRecoverySetItem(ctx context.Context, db DBTX, arg EventRecoverySetItemParams) error
@@ -701,6 +724,9 @@ type Querier interface {
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
 	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error)
+	// Caller holds the account range lock acquired in a previous SQL statement.
+	// This statement's READ COMMITTED snapshot sees every hold committed before it.
 	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
 	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
 	// Read provenance before taking the job lock, preserving job -> parent order.
@@ -709,6 +735,7 @@ type Querier interface {
 	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
 	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error)
+	EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error)
 	EventReplayBackfillWorkflowFinishRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowFinishRetryParams) (int64, error)
 	EventReplayBackfillWorkflowRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryCandidatesParams) ([]EventReplayBackfillWorkflowRetryCandidatesRow, error)
@@ -717,6 +744,7 @@ type Querier interface {
 	EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg EventReplayPreviewCandidatesParams) ([]EventReplayPreviewCandidatesRow, error)
 	EventReplayPreviewEarliestRetained(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
 	EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error)
+	EventRetentionHealth(ctx context.Context, db DBTX, arg EventRetentionHealthParams) (EventRetentionHealthRow, error)
 	EventRetryFinishReceipt(ctx context.Context, db DBTX, arg EventRetryFinishReceiptParams) (int64, error)
 	EventRoutingClaimReceipt(ctx context.Context, db DBTX, arg EventRoutingClaimReceiptParams) (EventRoutingClaimReceiptRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.

@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventRecoveryExecutionResults   map[recoveryResultKey]memRecoveryExecutionResult
 	productionLifecycleHistory      []api.RouteLifecycleHistoryEntry
 	nextProductionLifecycleReviewID int64
 	productionLifecycleDecisions    map[string]api.RouteGateDecision
@@ -25850,7 +25851,8 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if _, ok := m.invocations[id]; ok {
+		if inv, ok := m.invocations[id]; ok {
+			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

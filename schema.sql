@@ -1037,6 +1037,33 @@ $$;
 
 
 --
+-- Name: capture_event_recovery_invocation_result(uuid, uuid, uuid, timestamp with time zone, bigint, text, text, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_invocation_result(p_invocation uuid, p_account uuid, p_app uuid, p_created timestamp with time zone, p_generation bigint, p_state text, p_outcome text, p_attempts integer, p_completed timestamp with time zone) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ observed timestamptz := clock_timestamp();
+ terminal text := CASE p_state WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed'
+  WHEN 'dead_letter' THEN 'dead_lettered' WHEN 'expired' THEN 'expired'
+  WHEN 'cancelled' THEN 'cancelled' WHEN 'superseded' THEN 'superseded' END;
+BEGIN
+ IF terminal IS NULL OR p_outcome='uncertain' OR p_created>observed
+  OR p_completed>observed OR p_completed<p_created THEN RETURN; END IF;
+ INSERT INTO event_recovery_execution_results(job_id,position,replay_invocation_id,replay_generation,replay_created_at,
+  state,attempts,completed_at,recorded_at,evidence_source)
+ SELECT item.job_id,item.position,p_invocation,p_generation,p_created,terminal,p_attempts,p_completed,observed,'invocation'
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ WHERE item.state='queued' AND job.selection->>'mode'='execution' AND job.account_id=p_account AND job.app_id=p_app
+  AND item.replay_invocation_id=p_invocation AND item.replay_generation=p_generation AND item.replay_created_at=p_created
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3436,6 +3463,37 @@ SELECT CASE WHEN key IS NULL OR key = 's:' THEN NULL
     ELSE hashtextextended(jsonb_build_array(lane_app_id, lane_policy_name, key)::text, 0)
     END
 FROM canonical;
+$$;
+
+
+--
+-- Name: event_receipt_retention_hold(uuid, bigint, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT event_receipt_retention_hold(p_account,p_outbox,p_accepted,p_job_cutoff,CURRENT_TIMESTAMP);
+$$;
+
+
+--
+-- Name: event_receipt_retention_hold(uuid, bigint, timestamp with time zone, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_retention_hold(p_account uuid, p_outbox bigint, p_accepted timestamp with time zone, p_job_cutoff timestamp with time zone, p_now timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE
+ WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='running'
+  AND p_accepted>=j.from_at AND p_accepted<j.cutoff_at) THEN 'backfill_running'
+ WHEN EXISTS (SELECT 1 FROM event_replay_jobs j WHERE j.account_id=p_account AND j.state='completed_with_failures'
+  AND j.completed_at>=p_job_cutoff AND EXISTS (SELECT 1 FROM event_replay_job_items i
+   WHERE i.job_id=j.id AND i.outbox_id=p_outbox AND i.state='failed' AND i.retryable)) THEN 'backfill_retryable'
+ WHEN EXISTS (SELECT 1 FROM event_recovery_items i JOIN event_recovery_jobs j ON j.id=i.job_id
+  WHERE i.outbox_id=p_outbox AND i.state='pending' AND j.account_id=p_account
+   AND j.selection->'protect_receipts'='true'::jsonb AND j.state IN ('running','paused') AND j.expires_at>p_now) THEN 'recovery_pending'
+ ELSE '' END;
 $$;
 
 
@@ -9757,6 +9815,50 @@ $$;
 
 
 --
+-- Name: record_event_recovery_admitted_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_admitted_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state<>'queued' OR NEW.replay_invocation_id IS NULL THEN RETURN NEW; END IF;
+ PERFORM capture_event_recovery_invocation_result(inv.id,inv.account_id,inv.app_id,inv.created_at,inv.replay_generation,
+  inv.state,inv.outcome,inv.attempts,inv.completed_at)
+ FROM invocations inv JOIN event_recovery_jobs job ON job.id=NEW.job_id
+ WHERE job.selection->>'mode'='execution' AND inv.id=NEW.replay_invocation_id AND inv.account_id=job.account_id
+  AND inv.app_id=job.app_id AND inv.replay_generation=NEW.replay_generation AND inv.created_at=NEW.replay_created_at;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: record_event_recovery_invocation_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_invocation_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+   OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation)
+   IS DISTINCT FROM (NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation) THEN
+   PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+    OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  END IF;
+ END IF;
+ PERFORM capture_event_recovery_invocation_result(NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation,
+  NEW.state,NEW.outcome,NEW.attempts,NEW.completed_at);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11953,14 +12055,15 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
+    CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
+    CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
     CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
@@ -13148,7 +13251,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -16204,6 +16307,31 @@ CREATE TABLE public.event_fanout_recipients (
 
 
 --
+-- Name: event_recovery_execution_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_execution_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    replay_generation bigint NOT NULL,
+    replay_created_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    attempts integer NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    evidence_source text NOT NULL,
+    CONSTRAINT event_recovery_execution_results_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_recovery_execution_results_check CHECK ((recorded_at >= replay_created_at)),
+    CONSTRAINT event_recovery_execution_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= replay_created_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_execution_results_evidence_source_check CHECK ((evidence_source = ANY (ARRAY['invocation'::text, 'attempt_history'::text]))),
+    CONSTRAINT event_recovery_execution_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_execution_results_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT event_recovery_execution_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead_lettered'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
+);
+
+
+--
 -- Name: event_recovery_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16303,16 +16431,27 @@ CREATE TABLE public.event_recovery_jobs (
     capacity_scope text DEFAULT ''::text NOT NULL,
     capacity_wait_started_at timestamp with time zone,
     capacity_wait_observed_at timestamp with time zone,
+    execution_notification_captured boolean DEFAULT false NOT NULL,
+    execution_finished_at timestamp with time zone,
+    execution_notification_next_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id uuid,
+    notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
+    CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
     CONSTRAINT event_recovery_jobs_completion_chk CHECK (((state = ANY (ARRAY['running'::text, 'paused'::text])) = (completed_at IS NULL))),
     CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text]) = '{}'::jsonb))),
     CONSTRAINT event_recovery_jobs_pause_chk CHECK (((state = 'paused'::text) = (paused_at IS NOT NULL))),
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
     CONSTRAINT event_recovery_jobs_wait_reason_check CHECK ((wait_reason = ANY (ARRAY[''::text, 'capacity'::text, 'legacy_claim'::text]))),
-    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100)))
+    CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
+    CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
+    CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
 );
 
 
@@ -26990,6 +27129,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 
 --
+-- Name: event_recovery_execution_results event_recovery_execution_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_pkey PRIMARY KEY (job_id, "position");
+
+
+--
 -- Name: event_recovery_history event_recovery_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33077,6 +33224,13 @@ CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_out
 
 
 --
+-- Name: event_fanout_outbox_account_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_retention_idx ON public.event_fanout_outbox USING btree (account_id, delivered_at, id) WHERE (state = 'delivered'::text);
+
+
+--
 -- Name: event_fanout_outbox_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33140,6 +33294,20 @@ CREATE INDEX event_recipient_delivery_deadline_idx ON public.event_fanout_recipi
 
 
 --
+-- Name: event_recovery_child_request_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_recovery_jobs USING btree (account_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
+-- Name: event_recovery_execution_notification_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_execution_notification_pending_idx ON public.event_recovery_jobs USING btree (execution_notification_next_at, id) WHERE ((NOT execution_notification_captured) AND (state = ANY (ARRAY['completed'::text, 'cancelled'::text])) AND ((selection ->> 'mode'::text) = 'execution'::text));
+
+
+--
 -- Name: event_recovery_history_job_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33147,10 +33315,24 @@ CREATE INDEX event_recovery_history_job_idx ON public.event_recovery_history USI
 
 
 --
+-- Name: event_recovery_items_execution_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_execution_identity_idx ON public.event_recovery_items USING btree (replay_invocation_id, replay_generation, replay_created_at) WHERE ((state = 'queued'::text) AND (replay_invocation_id IS NOT NULL));
+
+
+--
 -- Name: event_recovery_items_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USING btree (job_id, "position") WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_receipt_hold_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
 
 
 --
@@ -33175,10 +33357,24 @@ CREATE INDEX event_recovery_jobs_due_idx ON public.event_recovery_jobs USING btr
 
 
 --
+-- Name: event_recovery_jobs_execution_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_jobs_execution_health_idx ON public.event_recovery_jobs USING btree (account_id, app_id, completed_at, id) WHERE ((state = ANY (ARRAY['completed'::text, 'cancelled'::text])) AND ((selection ->> 'mode'::text) = 'execution'::text) AND (execution_finished_at IS NULL));
+
+
+--
 -- Name: event_recovery_jobs_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX event_recovery_jobs_expiry_idx ON public.event_recovery_jobs USING btree (expires_at, id) WHERE (state = ANY (ARRAY['running'::text, 'paused'::text]));
+
+
+--
+-- Name: event_recovery_jobs_notification_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_jobs_notification_health_idx ON public.event_recovery_jobs USING btree (account_id, app_id, completed_at, id) WHERE (state = ANY (ARRAY['completed'::text, 'cancelled'::text]));
 
 
 --
@@ -38544,6 +38740,20 @@ CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipi
 
 
 --
+-- Name: event_recovery_items event_recovery_admitted_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_admitted_result AFTER INSERT OR UPDATE OF state, replay_invocation_id, replay_generation, replay_created_at ON public.event_recovery_items FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_admitted_result();
+
+
+--
+-- Name: invocations event_recovery_invocation_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE OF state, attempts, replay_generation, completed_at, outcome ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_invocation_result();
+
+
+--
 -- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -43164,6 +43374,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_execution_results event_recovery_execution_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --

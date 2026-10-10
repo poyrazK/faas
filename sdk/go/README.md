@@ -465,6 +465,66 @@ holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
+## Recovery receipt protection
+
+Set `protect_receipts: true` when creating an event recovery job (Go:
+`EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
+items are pending and the job is active, until its original 24-hour expiry.
+Preview reserves nothing. Held receipts continue counting against account
+storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+
+## Durable recovery outcomes
+
+Existing recovery status and item reads prefer saved terminal results for the
+exact admitted replay generation. `execution.source` is `recovery_result`, with
+`recorded_at` and original `evidence_source`; job execution summaries include
+`saved_results`. These results survive execution-history pruning until the
+recovery job is pruned. Uncertain outcomes remain unknown. See
+[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+
+Recovery webhook filters support `event_recovery.execution_finished`, separately
+from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
+contains saved terminal execution counts and `unresolved_count=0`; `all_succeeded`
+refers only to queued executions. Recovery job `execution_finished_at` is capture
+time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
+created execution jobs with queued deliveries qualify. Update strict webhook
+event-enum consumers before API rollout; existing webhook delivery retries and
+dead-letter tools apply. See [ADR-915](../../docs/adr/915-recovery-execution-completion-notifications.md).
+
+Existing recovery preview/create methods accept `parent_job_id` with
+`mode=execution` to select only saved failed/dead-lettered deliveries from a
+retained terminal recovery in the same app. Child creation requires a stable
+`request_id` UUID: repeat it with the same normalized selection to return the same
+retained child. Changed selections conflict, and the original audit reason wins.
+Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
+execution evidence is skipped at admission; newer replays are never substituted.
+See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+
+Application-scoped producer keys:
+
+```go
+receipt, err := client.PublishAppEvent(ctx, "my-app", faas.AppPublishEventRequest{
+    Key: "order-123-created",
+    Type: "order.created",
+    Data: json.RawMessage(`{"order_id":"123"}`),
+})
+```
+
+The result includes `Duplicate` and the original durable `Receipt`. Preserve app/key/content on retry. Configure subscriptions against the returned `app.<UUID>` source. Deduplication lasts while the receipt is retained; consumer side effects still need deduplication.
+
+Read-only producer-key reconciliation:
+
+```go
+status, err := client.GetAppEventPublishStatus(ctx, "my-app", faas.AppEventPublishStatusQuery{
+    Key: "order-123-created",
+})
+```
+
+`processing` and `accepted` prove retained acceptance, while accepted only means routing settled, not successful handler execution. `unavailable` cannot establish nonpublication and must not automatically trigger another publish. Follow `status.Evidence.NextAfter` using `After` (default 100, maximum 200 recipients). The standalone SDK exposes typed receipt metadata and lossless `json.RawMessage` recipient rows; the root Go SDK uses the existing full receipt DTOs.
+
+Read-only content verification: `client.VerifyAppEventPublication(ctx, "my-app", originalRequest)` compares the original `AppPublishEventRequest` without publishing. Status is match/conflict/unavailable; match and conflict include the retained original receipt from the same snapshot. Comparison uses normalized type/schema version and semantic JSON data, excluding occurrence time and trace metadata. Matching acceptance does not prove consumer execution, and unavailable must not automatically trigger a publish.
+
+Acceptance guards: parse the saved `accepted_at` with `time.RFC3339Nano` and pass its pointer as `AppEventPublishStatusQuery.ExpectedAcceptedAt`, or pass one optional `faas.AppEventAcceptanceGuard{ExpectedAcceptedAt: &savedTime}` to `VerifyAppEventPublication`. `Acceptance` reports same_acceptance/replacement_acceptance/unavailable independently of content/routing status. Comparison uses exact instants, without rounding; returned evidence describes the current retained acceptance even when it is a replacement. Existing unguarded calls remain supported.
 ### Workflow blockers
 
 Inside the customer Operation transaction callback, use `tx.WorkflowBlockers(workflow, instanceID, lockedRowState, []faas.OperationWorkflowBlocker{...})` to replace
