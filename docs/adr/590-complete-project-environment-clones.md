@@ -9294,10 +9294,35 @@ retain requested state, and terminal replay requires the exact saved proof and
 unchanged original ownership. Migration rollback refuses every journal row,
 including planned and retired ownership evidence.
 
-The journal does not dispatch native work or delete configuration. Native closure
-leaves the environment and desired settings available for later authenticated
+The journal does not delete configuration. Native closure leaves the environment
+and desired settings available for later authenticated
 catalogue cleanup. Catalogue retirement must separately verify removal of owned
 settings, values and policies; native observations cannot assert that SQL state
-was deleted. A native coordinator, atomic catalogue cleanup and whole-stage
-terminal compensation remain outstanding. Public full-stage admission stays
-gated, and native qualification remains deferred.
+was deleted. Atomic catalogue cleanup and whole-stage terminal compensation
+remain outstanding. Public full-stage admission stays gated, and native
+qualification remains deferred.
+
+### Private native workload retirement coordinator
+
+The private coordinator now renews the compensation lease before reserving and
+claiming the authenticated workload journal. Admission checks guard the claim,
+native dispatch, observation and final write, and all work is bounded by the
+renewed lease deadline. Only the first committed claim authorizes native
+retirement. After a lost claim or native reply, a replacement worker observes the
+original request without dispatching cleanup again. A lost reservation reply can
+still recover the unclaimed original plan.
+
+Qualified drivers must permanently fence the entire original deployment request
+namespace and close queued scheduler work, including unknown creation outcomes,
+then prove all owned runtime artifacts and publication are absent while preserving
+the source. Observation is read-only; local not-found and deployment labels are
+insufficient. Fresh copies of the immutable workload membership isolate adapter
+mutation, and returned proof membership is copied before persistence. Terminal
+replay authenticates the saved proof without native calls.
+
+PostgreSQL-backed simulated-driver tests cover lost reservation, claim, dispatch,
+observation and finish replies, worker handoff, cancellation, invalid scheduler
+and runtime closure, changed source/digest, and adapter mutation. They do not
+qualify a scheduler/VM adapter. No built-in native adapter or public full-stage
+admission is enabled; configuration cleanup and terminal compensation remain
+outstanding, and live provider qualification stays deferred.
