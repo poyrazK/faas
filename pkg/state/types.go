@@ -3707,6 +3707,7 @@ const (
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
 	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
@@ -3765,7 +3766,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
 	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
-	AppWebhookEventWorkflowFinished,
+	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

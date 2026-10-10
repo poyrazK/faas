@@ -9,6 +9,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
+    from ..models.simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
     from ..models.simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
     from ..models.simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
     from ..models.workflow_spec import WorkflowSpec
@@ -19,7 +20,7 @@ T = TypeVar("T", bound="SimulateAutomationRequest")
 
 @_attrs_define
 class SimulateAutomationRequest:
-    """Sample workflow data and mocked action or timeout outcomes for a stateless simulation."""
+    """Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation."""
 
     definition: WorkflowSpec
     """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances
@@ -32,10 +33,17 @@ class SimulateAutomationRequest:
     """Successful action outputs keyed by root step name; explicit null is a supplied result."""
     mock_item_outputs: SimulateAutomationRequestMockItemOutputs | Unset = UNSET
     """Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked."""
+    mock_item_attempts: SimulateAutomationRequestMockItemAttempts | Unset = UNSET
+    """Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse
+    indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for
+    the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop
+    later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for
+    failed items when continuing."""
     mock_attempts: SimulateAutomationRequestMockAttempts | Unset = UNSET
-    """Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an
-    on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same
-    step."""
+    """Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one
+    success with the received payload as output, or one timeout with a configured timeout and on_timeout route.
+    Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action
+    timeouts require on_timeout. Cannot be combined with mock_outputs for the same step."""
 
     def to_dict(self) -> dict[str, Any]:
         definition = self.definition.to_dict()
@@ -49,6 +57,10 @@ class SimulateAutomationRequest:
         mock_item_outputs: dict[str, Any] | Unset = UNSET
         if not isinstance(self.mock_item_outputs, Unset):
             mock_item_outputs = self.mock_item_outputs.to_dict()
+
+        mock_item_attempts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.mock_item_attempts, Unset):
+            mock_item_attempts = self.mock_item_attempts.to_dict()
 
         mock_attempts: dict[str, Any] | Unset = UNSET
         if not isinstance(self.mock_attempts, Unset):
@@ -67,6 +79,8 @@ class SimulateAutomationRequest:
             field_dict["mock_outputs"] = mock_outputs
         if mock_item_outputs is not UNSET:
             field_dict["mock_item_outputs"] = mock_item_outputs
+        if mock_item_attempts is not UNSET:
+            field_dict["mock_item_attempts"] = mock_item_attempts
         if mock_attempts is not UNSET:
             field_dict["mock_attempts"] = mock_attempts
 
@@ -75,6 +89,7 @@ class SimulateAutomationRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
+        from ..models.simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
         from ..models.simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
         from ..models.simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
         from ..models.workflow_spec import WorkflowSpec
@@ -98,6 +113,13 @@ class SimulateAutomationRequest:
         else:
             mock_item_outputs = SimulateAutomationRequestMockItemOutputs.from_dict(_mock_item_outputs)
 
+        _mock_item_attempts = d.pop("mock_item_attempts", UNSET)
+        mock_item_attempts: SimulateAutomationRequestMockItemAttempts | Unset
+        if isinstance(_mock_item_attempts, Unset):
+            mock_item_attempts = UNSET
+        else:
+            mock_item_attempts = SimulateAutomationRequestMockItemAttempts.from_dict(_mock_item_attempts)
+
         _mock_attempts = d.pop("mock_attempts", UNSET)
         mock_attempts: SimulateAutomationRequestMockAttempts | Unset
         if isinstance(_mock_attempts, Unset):
@@ -110,6 +132,7 @@ class SimulateAutomationRequest:
             input_=input_,
             mock_outputs=mock_outputs,
             mock_item_outputs=mock_item_outputs,
+            mock_item_attempts=mock_item_attempts,
             mock_attempts=mock_attempts,
         )
 

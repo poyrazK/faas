@@ -435,6 +435,11 @@ type MemStore struct {
 	workflowSchedules           map[string]WorkflowScheduleCursor
 	workflowTenantSchedules     map[string]WorkflowScheduleCursor
 	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
+	automationFailurePolicies   map[string]api.AutomationFailurePolicy
+	automationFailureGuards     map[string]automationFailureGuard
+	automationFailureHistory    map[string][]api.AutomationFailureTransition
+	automationPublishPolicies   map[string]api.AutomationPublishPolicy
+	automationPublishReceipts   map[string]automationPublishReceipt
 	automationVersion           int64
 	automations                 map[string]Automation
 	automationRevisions         map[string][]AutomationRevision

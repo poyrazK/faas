@@ -355,11 +355,27 @@ from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
 from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
+from .automation_check_attempt import AutomationCheckAttempt
+from .automation_check_attempt_outcome import AutomationCheckAttemptOutcome
+from .automation_check_evidence import AutomationCheckEvidence
+from .automation_check_exclusion import AutomationCheckExclusion
+from .automation_check_exclusion_code import AutomationCheckExclusionCode
+from .automation_check_expectation import AutomationCheckExpectation
+from .automation_check_expectation_state import AutomationCheckExpectationState
+from .automation_check_scenario import AutomationCheckScenario
+from .automation_failure_policy import AutomationFailurePolicy
+from .automation_failure_policy_response import AutomationFailurePolicyResponse
+from .automation_failure_transition import AutomationFailureTransition
+from .automation_failure_transition_reason import AutomationFailureTransitionReason
+from .automation_failure_transition_state import AutomationFailureTransitionState
 from .automation_health_response import AutomationHealthResponse
 from .automation_health_response_status_counts import AutomationHealthResponseStatusCounts
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_publish_check_scenario import AutomationPublishCheckScenario
+from .automation_publish_policy import AutomationPublishPolicy
+from .automation_publish_policy_mode import AutomationPublishPolicyMode
 from .automation_queue_health import AutomationQueueHealth
 from .automation_queue_health_reason_counts import AutomationQueueHealthReasonCounts
 from .automation_response import AutomationResponse
@@ -457,6 +473,8 @@ from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
+from .check_automation_publication_request import CheckAutomationPublicationRequest
+from .check_automation_publication_response import CheckAutomationPublicationResponse
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
@@ -2677,6 +2695,7 @@ from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
@@ -3034,6 +3053,9 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
+from .set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
+from .set_automation_publish_policy_request import SetAutomationPublishPolicyRequest
+from .set_automation_publish_policy_request_mode import SetAutomationPublishPolicyRequestMode
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
@@ -3080,6 +3102,10 @@ from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
 from .simulate_automation_request import SimulateAutomationRequest
 from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
+from .simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
+from .simulate_automation_request_mock_item_attempts_additional_property import (
+    SimulateAutomationRequestMockItemAttemptsAdditionalProperty,
+)
 from .simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
 from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
 from .simulate_automation_response import SimulateAutomationResponse
@@ -3751,11 +3777,27 @@ __all__ = (
     "AutomaticRouteCheckLastErrorCode",
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
+    "AutomationCheckAttempt",
+    "AutomationCheckAttemptOutcome",
+    "AutomationCheckEvidence",
+    "AutomationCheckExclusion",
+    "AutomationCheckExclusionCode",
+    "AutomationCheckExpectation",
+    "AutomationCheckExpectationState",
+    "AutomationCheckScenario",
+    "AutomationFailurePolicy",
+    "AutomationFailurePolicyResponse",
+    "AutomationFailureTransition",
+    "AutomationFailureTransitionReason",
+    "AutomationFailureTransitionState",
     "AutomationHealthResponse",
     "AutomationHealthResponseStatusCounts",
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationPublishCheckScenario",
+    "AutomationPublishPolicy",
+    "AutomationPublishPolicyMode",
     "AutomationQueueHealth",
     "AutomationQueueHealthReasonCounts",
     "AutomationResponse",
@@ -3853,6 +3895,8 @@ __all__ = (
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
     "CheckAccountWorkflowReadinessBody",
+    "CheckAutomationPublicationRequest",
+    "CheckAutomationPublicationResponse",
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
@@ -5971,6 +6015,7 @@ __all__ = (
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
+    "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
@@ -6318,6 +6363,9 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
+    "SetAutomationFailurePolicyRequest",
+    "SetAutomationPublishPolicyRequest",
+    "SetAutomationPublishPolicyRequestMode",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
     "SetCanaryRouteGateRequest",
@@ -6362,6 +6410,8 @@ __all__ = (
     "SidecarType",
     "SimulateAutomationRequest",
     "SimulateAutomationRequestMockAttempts",
+    "SimulateAutomationRequestMockItemAttempts",
+    "SimulateAutomationRequestMockItemAttemptsAdditionalProperty",
     "SimulateAutomationRequestMockItemOutputs",
     "SimulateAutomationRequestMockOutputs",
     "SimulateAutomationResponse",

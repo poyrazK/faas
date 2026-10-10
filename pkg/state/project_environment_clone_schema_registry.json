@@ -8876,10 +8876,75 @@
     ]
   },
   {
+    "table": "workflow_automation_failure_guards",
+    "columns": [
+      "app_id",
+      "generation",
+      "monitoring_since",
+      "name",
+      "paused_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_history",
+    "columns": [
+      "actor_account_id",
+      "app_id",
+      "completed_runs",
+      "failures",
+      "generation",
+      "id",
+      "name",
+      "policy_version",
+      "reason",
+      "recorded_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_failure_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "min_completed_runs",
+      "name",
+      "version",
+      "window_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_publish_policies",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "mode",
+      "version"
+    ]
+  },
+  {
+    "table": "workflow_automation_publish_receipts",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "api_key_id",
+      "app_id",
+      "evidence",
+      "expires_at",
+      "name",
+      "policy_version",
+      "token_hash"
+    ]
+  },
+  {
     "table": "workflow_automation_revisions",
     "kind": "configuration",
     "columns": [
       "app_id",
+      "check_evidence",
       "definition",
       "legacy_snapshot",
       "name",

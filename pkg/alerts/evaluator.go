@@ -464,7 +464,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule))
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.investigationPaths(ctx, rule))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -1022,28 +1022,44 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // the canonical map across both sides, we guarantee the dashboard
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
-type preAuthPaths struct {
-	observations string
-	dashboard    string
+type investigationPaths struct {
+	observations     string
+	dashboard        string
+	appID            string
+	workflowRuns     string
+	workflowDeadRuns string
+	automations      string
 }
 
-func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.AlertRule) preAuthPaths {
-	if (rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
-		return preAuthPaths{}
+func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
+	workflow := isWorkflowMetric(rule.Metric)
+	if (!workflow && rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
+		return investigationPaths{}
 	}
+	ctx, cancel := context.WithTimeout(ctx, api.WorkflowAlertSnapshotReadTimeout)
+	defer cancel()
 	app, err := e.store.AppByID(ctx, rule.AppID)
 	if err != nil || app.AccountID != rule.AccountID || app.Slug == "" {
-		e.log.Warn("alerts: cannot resolve app for pre-auth observations link", "rule", rule.ID, "error", err)
-		return preAuthPaths{}
+		e.log.Warn("alerts: cannot resolve app for investigation links", "rule", rule.ID, "error", err)
+		return investigationPaths{}
 	}
 	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
-	return preAuthPaths{
+	if workflow {
+		paths := investigationPaths{appID: app.ID, automations: "/v1/apps/" + slug + "/automations"}
+		paths.workflowRuns = "/v1/apps/" + slug + "/workflows/runs"
+		if rule.Metric == state.AlertMetricWorkflowFailures {
+			paths.workflowDeadRuns = paths.workflowRuns + "?status=dead"
+			paths.workflowRuns += "?status=failed"
+		}
+		return paths
+	}
+	return investigationPaths{
 		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
 		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
 	}
 }
 
-func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([]byte, map[string]any, error) {
+func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -1063,6 +1079,14 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
 		m["dashboard_path"] = paths.dashboard
+	}
+	if paths.workflowRuns != "" {
+		m["app_id"] = paths.appID
+		m["workflow_runs_path"] = paths.workflowRuns
+		m["automations_path"] = paths.automations
+		if paths.workflowDeadRuns != "" {
+			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
+		}
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

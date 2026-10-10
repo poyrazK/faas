@@ -3910,6 +3910,12 @@ Build, monitor and control customer-built automations
 Examples:
 
 ```sh
+gregale automations init --list
+gregale automations check --app billing --scenarios scenarios.yaml
+gregale automations diff --app billing --name approval-flow
+gregale automations init --template scheduled-report --path reports
+gregale automations runs --app billing --name approval-flow --status failed
+gregale automations diagnose --app billing --name approval-flow --run RUN_ID
 gregale automations list --app billing
 gregale automations get --app billing --name paid-invoice
 gregale automations health --app billing --name paid-invoice
@@ -3924,6 +3930,43 @@ gregale automations publish --app billing --name paid-invoice --expected-version
 gregale automations restore --app billing --name paid-invoice --revision 42 --expected-version 47
 gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
 ```
+
+### automations diff
+
+Compare draft and published definition fields without exposing values
+
+`gregale automations diff --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+
+### automations check
+
+Check simulation scenarios and expected step outcomes
+
+`gregale automations check --app <SLUG> --scenarios <PATH> [--require-coverage] [--suggest] [--suggest-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--scenarios <PATH>` | scenario suite YAML or JSON file | required |
+| `--require-coverage` | fail on unexcluded coverage hints |  |
+| `--suggest` | write coverage scenario starters to a new file |  |
+| `--suggest-out <PATH>` | new suggestion file (requires --suggest; defaults beside the suite) |  |
+
+### automations init
+
+Create a local automation starter with simulation samples
+
+`gregale automations init [--template <NAME>] [--path <DIR>] [--list]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--template <NAME>` | automation starter name |  |
+| `--path <DIR>` | new directory (defaults to starter name) |  |
+| `--list` | list starters without creating files |  |
 
 ### automations list
 
@@ -3948,6 +3991,34 @@ Inspect automation state or export a definition
 | `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
 | `--published` | export the published definition instead of the draft |  |
 
+### automations runs
+
+List run history for one automation
+
+`gregale automations runs --app <SLUG> --name <NAME> [--status <STATUS>] [--limit <N>] [--offset <N>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--status <STATUS>` | pending, running, awaiting_event, succeeded, failed or dead |  |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | page offset |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 creation-time start |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 creation-time end |  |
+
+### automations diagnose
+
+Diagnose a run belonging to the selected automation
+
+`gregale automations diagnose --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | workflow run UUID | required |
+
 ### automations health
 
 Show bounded run reliability and failed-step metrics
@@ -3960,6 +4031,34 @@ Show bounded run reliability and failed-step metrics
 | `--name <NAME>` | automation name | required |
 | `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
 | `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+
+### automations failure-policy
+
+Inspect failure pause status, history and resume preview or configure monitoring
+
+`gregale automations failure-policy --app <SLUG> --name <NAME> [--enabled <BOOL>] [--expected-version <N>] [--failure-threshold <N>] [--min-completed-runs <N>] [--window-seconds <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--enabled <BOOL>` | enable or disable monitoring; required when configuring |  |
+| `--expected-version <N>` | current failure policy version; required when configuring |  |
+| `--failure-threshold <N>` | terminal failures needed to pause (1..10000, default 3) |  |
+| `--min-completed-runs <N>` | minimum completed outcomes (1..10000, default 5) |  |
+| `--window-seconds <N>` | observation window (60..86400, default 300) |  |
+
+### automations failure-resume
+
+Preview retained work and explicitly clear a failure pause
+
+`gregale automations failure-resume --app <SLUG> --name <NAME> --expected-generation <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--expected-generation <N>` | current failure pause generation | required |
 
 ### automations pause
 
@@ -4057,7 +4156,7 @@ Validate an automation definition without saving it
 
 Trace an automation using sample input and mocked outputs, without running steps
 
-`gregale automations simulate --app <SLUG> --file <PATH> [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--require-complete]`
+`gregale automations simulate --app <SLUG> --file <PATH> [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--mock-item-attempts-file <PATH>] [--require-complete]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4067,6 +4166,7 @@ Trace an automation using sample input and mocked outputs, without running steps
 | `--mock-outputs-file <PATH>` | JSON object of action outputs keyed by step name |  |
 | `--mock-item-outputs-file <PATH>` | JSON object of for_each output arrays keyed by step name |  |
 | `--mock-attempts-file <PATH>` | JSON object of ordered attempt outcomes keyed by step name |  |
+| `--mock-item-attempts-file <PATH>` | JSON object mapping loops and zero-based item indexes to attempt outcomes |  |
 | `--require-complete` | fail if mocks leave steps unresolved |  |
 
 ### automations apply
@@ -4081,11 +4181,23 @@ Save an automation definition as a draft
 | `--file <PATH>` | YAML or JSON definition file | required |
 | `--expected-version <N>` | current version; use 0 for a new draft | required |
 
+### automations publish-policy
+
+Inspect or set required server publishing checks
+
+`gregale automations publish-policy --app <SLUG> [--mode <MODE>] [--expected-version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--mode <MODE>` | set publishing requirement (admin scope) | one of `optional` · `scenarios` · `coverage` |
+| `--expected-version <N>` | current policy version (required when setting mode) |  |
+
 ### automations publish
 
 Publish the current automation draft
 
-`gregale automations publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest]`
+`gregale automations publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4093,6 +4205,8 @@ Publish the current automation draft
 | `--name <NAME>` | automation name | required |
 | `--expected-version <N>` | current version of the draft | required |
 | `--take-over-manifest` | explicitly take over YAML ownership |  |
+| `--scenarios <PATH>` | check scenarios against the saved draft before publishing |  |
+| `--require-coverage` | require coverage before publishing (requires --scenarios) |  |
 
 
 ## workflows

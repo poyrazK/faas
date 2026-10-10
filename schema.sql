@@ -210,7 +210,7 @@ $$;
 CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
- SELECT coalesce(jsonb_agg(definition ORDER BY definition->>'name'),'[]'::jsonb)
+ SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
  FROM (
   SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
   WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
@@ -12642,7 +12642,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -14032,7 +14032,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -26293,6 +26293,100 @@ CREATE TABLE public.workflow_automation_definitions (
 
 
 --
+-- Name: workflow_automation_failure_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_guards (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    monitoring_since timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    paused_at timestamp with time zone,
+    CONSTRAINT workflow_automation_failure_guards_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT workflow_automation_failure_guards_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128)))
+);
+
+
+--
+-- Name: workflow_automation_failure_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    generation bigint NOT NULL,
+    state text NOT NULL,
+    reason text NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    failures bigint NOT NULL,
+    completed_runs bigint NOT NULL,
+    policy_version bigint NOT NULL,
+    actor_account_id uuid,
+    CONSTRAINT workflow_automation_failure_history_check CHECK ((completed_runs >= failures)),
+    CONSTRAINT workflow_automation_failure_history_failures_check CHECK ((failures >= 0)),
+    CONSTRAINT workflow_automation_failure_history_generation_check CHECK ((generation > 0)),
+    CONSTRAINT workflow_automation_failure_history_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_failure_history_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_automation_failure_history_reason_check CHECK ((reason = ANY (ARRAY['failure_threshold'::text, 'operator_resume'::text]))),
+    CONSTRAINT workflow_automation_failure_history_state_check CHECK ((state = ANY (ARRAY['paused'::text, 'resumed'::text])))
+);
+
+
+--
+-- Name: workflow_automation_failure_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_failure_policies (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    failure_threshold integer NOT NULL,
+    min_completed_runs integer NOT NULL,
+    window_seconds integer NOT NULL,
+    CONSTRAINT workflow_automation_failure_policies_failure_threshold_check CHECK (((failure_threshold >= 1) AND (failure_threshold <= 10000))),
+    CONSTRAINT workflow_automation_failure_policies_min_completed_runs_check CHECK (((min_completed_runs >= 1) AND (min_completed_runs <= 10000))),
+    CONSTRAINT workflow_automation_failure_policies_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_failure_policies_version_check CHECK ((version > 0)),
+    CONSTRAINT workflow_automation_failure_policies_window_seconds_check CHECK (((window_seconds >= 60) AND (window_seconds <= 86400)))
+);
+
+
+--
+-- Name: workflow_automation_publish_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_publish_policies (
+    app_id uuid NOT NULL,
+    mode text NOT NULL,
+    version bigint NOT NULL,
+    CONSTRAINT workflow_automation_publish_policies_mode_check CHECK ((mode = ANY (ARRAY['optional'::text, 'scenarios'::text, 'coverage'::text]))),
+    CONSTRAINT workflow_automation_publish_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: workflow_automation_publish_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_publish_receipts (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    account_id uuid NOT NULL,
+    api_key_id text DEFAULT ''::text NOT NULL,
+    token_hash text NOT NULL,
+    policy_version bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    evidence jsonb NOT NULL,
+    CONSTRAINT workflow_automation_publish_receipts_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT workflow_automation_publish_receipts_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0)),
+    CONSTRAINT workflow_automation_publish_receipts_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: workflow_automation_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26305,6 +26399,7 @@ CREATE TABLE public.workflow_automation_revisions (
     legacy_snapshot boolean DEFAULT false NOT NULL,
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
+    check_evidence jsonb,
     CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
@@ -26561,7 +26656,7 @@ CREATE TABLE public.workflow_webhook_receipts (
     accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT workflow_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
     CONSTRAINT workflow_webhook_receipts_check CHECK ((((status = 'accepted'::text) AND (recipient_id IS NOT NULL) AND (ignored_reason IS NULL)) OR ((status = 'ignored'::text) AND (recipient_id IS NULL) AND (ignored_reason IS NOT NULL)))),
-    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
+    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'automation_failure_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
     CONSTRAINT workflow_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
     CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
     CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
@@ -32550,6 +32645,54 @@ ALTER TABLE ONLY public.webhook_deliveries
 
 ALTER TABLE ONLY public.workflow_automation_definitions
     ADD CONSTRAINT workflow_automation_definitions_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_failure_guards workflow_automation_failure_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_guards
+    ADD CONSTRAINT workflow_automation_failure_guards_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_app_id_name_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_app_id_name_generation_key UNIQUE (app_id, name, generation);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_automation_failure_policies workflow_automation_failure_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_policies
+    ADD CONSTRAINT workflow_automation_failure_policies_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_publish_policies workflow_automation_publish_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_policies
+    ADD CONSTRAINT workflow_automation_publish_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_pkey PRIMARY KEY (app_id, name, account_id, api_key_id);
 
 
 --
@@ -38858,6 +39001,13 @@ CREATE INDEX warm_hint_node_id_idx ON public.warm_hint USING btree (node_id);
 --
 
 CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING btree (expires_at);
+
+
+--
+-- Name: workflow_automation_failure_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_automation_failure_finished_idx ON public.workflow_runs USING btree (app_id, workflow_name, finished_at) WHERE ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead'::text])) AND (cancelled_at IS NULL) AND (operation_id IS NULL));
 
 
 --
@@ -50391,6 +50541,62 @@ ALTER TABLE ONLY public.usage_minutes
 
 ALTER TABLE ONLY public.workflow_automation_definitions
     ADD CONSTRAINT workflow_automation_definitions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_failure_guards workflow_automation_failure_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_guards
+    ADD CONSTRAINT workflow_automation_failure_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_actor_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_actor_account_id_fkey FOREIGN KEY (actor_account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: workflow_automation_failure_history workflow_automation_failure_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_history
+    ADD CONSTRAINT workflow_automation_failure_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_failure_policies workflow_automation_failure_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_failure_policies
+    ADD CONSTRAINT workflow_automation_failure_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_policies workflow_automation_publish_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_policies
+    ADD CONSTRAINT workflow_automation_publish_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_publish_receipts workflow_automation_publish_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_publish_receipts
+    ADD CONSTRAINT workflow_automation_publish_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

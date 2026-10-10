@@ -149,6 +149,17 @@
       "platform": "linux/amd64",
       "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
       "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
+    },
+    {
+      "dockerfile": "images/builder-base.Dockerfile",
+      "instruction": "FROM",
+      "alias": "golang:1.26.9",
+      "resolved_repo": "docker.io/library/golang",
+      "resolved_tag": "1.26.9",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build"
     }
   ]
 }

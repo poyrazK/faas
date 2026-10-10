@@ -209,6 +209,7 @@ type Loop struct {
 	// workflow dispatch tick (ADR-081).
 	workflowsDispatched               bool
 	workflowScheduleMinute            int64
+	workflowFailurePolicyAfter        string
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool

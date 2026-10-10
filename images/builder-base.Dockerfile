@@ -8,15 +8,14 @@
 # CI can verify that the cross-compiled guest binaries and upstream assets stay
 # complete for every published platform.
 #
-# Railpack, BuildKit and runc are compiled from checksum-pinned sources
+# Railpack, BuildKit, and runc are compiled from checksum-pinned sources
 # below so the image does not inherit stale Go dependencies from opaque
 # upstream binaries. Versions are pinned via build-args so CI can override
 # them per release without churning this file.
 
 # ---- railpack (Node/Python builder, spec §4.5) ---------------------------
-# Keep the release behavior while rebuilding the CLI with the image's patched
-# Go toolchain and dependency floor. The upstream binary embeds Go 1.26.7 and
-# x/net v0.58.0, including fixed HIGH/CRITICAL vulnerabilities.
+# Keep the matching frontend release, but rebuild the CLI with patched Go
+# dependencies rather than importing its vulnerable upstream binary.
 ARG RAILPACK_VERSION=0.38.0
 ARG RAILPACK_SOURCE_SHA256=ae2ec93af2ecf000be8bf08d060a9440346f60407f16d072b25ac16eb8d34e11
 
@@ -85,6 +84,32 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
       go build -trimpath -tags linux \
         -o /out/faas-guest-init ./guest/init
+
+# ---- railpack (same frontend contract, patched CLI dependencies) --------
+FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build
+WORKDIR /src/railpack
+ARG RAILPACK_VERSION
+ARG RAILPACK_SOURCE_SHA256
+ARG TARGETOS
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+      rm -rf /var/lib/apt/lists/* && \
+      curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+        -o /tmp/railpack-source.tgz \
+        "https://github.com/railwayapp/railpack/archive/refs/tags/v${RAILPACK_VERSION}.tar.gz" && \
+      echo "${RAILPACK_SOURCE_SHA256}  /tmp/railpack-source.tgz" | sha256sum -c - && \
+      tar -xzf /tmp/railpack-source.tgz --strip-components=1 -C /src/railpack && \
+      rm /tmp/railpack-source.tgz && \
+      go mod edit -go=1.26.9 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
+      GOTOOLCHAIN=local go mod tidy && \
+      CGO_ENABLED=0 GOTOOLCHAIN=local GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+        go build -mod=mod -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
+          -o /out/railpack ./cmd/cli && \
+      go version -m /out/railpack | tee /tmp/railpack-build-info && \
+      grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
+      grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info && \
+      ! grep -Eq 'v0.58.0|go1.26.7' /tmp/railpack-build-info
 
 # ---- runc (builder OCI runtime) -----------------------------------------
 # The official runc asset is intentionally not copied into the final image:
@@ -163,29 +188,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildctl ./cmd/buildctl
 
-# ---- railpack (same release, patched compiler and dependencies) ----------
-# Reuse the native checksum-pinned Go stage and cross-compile for TARGETARCH.
-# Binary build metadata is checked before the final image can copy it.
-WORKDIR /src/railpack
-ARG RAILPACK_VERSION
-ARG RAILPACK_SOURCE_SHA256
-RUN curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
-        -o /tmp/railpack-source.tgz \
-        "https://github.com/railwayapp/railpack/archive/refs/tags/v${RAILPACK_VERSION}.tar.gz" && \
-      echo "${RAILPACK_SOURCE_SHA256}  /tmp/railpack-source.tgz" | sha256sum -c - && \
-      tar -xzf /tmp/railpack-source.tgz --strip-components=1 -C /src/railpack && \
-      rm /tmp/railpack-source.tgz && \
-      go mod edit -go=1.26.9 && \
-      go mod edit -require=golang.org/x/net@v0.60.0 && \
-      GOTOOLCHAIN=local go mod tidy && \
-      CGO_ENABLED=0 GOTOOLCHAIN=local GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-        go build -mod=mod -trimpath \
-          -ldflags "-s -w -X main.version=${RAILPACK_VERSION}" \
-          -o /out/railpack ./cmd/cli && \
-      go version -m /out/railpack | tee /tmp/railpack-build-info && \
-      grep -q '^/out/railpack: go1.26.9$' /tmp/railpack-build-info && \
-      grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info
-
 # ---- stage 2: assemble the runtime rootfs -------------------------------
 # See the stage 1 FROM above re: $TARGETPLATFORM handling.
 # Docker's build-time /etc/resolv.conf is a read-only injected mount, so keep
@@ -246,10 +248,9 @@ COPY --from=buildkit-client-build /out/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit-client-build /out/buildctl /usr/local/bin/buildctl
 RUN chmod 0755 /usr/local/bin/buildkitd /usr/local/bin/buildctl
 
-# The same Railpack release is built above with checked compiler/module
-# metadata. Each target manifest gets its own static CLI binary.
-COPY --from=buildkit-client-build /out/railpack /usr/local/bin/railpack
-RUN chmod 0755 /usr/local/bin/railpack && /usr/local/bin/railpack --version
+# The source-built CLI retains the version used by guest-init's frontend.
+COPY --from=railpack-build /out/railpack /usr/local/bin/railpack
+RUN /usr/local/bin/railpack --version
 
 # Railpack currently downloads a glibc mise asset at build time. Keep a
 # musl-compatible copy in the builder image; guest-init stages it into the
