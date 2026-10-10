@@ -58,6 +58,7 @@ native_e2e_phase_files() {
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
       direct_oci_port_metal_test.go \
+      guest_tracing_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       private_service_tcp_metal_test.go \
