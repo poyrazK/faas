@@ -65,6 +65,7 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 		}
 		out = append(out, gateway.EdgeRuleRetryResolved{
 			ID:                 r.ID,
+			EdgeRuleCondition:  compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:          r.AccountID,
 			AppID:              r.AppID,
 			Priority:           r.Priority,
@@ -124,18 +125,19 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 			maxOpen = open
 		}
 		out = append(out, gateway.EdgeRuleCircuitBreakerResolved{
-			ID:               r.ID,
-			AccountID:        r.AccountID,
-			AppID:            r.AppID,
-			Priority:         r.Priority,
-			PathGlob:         r.MatchPath,
-			Methods:          buildMethodsMap(r.MatchMethods),
-			MatchHeaders:     buildMatchHeadersMap(r.MatchHeaders),
-			FailureThreshold: threshold,
-			MinRequests:      minRequests,
-			Window:           time.Duration(window) * time.Second,
-			OpenDuration:     time.Duration(open) * time.Second,
-			MaxOpenDuration:  time.Duration(maxOpen) * time.Second,
+			ID:                r.ID,
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
+			AccountID:         r.AccountID,
+			AppID:             r.AppID,
+			Priority:          r.Priority,
+			PathGlob:          r.MatchPath,
+			Methods:           buildMethodsMap(r.MatchMethods),
+			MatchHeaders:      buildMatchHeadersMap(r.MatchHeaders),
+			FailureThreshold:  threshold,
+			MinRequests:       minRequests,
+			Window:            time.Duration(window) * time.Second,
+			OpenDuration:      time.Duration(open) * time.Second,
+			MaxOpenDuration:   time.Duration(maxOpen) * time.Second,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
@@ -161,7 +163,9 @@ func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Retry
 	}
-	return gateway.PickFirstRetryMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstRetryMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstRetryMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchCircuitBreaker is the ADR-201 §2 matcher.
@@ -181,5 +185,7 @@ func (g *gatewaydEdgeRules) MatchCircuitBreaker(ctx context.Context, host, reque
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CircuitBreaker
 	}
-	return gateway.PickFirstCircuitBreakerMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstCircuitBreakerMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstCircuitBreakerMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }

@@ -562,9 +562,12 @@ from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequest
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
 from .create_dev_bridge_request import CreateDevBridgeRequest
 from .create_dev_bridge_response import CreateDevBridgeResponse
+from .create_edge_rule_list_request import CreateEdgeRuleListRequest
+from .create_edge_rule_list_request_kind import CreateEdgeRuleListRequestKind
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
+from .create_edge_rule_request_mode import CreateEdgeRuleRequestMode
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
@@ -898,16 +901,24 @@ from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
 from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
+from .edge_rule_event_response import EdgeRuleEventResponse
+from .edge_rule_event_response_outcome import EdgeRuleEventResponseOutcome
+from .edge_rule_events_response import EdgeRuleEventsResponse
 from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
 from .edge_rule_header_op_action import EdgeRuleHeaderOpAction
 from .edge_rule_headers_action import EdgeRuleHeadersAction
+from .edge_rule_hit_stats_response import EdgeRuleHitStatsResponse
 from .edge_rule_ip_action import EdgeRuleIPAction
 from .edge_rule_jwt_action import EdgeRuleJWTAction
 from .edge_rule_jwt_action_algorithms_item import EdgeRuleJWTActionAlgorithmsItem
 from .edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
 from .edge_rule_limit_action import EdgeRuleLimitAction
+from .edge_rule_list_response import EdgeRuleListResponse
+from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+from .edge_rule_match_expr import EdgeRuleMatchExpr
+from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
@@ -915,10 +926,14 @@ from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
+from .edge_rule_response_mode import EdgeRuleResponseMode
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
+from .edge_rule_set_version_response import EdgeRuleSetVersionResponse
+from .edge_rule_stats_response import EdgeRuleStatsResponse
+from .edge_rule_stats_response_window import EdgeRuleStatsResponseWindow
 from .edge_rule_suggestion import EdgeRuleSuggestion
 from .edge_rule_suggestion_action import EdgeRuleSuggestionAction
 from .edge_rule_suggestion_kind import EdgeRuleSuggestionKind
@@ -1343,6 +1358,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
@@ -1526,6 +1542,8 @@ from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
+from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
+from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
@@ -2753,6 +2771,7 @@ from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import 
 )
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
@@ -3298,8 +3317,10 @@ from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpe
 from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
+from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
+from .update_edge_rule_request_mode import UpdateEdgeRuleRequestMode
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
@@ -4034,9 +4055,12 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreateEdgeRuleListRequest",
+    "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
+    "CreateEdgeRuleRequestMode",
     "CreateEdgeRuleRequestValidateMode",
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
@@ -4354,16 +4378,24 @@ __all__ = (
     "EdgeRuleCacheActionVaryOnItem",
     "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
+    "EdgeRuleEventResponse",
+    "EdgeRuleEventResponseOutcome",
+    "EdgeRuleEventsResponse",
     "EdgeRuleGeoAction",
     "EdgeRuleHeaderOp",
     "EdgeRuleHeaderOpAction",
     "EdgeRuleHeadersAction",
+    "EdgeRuleHitStatsResponse",
     "EdgeRuleIPAction",
     "EdgeRuleJWTAction",
     "EdgeRuleJWTActionAlgorithmsItem",
     "EdgeRuleJWTActionRequiredClaims",
     "EdgeRuleLimitAction",
+    "EdgeRuleListResponse",
+    "EdgeRuleListResponseKind",
     "EdgeRuleMaintenanceAction",
+    "EdgeRuleMatchExpr",
+    "EdgeRuleMatchExprOp",
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
@@ -4371,10 +4403,14 @@ __all__ = (
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseMatchHeaders",
+    "EdgeRuleResponseMode",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
+    "EdgeRuleSetVersionResponse",
+    "EdgeRuleStatsResponse",
+    "EdgeRuleStatsResponseWindow",
     "EdgeRuleSuggestion",
     "EdgeRuleSuggestionAction",
     "EdgeRuleSuggestionKind",
@@ -4787,6 +4823,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetEdgeRuleStatsWindow",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
     "GetEventBacklogOrigin",
@@ -4968,6 +5005,8 @@ __all__ = (
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
+    "ListEdgeRuleEventsOutcome",
+    "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
@@ -6115,6 +6154,7 @@ __all__ = (
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",
@@ -6638,8 +6678,10 @@ __all__ = (
     "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
+    "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
+    "UpdateEdgeRuleRequestMode",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",

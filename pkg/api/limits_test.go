@@ -200,7 +200,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (route|rewrite|redirect|headers|cors) but jwt/ip stay
 			// plan-gated to Hobby+. The limits surface reflects only
 			// what the create handler will accept (5 rules total).
-			EdgeRulesPerApp: 5, EdgeRulesJWTAllowed: false, EdgeRulesIPAllowed: false, EdgeRulesGeoPerApp: 1, EdgeRulesThrottlePerApp: 1, EdgeRulesCachePerApp: 0,
+			EdgeRulesPerApp: 5, EdgeRuleEventsWindowHours: 24, EdgeRuleListsPerAccount: 0, EdgeRuleListMaxItems: 0, EdgeRulesJWTAllowed: false, EdgeRulesIPAllowed: false, EdgeRulesGeoPerApp: 1, EdgeRulesThrottlePerApp: 1, EdgeRulesCachePerApp: 0,
 			EdgeRulesRetryPerApp: 0, EdgeRulesCircuitBreakerPerApp: 0, EgressCircuitBreakersPerApp: 0,
 			// issue #975 #4 / Mega-Foundation #979-b — Free is the abuse-floor tier;
 			// the abstraction is the upsell. PR-B (#979-c) wires the writer.
@@ -367,7 +367,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// AND the jwt|ip kinds. The plan-kind gate surface
 			// (EdgeRulesJWTAllowed / EdgeRulesIPAllowed) feeds the
 			// 402 response in handlers_edge_rules.go for Free.
-			EdgeRulesPerApp: 25, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 5, EdgeRulesThrottlePerApp: 5, EdgeRulesCachePerApp: 1,
+			EdgeRulesPerApp: 25, EdgeRuleEventsWindowHours: 72, EdgeRuleListsPerAccount: 5, EdgeRuleListMaxItems: 100, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 5, EdgeRulesThrottlePerApp: 5, EdgeRulesCachePerApp: 1,
 			EdgeRulesRetryPerApp: 3, EdgeRulesCircuitBreakerPerApp: 3, EgressCircuitBreakersPerApp: 3,
 			// issue #975 #4 / Mega-Foundation #979-b — Hobby is the entry paid tier.
 			CorsPresetsPerAccount: 10, CorsPresetsPerApp: 5, CorsPresetMaxOrigins: 25, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
@@ -527,7 +527,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-089 (planned): edge rules — Pro unlocks 100 rules
 			// AND jwt|ip. Same surface as Hobby; the gate only
 			// flips the Free arm of the kind-switch.
-			EdgeRulesPerApp: 100, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 25, EdgeRulesThrottlePerApp: 25, EdgeRulesCachePerApp: 5,
+			EdgeRulesPerApp: 100, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 20, EdgeRuleListMaxItems: 1000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 25, EdgeRulesThrottlePerApp: 25, EdgeRulesCachePerApp: 5,
 			EdgeRulesRetryPerApp: 10, EdgeRulesCircuitBreakerPerApp: 10, EgressCircuitBreakersPerApp: 10,
 			// issue #975 #4 / Mega-Foundation #979-b — Pro is the typical SaaS tier.
 			CorsPresetsPerAccount: 50, CorsPresetsPerApp: 15, CorsPresetMaxOrigins: 100, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
@@ -692,7 +692,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (5× Pro) AND jwt|ip. The 500 cap is the practical upper
 			// bound the LRU + per-host matcher budget tolerates before
 			// per-host invalidation becomes load-bearing.
-			EdgeRulesPerApp: 500, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 100, EdgeRulesThrottlePerApp: 100, EdgeRulesCachePerApp: 20,
+			EdgeRulesPerApp: 500, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 100, EdgeRuleListMaxItems: 10000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 100, EdgeRulesThrottlePerApp: 100, EdgeRulesCachePerApp: 20,
 			EdgeRulesRetryPerApp: 25, EdgeRulesCircuitBreakerPerApp: 25, EgressCircuitBreakersPerApp: 50,
 			// issue #975 #4 / Mega-Foundation #979-b — Scale is the large-fleet tier.
 			CorsPresetsPerAccount: 250, CorsPresetsPerApp: 50, CorsPresetMaxOrigins: 500, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,

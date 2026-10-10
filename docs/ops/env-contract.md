@@ -200,6 +200,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
+| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |

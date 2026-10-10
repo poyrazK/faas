@@ -757,3 +757,155 @@ func TestPgStore_EdgeRule_ValidateModeInvalidRejected(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// ADR-961: every committed change records the app's whole rule set as a new
+// version (the deferred trigger collapses a multi-row commit into one), an
+// expired rule is listed but not served, and a restore puts back an earlier
+// set — same rule IDs and labels — as a new version.
+func TestPgStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "versions")
+
+	first := pgSampleEdgeRuleParams(acct, app, "versions.example.com")
+	first.Name = "first"
+	r1, err := s.CreateEdgeRuleIfUnderQuota(ctx, first, limits)
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second := pgSampleEdgeRuleParams(acct, app, "versions.example.com")
+	past := time.Now().Add(-time.Minute)
+	second.ExpiresAt = &past
+	if _, err := s.CreateEdgeRuleIfUnderQuota(ctx, second, limits); err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	served, err := s.MatchEdgeRulesForHost(ctx, "versions.example.com")
+	if err != nil || len(served) != 1 || served[0].ID != r1.ID {
+		t.Fatalf("gateway read = %v, %v; want only the unexpired rule", served, err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, r1.ID, state.UpdateEdgeRuleParams{Name: ptr("renamed")}); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	versions, err := s.ListEdgeRuleSetVersions(ctx, app, 10)
+	if err != nil || len(versions) != 3 {
+		t.Fatalf("versions = %+v, %v; want 3 (create, create, rename)", versions, err)
+	}
+	if versions[0].Version != 3 || versions[0].RuleCount != 2 || versions[2].RuleCount != 1 {
+		t.Fatalf("versions newest-first = %+v", versions)
+	}
+	if latest, _ := s.LatestEdgeRuleSetVersion(ctx, app); latest != 3 {
+		t.Fatalf("latest = %d, want 3", latest)
+	}
+
+	restore, err := s.RestoreEdgeRuleSetVersion(ctx, app, 1, limits)
+	if err != nil {
+		t.Fatalf("restore v1: %v", err)
+	}
+	if len(restore.Rules) != 1 || restore.Rules[0].ID != r1.ID || restore.Rules[0].Name != "first" {
+		t.Fatalf("restored = %+v, want the original first rule with its original name", restore.Rules)
+	}
+	if len(restore.PreviousHosts) != 1 || restore.PreviousHosts[0] != "versions.example.com" {
+		t.Fatalf("previous hosts = %v", restore.PreviousHosts)
+	}
+	if latest, _ := s.LatestEdgeRuleSetVersion(ctx, app); latest != 4 {
+		t.Fatalf("restore did not append a new version: latest = %d", latest)
+	}
+	v4, err := s.GetEdgeRuleSetVersion(ctx, app, 4)
+	v1, _ := s.GetEdgeRuleSetVersion(ctx, app, 1)
+	if err != nil || v4.RulesSHA256 != v1.RulesSHA256 {
+		t.Fatalf("restored version digest = %q, want v1's %q (%v)", v4.RulesSHA256, v1.RulesSHA256, err)
+	}
+	if _, err := s.RestoreEdgeRuleSetVersion(ctx, app, 99, limits); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown version err = %v, want ErrNotFound", err)
+	}
+	tight := limits
+	tight.EdgeRulesPerApp = 1
+	var quotaErr *state.EdgeRuleQuotaError
+	if _, err := s.RestoreEdgeRuleSetVersion(ctx, app, 3, tight); !errors.As(err, &quotaErr) {
+		t.Fatalf("over-quota restore err = %v, want *EdgeRuleQuotaError", err)
+	}
+}
+
+// ADR-962: a match condition round-trips through edge_rules.match_expr, is
+// part of the rule-set snapshot, and comes back on rollback.
+func TestPgStore_EdgeRuleMatchExpr_RoundTripAndRollback(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "match-expr")
+
+	params := pgSampleEdgeRuleParams(acct, app, "match-expr.example.com")
+	params.Match = &api.EdgeRuleMatchExpr{Any: []api.EdgeRuleMatchExpr{
+		{Field: "cookie:beta", Op: "eq", Value: "1"},
+		{Field: "client_ip", Op: "cidr", Values: []string{"10.0.0.0/8"}},
+	}}
+	created, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, limits)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := s.GetEdgeRuleByID(ctx, created.ID)
+	if err != nil || got.Match == nil || len(got.Match.Any) != 2 || got.Match.Any[1].Values[0] != "10.0.0.0/8" {
+		t.Fatalf("stored condition = %+v, %v", got.Match, err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, created.ID, state.UpdateEdgeRuleParams{ClearMatch: true}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got, _ := s.GetEdgeRuleByID(ctx, created.ID); got.Match != nil {
+		t.Fatalf("condition not cleared: %+v", got.Match)
+	}
+	v1, err := s.GetEdgeRuleSetVersion(ctx, app, 1)
+	if err != nil || len(v1.Rules) != 1 || v1.Rules[0].Match == nil {
+		t.Fatalf("version 1 snapshot lost the condition: %+v, %v", v1.Rules, err)
+	}
+	restored, err := s.RestoreEdgeRuleSetVersion(ctx, app, 1, limits)
+	if err != nil || len(restored.Rules) != 1 || restored.Rules[0].Match == nil || len(restored.Rules[0].Match.Any) != 2 {
+		t.Fatalf("rollback did not restore the condition: %+v, %v", restored.Rules, err)
+	}
+}
+
+// ADR-960: mode round-trips and defaults to enforce; hit counts from two
+// flushes into the same hour add up, totals respect the window, and pruning
+// removes expired buckets.
+func TestPgStore_EdgeRuleModeAndHitCounts(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "log-mode")
+
+	enforced, err := s.CreateEdgeRuleIfUnderQuota(ctx, pgSampleEdgeRuleParams(acct, app, "log-mode.example.com"), limits)
+	if err != nil || enforced.Mode != state.EdgeRuleModeEnforce {
+		t.Fatalf("default mode = %q, %v", enforced.Mode, err)
+	}
+	params := pgSampleEdgeRuleParams(acct, app, "log-mode.example.com")
+	params.Mode = state.EdgeRuleModeLog
+	logged, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, limits)
+	if err != nil || logged.Mode != state.EdgeRuleModeLog {
+		t.Fatalf("log mode = %q, %v", logged.Mode, err)
+	}
+
+	now := time.Now().UTC()
+	old := now.Add(-48 * time.Hour)
+	for range 2 {
+		if err := s.RecordEdgeRuleHits(ctx, []state.EdgeRuleHit{
+			{RuleID: enforced.ID, AppID: app, Bucket: now, Outcome: state.EdgeRuleHitMatched, Hits: 3},
+			{RuleID: logged.ID, AppID: app, Bucket: now, Outcome: state.EdgeRuleHitLogged, Hits: 5},
+		}); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+	if err := s.RecordEdgeRuleHits(ctx, []state.EdgeRuleHit{{RuleID: enforced.ID, AppID: app, Bucket: old, Outcome: state.EdgeRuleHitMatched, Hits: 100}}); err != nil {
+		t.Fatalf("record old: %v", err)
+	}
+	stats, err := s.EdgeRuleHitStatsForApp(ctx, app, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]state.EdgeRuleHitStats{}
+	for _, st := range stats {
+		got[st.RuleID] = st
+	}
+	if got[enforced.ID].Matched != 6 || got[logged.ID].Logged != 10 {
+		t.Fatalf("24h stats = %+v, want matched 6 and logged 10", stats)
+	}
+	if n, err := s.PruneEdgeRuleHitCounts(ctx, now.Add(-24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("prune removed %d, %v; want 1 expired bucket", n, err)
+	}
+}

@@ -58,6 +58,7 @@ import (
 // callers cannot cross-serve cached bodies from a sibling cohort. cmd-side
 // compileCacheRules therefore leaves DeploymentID out of the Resolved struct.
 type EdgeRuleCacheResolved struct {
+	EdgeRuleCondition
 	ID                          string
 	AccountID                   string
 	AppID                       string
