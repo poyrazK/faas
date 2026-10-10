@@ -8287,6 +8287,29 @@ PostgreSQL copy readers and copy targets remain blocked until their complete
 retirement provenance is connected. Whole-stage reconciliation and qualified
 native provider adapters remain outstanding; public full-stage admission is gated.
 
+### Permanent PostgreSQL copy dependency retirement contract
+
+The private copy retirement contract pins the original adopted, isolated capture
+and frozen SQL scope, plus the original reader and/or independent copy-target
+ownership journals. Plans and proofs are bounded by
+`PostgresCheckpointCopyRetirementMaxBytes` (2 MiB). Native observations must
+permanently fence the original creation keys, close all reader operations
+(including queued cleanup) and all copy writers, and prove each complete owner
+namespace absent with no native grants. Source data, snapshot and capture must
+remain unchanged.
+
+Unknown native identities may remain unknown under owner-wide absence proof, or
+be supplied by the qualified observer after an original request was dispatched.
+Known identities cannot change; undispatched reservations cannot invent physical
+identities. Proofs for omitted dependencies, protected source/capture identities,
+missing closure and changed terminal replay are rejected. Legacy deleted/retired
+labels and deletion receipts do not satisfy this contract.
+
+This is a proof contract only. Durable journal authentication, once-only dispatch,
+atomic borrower catalogue retirement and capture-gate integration remain to be
+implemented. PostgreSQL copy dependencies and public full-stage admission remain
+gated; no native provider adapter is qualified by these shape checks.
+
 ### Checkpoint terminal compensation gate
 
 The generic operation transition now refuses `compensating` to `compensated`

@@ -8836,3 +8836,6 @@ const CheckpointCaptureRetirementMaxBytes = 16 << 20
 
 // Bounds for private PostgreSQL checkpoint target compensation evidence.
 const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20
+
+// Original PostgreSQL copy ownership and permanent retirement observations.
+const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
