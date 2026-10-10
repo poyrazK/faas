@@ -292,3 +292,5 @@ export type { OperationWorkflowUnmetEffect } from './generated/models/OperationW
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
 
 export type { OperationWorkflowChangeReason } from "./customer-operation-decisions.js";
+
+export type { OperationWorkflowOutcomeLink } from './customer-operations.js';

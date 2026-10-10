@@ -88,6 +88,7 @@ type CustomerOperationWorkflow struct {
 
 type CustomerOperationWorkflowStateHistory struct {
 	ChangeReason                    *api.OperationWorkflowChangeReason
+	OutcomeLink                     *api.OperationWorkflowOutcomeLink
 	Comparison                      *api.OperationWorkflowRevisionComparison
 	SelectedPaths                   []api.OperationWorkflowPathSelection
 	ResolutionVerifications         []api.OperationWorkflowResolutionVerification

@@ -265,6 +265,12 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 			}
 		}
 
+		if link := transition.OutcomeLink; link != nil {
+			if _, err := fmt.Fprintf(out, "workflow-outcome-path\t%s\tinstance=%s\trevision=%d\tstatus=%s\toutcome=%s\toutcome-revision=%d\treport=%s\toperation=%s\telapsed-seconds=%d\tblocked-seconds=%d\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, link.Status, link.OutcomeCode, link.OutcomeRevision, link.OutcomeReportID, link.OutcomeOperationID, link.ElapsedSeconds, link.BlockedSeconds, link.Summary); err != nil {
+				return err
+			}
+		}
+
 		if comparison := transition.Comparison; comparison != nil {
 			if _, err := fmt.Fprintf(out, "workflow-revision-comparison\t%s\tinstance=%s\trevision=%d\tstatus=%s\tprevious-revision=%d\tprevious-report=%s\tprevious-operation=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, comparison.Status, comparison.PreviousRevision, comparison.PreviousReportID, comparison.PreviousOperationID, comparison.Summary); err != nil {
 				return err

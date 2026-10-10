@@ -2074,6 +2074,8 @@ from .operation_workflow_instance_transition import OperationWorkflowInstanceTra
 from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
 from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
 from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+from .operation_workflow_outcome_link import OperationWorkflowOutcomeLink
+from .operation_workflow_outcome_link_status import OperationWorkflowOutcomeLinkStatus
 from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
 from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
 from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
@@ -5511,6 +5513,8 @@ __all__ = (
     "OperationWorkflowInvariantRequirement",
     "OperationWorkflowOutcomeEntry",
     "OperationWorkflowOutcomeGroup",
+    "OperationWorkflowOutcomeLink",
+    "OperationWorkflowOutcomeLinkStatus",
     "OperationWorkflowOutcomesResponse",
     "OperationWorkflowOutcomeSummary",
     "OperationWorkflowOutcomeSummaryGroupBy",

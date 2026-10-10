@@ -474,3 +474,25 @@ even without a baseline. Comparison evidence identifies the decision when facts
 are compared; reasons describe application reasoning rather than inferred cause.
 Dashboard and CLI render that distinction. This introduces no execution authority,
 remote application action, or permanent evidence retention.
+
+### Retained workflow outcome paths
+
+History reports expose `outcome_link`, correlating each report (including its
+application decision reason and selected paths) with the first reported outcome
+at or after it on the same retained page. The link includes the outcome report,
+Operation, revision and code. This is an observed sequence, not proof that a
+rule caused an outcome. An outcome on the report itself has zero duration.
+
+Correlation requires a unique consecutive revision path within the same tenant,
+workflow instance and pinned contract, consistent state continuity, and
+nondecreasing application occurrence times. Gaps, duplicate revisions, contract
+changes and inconsistent timing are explicit unavailable statuses. The extra
+pagination lookahead is excluded from correlation; clients must not interpret
+an unavailable outcome as an ongoing workflow. Terminal states without a
+reported outcome code cannot produce an outcome link.
+
+Elapsed seconds cover only this report-to-outcome path, not total workflow
+completion time. Blocked seconds count intervals whose preceding snapshot had
+at least one blocker, counting overlapping blockers once. These durations are
+meaningful only for `linked` status. API, dashboard and CLI expose the same
+projection; no new persisted data or migration is required.

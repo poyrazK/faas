@@ -479,3 +479,18 @@ Go exposes `LookupPlatformTenantSelfOperationSubmission`, Node exposes
 Optional principal and feature fences on the start request reject credential
 or feature changes; they never authorize another owner. See
 [ADR-663](../adr/663-browser-operation-submission-receipts.md).
+
+### Workflow outcome paths
+
+History includes `outcome_link` in JSON and `workflow-outcome-path` in text.
+A `linked` report points to the first reported outcome at or after it on the
+same page, with the outcome code, report, Operation and revision. Decision
+reasons and selected paths remain on their original reports. The dashboard
+shows these links alongside the retained revision timeline.
+
+Elapsed and blocked seconds cover only that observed path. Blocked intervals
+count once even when multiple blockers overlap. Missing revisions, duplicate
+revisions, contract changes, or inconsistent occurrence times prevent a link.
+`outcome_unavailable` means no later outcome is visible on the current page;
+it does not mean the workflow is ongoing. Durations are meaningful only for
+`linked` status, and sequence alone does not establish business causation.

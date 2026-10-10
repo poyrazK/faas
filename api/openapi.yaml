@@ -39678,6 +39678,20 @@ components:
           items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
         updated_at: {type: string, format: date-time}
         platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
+    OperationWorkflowOutcomeLink:
+      description: "Observed report-to-outcome path on the same retained history page. Links reported sequence without establishing business causation; durations are meaningful only for linked status."
+      type: object
+      additionalProperties: false
+      required: [status, summary, elapsed_seconds, blocked_seconds]
+      properties:
+        status: {type: string, enum: [linked, outcome_unavailable, history_incomplete, timing_inconsistent]}
+        summary: {type: string, maxLength: 512}
+        outcome_report_id: {type: string, format: uuid}
+        outcome_operation_id: {type: string, format: uuid}
+        outcome_revision: {type: integer, format: int64, minimum: 1}
+        outcome_code: {type: string, maxLength: 64}
+        elapsed_seconds: {type: integer, format: int64, minimum: 0, description: "Observed duration from this report to the linked outcome. Meaningful only when status is linked."}
+        blocked_seconds: {type: integer, format: int64, minimum: 0, description: "Observed intervals with at least one reported blocker. Overlapping blockers count once. Meaningful only when status is linked."}
     OperationWorkflowRevisionComparison:
       type: object
       additionalProperties: false
@@ -39719,6 +39733,7 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        outcome_link: {$ref: '#/components/schemas/OperationWorkflowOutcomeLink'}
         change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         comparison: {$ref: '#/components/schemas/OperationWorkflowRevisionComparison'}
         selected_paths: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowPathSelection'}}

@@ -7,6 +7,7 @@ import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBloc
 import type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowOutcomeLink } from './OperationWorkflowOutcomeLink.js';
 import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 import type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
@@ -14,6 +15,7 @@ import type { OperationWorkflowRevisionComparison } from './OperationWorkflowRev
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+  outcome_link?: OperationWorkflowOutcomeLink;
   change_reason?: OperationWorkflowChangeReason;
   comparison?: OperationWorkflowRevisionComparison;
   selected_paths?: Array<OperationWorkflowPathSelection>;

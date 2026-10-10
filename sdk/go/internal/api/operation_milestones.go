@@ -116,6 +116,7 @@ type OperationWorkflowState struct {
 }
 
 type OperationWorkflowStateHistoryEntry struct {
+	OutcomeLink             *OperationWorkflowOutcomeLink             `json:"outcome_link,omitempty"`
 	ChangeReason            *OperationWorkflowChangeReason            `json:"change_reason,omitempty"`
 	Comparison              *OperationWorkflowRevisionComparison      `json:"comparison,omitempty"`
 	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
@@ -361,4 +362,16 @@ type OperationWorkflowRevisionEvidence struct {
 	OperationID string `json:"operation_id"`
 	MilestoneID string `json:"milestone_id"`
 	Milestone   string `json:"milestone,omitempty"`
+}
+
+// OperationWorkflowOutcomeLink correlates one retained report with a later reported outcome on this page.
+type OperationWorkflowOutcomeLink struct {
+	Status             string `json:"status"`
+	Summary            string `json:"summary"`
+	OutcomeReportID    string `json:"outcome_report_id,omitempty"`
+	OutcomeOperationID string `json:"outcome_operation_id,omitempty"`
+	OutcomeRevision    int64  `json:"outcome_revision,omitempty"`
+	OutcomeCode        string `json:"outcome_code,omitempty"`
+	ElapsedSeconds     int64  `json:"elapsed_seconds"`
+	BlockedSeconds     int64  `json:"blocked_seconds"`
 }

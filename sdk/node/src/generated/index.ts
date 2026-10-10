@@ -1105,6 +1105,7 @@ export type { OperationWorkflowInstanceTransition } from './models/OperationWork
 export type { OperationWorkflowInvariantRequirement } from './models/OperationWorkflowInvariantRequirement.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
+export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';
 export type { OperationWorkflowOutcomesResponse } from './models/OperationWorkflowOutcomesResponse.js';
 export type { OperationWorkflowOutcomeSummary } from './models/OperationWorkflowOutcomeSummary.js';
 export type { OperationWorkflowPathDecisionResult } from './models/OperationWorkflowPathDecisionResult.js';

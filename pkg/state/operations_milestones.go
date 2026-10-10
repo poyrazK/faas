@@ -624,6 +624,12 @@ func operationWorkflowStateHistoryPage(rows []api.OperationWorkflowStateHistoryE
 		previousByRun[run] = i
 	}
 
+	visible := rows
+	if len(visible) > limit {
+		visible = visible[:limit]
+	}
+	linkWorkflowOutcomes(visible)
+
 	if len(rows) <= limit {
 		return rows, ""
 	}
