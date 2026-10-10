@@ -58,7 +58,7 @@ func TestGetCapabilitiesConditionalParking(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := client.GetCapabilities(t.Context())
+		response, err := client.GetCapabilities(SDKTestContext(t))
 		server.Close()
 		if err != nil || response.ConditionalParking != tc.want {
 			t.Fatalf("response=%+v err=%v", response, err)

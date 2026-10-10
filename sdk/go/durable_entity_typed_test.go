@@ -131,23 +131,23 @@ func TestTypedEntityHandleKeepsScopeAndCommitMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope.Key = "changed"
-	result, err := handle.Invoke(t.Context(), "stable", map[string]float64{"delta": 1})
+	result, err := handle.Invoke(faas.SDKTestContext(t), "stable", map[string]float64{"delta": 1})
 	if err == nil || result.Version != ^uint64(0) || result.Replayed {
 		t.Fatal("committed decoding failure lost metadata", result, err)
 	}
-	if _, err := handle.Invoke(t.Context(), "", map[string]float64{}); err == nil {
+	if _, err := handle.Invoke(faas.SDKTestContext(t), "", map[string]float64{}); err == nil {
 		t.Fatal("generated an implicit request identity")
 	}
-	if _, err := handle.Invoke(t.Context(), "stable", map[string]float64{"delta": math.NaN()}); err == nil {
+	if _, err := handle.Invoke(faas.SDKTestContext(t), "stable", map[string]float64{"delta": math.NaN()}); err == nil {
 		t.Fatal("non-JSON payload reached API")
 	}
 	if calls != 1 {
 		t.Fatal(calls)
 	}
-	if _, err := handle.Inspect(t.Context()); err != nil {
+	if _, err := handle.Inspect(faas.SDKTestContext(t)); err != nil {
 		t.Fatal(err)
 	}
-	response, err := handle.Retry(t.Context(), faas.DurableEntityRetryRequest{Namespace: "foreign", Key: "foreign", Environment: "foreign", PlatformTenantID: "foreign", Target: "outbox", ExpectedVersion: 1, ExpectedRecoveryRevision: strings.Repeat("a", 64), HeadID: "6dd283da-3c14-40de-9d47-bb71fb35be9a"})
+	response, err := handle.Retry(faas.SDKTestContext(t), faas.DurableEntityRetryRequest{Namespace: "foreign", Key: "foreign", Environment: "foreign", PlatformTenantID: "foreign", Target: "outbox", ExpectedVersion: 1, ExpectedRecoveryRevision: strings.Repeat("a", 64), HeadID: "6dd283da-3c14-40de-9d47-bb71fb35be9a"})
 	if err != nil || !response.Rearmed || calls != 3 {
 		t.Fatal(response, err, calls)
 	}

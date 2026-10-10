@@ -35,19 +35,19 @@ func TestStateExportRestoreSDKTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.ExportDurableEntity(t.Context(), "counter", faas.DurableEntityInspectRequest{Namespace: "documents", Key: "document:/?雪"})
+	out, err := client.ExportDurableEntity(faas.SDKTestContext(t), "counter", faas.DurableEntityInspectRequest{Namespace: "documents", Key: "document:/?雪"})
 	if err != nil || out.Checksum != exported.Checksum {
 		t.Fatal(out, err)
 	}
 	request := faas.DurableEntityRestoreRequest{Namespace: "documents", Key: "document:/?雪", RequestID: "stable", ExpectedVersion: 42, Export: out}
 	for _, replay := range []bool{false, true} {
-		result, err := client.RestoreDurableEntity(t.Context(), "counter", request)
+		result, err := client.RestoreDurableEntity(faas.SDKTestContext(t), "counter", request)
 		if err != nil || result.Version != 43 || result.Replayed != replay {
 			t.Fatal(result, err)
 		}
 	}
 	request.RequestID = ""
-	if _, err := client.RestoreDurableEntity(t.Context(), "counter", request); err == nil || calls != 3 {
+	if _, err := client.RestoreDurableEntity(faas.SDKTestContext(t), "counter", request); err == nil || calls != 3 {
 		t.Fatal("missing stable ID reached server")
 	}
 }
