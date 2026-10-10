@@ -82,15 +82,6 @@ func (r *deploymentFilterFakeVMM) dialed() []recordedDial {
 	return out
 }
 
-func (r *deploymentFilterFakeVMM) setStream(nodeID, instanceID string, stream LogStream) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.perInstanceStream == nil {
-		r.perInstanceStream = make(map[string]LogStream)
-	}
-	r.perInstanceStream[nodeID+"/"+instanceID] = stream
-}
-
 func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string, AppSpec) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
