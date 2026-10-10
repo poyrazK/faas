@@ -6,10 +6,12 @@ import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowStateSLA } from './OperationWorkflowStateSLA.js';
 /**
  * Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
  */
 export type OperationWorkflowState = {
+  sla?: OperationWorkflowStateSLA;
   /**
    * In the latest retained state, full replacement snapshot of direct prerequisite references.
    */

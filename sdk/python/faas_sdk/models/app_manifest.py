@@ -43,6 +43,7 @@ from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
     AppManifestSecretReloadSignalType3Type1,
     check_app_manifest_secret_reload_signal_type_3_type_1,
 )
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.profiling_config import ProfilingConfig
     from ..models.service_replicas import ServiceReplicas
+    from ..models.tracing_config import TracingConfig
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -78,12 +80,19 @@ class AppManifest:
     entrypoint: list[str]
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    tracing: TracingConfig | Unset = UNSET
+    """Opt-in zero-config request tracing baked into each deployment (ADR-934). Managed runtimes export database,
+    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
+    OTel exporter are left untouched."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
     the app_secrets table at wake."""
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     ports: list[WorkloadPort] | Unset = UNSET
     """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
     listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
@@ -184,6 +193,10 @@ class AppManifest:
         if not isinstance(self.profiling, Unset):
             profiling = self.profiling.to_dict()
 
+        tracing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tracing, Unset):
+            tracing = self.tracing.to_dict()
+
         env: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env, Unset):
             env = self.env.to_dict()
@@ -203,6 +216,10 @@ class AppManifest:
             port = UNSET
         else:
             port = self.port
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):
@@ -354,6 +371,8 @@ class AppManifest:
         )
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
+        if tracing is not UNSET:
+            field_dict["tracing"] = tracing
         if env is not UNSET:
             field_dict["env"] = env
         if env_secrets is not UNSET:
@@ -362,6 +381,8 @@ class AppManifest:
             field_dict["working_dir"] = working_dir
         if port is not UNSET:
             field_dict["port"] = port
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if ports is not UNSET:
             field_dict["ports"] = ports
         if healthz is not UNSET:
@@ -431,6 +452,7 @@ class AppManifest:
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.profiling_config import ProfilingConfig
         from ..models.service_replicas import ServiceReplicas
+        from ..models.tracing_config import TracingConfig
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
@@ -443,6 +465,13 @@ class AppManifest:
             profiling = UNSET
         else:
             profiling = ProfilingConfig.from_dict(_profiling)
+
+        _tracing = d.pop("tracing", UNSET)
+        tracing: TracingConfig | Unset
+        if isinstance(_tracing, Unset):
+            tracing = UNSET
+        else:
+            tracing = TracingConfig.from_dict(_tracing)
 
         _env = d.pop("env", UNSET)
         env: AppManifestEnv | Unset
@@ -475,6 +504,13 @@ class AppManifest:
             return cast(int | None | Unset, data)
 
         port = _parse_port(d.pop("port", UNSET))
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _ports = d.pop("ports", UNSET)
         ports: list[WorkloadPort] | Unset = UNSET
@@ -778,10 +814,12 @@ class AppManifest:
         app_manifest = cls(
             entrypoint=entrypoint,
             profiling=profiling,
+            tracing=tracing,
             env=env,
             env_secrets=env_secrets,
             working_dir=working_dir,
             port=port,
+            service_binding_transport=service_binding_transport,
             ports=ports,
             healthz=healthz,
             user=user,

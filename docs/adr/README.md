@@ -72,6 +72,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 934 | [Zero-config in-guest tracing for the debugger](934-zero-config-guest-tracing.md) | accepted for internal implementation; native acceptance pending | Opt-in OTLP bridge in guest-init, preloaded Node/Python auto-instrumentation, and a vmmd-brokered, apid-parsed path into request telemetry spans |
 | 843 | [App consumer statement revisions and unbilled platform failures](843-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
 | 844 | [Monthly included units on app consumer rate cards](844-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
 | 845 | [Graduated tiers on app consumer rate cards](845-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
@@ -725,7 +726,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
-- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -741,5 +742,39 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+- [ADR-933: Durable entity outbox relay and transport acceptance](933-durable-entity-outbox-relay.md)
+
+- [ADR-934: Gated durable entity guest outbox protocol](934-durable-entity-guest-outbox-protocol.md)
+
+- [ADR-935: Account-scoped durable entity inspection](935-durable-entity-owner-inspection.md)
+
+- [ADR-936: Owner recovery for exhausted durable entity work](936-durable-entity-exhausted-work-recovery.md)
+
+- [ADR-937: Bounded durable entity operational health](937-durable-entity-operational-health.md)
+
+- [ADR-938: Typed durable entity SDK handles and guest transitions](938-typed-durable-entity-sdk.md)
+
+- [ADR-939: Durable entity application-state schema migrations](939-durable-entity-application-schema-migrations.md)
+
+- [ADR-940: Durable entity application-state export and restore](940-durable-entity-state-export-restore.md)
+
+- [ADR-941: Durable entity owner state recovery API](941-durable-entity-owner-state-recovery-api.md)
+
+- [ADR-942: Scheduled durable entity backups and restore preview](942-durable-entity-scheduled-backups-and-restore-preview.md)
+
+- [ADR-943: Application-validated durable entity restore](943-durable-entity-application-validated-restore.md)
+
+- [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution
+
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
+
+- [ADR-944: Isolated durable entity restore validation](944-durable-entity-isolated-restore-validation.md)
+
+- [ADR-945: Durable entity operation observability](945-durable-entity-operation-observability.md)
+
+- [ADR-946: Durable entity validator release tooling](946-durable-entity-validator-release-tooling.md)
+
+- [ADR-947: Shared durable entity validator artifacts](947-shared-durable-entity-validator-artifacts.md)
+
+- [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)

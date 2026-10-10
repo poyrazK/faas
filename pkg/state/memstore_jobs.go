@@ -273,6 +273,9 @@ func (m *MemStore) JobListScheduled(_ context.Context) ([]Job, error) {
 func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return Job{}, ErrEnvironmentGitManaged
+	}
 	return m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, nil, nil)
 }
 
@@ -281,6 +284,9 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 func (m *MemStore) JobUpdateWithSchedule(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return Job{}, ErrEnvironmentGitManaged
+	}
 	updated, err := m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, schedule, timezone)
 
 	if err != nil {
@@ -670,6 +676,9 @@ func (m *MemStore) settleJobImageFailureLocked(jobID, reason string) {
 func (m *MemStore) JobSoftDelete(_ context.Context, id string) (bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return false, false, ErrEnvironmentGitManaged
+	}
 	j, ok := m.jobs[id]
 	if !ok {
 		return false, false, ErrNotFound

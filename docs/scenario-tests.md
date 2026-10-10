@@ -18,10 +18,12 @@ authentication remains the application's responsibility.
 ## Scenario-scoped chaos
 
 Real-VM scenarios can inject bounded faults into Gregale-managed HTTP service
-calls between workloads registered in the same test run. Rules are armed after
+calls and private TCP connections between workloads registered in the same test
+run. Rules are armed after
 the selected warm, cold, or restored profile is prepared and before the
-scenario trigger. They expire automatically, are removed with the run
-namespace, and cannot select a production workload.
+scenario trigger when declared as a top-level plan. Staged scenarios can arm
+and clear plans between steps. Plans expire automatically, are removed with the
+run namespace, and cannot select a production workload.
 
 Declare repeatable rules in the scenario manifest:
 
@@ -60,13 +62,275 @@ metrics and traces identify injected requests. Fault plans last from one second
 to five minutes; each delay is limited to 30 seconds, and each scenario may
 declare at most 16 rules.
 
-This first version acts at Gregale's internal HTTP service proxy after normal
-identity, tenant, binding, and target authorization. It does not alter public
-HTTP, external service calls, or raw TCP/UDP traffic. Chaos plans require the
-`real-vm` engine; local and simulated runs reject them so their results cannot
-be mistaken for platform fault injection. Application assertions still decide
-whether retries, circuit breakers, rollbacks, and customer notifications match
-the expected policy.
+HTTP faults act at Gregale's internal HTTP service proxy after normal
+identity, tenant, binding, and target authorization. They do not alter public
+HTTP or external calls. TCP faults use the private TCP service proxy described
+below. Chaos plans require the `real-vm` engine; local and simulated runs reject
+them. Application assertions decide whether retries, circuit breakers,
+rollbacks, and customer notifications match the expected policy.
+
+### TCP dependencies
+
+Declare private TCP listeners with `tcp_ports` on a scenario or service. These
+listeners remain internal; the workload must start them itself. Built-in
+`tcp-echo` and `tcp-relay` fixtures each provide one TCP listener plus an HTTP
+health endpoint. `${service.cache.host}` resolves to `cache.svc.gregale` inside
+the run. `${service.cache.port}` is available when exactly one TCP port is
+specified; use a literal port for a service with multiple listeners.
+
+```yaml
+version: 1
+scenarios:
+  cache-resilience:
+    project: checkout
+    source: ./checkout
+    secrets:
+      CACHE_HOST: ${service.cache.host}
+      CACHE_PORT: ${service.cache.port}
+    services:
+      cache:
+        fixture: tcp-echo
+        tcp_ports: [6379]
+    chaos:
+      duration: 2m
+      rules:
+        - from: checkout
+          to: cache
+          kind: tcp_bandwidth
+          port: 6379
+          direction: downstream
+          rate_kib_per_second: 64
+          percent: 100
+          min_matches: 1
+    command: [node, --test, test/cache-resilience.test.mjs]
+```
+
+| Kind | Parameters | Behavior |
+| --- | --- | --- |
+| `tcp_latency` | `latency: 200ms` | Delay each forwarded chunk, at most 30 seconds. |
+| `tcp_bandwidth` | `rate_kib_per_second: 64` | Cap throughput per connection and direction, from 1 to 1,000,000 KiB/s. |
+| `tcp_timeout` | No extra parameters | Stall forwarding until lease expiry or replacement; the application owns its timeout. |
+| `tcp_reset` | Optional `reset_after: 1s` | Reset the application socket immediately or after up to 30 seconds. |
+| `tcp_connect_timeout` | No extra parameters | Hold a new service connection before forwarding to its target; clear or expiry resets it. |
+| `tcp_connect_refused` | No extra parameters | Reset a new service connection before it reaches or wakes the target. |
+
+Every TCP rule requires `port`. Direction defaults to `both`; `upstream` means
+application to dependency and `downstream` means dependency to application.
+Reset and connect-phase rules require direction `both`. Percent selects connections, not queries or
+requests. Seeded selection remains fixed for an individual connection, but
+parallel connection ordering and node placement can change the selected set;
+use 100 percent for reproducible assertions.
+
+These connection faults act after the guest's TCP handshake with Gregale's
+service proxy. The proxy skips dialing or waking the target and simulates the
+failure on first use: timeout drains bytes until the lease is cleared or expires,
+while refusal sends an immediate reset. An application may see `connect()`
+succeed and then receive a reset on write or read; these faults do not emulate
+SYN loss or a kernel-level `ECONNREFUSED` at the initial system call.
+
+One-off experiments use a scenario without an existing chaos block:
+
+```sh
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --latency 200ms --direction downstream
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --bandwidth 64
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --timeout --duration 5s
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --reset --reset-after 1s
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --connect-timeout --duration 8s
+gregale chaos inject --scenario cache-resilience --target cache \
+  --tcp-port 6379 --connect-refused
+```
+
+Active pooled connections refresh their policies every 250 ms. In-flight
+lookups have a 1-second deadline. Allow for that propagation interval when
+arming or replacing rules on an existing connection. Expiry releases pending
+bytes without requiring a new connection; a reset connection must reconnect.
+Removed runs, revoked authorization, or unavailable policy reads close the
+affected test sockets. Node-wide active policy routes are capped at 256.
+Production connections never consult test policies. Buffers remain bounded,
+and normal stream byte and idle limits still apply during faults.
+
+JSON and HTML reports show installed rules and their expiry, not a guarantee
+that application traffic matched them. Add `min_matches` to a rule when the
+scenario must prove the dependency was exercised:
+
+```yaml
+        - to: cache
+          kind: tcp_timeout
+          port: 6379
+          percent: 100
+          min_matches: 1
+```
+
+At the end of the scenario or staged step, Gregale records per-rule match
+counts in JSON and HTML reports and fails the scenario when a minimum is not
+met. A match means one HTTP request or one TCP connection selected for that
+rule; a TCP connection counts once even when the rule affects both directions.
+Counts are scoped to the run and plan generation and include gateway nodes
+across the run. The `GET /v1/dev/test-runs/{run_id}/chaos/matches` API returns
+the same evidence. Warm lifecycle evidence for a dependency with `tcp_ports`
+records whether a new wake occurred; TCP streams do not generate HTTP request
+telemetry.
+
+### External dependencies through a relay
+
+A relay is an isolated test service with a fixed upstream; its private listener
+is the fault target. For example:
+
+```yaml
+services:
+  payment:
+    fixture: tcp-relay
+    tcp_ports: [16443]
+    upstream: api.example.com:443
+    # Optional IP allowlist, enforced by normal app policy:
+    # egress_allowlist: [203.0.113.8/32]
+```
+
+Configure the application's connection endpoint with `${service.payment.host}`
+and `${service.payment.port}`, and target `payment` port `16443` in TCP rules.
+The relay forwards opaque bytes and declares only its upstream egress port.
+Plan limits and forbidden destinations/ports still apply; nonstandard external
+ports require a plan with that egress allowance. Upstream addresses cannot
+contain credentials or manifest references. Managed database credentials and
+bindings are not changed; configure an authorized test database endpoint and
+application credentials separately.
+
+For HTTPS or database TLS, keep verification enabled and explicitly set the
+TLS server name to the original upstream hostname. Connecting to the relay's
+service hostname must not change the certificate name being verified.
+
+TCP scenarios require private service TCP routing enabled on the test compute
+nodes: vmmd `service_tcp_enabled`, nftables `faas_service_tcp_enabled`, and the
+internal gateway's `service_tcp_listen` and `service_tcp_dns`. The runner does
+not enable these fleet settings. Ports 443, 10080 and 10081 are reserved for the
+HTTP mesh; relay listeners must use another port. This mechanism models
+established byte streams, not DNS failure, TCP handshake timeout, or packet
+loss. UDP is outside its scope.
+
+### Staged fault and recovery checks
+
+Use `steps` when one scenario needs to compare baseline behavior, behavior under
+a fault, and recovery in the same application process. The first step establishes
+the baseline. A later step can install a chaos plan, and a subsequent step uses
+`clear_chaos: true` to remove it before asserting recovery:
+
+```yaml
+steps:
+  - name: baseline
+    requests:
+      - {name: baseline-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+    load:
+      vus: 5
+      iterations: 100
+      thresholds:
+        p95: 250ms
+        p99: 500ms
+        error_rate: 0.01
+        success_rate: 0.99
+        min_samples: 100
+  - name: slow-dependency
+    chaos:
+      duration: 1m
+      rules:
+        - to: cache
+          kind: tcp_latency
+          port: 6379
+          direction: downstream
+          latency: 250ms
+          percent: 100
+    requests:
+      - {name: fault-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+    load:
+      vus: 5
+      iterations: 100
+      thresholds:
+        p95: 1s
+        p99: 2s
+        error_rate: 0.05
+        success_rate: 0.95
+        min_samples: 100
+  - name: clear-fault
+    clear_chaos: true
+  - name: recovery
+    requests:
+      - {name: recovery-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+    load:
+      vus: 5
+      iterations: 100
+      thresholds:
+        p95: 250ms
+        p99: 500ms
+        error_rate: 0.01
+        success_rate: 0.99
+        min_samples: 100
+      relative:
+        compare_to: baseline
+        p95_increase_percent: 20
+        success_rate_drop: 0.01
+        min_samples: 100
+        steps:
+          dependency:
+            baseline_step: baseline-probe
+            current_step: recovery-probe
+            p95_increase_percent: 20
+            success_rate_drop: 0.01
+            min_samples: 100
+        retry_until_passes:
+          timeout: 30s
+          interval: 500ms
+          consecutive_passes: 3
+```
+
+Each step can run a command and one-time `requests` or `checks`. Adding `load`
+repeats that step's HTTP journey instead of issuing it once, then measures
+success rate, error rate, p95 and p99 latency. Its thresholds fail the step and
+appear beside the measurements in JSON, HTML, and terminal output. `min_samples`
+requires enough HTTP samples before the SLO can pass; thresholds use inclusive
+limits. Captures from earlier steps are available to every repeated journey.
+A step's load settings are independent, so baseline, fault, and recovery can
+have different budgets. Staged scenarios require the `real-vm` engine, at
+least three steps, and an explicit clear followed by a recovery step. They
+cannot combine with top-level `chaos`, `trigger`, `command`, `requests`,
+`checks`, `wait_for`, `load`, `local`, or `simulation` fields. Fault leases
+still expire on their own as a safety bound if the run stops before the clear
+step.
+
+Use `load.relative` to compare a step's aggregate measurements with an earlier
+staged step that also has `load` configured. The optional `steps` map adds
+per-request comparisons: each entry maps a `baseline_step` HTTP name from the
+`compare_to` stage to a `current_step` HTTP name in the current stage. In the
+example, both the aggregate journey and the named `dependency` request may have
+p95 at most 20% above baseline and success rate may drop by at most 1 percentage
+point. Per-request `min_samples` overrides the aggregate value; if omitted, it
+inherits `load.relative.min_samples`. `p95_increase_percent` and
+`p99_increase_percent` are percentages; `error_rate_increase` and
+`success_rate_drop` are fractions from 0 to 1. `min_samples` requires both
+measurements in each comparison to meet the sample count. Comparison names,
+HTTP-step mappings, checks, and measured deltas appear in JSON, HTML, and
+terminal reports, and a failed comparison fails the staged step.
+`retry_until_passes`
+repeats the recovery load and comparison until both the regular load thresholds
+and relative budgets pass, or the timeout expires. Set
+`consecutive_passes` to require a sustained recovery; it defaults to 1 and must
+be between 1 and 100. A failed load or relative comparison resets the streak.
+Reports show the current and required streak alongside each attempt. The default
+retry interval is 1s; an explicit interval must be between 100ms and 30s. Reports
+include the attempt count, elapsed time, and each attempt's measured comparisons.
+A retry window must exceed the load scheduling duration and fit within the
+scenario timeout; retrying is capped at 100 attempts and 100,000 HTTP steps. A
+`clear_chaos` step can stand on its own without a command or probe.
+
+The runner clears faults on assertion or transport errors as part of cleanup.
+API clients can also clear an active run plan directly with
+`DELETE /v1/dev/test-runs/{run_id}/chaos`; the run must still have a live member.
+The [TCP example suite](../examples/scenario-tcp/README.md) exercises latency,
+bandwidth, application timeout, connection reset, and staged SLO checks through
+`gregale test`.
 
 Create `gregale-test.yaml` at the repository root:
 
@@ -636,19 +900,26 @@ load:
   iterations: 100
   thresholds:
     p95: 250ms
+    p99: 500ms
     error_rate: 0.01
+    success_rate: 0.99
+    min_samples: 100
     steps:
-      submit: {p95: 200ms, error_rate: 0}
-      read: {p95: 100ms}
+      submit: {p95: 200ms, p99: 400ms, error_rate: 0}
+      read: {p95: 100ms, p99: 200ms}
 ```
 
 `thresholds.steps` keys must name declared HTTP requests or checks. Step budgets
 add to the aggregate limits; they do not replace them. Only explicitly supplied
 step limits apply. A step with a budget and no samples fails, including a check
-skipped because an earlier request failed. This prevents an aggregate percentile
-or an allowed error rate from hiding a problem in a critical step. JSON reports
-include evaluated budgets under each step, terminal summaries identify them by
-step name, and failed budgets fail the JUnit case and command.
+skipped because an earlier request failed. `min_samples` applies to the total
+HTTP request count, while each entry under `thresholds.steps` can set its own
+sample minimum for a critical request.
+This prevents an aggregate percentile or an allowed error rate from hiding a
+problem in a critical step. JSON reports include evaluated budgets under each
+step, terminal summaries identify them by step name, and failed budgets fail
+the JUnit case and command. Success rate and error rate are calculated from
+requests that matched the declared expected status and response assertions.
 
 This optional block configures `--load`; it does not enable load for a normal
 test. Replace `iterations` with `duration: 30s` to choose a timed run. CLI flags
@@ -875,18 +1146,20 @@ receive `GREGALE_TEST_LOAD_MAX_VUS` and `GREGALE_TEST_LOAD_PACING`.
 
 A failed request or assertion ends that journey; other journeys continue.
 `error_rate` is failed HTTP steps divided by all attempted HTTP steps, as a
-fraction from 0 to 1. An expected 403 passes. The default error threshold is zero;
-there is no default latency threshold. Configured limits are inclusive. Crossing
-either threshold fails the receipt and exits with status 1. No samples, canceled
-runs, time limits, incomplete runs caused by the request budget, and failed
-cleanup also fail, regardless of the error tolerance.
+fraction from 0 to 1. `success_rate` is its complement. An expected 403 passes.
+The default error threshold is zero; setting only `success_rate` replaces that
+default with the success-rate threshold. There is no default latency threshold.
+Configured limits are inclusive. Crossing a threshold fails the receipt and
+exits with status 1. No samples, canceled runs, time limits, incomplete runs
+caused by the request budget, and failed cleanup also fail, regardless of the
+error tolerance.
 
-The terminal summary shows throughput, p95 latency, failure counts, thresholds,
-and the first error for up to ten failed steps. The JSON `load` object reports
-started, completed, failed, and interrupted journeys, peak concurrency,
-HTTP-step throughput, response status counts, error rate, and
-min/mean/p50/p95/p99/max latency. Each step gets its own metrics and up to five
-distinct error examples. Status `0` means no HTTP response
+The terminal summary shows throughput, success and error rates, p95 and p99
+latency, threshold results, and the first error for up to ten failed steps. The
+JSON `load` object reports started, completed, failed, and interrupted journeys,
+peak concurrency, HTTP-step throughput, response status counts, success and
+error rates, and min/mean/p50/p95/p99/max latency. Each step gets its own metrics
+and up to five distinct error examples. Status `0` means no HTTP response
 was received. Latency is client-observed step time, including template expansion,
 request encoding, the full bounded response read, and assertions. Percentiles
 use the nearest-rank method; they describe these client timings, not isolated

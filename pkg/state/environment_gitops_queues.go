@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -144,7 +145,29 @@ func gitOpsQueueWantedOrOwned(snapshot gitOpsIntentSnapshot, desired environment
 
 func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource string, app gitOpsIntentApp) {
 	workload := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]
+	if app.WorkloadClass == WorkloadClassJob {
+		for _, binding := range app.QueueBindings {
+			if binding.Intent.Enabled != nil && !*binding.Intent.Enabled {
+				continue
+			}
+			// A reviewed disable is a safe way to retire an existing consumer
+			// before the Job graph is applied. Otherwise an enabled live binding
+			// blocks this plan even when Git omits the binding and would retain it.
+			if wanted, exists := workload.QueueBindings[binding.Name]; exists && wanted.Enabled != nil && !*wanted.Enabled {
+				continue
+			}
+			appendGitOpsQueueUnsupported(out, resource+"#queue_bindings/"+binding.Name+": environment_job_queue_binding_execution_unsupported")
+		}
+	}
 	for name, intent := range workload.QueueBindings {
+		// Job queue execution has no production adapter yet. Keep a disabled
+		// binding available for a reviewed reservation, but block enabling it
+		// during planning rather than waiting for qualification/activation to
+		// discover that no executor can acknowledge its messages.
+		if app.WorkloadClass == WorkloadClassJob && (intent.Enabled == nil || *intent.Enabled) {
+			appendGitOpsQueueUnsupported(out, resource+"#queue_bindings/"+name+": environment_job_queue_binding_execution_unsupported")
+			continue
+		}
 		if id := workload.QueueRecoveries[name]; id != "" && !gitOpsQueueRecoveryMatches(id, out.State.ResourceIDs[gitOpsQueueResource(resource, "queue_bindings/"+name)]) {
 			out.State.Unsupported = append(out.State.Unsupported, resource+"#queue_bindings/"+name+": recovery must name the original scoped binding UUID")
 		}
@@ -167,6 +190,12 @@ func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot git
 		if _, wanted := workload.QueueBindings[strings.TrimPrefix(owner.Path, "queue_bindings/")]; !wanted && desired.Definition.QueuePruningPolicy != "retain" {
 			out.State.Unsupported = append(out.State.Unsupported, owner.Key()+": queue pruning requires a reviewed disposition for retained work")
 		}
+	}
+}
+
+func appendGitOpsQueueUnsupported(out *EnvironmentGitOpsObservation, blocker string) {
+	if !slices.Contains(out.State.Unsupported, blocker) {
+		out.State.Unsupported = append(out.State.Unsupported, blocker)
 	}
 }
 

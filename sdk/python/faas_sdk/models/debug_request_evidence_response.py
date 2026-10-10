@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
     from ..models.debug_evidence_explanation import DebugEvidenceExplanation
     from ..models.debug_regression_item import DebugRegressionItem
     from ..models.debug_request_correlation import DebugRequestCorrelation
@@ -45,6 +46,9 @@ class DebugRequestEvidenceResponse:
     regression: DebugRegressionItem | None | Unset = UNSET
     critical_path: DebugRequestCriticalPath | Unset = UNSET
     """Bounded causal path reconstructed from retained span timing and parent links."""
+    dependency_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
+    """Dependency latency split by deployment (ADR-934): baseline_* fields describe the previous deployment,
+    current_* the compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +93,10 @@ class DebugRequestEvidenceResponse:
         if not isinstance(self.critical_path, Unset):
             critical_path = self.critical_path.to_dict()
 
+        dependency_comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dependency_comparison, Unset):
+            dependency_comparison = self.dependency_comparison.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,11 +116,14 @@ class DebugRequestEvidenceResponse:
             field_dict["regression"] = regression
         if critical_path is not UNSET:
             field_dict["critical_path"] = critical_path
+        if dependency_comparison is not UNSET:
+            field_dict["dependency_comparison"] = dependency_comparison
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
         from ..models.debug_evidence_explanation import DebugEvidenceExplanation
         from ..models.debug_regression_item import DebugRegressionItem
         from ..models.debug_request_correlation import DebugRequestCorrelation
@@ -180,6 +191,13 @@ class DebugRequestEvidenceResponse:
         else:
             critical_path = DebugRequestCriticalPath.from_dict(_critical_path)
 
+        _dependency_comparison = d.pop("dependency_comparison", UNSET)
+        dependency_comparison: DebugDependencyDeploymentComparison | Unset
+        if isinstance(_dependency_comparison, Unset):
+            dependency_comparison = UNSET
+        else:
+            dependency_comparison = DebugDependencyDeploymentComparison.from_dict(_dependency_comparison)
+
         debug_request_evidence_response = cls(
             request=request,
             timeline=timeline,
@@ -192,6 +210,7 @@ class DebugRequestEvidenceResponse:
             generated_at=generated_at,
             regression=regression,
             critical_path=critical_path,
+            dependency_comparison=dependency_comparison,
         )
 
         debug_request_evidence_response.additional_properties = d

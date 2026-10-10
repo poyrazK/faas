@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.dev_patch_preview import DevPatchPreview
+    from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
     from ..models.log_excerpt import LogExcerpt
     from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
@@ -84,6 +85,8 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
+    """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
@@ -292,6 +295,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        durable_entity_validator: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.durable_entity_validator, Unset):
+            durable_entity_validator = self.durable_entity_validator.to_dict()
 
         stage_state: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stage_state, Unset):
@@ -602,6 +609,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if durable_entity_validator is not UNSET:
+            field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
             field_dict["stage_state"] = stage_state
         if dev_patch is not UNSET:
@@ -729,6 +738,7 @@ class DeploymentResponse:
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.dev_patch_preview import DevPatchPreview
+        from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
         from ..models.log_excerpt import LogExcerpt
         from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
@@ -749,6 +759,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
+        durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
+        if isinstance(_durable_entity_validator, Unset):
+            durable_entity_validator = UNSET
+        else:
+            durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
 
         _stage_state = d.pop("stage_state", UNSET)
         stage_state: DeploymentResponseStageState | Unset
@@ -1301,6 +1318,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
             dev_patch=dev_patch,
             revision=revision,

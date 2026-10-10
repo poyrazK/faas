@@ -1,0 +1,387 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"path"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type config struct {
+	Version        int            `json:"version"`
+	Endpoint       string         `json:"endpoint"`
+	Transport      string         `json:"transport"`
+	Mode           string         `json:"mode"`
+	Legacy         bool           `json:"legacy"`
+	AllowedOrigins []string       `json:"allowed_origins"`
+	Auth           authConfig     `json:"auth"`
+	Tasks          *mcpTaskConfig `json:"tasks,omitempty"`
+}
+
+type greetInput struct {
+	Name string `json:"name" jsonschema:"name of the person to greet"`
+}
+
+type greetOutput struct {
+	Greeting string `json:"greeting" jsonschema:"friendly greeting"`
+}
+
+type addInput struct {
+	A float64 `json:"a" jsonschema:"first number"`
+	B float64 `json:"b" jsonschema:"second number"`
+}
+
+type addOutput struct {
+	Result float64 `json:"result" jsonschema:"sum of a and b"`
+}
+
+type buildReportInput struct {
+	Report string `json:"report" jsonschema:"report name"`
+	Steps  int    `json:"steps" jsonschema:"number of report generation steps"`
+}
+
+const customerURI = "customer://records/{recordId}"
+
+var summaryStyles = []string{"brief", "technical", "executive"}
+var sampleRecordIDs = []string{"example-1", "example-2", "example-3"}
+var sampleRecordOwners = map[string]string{
+	"example-1": "demo-caller-a",
+	"example-2": "demo-caller-b",
+	"example-3": "demo-caller-a",
+}
+
+type callerIdentity struct {
+	Subject  string
+	ClientID string
+}
+
+// verifiedCallerIdentity returns only identity claims from an authenticated principal.
+// Open-mode requests have no verified caller identity.
+func verifiedCallerIdentity(principal *authPrincipal) *callerIdentity {
+	if principal == nil || principal.subject == "" {
+		return nil
+	}
+	return &callerIdentity{Subject: principal.subject, ClientID: principal.clientID}
+}
+
+func canReadSampleRecord(authMode, recordID string, caller *callerIdentity) bool {
+	owner, exists := sampleRecordOwners[recordID]
+	if !exists {
+		return false
+	}
+	return authMode == "open" || (caller != nil && owner == caller.Subject)
+}
+
+func main() {
+	cfg, err := loadConfig("gregale-mcp.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	authorization, err := newAuthorization(cfg)
+	if err != nil {
+		log.Fatalf("invalid MCP authorization configuration: %v", err)
+	}
+	tasks, err := newMcpTaskManager(context.Background(), cfg.Tasks, cfg.Endpoint, cfg.Auth.Resource, cfg.Auth.Mode)
+	if err != nil {
+		log.Fatalf("initialize durable MCP Tasks: %v", err)
+	}
+	if tasks != nil {
+		defer tasks.close()
+	}
+	var mcpHandler http.Handler = mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return buildMCPServer(authorization, principalFromContext(r.Context()), tasks)
+	}, &mcp.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: maxMCPBodyBytes})
+	if tasks != nil {
+		mcpHandler = mcpTaskProtocolHandler(tasks, authorization, mcpHandler)
+	}
+	mux := http.NewServeMux()
+	mux.Handle(cfg.Endpoint, originPolicy(cfg.AllowedOrigins, authorization.middleware(mcpHandler)))
+	if authorization.metadataPath != "" {
+		mux.Handle("GET "+authorization.metadataPath, originPolicy(cfg.AllowedOrigins, http.HandlerFunc(authorization.protectedResourceMetadata)))
+	}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = "8080"
+	}
+	serverHTTP := &http.Server{
+		Addr:              bindAddress() + ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      0, // MCP SSE responses can remain open while a tool streams.
+		IdleTimeout:       120 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if tasks != nil {
+		go tasks.run(ctx)
+	}
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf(`{"event":"mcp_listening","port":%q}`, port)
+		if err := serverHTTP.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := serverHTTP.Shutdown(shutdownCtx); err != nil {
+			log.Printf("MCP server shutdown failed: %v", err)
+		}
+	case err := <-serverErr:
+		log.Printf("MCP server failed: %v", err)
+		_ = serverHTTP.Close()
+	}
+}
+
+func greet(_ context.Context, _ *mcp.CallToolRequest, input greetInput) (*mcp.CallToolResult, greetOutput, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || len(name) > 120 {
+		return nil, greetOutput{}, fmt.Errorf("name must contain between 1 and 120 characters")
+	}
+	return nil, greetOutput{Greeting: "Hello, " + name + "!"}, nil
+}
+
+func add(_ context.Context, _ *mcp.CallToolRequest, input addInput) (*mcp.CallToolResult, addOutput, error) {
+	return nil, addOutput{Result: input.A + input.B}, nil
+}
+
+func buildMCPServer(authorization *authorization, principal *authPrincipal, tasks *mcpTaskManager) *mcp.Server {
+	caller := verifiedCallerIdentity(principal)
+	options := &mcp.ServerOptions{
+		CompletionHandler: func(_ context.Context, request *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+			if request == nil || request.Params.Ref == nil {
+				return nil, errors.New("invalid completion request")
+			}
+			var options []string
+			switch request.Params.Ref.Type {
+			case "ref/prompt":
+				if request.Params.Ref.Name == "summarize" && request.Params.Argument.Name == "style" && authorization.canAccess(authorization.prompts, "summarize", principal) {
+					options = summaryStyles
+				}
+			case "ref/resource":
+				if request.Params.Ref.URI == customerURI && request.Params.Argument.Name == "recordId" && authorization.canAccess(authorization.resources, customerURI, principal) {
+					for _, recordID := range sampleRecordIDs {
+						if canReadSampleRecord(authorization.auth.Mode, recordID, caller) {
+							options = append(options, recordID)
+						}
+					}
+				}
+			}
+			values := make([]string, 0, len(options))
+			prefix := strings.ToLower(request.Params.Argument.Value)
+			for _, option := range options {
+				if strings.HasPrefix(strings.ToLower(option), prefix) {
+					values = append(values, option)
+				}
+			}
+			return &mcp.CompleteResult{Completion: mcp.CompletionResultDetails{Values: values, Total: len(values)}}, nil
+		},
+	}
+	if tasks != nil {
+		options.Capabilities = &mcp.ServerCapabilities{}
+		options.Capabilities.AddExtension(mcpTaskExtensionID, nil)
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "gregale-mcp-go", Version: "1.0.0"}, options)
+	if authorization.canAccess(authorization.tools, "greet", principal) {
+		mcp.AddTool(server, &mcp.Tool{Name: "greet", Description: "Greet a person by name."}, func(ctx context.Context, request *mcp.CallToolRequest, input greetInput) (*mcp.CallToolResult, greetOutput, error) {
+			if !authorization.canAccess(authorization.tools, "greet", principal) {
+				return nil, greetOutput{}, errors.New("tool access denied")
+			}
+			return greet(ctx, request, input)
+		})
+	}
+	if authorization.canAccess(authorization.tools, "add", principal) {
+		mcp.AddTool(server, &mcp.Tool{Name: "add", Description: "Add two numbers."}, func(ctx context.Context, request *mcp.CallToolRequest, input addInput) (*mcp.CallToolResult, addOutput, error) {
+			if !authorization.canAccess(authorization.tools, "add", principal) {
+				return nil, addOutput{}, errors.New("tool access denied")
+			}
+			return add(ctx, request, input)
+		})
+	}
+	if authorization.canAccess(authorization.tools, "build_report", principal) {
+		mcp.AddTool(server, &mcp.Tool{Name: "build_report", Description: "Build a harmless sample report; supports durable MCP Tasks when enabled."}, func(ctx context.Context, request *mcp.CallToolRequest, input buildReportInput) (*mcp.CallToolResult, any, error) {
+			if !authorization.canAccess(authorization.tools, "build_report", principal) {
+				return nil, nil, errors.New("tool access denied")
+			}
+			report := strings.TrimSpace(input.Report)
+			if report == "" || len(report) > 80 || input.Steps < 1 || input.Steps > 20 {
+				return nil, nil, errors.New("report must contain 1-80 characters and steps must be between 1 and 20")
+			}
+			for step := 0; step < input.Steps; step++ {
+				select {
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+			return nil, map[string]any{"content": []map[string]string{{"type": "text", "text": fmt.Sprintf("Report %s is ready after %d steps.", report, input.Steps)}}}, nil
+		})
+	}
+	if authorization.canAccess(authorization.resources, "greeting://welcome", principal) {
+		server.AddResource(&mcp.Resource{
+			Name: "welcome", URI: "greeting://welcome", Description: "A public example resource.", MIMEType: "text/plain",
+		}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			if !authorization.canAccess(authorization.resources, request.Params.URI, principal) {
+				return nil, mcp.ResourceNotFoundError(request.Params.URI)
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, MIMEType: "text/plain", Text: "Welcome to the Gregale MCP starter."}}}, nil
+		})
+	}
+	if authorization.canAccess(authorization.resources, customerURI, principal) {
+		server.AddResourceTemplate(&mcp.ResourceTemplate{
+			Name: "customer_record", URITemplate: customerURI,
+			Description: "Demo records are restricted by the verified OAuth subject.", MIMEType: "application/json",
+		}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			uri := request.Params.URI
+			if !authorization.canAccess(authorization.resources, uri, principal) {
+				return nil, mcp.ResourceNotFoundError(uri)
+			}
+			parsed, err := url.Parse(uri)
+			if err != nil || parsed.Scheme != "customer" || parsed.Host != "records" || !strings.HasPrefix(parsed.Path, "/") || strings.Contains(strings.TrimPrefix(parsed.Path, "/"), "/") {
+				return nil, mcp.ResourceNotFoundError(uri)
+			}
+			recordID, err := url.PathUnescape(strings.TrimPrefix(parsed.EscapedPath(), "/"))
+			if err != nil || recordID == "" {
+				return nil, mcp.ResourceNotFoundError(uri)
+			}
+			if !canReadSampleRecord(authorization.auth.Mode, recordID, caller) {
+				return nil, mcp.ResourceNotFoundError(uri)
+			}
+			content, err := json.Marshal(map[string]string{"recordId": recordID, "status": "example"})
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: "application/json", Text: string(content)}}}, nil
+		})
+	}
+	if authorization.canAccess(authorization.prompts, "summarize", principal) {
+		server.AddPrompt(&mcp.Prompt{
+			Name: "summarize", Description: "Create a summary prompt with a selected style.",
+			Arguments: []*mcp.PromptArgument{
+				{Name: "text", Description: "Text to summarize.", Required: true},
+				{Name: "style", Description: "Summary style: brief, technical or executive."},
+			},
+		}, func(_ context.Context, request *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			if !authorization.canAccess(authorization.prompts, "summarize", principal) {
+				return nil, errors.New("prompt access denied")
+			}
+			text := strings.TrimSpace(request.Params.Arguments["text"])
+			if text == "" || len(text) > 4000 {
+				return nil, errors.New("text must contain between 1 and 4000 characters")
+			}
+			style := request.Params.Arguments["style"]
+			instructions := map[string]string{
+				"":          "Write a brief summary of the following text.",
+				"brief":     "Write a brief summary of the following text.",
+				"technical": "Write a technical summary of the following text, preserving important details.",
+				"executive": "Write an executive summary of the following text, emphasizing decisions and outcomes.",
+			}
+			instruction, ok := instructions[style]
+			if !ok {
+				return nil, errors.New("style must be brief, technical or executive")
+			}
+			return &mcp.GetPromptResult{
+				Description: "Summary prompt.",
+				Messages:    []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: instruction + "\n\n" + text}}},
+			}, nil
+		})
+	}
+	return server
+}
+
+func loadConfig(file string) (config, error) {
+	var cfg config
+	f, err := os.Open(file)
+	if err != nil {
+		return cfg, fmt.Errorf("open MCP config: %w", err)
+	}
+	defer f.Close()
+	decoder := json.NewDecoder(f)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return cfg, fmt.Errorf("decode MCP config: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return cfg, errors.New("decode MCP config: expected one JSON object")
+	}
+	if cfg.Version != 1 || cfg.Transport != "streamable-http" || cfg.Mode != "stateless" ||
+		cfg.Endpoint == "" || cfg.Endpoint == "/" || cfg.Endpoint == "/healthz" || !validEndpoint.MatchString(cfg.Endpoint) ||
+		path.Clean(cfg.Endpoint) != cfg.Endpoint || strings.ContainsAny(cfg.Endpoint, "\\?#") {
+		return cfg, errors.New("MCP config requires version 1, streamable-http, stateless mode, and a literal endpoint path")
+	}
+	if cfg.Legacy {
+		return cfg, errors.New("this starter does not implement legacy MCP transport; use the Node starter for legacy compatibility")
+	}
+	if cfg.Tasks != nil {
+		if err := cfg.Tasks.validate(); err != nil {
+			return cfg, err
+		}
+	}
+	for _, origin := range cfg.AllowedOrigins {
+		parsed, parseErr := url.Parse(origin)
+		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+			parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			strings.TrimSpace(origin) != origin || strings.HasSuffix(parsed.Host, ":") || origin != parsed.Scheme+"://"+parsed.Host {
+			return cfg, errors.New("allowed_origins must contain exact HTTP origins")
+		}
+	}
+	return cfg, nil
+}
+
+func originPolicy(allowed []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !slices.Contains(allowed, origin) {
+			http.Error(w, "Origin is not allowed", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, Last-Event-ID")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bindAddress() string {
+	if address := strings.TrimSpace(os.Getenv("MCP_BIND_ADDRESS")); address != "" {
+		return address
+	}
+	if os.Getenv("FAAS_APP_ID") != "" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
+}

@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.capabilities_response_plan import CapabilitiesResponsePlan, check_capabilities_response_plan
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.capability_status import CapabilityStatus
@@ -23,6 +24,10 @@ class CapabilitiesResponse:
     """Version of the embedded product capability catalog."""
     plan: CapabilitiesResponsePlan
     capabilities: list[CapabilityStatus]
+    conditional_parking: bool | Unset = False
+    """The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit
+    this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use
+    the conditional parking endpoint, including in mixed-version fleets."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +40,8 @@ class CapabilitiesResponse:
             capabilities_item = capabilities_item_data.to_dict()
             capabilities.append(capabilities_item)
 
+        conditional_parking = self.conditional_parking
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -44,6 +51,8 @@ class CapabilitiesResponse:
                 "capabilities": capabilities,
             }
         )
+        if conditional_parking is not UNSET:
+            field_dict["conditional_parking"] = conditional_parking
 
         return field_dict
 
@@ -63,10 +72,13 @@ class CapabilitiesResponse:
 
             capabilities.append(capabilities_item)
 
+        conditional_parking = d.pop("conditional_parking", UNSET)
+
         capabilities_response = cls(
             registry_version=registry_version,
             plan=plan,
             capabilities=capabilities,
+            conditional_parking=conditional_parking,
         )
 
         capabilities_response.additional_properties = d

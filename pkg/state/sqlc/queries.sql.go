@@ -365,6 +365,23 @@ func (q *Queries) AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const acknowledgeEnvironmentWorkloadServingRoute = `-- name: AcknowledgeEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_route_acks (graph_id, route_generation, node_name)
+VALUES ($1::uuid, $2::bigint, $3::text)
+ON CONFLICT (graph_id, route_generation, node_name) DO NOTHING
+`
+
+type AcknowledgeEnvironmentWorkloadServingRouteParams struct {
+	GraphID         pgtype.UUID
+	RouteGeneration int64
+	NodeName        string
+}
+
+func (q *Queries) AcknowledgeEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentWorkloadServingRouteParams) error {
+	_, err := db.Exec(ctx, acknowledgeEnvironmentWorkloadServingRoute, arg.GraphID, arg.RouteGeneration, arg.NodeName)
+	return err
+}
+
 const acknowledgePendingNotification = `-- name: AcknowledgePendingNotification :exec
 UPDATE notification_outbox
 SET state = 'delivered', delivered_at = now(),
@@ -400,6 +417,67 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const activeEnvironmentWorkloadReleaseMembers = `-- name: ActiveEnvironmentWorkloadReleaseMembers :many
+SELECT rm.app_id::text AS app_id, rm.deployment_id::text AS deployment_id
+FROM environment_git_sources source
+JOIN project_environments env ON env.id = source.environment_id
+  AND env.account_id = source.account_id AND env.project_id = source.project_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+JOIN project_release_members rm ON rm.release_id = release.id
+JOIN deployments deployment ON deployment.id = rm.deployment_id AND deployment.app_id = rm.app_id
+  AND deployment.scope = env.slug AND deployment.status = 'live' AND NOT deployment.environment_workload_held
+WHERE source.id = $1::uuid AND env.id = $2::uuid
+ORDER BY rm.app_id
+`
+
+type ActiveEnvironmentWorkloadReleaseMembersParams struct {
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type ActiveEnvironmentWorkloadReleaseMembersRow struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) ActiveEnvironmentWorkloadReleaseMembers(ctx context.Context, db DBTX, arg ActiveEnvironmentWorkloadReleaseMembersParams) ([]ActiveEnvironmentWorkloadReleaseMembersRow, error) {
+	rows, err := db.Query(ctx, activeEnvironmentWorkloadReleaseMembers, arg.SourceID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ActiveEnvironmentWorkloadReleaseMembersRow{}
+	for rows.Next() {
+		var i ActiveEnvironmentWorkloadReleaseMembersRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const activeEnvironmentWorkloadReleaseSet = `-- name: ActiveEnvironmentWorkloadReleaseSet :one
+SELECT release.id::text
+FROM environment_workload_graphs graph
+JOIN environment_git_sources source ON source.id = graph.source_id
+JOIN project_environments env ON env.id = source.environment_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+WHERE graph.id = $1::uuid
+`
+
+func (q *Queries) ActiveEnvironmentWorkloadReleaseSet(ctx context.Context, db DBTX, graphID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, activeEnvironmentWorkloadReleaseSet, graphID)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
 }
 
 const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
@@ -1586,7 +1664,7 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 `
 
 type ApplyRegressionActionParams struct {
@@ -1624,6 +1702,7 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		&i.AcknowledgedAt,
 		&i.DismissedUntil,
 		&i.ResolvedAt,
+		&i.SuspectedDependency,
 	)
 	return i, err
 }
@@ -3362,7 +3441,7 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  reserved_instance_id=$4::uuid
 WHERE id=$5::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
 `
 
 type ClaimEnvironmentWorkloadQualificationParams struct {
@@ -6057,6 +6136,20 @@ func (q *Queries) CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
+const completeEnvironmentWorkloadServingReceipt = `-- name: CompleteEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET phase = 'served', served_at = coalesce(served_at, clock_timestamp()), updated_at = clock_timestamp()
+WHERE graph_id = $1::uuid AND phase = 'pending'
+`
+
+func (q *Queries) CompleteEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, completeEnvironmentWorkloadServingReceipt, graphID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeLayerArtifactDeletion = `-- name: CompleteLayerArtifactDeletion :execrows
 UPDATE layer_artifact_retention SET state = 'deleted', deleted_at = coalesce(deleted_at, clock_timestamp())
 WHERE storage_key = $1::text AND deletion_id = $2::uuid
@@ -6506,7 +6599,8 @@ func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, 
 
 const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid))::bigint AS count
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid)
+ + (SELECT count(*) FROM app_environment_workload_intents w CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid))::bigint AS count
 `
 
 type CountAppEnvironmentIntentParams struct {
@@ -6514,7 +6608,7 @@ type CountAppEnvironmentIntentParams struct {
 	AppID     pgtype.UUID
 }
 
-// References and plaintext variables share the app's environment-key quota.
+// Bindings, references and plaintext variables share the app's environment-key quota.
 func (q *Queries) CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error) {
 	row := db.QueryRow(ctx, countAppEnvironmentIntent, arg.AccountID, arg.AppID)
 	var count int64
@@ -6524,7 +6618,8 @@ func (q *Queries) CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg Co
 
 const countAppEnvironmentIntentInScope = `-- name: CountAppEnvironmentIntentInScope :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text))::bigint AS count
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text)
+ + (SELECT count(*) FROM app_environment_workload_intents w JOIN project_environments e ON e.id=w.environment_id CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND e.slug=$3::text))::bigint AS count
 `
 
 type CountAppEnvironmentIntentInScopeParams struct {
@@ -7549,7 +7644,7 @@ WITH queued AS (
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
-WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending'
+WHERE d.id=queued.deployment_id AND d.environment_workload_held AND d.status='pending'
 `
 
 type CreateEnvironmentGitOpsSourceBuildParams struct {
@@ -7571,13 +7666,14 @@ func (q *Queries) CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBT
 
 const createEnvironmentGitOpsWorkloadCandidate = `-- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,environment_workload_held,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
  rollback_on_5xx)
 VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  nullif($6::text,''),$7::text,nullif($8::text,''),$9::bigint,nullif($10::text,''),$11::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$11::jsonb,
+ true,
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  $11::jsonb->'deployment_inputs'->'override_env',$11::jsonb->'deployment_inputs'->'override_env_secrets',
@@ -9700,6 +9796,16 @@ func (q *Queries) DeleteEnvironmentWorkKeyLanes(ctx context.Context, db DBTX, en
 	return err
 }
 
+const deleteEnvironmentWorkloadServingAcks = `-- name: DeleteEnvironmentWorkloadServingAcks :exec
+DELETE FROM environment_workload_serving_route_acks
+WHERE graph_id = $1::uuid
+`
+
+func (q *Queries) DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteEnvironmentWorkloadServingAcks, graphID)
+	return err
+}
+
 const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3
@@ -10823,7 +10929,7 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
 WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
- WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')))
+WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/')))
 `
 
 type EnvironmentGitOpsUnqualifiedWorkloadsRow struct {
@@ -10928,8 +11034,40 @@ func (q *Queries) EnvironmentQualificationAdmissionInputs(ctx context.Context, d
 	return i, err
 }
 
+const environmentQualificationAppProtocol = `-- name: EnvironmentQualificationAppProtocol :one
+SELECT app_protocol FROM apps WHERE id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, environmentQualificationAppProtocol, appID)
+	var app_protocol string
+	err := row.Scan(&app_protocol)
+	return app_protocol, err
+}
+
+const environmentQualificationConfigReceipt = `-- name: EnvironmentQualificationConfigReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at
+FROM environment_qualification_config_receipts
+WHERE instance_id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationConfigReceipt, instanceID)
+	var i EnvironmentQualificationConfigReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.ApiEnvSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const environmentQualificationExecution = `-- name: EnvironmentQualificationExecution :one
-SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at, capture_instance_id FROM environment_qualification_executions WHERE instance_id=$1::uuid
 `
 
 func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
@@ -10944,13 +11082,14 @@ func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX
 		&i.Retirement,
 		&i.CreatedAt,
 		&i.RetiredAt,
+		&i.CaptureInstanceID,
 	)
 	return i, err
 }
 
 const environmentQualificationExecutionRecoverable = `-- name: EnvironmentQualificationExecutionRecoverable :one
 SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
- AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
  AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
 FROM environment_qualification_executions e WHERE e.instance_id=$1::uuid
 `
@@ -10962,6 +11101,33 @@ func (q *Queries) EnvironmentQualificationExecutionRecoverable(ctx context.Conte
 	var recoverable pgtype.Bool
 	err := row.Scan(&recoverable)
 	return recoverable, err
+}
+
+const environmentQualificationFrameworkReadyReceipt = `-- name: EnvironmentQualificationFrameworkReadyReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at
+FROM environment_qualification_framework_ready_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationFrameworkReadyReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationFrameworkReadyReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationFrameworkReadyReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Runtime,
+		&i.WarmupMs,
+		&i.RecordedAt,
+	)
+	return i, err
 }
 
 const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
@@ -11006,6 +11172,81 @@ func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const environmentQualificationJobSmokeReceipt = `-- name: EnvironmentQualificationJobSmokeReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at
+FROM environment_qualification_job_smoke_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationJobSmokeReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationJobSmokeReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationJobSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.ExitCode,
+		&i.ErrorClass,
+		&i.Signal,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const environmentQualificationNetworkInstances = `-- name: EnvironmentQualificationNetworkInstances :many
+SELECT i.id, i.node_id, d.environment_workload_held AS held
+FROM instances i JOIN deployments d ON d.id=i.deployment_id
+WHERE (i.node_id=coalesce(nullif($1::text,'')::uuid,
+ (SELECT n.id FROM compute_nodes n WHERE n.name=$2::text))
+ OR ($1::text='' AND $2::text=''))
+ AND i.host_ip=$3::text::inet
+ AND i.state IN ('running','draining') ORDER BY i.id
+`
+
+type EnvironmentQualificationNetworkInstancesParams struct {
+	NodeID   string
+	NodeName string
+	HostIp   string
+}
+
+type EnvironmentQualificationNetworkInstancesRow struct {
+	ID     pgtype.UUID
+	NodeID pgtype.UUID
+	Held   bool
+}
+
+// An observed source address may name exactly one current network incarnation.
+// Holding a deployment is independent of whether its execution lease expired.
+func (q *Queries) EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error) {
+	rows, err := db.Query(ctx, environmentQualificationNetworkInstances, arg.NodeID, arg.NodeName, arg.HostIp)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentQualificationNetworkInstancesRow{}
+	for rows.Next() {
+		var i EnvironmentQualificationNetworkInstancesRow
+		if err := rows.Scan(&i.ID, &i.NodeID, &i.Held); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const environmentQualificationNodeUsedMB = `-- name: EnvironmentQualificationNodeUsedMB :one
 SELECT coalesce(sum(ram_mb+$1::integer),0)::bigint FROM instances
 WHERE node_id=$2::uuid AND state IN ('waking','cold_booting','running','draining','warm')
@@ -11021,6 +11262,124 @@ func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBT
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const environmentQualificationRestoreCurrent = `-- name: EnvironmentQualificationRestoreCurrent :one
+SELECT environment_qualification_restore_current($1::uuid,$2::uuid)::boolean
+`
+
+type EnvironmentQualificationRestoreCurrentParams struct {
+	RequestID         pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreCurrent, arg.RequestID, arg.CaptureInstanceID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const environmentQualificationRestoreReceipt = `-- name: EnvironmentQualificationRestoreReceipt :one
+SELECT request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at
+FROM environment_qualification_restore_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationRestoreReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationRestoreReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.RuntimeInputs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const environmentQualificationRestoreReservation = `-- name: EnvironmentQualificationRestoreReservation :one
+SELECT instance_id, capture_instance_id, request_id, attempt, created_at FROM environment_qualification_restore_reservations WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationRestoreReservationParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreReservation, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationRestoreReservation
+	err := row.Scan(
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.RequestID,
+		&i.Attempt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const environmentQualificationSmokeReceipt = `-- name: EnvironmentQualificationSmokeReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
+FROM environment_qualification_smoke_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationSmokeReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationSmokeReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const environmentQualificationSnapshotReceipt = `-- name: EnvironmentQualificationSnapshotReceipt :one
+SELECT e.frame,e.cleanup_token,r.snapshot,r.inputs,r.recorded_at FROM environment_qualification_snapshot_receipts r
+JOIN environment_qualification_executions e ON e.instance_id=r.instance_id WHERE r.instance_id=$1::uuid
+`
+
+type EnvironmentQualificationSnapshotReceiptRow struct {
+	Frame        []byte
+	CleanupToken pgtype.UUID
+	Snapshot     []byte
+	Inputs       []byte
+	RecordedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) EnvironmentQualificationSnapshotReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationSnapshotReceiptRow, error) {
+	row := db.QueryRow(ctx, environmentQualificationSnapshotReceipt, instanceID)
+	var i EnvironmentQualificationSnapshotReceiptRow
+	err := row.Scan(
+		&i.Frame,
+		&i.CleanupToken,
+		&i.Snapshot,
+		&i.Inputs,
+		&i.RecordedAt,
+	)
+	return i, err
 }
 
 const environmentQueueClaimCapacity = `-- name: EnvironmentQueueClaimCapacity :one
@@ -11211,8 +11570,43 @@ func (q *Queries) EnvironmentWorkloadGraphForPreparation(ctx context.Context, db
 	return i, err
 }
 
+const environmentWorkloadGraphForStatus = `-- name: EnvironmentWorkloadGraphForStatus :one
+SELECT id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at FROM environment_workload_graphs WHERE source_id=$1::uuid
+ AND generation=$2::bigint AND plan_hash=$3::text
+`
+
+type EnvironmentWorkloadGraphForStatusParams struct {
+	SourceID   pgtype.UUID
+	Generation int64
+	PlanHash   string
+}
+
+// Status reads use a read-only transaction and must not lock the candidate graph.
+func (q *Queries) EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForStatusParams) (EnvironmentWorkloadGraph, error) {
+	row := db.QueryRow(ctx, environmentWorkloadGraphForStatus, arg.SourceID, arg.Generation, arg.PlanHash)
+	var i EnvironmentWorkloadGraph
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EnvironmentID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.DefinitionDigest,
+		&i.Members,
+		&i.ResourceIds,
+		&i.Phase,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
-SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at, w.source_revision FROM app_environment_workload_intents w
+SELECT w.account_id,w.app_id,w.environment_id,w.job_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables
+FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
 WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND w.environment_id=$3::uuid
@@ -11231,17 +11625,21 @@ func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg En
 		&i.AccountID,
 		&i.AppID,
 		&i.EnvironmentID,
+		&i.JobID,
 		&i.Source,
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
+		&i.ServiceBindings,
+		&i.Schedule,
+		&i.Variables,
 	)
 	return i, err
 }
 
 const environmentWorkloadIntentContext = `-- name: EnvironmentWorkloadIntentContext :one
-SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
 JOIN accounts c ON c.id=a.account_id
 WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.id=$3::uuid AND a.status<>'deleted'
@@ -11291,19 +11689,20 @@ func (q *Queries) EnvironmentWorkloadIntentLockSource(ctx context.Context, db DB
 }
 
 const environmentWorkloadQualificationAppOwner = `-- name: EnvironmentWorkloadQualificationAppOwner :one
-SELECT node_id, status FROM apps WHERE id = $1
+SELECT node_id, status, app_protocol FROM apps WHERE id = $1
 `
 
 type EnvironmentWorkloadQualificationAppOwnerRow struct {
-	NodeID pgtype.UUID
-	Status string
+	NodeID      pgtype.UUID
+	Status      string
+	AppProtocol string
 }
 
 // Called after qualificationCurrentTx locks the source and its mapped apps.
 func (q *Queries) EnvironmentWorkloadQualificationAppOwner(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationAppOwnerRow, error) {
 	row := db.QueryRow(ctx, environmentWorkloadQualificationAppOwner, id)
 	var i EnvironmentWorkloadQualificationAppOwnerRow
-	err := row.Scan(&i.NodeID, &i.Status)
+	err := row.Scan(&i.NodeID, &i.Status, &i.AppProtocol)
 	return i, err
 }
 
@@ -11321,6 +11720,20 @@ func (q *Queries) EnvironmentWorkloadQualificationArtifactCurrent(ctx context.Co
 	var current bool
 	err := row.Scan(&current)
 	return current, err
+}
+
+const environmentWorkloadQualificationEvidenceCurrent = `-- name: EnvironmentWorkloadQualificationEvidenceCurrent :one
+SELECT environment_workload_qualification_evidence_current($1::uuid)::boolean
+`
+
+// Qualification receipts are written only while candidates are held in
+// snapshotting. Evidence remains current after activation only while the exact
+// candidates belong to the active environment release set.
+func (q *Queries) EnvironmentWorkloadQualificationEvidenceCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationEvidenceCurrent, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const environmentWorkloadQualificationForUpdate = `-- name: EnvironmentWorkloadQualificationForUpdate :one
@@ -11438,6 +11851,165 @@ func (q *Queries) EnvironmentWorkloadQualificationsByGraph(ctx context.Context, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const environmentWorkloadServingAcks = `-- name: EnvironmentWorkloadServingAcks :many
+SELECT route_generation, node_name
+FROM environment_workload_serving_route_acks
+WHERE graph_id = $1::uuid
+ORDER BY route_generation, node_name
+`
+
+type EnvironmentWorkloadServingAcksRow struct {
+	RouteGeneration int64
+	NodeName        string
+}
+
+func (q *Queries) EnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingAcksRow, error) {
+	rows, err := db.Query(ctx, environmentWorkloadServingAcks, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadServingAcksRow{}
+	for rows.Next() {
+		var i EnvironmentWorkloadServingAcksRow
+		if err := rows.Scan(&i.RouteGeneration, &i.NodeName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentWorkloadServingCutoverWeightsMatch = `-- name: EnvironmentWorkloadServingCutoverWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required
+      AND (target.status <> 'live' OR target.environment_workload_held OR target.traffic_percent <> 100)
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AS cutover_weights_match
+`
+
+// A previous gateway acknowledgement becomes stale if managed candidate
+// traffic drifts. Retained routes are intentionally excluded because their
+// traffic policy is not owned by the environment definition.
+func (q *Queries) EnvironmentWorkloadServingCutoverWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingCutoverWeightsMatch, graphID)
+	var cutover_weights_match pgtype.Bool
+	err := row.Scan(&cutover_weights_match)
+	return cutover_weights_match, err
+}
+
+const environmentWorkloadServingReceipt = `-- name: EnvironmentWorkloadServingReceipt :one
+SELECT graph_id::text AS graph_id, source_id::text AS source_id, release_set_id::text AS release_set_id,
+       source_generation, intent_version, revision_id::text AS revision_id, plan_hash,
+       expected_gateways, phase, served_at
+FROM environment_workload_serving_receipts
+WHERE graph_id = $1::uuid
+`
+
+type EnvironmentWorkloadServingReceiptRow struct {
+	GraphID          string
+	SourceID         string
+	ReleaseSetID     string
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       string
+	PlanHash         string
+	ExpectedGateways []string
+	Phase            string
+	ServedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) EnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (EnvironmentWorkloadServingReceiptRow, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingReceipt, graphID)
+	var i EnvironmentWorkloadServingReceiptRow
+	err := row.Scan(
+		&i.GraphID,
+		&i.SourceID,
+		&i.ReleaseSetID,
+		&i.SourceGeneration,
+		&i.IntentVersion,
+		&i.RevisionID,
+		&i.PlanHash,
+		&i.ExpectedGateways,
+		&i.Phase,
+		&i.ServedAt,
+	)
+	return i, err
+}
+
+const environmentWorkloadServingRoutes = `-- name: EnvironmentWorkloadServingRoutes :many
+SELECT app_id::text AS app_id, deployment_id::text AS deployment_id, route_generation, cutover_required
+FROM environment_workload_serving_routes
+WHERE graph_id = $1::uuid
+ORDER BY app_id
+`
+
+type EnvironmentWorkloadServingRoutesRow struct {
+	AppID           string
+	DeploymentID    string
+	RouteGeneration int64
+	CutoverRequired bool
+}
+
+func (q *Queries) EnvironmentWorkloadServingRoutes(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingRoutesRow, error) {
+	rows, err := db.Query(ctx, environmentWorkloadServingRoutes, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadServingRoutesRow{}
+	for rows.Next() {
+		var i EnvironmentWorkloadServingRoutesRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.RouteGeneration,
+			&i.CutoverRequired,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentWorkloadServingWeightsMatch = `-- name: EnvironmentWorkloadServingWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = $1::uuid
+      AND (target.status <> 'live' OR target.environment_workload_held OR
+           (route.cutover_required AND target.traffic_percent <> 100) OR
+           (NOT route.cutover_required AND target.traffic_percent <= 0))
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AND public.environment_workload_serving_ready($1::uuid) AS serving_weights_match
+`
+
+func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingWeightsMatch, graphID)
+	var serving_weights_match pgtype.Bool
+	err := row.Scan(&serving_weights_match)
+	return serving_weights_match, err
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -15933,6 +16505,149 @@ func (q *Queries) GetCustomerOperationReport(ctx context.Context, db DBTX, arg G
 	return fingerprint, err
 }
 
+const getCustomerOperationResolutionVerifications = `-- name: GetCustomerOperationResolutionVerifications :one
+SELECT verifications.items::jsonb AS items FROM (
+ SELECT $1::uuid account_id,$2::uuid app_id,$3::uuid platform_tenant_id,
+ $4::text scope,$5::text subject_type,$6::text subject_id,
+ $7::text workflow,$8::text instance_id
+) s
+CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$9::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>$10::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=$9::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>$10::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+`
+
+type GetCustomerOperationResolutionVerificationsParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	TenantID     pgtype.UUID
+	Scope        string
+	SubjectType  string
+	SubjectID    string
+	WorkflowName string
+	InstanceID   string
+	EvaluatedAt  pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationResolutionVerifications(ctx context.Context, db DBTX, arg GetCustomerOperationResolutionVerificationsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getCustomerOperationResolutionVerifications,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.Scope,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.WorkflowName,
+		arg.InstanceID,
+		arg.EvaluatedAt,
+		arg.Now,
+	)
+	var items []byte
+	err := row.Scan(&items)
+	return items, err
+}
+
+const getCustomerOperationWorkflowBottleneckHistory = `-- name: GetCustomerOperationWorkflowBottleneckHistory :many
+SELECT jsonb_build_object('history',jsonb_build_object(
+ 'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
+ 'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
+ 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),false)) AS observation
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
+ AND o.platform_tenant_id=$3::uuid AND d.scope=$4::text
+ AND o.record #>> '{subject,type}'=$5::text AND o.record #>> '{subject,id}'=$6::text
+ AND r.workflow=$7::text AND r.instance_id=$8::text
+ AND r.created_at<=$9::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>$10::timestamptz)
+ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT $11::integer
+`
+
+type GetCustomerOperationWorkflowBottleneckHistoryParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	TenantID     pgtype.UUID
+	Scope        string
+	SubjectType  string
+	SubjectID    string
+	WorkflowName string
+	InstanceID   string
+	EvaluatedAt  pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+	WindowLimit  int32
+}
+
+func (q *Queries) GetCustomerOperationWorkflowBottleneckHistory(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowBottleneckHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, getCustomerOperationWorkflowBottleneckHistory,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.Scope,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.WorkflowName,
+		arg.InstanceID,
+		arg.EvaluatedAt,
+		arg.Now,
+		arg.WindowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var observation []byte
+		if err := rows.Scan(&observation); err != nil {
+			return nil, err
+		}
+		items = append(items, observation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCustomerOperationWorkflowCustody = `-- name: GetCustomerOperationWorkflowCustody :one
 SELECT workflow_run_id, operation_id, generation, execution_kind, attempt, capability_digest, lease_until FROM customer_operation_workflow_claims WHERE workflow_run_id=$1::uuid
 `
@@ -16130,6 +16845,51 @@ func (q *Queries) GetCustomerOperationWorkflowResolutionSource(ctx context.Conte
 	var blockers []byte
 	err := row.Scan(&blockers)
 	return blockers, err
+}
+
+const getCustomerOperationWorkflowSLABudget = `-- name: GetCustomerOperationWorkflowSLABudget :one
+SELECT COALESCE(MAX((step->'state_sla_budget_seconds'->>$1::text)::bigint),0::bigint)::bigint AS budget,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>$1::text)::bigint),0::bigint)::bigint AS warning_percent
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.app_id=$4::uuid AND o.platform_tenant_id=$5::uuid AND d.scope=$6::text
+AND step->>'workflow'=$7::text AND COALESCE(NULLIF((step->>'version')::integer,0),1)=$8::integer
+AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+`
+
+type GetCustomerOperationWorkflowSLABudgetParams struct {
+	StateName       string
+	OperationID     pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	TenantID        pgtype.UUID
+	Scope           string
+	WorkflowName    string
+	ContractVersion int32
+	Now             pgtype.Timestamptz
+}
+
+type GetCustomerOperationWorkflowSLABudgetRow struct {
+	Budget         int64
+	WarningPercent int64
+}
+
+func (q *Queries) GetCustomerOperationWorkflowSLABudget(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowSLABudgetParams) (GetCustomerOperationWorkflowSLABudgetRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationWorkflowSLABudget,
+		arg.StateName,
+		arg.OperationID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.Scope,
+		arg.WorkflowName,
+		arg.ContractVersion,
+		arg.Now,
+	)
+	var i GetCustomerOperationWorkflowSLABudgetRow
+	err := row.Scan(&i.Budget, &i.WarningPercent)
+	return i, err
 }
 
 const getCustomerOperationWorkflowStateReport = `-- name: GetCustomerOperationWorkflowStateReport :one
@@ -17274,7 +18034,7 @@ const getRegressionObservation = `-- name: GetRegressionObservation :one
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -17306,6 +18066,7 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.AcknowledgedAt,
 		&i.DismissedUntil,
 		&i.ResolvedAt,
+		&i.SuspectedDependency,
 	)
 	return i, err
 }
@@ -20069,6 +20830,125 @@ func (q *Queries) InsertEnvironmentGitRevisionApproval(ctx context.Context, db D
 		arg.PollLeaseToken,
 	)
 	return err
+}
+
+const insertEnvironmentQualificationConfigReceipt = `-- name: InsertEnvironmentQualificationConfigReceipt :one
+INSERT INTO environment_qualification_config_receipts(request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::uuid,$6::text)
+ON CONFLICT(instance_id) DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at
+`
+
+type InsertEnvironmentQualificationConfigReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	ApiEnvSha256      string
+}
+
+func (q *Queries) InsertEnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationConfigReceiptParams) (EnvironmentQualificationConfigReceipt, error) {
+	row := db.QueryRow(ctx, insertEnvironmentQualificationConfigReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.InstanceID,
+		arg.CaptureInstanceID,
+		arg.ApiEnvSha256,
+	)
+	var i EnvironmentQualificationConfigReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.ApiEnvSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const insertEnvironmentQualificationFrameworkReadyReceipt = `-- name: InsertEnvironmentQualificationFrameworkReadyReceipt :one
+INSERT INTO environment_qualification_framework_ready_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::uuid,$6::text,$7::bigint)
+ON CONFLICT(request_id,attempt) DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at
+`
+
+type InsertEnvironmentQualificationFrameworkReadyReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Runtime           string
+	WarmupMs          int64
+}
+
+func (q *Queries) InsertEnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error) {
+	row := db.QueryRow(ctx, insertEnvironmentQualificationFrameworkReadyReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.Runtime,
+		arg.WarmupMs,
+	)
+	var i EnvironmentQualificationFrameworkReadyReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Runtime,
+		&i.WarmupMs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const insertEnvironmentWorkloadServingReceipt = `-- name: InsertEnvironmentWorkloadServingReceipt :execrows
+INSERT INTO environment_workload_serving_receipts
+    (graph_id, source_id, release_set_id, source_generation, intent_version, revision_id, plan_hash, expected_gateways, phase)
+VALUES
+    ($1::uuid, $2::uuid, $3::uuid,
+     $4::bigint, $5::bigint, $6::uuid,
+     $7::text, $8::text[], 'pending')
+ON CONFLICT (graph_id) DO NOTHING
+`
+
+type InsertEnvironmentWorkloadServingReceiptParams struct {
+	GraphID          pgtype.UUID
+	SourceID         pgtype.UUID
+	ReleaseSetID     pgtype.UUID
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       pgtype.UUID
+	PlanHash         string
+	ExpectedGateways []string
+}
+
+func (q *Queries) InsertEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadServingReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, insertEnvironmentWorkloadServingReceipt,
+		arg.GraphID,
+		arg.SourceID,
+		arg.ReleaseSetID,
+		arg.SourceGeneration,
+		arg.IntentVersion,
+		arg.RevisionID,
+		arg.PlanHash,
+		arg.ExpectedGateways,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertEventWorkflowReceipt = `-- name: InsertEventWorkflowReceipt :exec
@@ -26372,7 +27252,7 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
@@ -26387,18 +27267,19 @@ type ListActiveRegressionsByAppParams struct {
 }
 
 type ListActiveRegressionsByAppRow struct {
-	DeploymentID     pgtype.UUID
-	Route            string
-	P95Ms            int32
-	P95BaseMs        int32
-	AffectedCount    int32
-	RegressionFactor pgtype.Numeric
-	FirstDetectedAt  pgtype.Timestamptz
-	LastDetectedAt   pgtype.Timestamptz
-	State            interface{}
-	AcknowledgedAt   pgtype.Timestamptz
-	DismissedUntil   pgtype.Timestamptz
-	ResolvedAt       pgtype.Timestamptz
+	DeploymentID        pgtype.UUID
+	Route               string
+	P95Ms               int32
+	P95BaseMs           int32
+	AffectedCount       int32
+	RegressionFactor    pgtype.Numeric
+	FirstDetectedAt     pgtype.Timestamptz
+	LastDetectedAt      pgtype.Timestamptz
+	State               interface{}
+	AcknowledgedAt      pgtype.Timestamptz
+	DismissedUntil      pgtype.Timestamptz
+	ResolvedAt          pgtype.Timestamptz
+	SuspectedDependency []byte
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -26429,6 +27310,7 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.AcknowledgedAt,
 			&i.DismissedUntil,
 			&i.ResolvedAt,
+			&i.SuspectedDependency,
 		); err != nil {
 			return nil, err
 		}
@@ -28018,10 +28900,10 @@ const listCustomerOperationWorkflowAttention = `-- name: ListCustomerOperationWo
 SELECT json_build_object(
  'app_id',s.app_id,'scope',s.scope,'platform_tenant_id',s.platform_tenant_id,
  'subject',json_build_object('type',s.subject_type,'id',s.subject_id),
- 'operation_id',o.id,'dependency_attention',dependencies.items,
+ 'operation_id',o.id,'resolution_verifications',verifications.items,'escalations',escalations.items,'dependency_attention',dependencies.items,
  'state',json_build_object(
   'workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
-  'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
+  'sla',sla.value,'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
   'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
@@ -28033,7 +28915,9 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s
 JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
 CROSS JOIN LATERAL (
  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
- COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+ COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_budget_seconds,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_warning_percent
  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS steps(step)
  WHERE step->>'workflow'=s.workflow
 ) config
@@ -28044,6 +28928,82 @@ CROSS JOIN LATERAL (
  CASE WHEN NOT config.terminal AND NULLIF(r.deadline_at,'')::timestamptz<=$1::timestamptz
  THEN GREATEST(0,floor(extract(epoch FROM ($1::timestamptz-r.deadline_at::timestamptz)))::bigint) ELSE 0::bigint END AS overdue_seconds
 ) attention
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.value ORDER BY h.revision DESC,h.operation_id DESC,h.id DESC),'[]'::jsonb) AS items FROM (
+  SELECT hr.id,hr.operation_id,hr.revision,jsonb_build_object('id',hr.id,'operation_id',hr.operation_id,'revision',hr.revision,'state',hr.state,'from_state',hr.from_state,'contract_version',hr.contract_version,'occurred_at',hr.occurred_at,
+  'budget',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0),
+  'warning',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0)) value
+  FROM customer_operation_workflow_state_reports hr
+  JOIN customer_operations ho ON ho.id=hr.operation_id
+  JOIN customer_operation_definitions hd ON hd.id=ho.definition_id AND hd.account_id=ho.account_id AND hd.app_id=ho.app_id
+  WHERE config.sla_budget_seconds>0 AND NOT config.terminal
+  AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
+  AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
+  AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=$1::timestamptz
+  AND (ho.state IN ('accepted','running') OR ho.expires_at>$2::timestamptz)
+  ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT $3::integer
+ ) h
+) sla_history
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((value->>'revision')::bigint) FILTER (WHERE value->>'state'<>s.state OR (value->>'contract_version')::integer<>r.contract_version),0::bigint) AS revision
+ FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+ WHERE n<$3::integer
+) sla_boundary
+CROSS JOIN LATERAL (
+ SELECT min(revision) AS entry_revision,max(revision) AS latest_revision,min(occurred_at) AS entered_at,
+ count(*) AS reports,count(DISTINCT revision) AS unique_reports,
+ bool_and(state=s.state AND version=r.contract_version AND budget=config.sla_budget_seconds AND warning=config.sla_warning_percent AND occurred_at<>'0001-01-01T00:00:00Z'::timestamptz AND occurred_at<=$1::timestamptz
+ AND (previous_time IS NULL OR occurred_at>=previous_time)
+ AND (previous_state IS NULL OR from_state='' OR from_state=previous_state)) AS timeline_valid,
+ bool_or(id=r.id::text AND operation_id=r.operation_id::text AND revision=s.revision) AS contains_current
+ FROM (
+  SELECT value->>'id' AS id,value->>'operation_id' AS operation_id,(value->>'revision')::bigint AS revision,value->>'state' AS state,COALESCE(value->>'from_state','') AS from_state,
+  (value->>'contract_version')::integer AS version,(value->>'budget')::bigint AS budget,(value->>'warning')::bigint AS warning,(value->>'occurred_at')::timestamptz AS occurred_at,
+  lag((value->>'occurred_at')::timestamptz) OVER (ORDER BY (value->>'revision')::bigint) AS previous_time,
+  lag(value->>'state') OVER (ORDER BY (value->>'revision')::bigint) AS previous_state
+  FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+  WHERE n<$3::integer AND (value->>'revision')::bigint>=sla_boundary.revision
+ ) ordered
+ WHERE revision>sla_boundary.revision
+) sla_suffix
+CROSS JOIN LATERAL (
+ SELECT count(*) AS reports,bool_and(value->>'state'<>s.state AND (value->>'contract_version')::integer=r.contract_version AND (value->>'occurred_at')::timestamptz<>'0001-01-01T00:00:00Z'::timestamptz
+ AND (value->>'occurred_at')::timestamptz<=sla_suffix.entered_at) AS valid
+ FROM jsonb_array_elements(sla_history.items) AS h(value)
+ WHERE (value->>'revision')::bigint=sla_boundary.revision
+) sla_border
+CROSS JOIN LATERAL (
+ SELECT COALESCE(sla_suffix.timeline_valid AND sla_suffix.contains_current AND sla_suffix.latest_revision=s.revision
+ AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(sla_history.items) AS h(value) WHERE (value->>'revision')::bigint>=sla_suffix.entry_revision GROUP BY (value->>'revision')::bigint HAVING count(*)>1)
+ AND sla_suffix.reports=sla_suffix.unique_reports AND sla_suffix.reports=s.revision-sla_suffix.entry_revision+1
+ AND (sla_suffix.entry_revision=1 AND sla_boundary.revision=0 OR sla_border.reports=1 AND sla_border.valid AND sla_boundary.revision=sla_suffix.entry_revision-1),false) AS known,
+ sla_suffix.entered_at + make_interval(secs=>config.sla_budget_seconds::double precision) AS due_at,
+ sla_suffix.entered_at + make_interval(secs=>(config.sla_budget_seconds*config.sla_warning_percent)::double precision/100) AS warning_at,
+ GREATEST(0,floor(extract(epoch FROM ($1::timestamptz-sla_suffix.entered_at))))::bigint AS elapsed
+) sla_clock
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN config.sla_budget_seconds<1 OR config.terminal THEN NULL::jsonb ELSE
+ jsonb_build_object('evaluated_at',$1::timestamptz,'budget_seconds',config.sla_budget_seconds,'history_complete',sla_clock.known,'status',CASE WHEN NOT sla_clock.known THEN 'unknown' WHEN sla_clock.due_at<=$1::timestamptz THEN 'breached' WHEN config.sla_warning_percent>0 AND sla_clock.warning_at<=$1::timestamptz THEN 'at_risk' ELSE 'within_budget' END)
+ || CASE WHEN config.sla_warning_percent>0 THEN jsonb_build_object('warning_percent',config.sla_warning_percent) ELSE '{}'::jsonb END
+ || CASE WHEN sla_clock.known AND config.sla_warning_percent>0 THEN jsonb_build_object('warning_at',sla_clock.warning_at) ELSE '{}'::jsonb END
+ || CASE WHEN NOT sla_clock.known THEN '{}'::jsonb ELSE jsonb_build_object('entered_at',sla_suffix.entered_at,'due_at',sla_clock.due_at,'elapsed_seconds',sla_clock.elapsed,'remaining_seconds',GREATEST(0,config.sla_budget_seconds-sla_clock.elapsed),'breached_seconds',GREATEST(0,sla_clock.elapsed-config.sla_budget_seconds)) END END AS value,
+ (config.sla_budget_seconds>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.due_at<=$1::timestamptz) IS TRUE AS breached,
+ (config.sla_budget_seconds>0 AND config.sla_warning_percent>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.warning_at<=$1::timestamptz AND sla_clock.due_at>$1::timestamptz) IS TRUE AS at_risk
+) sla
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(jsonb_build_object('code',b->>'code','operation',b->>'operation','owner',policy.value->>'owner',
+ 'after_seconds',(policy.value->>'after_seconds')::bigint,
+ 'escalated_at',NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision))
+ ORDER BY b->>'operation',b->>'code'),'[]'::jsonb) AS items
+ FROM jsonb_array_elements(r.blockers) b
+ CROSS JOIN LATERAL (
+  SELECT step->'blocker_escalations'->(b->>'code') AS value
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) steps(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version LIMIT 1
+ ) policy
+ WHERE NOT config.terminal AND (policy.value->>'after_seconds')::bigint>0
+ AND NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision)<=$1::timestamptz
+) escalations
 CROSS JOIN LATERAL (
  SELECT COALESCE(jsonb_agg(jsonb_build_object('dependency',link.value,'status',resolved.status) ORDER BY link.value->>'subject_type',link.value->>'subject_id',link.value->>'workflow',link.value->>'instance_id')
  FILTER (WHERE NOT config.terminal AND resolved.status IN ('unknown','waiting','outcome_mismatch')), '[]'::jsonb) AS items
@@ -28071,49 +29031,122 @@ CROSS JOIN LATERAL (
  ) resolved
 ) dependencies
 CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$1::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>$2::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=$1::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>$2::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+CROSS JOIN LATERAL (
  SELECT encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
 ) identity
-WHERE s.account_id=$3::uuid AND s.app_id=$4::uuid AND s.scope=$5::text
- AND ($6::text='' OR s.platform_tenant_id::text=$6::text)
+WHERE s.account_id=$4::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
+ AND ($7::text='' OR s.platform_tenant_id::text=$7::text)
  AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
- AND ($7::text='' OR s.workflow=$7::text)
- AND ($8::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=$8::text))
- AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR jsonb_array_length(dependencies.items)>0)
- AND ($9::text='' OR $9::text='blocked' AND jsonb_array_length(r.blockers)>0 OR $9::text='stale' AND attention.stale OR $9::text='overdue' AND attention.overdue OR $9::text='dependency' AND jsonb_array_length(dependencies.items)>0)
- AND (($10::text='' AND $11::text='') OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
-   ($10::text='' OR dep->>'status'=$10::text)
-   AND ($11::text='' OR dep->'dependency'->>'required_outcome_code'=$11::text)
+ AND ($8::text='' OR s.workflow=$8::text)
+ AND (((($9::text='' AND NOT $10::boolean AND $11::text='') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE ($9::text='' OR COALESCE(b->>'owner','')=$9::text)
+ AND (NOT $10::boolean OR COALESCE(b->>'owner','')='')
+ AND ($11::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=$11::text)
+ AND ($12::text='' OR b->>'code'=$12::text)
+ AND ($13::text='' OR b->>'operation'=$13::text)
  ))
- AND ($12::text='' OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=$12::text
- ) OR (attention.stale OR attention.overdue) AND EXISTS (
+ AND ($12::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=$12::text))
+ AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR sla.breached OR sla.at_risk OR jsonb_array_length(dependencies.items)>0)
+ AND ($14::text NOT IN ('unacknowledged','follow_up_overdue') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE
+ ($9::text='' OR COALESCE(b->>'owner','')=$9::text)
+ AND (NOT $10::boolean OR COALESCE(b->>'owner','')='')
+ AND ($11::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=$11::text)
+ AND ($12::text='' OR b->>'code'=$12::text)
+ AND ($13::text='' OR b->>'operation'=$13::text)
+ AND ($14::text='unacknowledged' AND COALESCE(b->>'acknowledged_at','')='' OR $14::text='follow_up_overdue' AND NULLIF(b->>'follow_up_at','')::timestamptz<=$1::timestamptz)))
+ AND ($14::text IN ('','unacknowledged','follow_up_overdue') OR $14::text='blocked' AND jsonb_array_length(r.blockers)>0 OR $14::text='stale' AND attention.stale OR $14::text='sla_breached' AND sla.breached OR $14::text='sla_at_risk' AND sla.at_risk OR $14::text='overdue' AND attention.overdue OR $14::text='dependency' AND jsonb_array_length(dependencies.items)>0 OR $14::text='escalated' AND jsonb_array_length(escalations.items)>0)
+ AND ($14::text<>'escalated' OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE
+ ($9::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=$9::text))
+ AND (NOT $10::boolean OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=''))
+ AND ($11::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(NULLIF(b->>'priority',''),'normal')=$11::text))
+ AND ($12::text='' OR e->>'code'=$12::text)
+ AND ($13::text='' OR e->>'operation'=$13::text)
+ ))
+ AND ($13::text='' OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=$13::text
+ ) OR (attention.stale OR attention.overdue OR sla.breached OR sla.at_risk) AND EXISTS (
   SELECT 1 FROM customer_operation_definitions producer
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
   WHERE producer.account_id=s.account_id AND producer.app_id=s.app_id AND producer.scope=s.scope
-   AND producer.spec->>'name'=$12::text AND step->>'workflow'=s.workflow
+   AND producer.spec->>'name'=$13::text AND step->>'workflow'=s.workflow
    AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version AND edge->>'from'=s.state
  ))
- AND ($13::text='' OR (s.updated_at,identity.cursor_key)<($14::timestamptz,$13::text))
-ORDER BY s.updated_at DESC,identity.cursor_key DESC LIMIT $15::integer
+) OR EXISTS (SELECT 1 FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND $11::text='' AND $14::text IN ('','awaiting_verification')
+ AND ($9::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=$9::text)
+ AND (NOT $10::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND ($12::text='' OR v->'resolution'->>'code'=$12::text)
+ AND ($13::text='' OR v->'resolution'->>'operation'=$13::text))) AND (($15::text='' AND $16::text='') OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
+   ($15::text='' OR dep->>'status'=$15::text)
+   AND ($16::text='' OR dep->'dependency'->>'required_outcome_code'=$16::text)
+ ))
+ AND ($17::text='' OR $18::text='updated_at' AND (s.updated_at,identity.cursor_key)<($19::timestamptz,$17::text)
+ OR $18::text='deadline' AND (
+ COALESCE(NULLIF(r.deadline_at,'')::timestamptz,'infinity'::timestamptz)>COALESCE(NULLIF($20::text,'')::timestamptz,'infinity'::timestamptz)
+ OR COALESCE(NULLIF(r.deadline_at,'')::timestamptz,'infinity'::timestamptz)=COALESCE(NULLIF($20::text,'')::timestamptz,'infinity'::timestamptz)
+ AND (s.updated_at,identity.cursor_key)<($19::timestamptz,$17::text)))
+ORDER BY CASE WHEN $18::text='deadline' THEN NULLIF(r.deadline_at,'')::timestamptz END ASC NULLS LAST,s.updated_at DESC,identity.cursor_key DESC LIMIT $21::integer
 `
 
 type ListCustomerOperationWorkflowAttentionParams struct {
 	EvaluatedAt         pgtype.Timestamptz
 	Now                 pgtype.Timestamptz
+	SlaHistoryLimit     int32
 	AccountID           pgtype.UUID
 	AppID               pgtype.UUID
 	Scope               string
 	TenantID            string
 	WorkflowName        string
+	Owner               string
+	Unassigned          bool
+	Priority            string
 	BlockerCode         string
+	TargetOperation     string
 	Reason              string
 	DependencyStatus    string
 	RequiredOutcomeCode string
-	TargetOperation     string
 	AfterKey            string
+	SortBy              string
 	AfterUpdatedAt      pgtype.Timestamptz
+	AfterDeadline       string
 	PageLimit           int32
 }
 
@@ -28126,18 +29159,24 @@ func (q *Queries) ListCustomerOperationWorkflowAttention(ctx context.Context, db
 	rows, err := db.Query(ctx, listCustomerOperationWorkflowAttention,
 		arg.EvaluatedAt,
 		arg.Now,
+		arg.SlaHistoryLimit,
 		arg.AccountID,
 		arg.AppID,
 		arg.Scope,
 		arg.TenantID,
 		arg.WorkflowName,
+		arg.Owner,
+		arg.Unassigned,
+		arg.Priority,
 		arg.BlockerCode,
+		arg.TargetOperation,
 		arg.Reason,
 		arg.DependencyStatus,
 		arg.RequiredOutcomeCode,
-		arg.TargetOperation,
 		arg.AfterKey,
+		arg.SortBy,
 		arg.AfterUpdatedAt,
+		arg.AfterDeadline,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -29719,6 +30758,39 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 	return items, nil
 }
 
+const listEnvironmentGitOpsOverrideExpirations = `-- name: ListEnvironmentGitOpsOverrideExpirations :many
+SELECT o.resource, o.field_path, o.expires_at
+FROM environment_management_overrides o JOIN environment_managed_fields f
+ON f.environment_id = o.environment_id AND f.resource = o.resource AND f.field_path = o.field_path
+WHERE f.source_id = $1::uuid
+`
+
+type ListEnvironmentGitOpsOverrideExpirationsRow struct {
+	Resource  string
+	FieldPath string
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error) {
+	rows, err := db.Query(ctx, listEnvironmentGitOpsOverrideExpirations, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvironmentGitOpsOverrideExpirationsRow{}
+	for rows.Next() {
+		var i ListEnvironmentGitOpsOverrideExpirationsRow
+		if err := rows.Scan(&i.Resource, &i.FieldPath, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentGitOpsRuns = `-- name: ListEnvironmentGitOpsRuns :many
 SELECT r.id, r.source_id, r.revision_id, r.generation, r.lease_token, r.status, r.plan, r.steps, r.error_code, r.started_at, r.completed_at FROM environment_gitops_runs r
 JOIN environment_git_sources s ON s.id = r.source_id
@@ -29765,11 +30837,11 @@ func (q *Queries) ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg Li
 }
 
 const listEnvironmentQualificationExecutionsForRecovery = `-- name: ListEnvironmentQualificationExecutionsForRecovery :many
-SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at FROM environment_qualification_executions e
+SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at, e.capture_instance_id FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=$1::text AND e.retired_at IS NULL
  AND ($2::text='' OR e.instance_id>nullif($2::text,'')::uuid)
  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
-  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=coalesce(e.capture_instance_id,e.instance_id)
   AND q.phase='claimed' AND q.lease_until>clock_timestamp())
 ORDER BY e.instance_id LIMIT $3::integer
 `
@@ -29800,6 +30872,7 @@ func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.
 			&i.Retirement,
 			&i.CreatedAt,
 			&i.RetiredAt,
+			&i.CaptureInstanceID,
 		); err != nil {
 			return nil, err
 		}
@@ -29836,6 +30909,105 @@ func (q *Queries) ListEnvironmentQueueCleanupInvocations(ctx context.Context, db
 	return items, nil
 }
 
+const listEnvironmentServingGatewayNames = `-- name: ListEnvironmentServingGatewayNames :many
+SELECT name
+FROM compute_nodes
+WHERE active AND role IN ('compute-only', 'compute-node')
+  AND nullif(btrim(gateway_target_url), '') IS NOT NULL
+ORDER BY name
+`
+
+func (q *Queries) ListEnvironmentServingGatewayNames(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listEnvironmentServingGatewayNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentWorkloadQualificationGraphsForDispatch = `-- name: ListEnvironmentWorkloadQualificationGraphsForDispatch :many
+SELECT g.id FROM environment_workload_graphs g
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL
+ AND ($1::text='' OR g.id>nullif($1::text,'')::uuid)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+     JOIN apps a ON a.id=q.app_id
+     WHERE q.graph_id=g.id AND (a.account_id<>s.account_id OR a.project_id<>s.project_id
+       OR a.status NOT IN ('active','evicted_cold') OR (a.app_protocol IS NOT NULL AND a.app_protocol<>'http1')
+       OR (a.node_id IS NOT NULL AND a.node_id<>$2::uuid)
+       OR (q.execution_mode='job' AND (coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object'
+         OR coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
+             WHERE member->>'resource'=q.resource AND member->>'execution_mode'='job'
+               AND coalesce((member->>'job_smoke_configured')::boolean,false)
+               AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb)))
+       OR NOT (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+       OR EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+       OR EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND ((q.execution_mode='worker' AND coalesce(jsonb_typeof(q.frozen_inputs->'queue_smoke'),'null')<>'object')
+       OR (q.execution_mode='job' AND coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object')
+       OR (q.execution_mode NOT IN ('worker','job') AND (coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'healthz'),'null')<>'string'
+         OR coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'port'),'null')<>'number'
+         OR coalesce(jsonb_typeof(q.frozen_inputs #> '{runtime,healthcheck,grpc}'),'null')<>'null'))))
+ AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_job_smoke_receipts jr WHERE jr.request_id=q.id AND jr.attempt=q.attempt))
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+     WHERE m ? 'candidate_deployment_id' AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+       WHERE q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+       WHERE m ? 'candidate_deployment_id' AND m->>'resource'=q.resource AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
+ORDER BY g.id LIMIT $3::integer
+`
+
+type ListEnvironmentWorkloadQualificationGraphsForDispatchParams struct {
+	AfterGraphID string
+	NodeID       pgtype.UUID
+	PageLimit    int32
+}
+
+// Graph discovery is advisory. Every member is claimed atomically by the
+// graph claim method, which rechecks source authority, artifacts, smoke policy
+// and owners. Job contracts use a distinct private one-shot execution path.
+func (q *Queries) ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationGraphsForDispatchParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEnvironmentWorkloadQualificationGraphsForDispatch, arg.AfterGraphID, arg.NodeID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentWorkloadQualificationsForDispatch = `-- name: ListEnvironmentWorkloadQualificationsForDispatch :many
 SELECT q.id FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
@@ -29848,9 +31020,11 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND c.status='active' AND c.abuse_hold_at IS NULL AND a.status IN ('active','evicted_cold')
  AND (a.node_id IS NULL OR a.node_id=$1::uuid)
  AND ($2::text='' OR q.id>nullif($2::text,'')::uuid)
- AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND q.execution_mode NOT IN ('job','worker') AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT $3::integer
 `
 
@@ -30668,7 +31842,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.environment_workload_held, d.serving_ended_at, d.runtime_upgrade_routing_token
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -30781,6 +31955,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.GithubSourceRef,
 			&i.GithubInstallationID,
 			&i.EnvironmentWorkloadRuntime,
+			&i.EnvironmentWorkloadHeld,
 			&i.ServingEndedAt,
 			&i.RuntimeUpgradeRoutingToken,
 		); err != nil {
@@ -34643,6 +35818,53 @@ func (q *Queries) ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const liveEnvironmentWorkloadDeploymentsForServing = `-- name: LiveEnvironmentWorkloadDeploymentsForServing :many
+SELECT id::text AS id, status, traffic_percent, rollout_state, environment_workload_held
+FROM deployments
+WHERE app_id = $1::uuid AND scope = $2::text AND status = 'live'
+ORDER BY id
+FOR UPDATE
+`
+
+type LiveEnvironmentWorkloadDeploymentsForServingParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+type LiveEnvironmentWorkloadDeploymentsForServingRow struct {
+	ID                      string
+	Status                  string
+	TrafficPercent          int32
+	RolloutState            string
+	EnvironmentWorkloadHeld bool
+}
+
+func (q *Queries) LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Context, db DBTX, arg LiveEnvironmentWorkloadDeploymentsForServingParams) ([]LiveEnvironmentWorkloadDeploymentsForServingRow, error) {
+	rows, err := db.Query(ctx, liveEnvironmentWorkloadDeploymentsForServing, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveEnvironmentWorkloadDeploymentsForServingRow{}
+	for rows.Next() {
+		var i LiveEnvironmentWorkloadDeploymentsForServingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.RolloutState,
+			&i.EnvironmentWorkloadHeld,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAlertRollback = `-- name: LockAlertRollback :one
 SELECT receipt FROM alert_rollback_actions WHERE fire_id=$1 FOR UPDATE
 `
@@ -35630,6 +36852,24 @@ func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBT
 	return i, err
 }
 
+const lockEnvironmentGitOpsServingProject = `-- name: LockEnvironmentGitOpsServingProject :one
+SELECT id FROM projects
+WHERE id = $1::uuid AND account_id = $2::uuid
+FOR UPDATE
+`
+
+type LockEnvironmentGitOpsServingProjectParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsServingProjectParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsServingProject, arg.ProjectID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
 SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
@@ -35831,7 +37071,7 @@ func (q *Queries) LockEnvironmentQualificationAccount(ctx context.Context, db DB
 }
 
 const lockEnvironmentQualificationExecution = `-- name: LockEnvironmentQualificationExecution :one
-SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid FOR UPDATE
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at, capture_instance_id FROM environment_qualification_executions WHERE instance_id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockEnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
@@ -35846,6 +37086,7 @@ func (q *Queries) LockEnvironmentQualificationExecution(ctx context.Context, db 
 		&i.Retirement,
 		&i.CreatedAt,
 		&i.RetiredAt,
+		&i.CaptureInstanceID,
 	)
 	return i, err
 }
@@ -37677,7 +38918,7 @@ const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment 
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>$3::uuid
-AND d.environment_workload_runtime IS NULL
+AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
     d.serving_ended_at IS NOT NULL
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
@@ -39806,6 +41047,17 @@ func (q *Queries) NextCustomerOperationWorkflowRun(ctx context.Context, db DBTX)
 		&i.DeploymentID,
 	)
 	return i, err
+}
+
+const nextDeploymentRouteGenerationTx = `-- name: NextDeploymentRouteGenerationTx :one
+SELECT nextval('deployment_route_generation_seq')::bigint
+`
+
+func (q *Queries) NextDeploymentRouteGenerationTx(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, nextDeploymentRouteGenerationTx)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const nextDueLegacyWorkflowRun = `-- name: NextDueLegacyWorkflowRun :one
@@ -48430,7 +49682,9 @@ SELECT jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
-        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,'inputs',environment_workload_deployment_inputs(d)) ORDER BY d.id) FROM deployments d
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
+            'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -48442,8 +49696,9 @@ SELECT jsonb_build_object(
         'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
         'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
         'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
-        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets,'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id)
             FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'binding_count', (SELECT coalesce(sum((SELECT count(*) FROM jsonb_object_keys(w.service_bindings))),0) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.account_id=s.account_id),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -50706,19 +51961,23 @@ func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, 
 }
 
 const putEnvironmentWorkloadIntent = `-- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb,nullif($6::text,''))
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
-RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at, source_revision
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,job_id,source,runtime,source_revision,service_bindings,schedule,variables)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,$6::jsonb,nullif($7::text,''),$8::jsonb,$9::jsonb,$10::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET job_id=excluded.job_id,source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,schedule=excluded.schedule,variables=excluded.variables,updated_at=now()
+RETURNING account_id,app_id,environment_id,job_id,source,runtime,created_at,updated_at,source_revision,service_bindings,schedule,variables
 `
 
 type PutEnvironmentWorkloadIntentParams struct {
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	Source         []byte
-	Runtime        []byte
-	SourceRevision string
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	JobID           pgtype.UUID
+	Source          []byte
+	Runtime         []byte
+	SourceRevision  string
+	ServiceBindings []byte
+	Schedule        []byte
+	Variables       []byte
 }
 
 func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
@@ -50726,20 +51985,28 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		arg.AccountID,
 		arg.AppID,
 		arg.EnvironmentID,
+		arg.JobID,
 		arg.Source,
 		arg.Runtime,
 		arg.SourceRevision,
+		arg.ServiceBindings,
+		arg.Schedule,
+		arg.Variables,
 	)
 	var i AppEnvironmentWorkloadIntent
 	err := row.Scan(
 		&i.AccountID,
 		&i.AppID,
 		&i.EnvironmentID,
+		&i.JobID,
 		&i.Source,
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
+		&i.ServiceBindings,
+		&i.Schedule,
+		&i.Variables,
 	)
 	return i, err
 }
@@ -58732,6 +59999,164 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 	return err
 }
 
+const recordEnvironmentQualificationJobSmokeReceipt = `-- name: RecordEnvironmentQualificationJobSmokeReceipt :one
+INSERT INTO environment_qualification_job_smoke_receipts
+ (request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::text,$6::text,$7::text,$8::text,
+ $9::integer,$10::text,$11::integer)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at
+`
+
+type RecordEnvironmentQualificationJobSmokeReceiptParams struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	GraphID      pgtype.UUID
+	InstanceID   pgtype.UUID
+	Resource     string
+	PolicyID     string
+	PolicySha256 string
+	ResultSha256 string
+	ExitCode     int32
+	ErrorClass   string
+	Signal       int32
+}
+
+func (q *Queries) RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationJobSmokeReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.InstanceID,
+		arg.Resource,
+		arg.PolicyID,
+		arg.PolicySha256,
+		arg.ResultSha256,
+		arg.ExitCode,
+		arg.ErrorClass,
+		arg.Signal,
+	)
+	var i EnvironmentQualificationJobSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.ExitCode,
+		&i.ErrorClass,
+		&i.Signal,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const recordEnvironmentQualificationRestoreReceipt = `-- name: RecordEnvironmentQualificationRestoreReceipt :one
+INSERT INTO environment_qualification_restore_receipts(request_id,attempt,capture_instance_id,instance_id,runtime_inputs)
+VALUES($1::uuid,$2::bigint,$3::uuid,
+ $4::uuid,$5::jsonb)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at
+`
+
+type RecordEnvironmentQualificationRestoreReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	RuntimeInputs     []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationRestoreReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.RuntimeInputs,
+	)
+	var i EnvironmentQualificationRestoreReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.RuntimeInputs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const recordEnvironmentQualificationSmokeReceipt = `-- name: RecordEnvironmentQualificationSmokeReceipt :one
+INSERT INTO environment_qualification_smoke_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256)
+VALUES($1::uuid,$2::bigint,$3::uuid,
+ $4::uuid,$5::uuid,$6::text,$7::text,
+ $8::text,$9::text)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
+`
+
+type RecordEnvironmentQualificationSmokeReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Resource          string
+	PolicyID          string
+	PolicySha256      string
+	ResultSha256      string
+}
+
+func (q *Queries) RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationSmokeReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.Resource,
+		arg.PolicyID,
+		arg.PolicySha256,
+		arg.ResultSha256,
+	)
+	var i EnvironmentQualificationSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const recordEnvironmentQualificationSnapshot = `-- name: RecordEnvironmentQualificationSnapshot :exec
+INSERT INTO environment_qualification_snapshot_receipts(instance_id,snapshot,inputs)
+VALUES($1::uuid,$2::jsonb,$3::jsonb)
+ON CONFLICT(instance_id) DO NOTHING
+`
+
+type RecordEnvironmentQualificationSnapshotParams struct {
+	InstanceID pgtype.UUID
+	Snapshot   []byte
+	Inputs     []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationSnapshot, arg.InstanceID, arg.Snapshot, arg.Inputs)
+	return err
+}
+
 const recordInstanceRuntimeConfigReceipt = `-- name: RecordInstanceRuntimeConfigReceipt :execrows
 INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs,sidecar_secret_versions)
 SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean,$5::jsonb,$6::jsonb
@@ -62821,6 +64246,28 @@ func (q *Queries) ReserveAccountCreditConsumption(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const reserveEnvironmentQualificationRestore = `-- name: ReserveEnvironmentQualificationRestore :exec
+INSERT INTO environment_qualification_restore_reservations(instance_id,capture_instance_id,request_id,attempt)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint)
+`
+
+type ReserveEnvironmentQualificationRestoreParams struct {
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	RequestID         pgtype.UUID
+	Attempt           int64
+}
+
+func (q *Queries) ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error {
+	_, err := db.Exec(ctx, reserveEnvironmentQualificationRestore,
+		arg.InstanceID,
+		arg.CaptureInstanceID,
+		arg.RequestID,
+		arg.Attempt,
+	)
+	return err
+}
+
 const reserveEnvironmentQueueDeliveryQuota = `-- name: ReserveEnvironmentQueueDeliveryQuota :one
 UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=now()
 WHERE account_id=$1 AND current_inflight<max_inflight RETURNING current_inflight
@@ -62916,6 +64363,28 @@ func (q *Queries) ResetCustomerOperationDelivery(ctx context.Context, db DBTX, a
 		arg.AccountID,
 		arg.ExpectedReplayGeneration,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetEnvironmentWorkloadServingReceipt = `-- name: ResetEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET release_set_id = $1::uuid,
+    expected_gateways = $2::text[],
+    phase = 'pending', served_at = NULL, updated_at = clock_timestamp()
+WHERE graph_id = $3::uuid
+`
+
+type ResetEnvironmentWorkloadServingReceiptParams struct {
+	ReleaseSetID     pgtype.UUID
+	ExpectedGateways []string
+	GraphID          pgtype.UUID
+}
+
+func (q *Queries) ResetEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg ResetEnvironmentWorkloadServingReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, resetEnvironmentWorkloadServingReceipt, arg.ReleaseSetID, arg.ExpectedGateways, arg.GraphID)
 	if err != nil {
 		return 0, err
 	}
@@ -63132,7 +64601,7 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
 `
 
 // A detector pass that no longer sees a regression resolves the previous
@@ -63161,6 +64630,7 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 			&i.AcknowledgedAt,
 			&i.DismissedUntil,
 			&i.ResolvedAt,
+			&i.SuspectedDependency,
 		); err != nil {
 			return nil, err
 		}
@@ -63302,7 +64772,7 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.environment_workload_held, d.serving_ended_at, d.runtime_upgrade_routing_token FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
@@ -63337,7 +64807,7 @@ func (q *Queries) RetainedLayerBytesWithClonePins(ctx context.Context, db DBTX, 
 
 const retainedReleaseMemberDeploymentForUpdate = `-- name: RetainedReleaseMemberDeploymentForUpdate :one
 SELECT d.id FROM deployments d WHERE d.id=$1::uuid AND d.app_id=$2::uuid
-AND d.scope=$3::text AND d.status='live' AND (
+AND d.scope=$3::text AND d.status='live' AND NOT d.environment_workload_held AND (
     d.traffic_percent>0 OR d.traffic_percent_explicit
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
@@ -66208,6 +67678,17 @@ func (q *Queries) SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX,
 	return column_1, err
 }
 
+const setEnvironmentGitOpsServingContext = `-- name: SetEnvironmentGitOpsServingContext :one
+SELECT set_config('gregale.gitops_serving', $1::text, true)::text
+`
+
+func (q *Queries) SetEnvironmentGitOpsServingContext(ctx context.Context, db DBTX, leaseToken string) (string, error) {
+	row := db.QueryRow(ctx, setEnvironmentGitOpsServingContext, leaseToken)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const setEnvironmentQualificationCleanupContext = `-- name: SetEnvironmentQualificationCleanupContext :one
 SELECT set_config('gregale.gitops_qualification_cleanup',$1::text,true)::text
 `
@@ -66228,6 +67709,25 @@ func (q *Queries) SetEnvironmentWorkloadQualificationContext(ctx context.Context
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const setEnvironmentWorkloadServingTraffic = `-- name: SetEnvironmentWorkloadServingTraffic :execrows
+UPDATE deployments
+SET traffic_percent = $1::integer, traffic_percent_explicit = true
+WHERE id = $2::uuid AND status = 'live'
+`
+
+type SetEnvironmentWorkloadServingTrafficParams struct {
+	TrafficPercent int32
+	DeploymentID   pgtype.UUID
+}
+
+func (q *Queries) SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error) {
+	result, err := db.Exec(ctx, setEnvironmentWorkloadServingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setExclusiveCaptureBarrier = `-- name: SetExclusiveCaptureBarrier :exec
@@ -66883,13 +68383,24 @@ WITH eligible AS (
 SELECT jsonb_build_object(
  'app_id',s.app_id,'scope',s.scope,'platform_tenant_id',s.platform_tenant_id,
  'subject',jsonb_build_object('type',s.subject_type,'id',s.subject_id),
- 'operation_id',o.id,'dependency_attention',dependencies.items,
+ 'operation_id',o.id,'resolution_verifications',COALESCE((SELECT jsonb_agg(v) FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND $3::text='' AND $4::text IN ('','awaiting_verification')
+ AND ($5::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=$5::text)
+ AND (NOT $6::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND ($7::text='' OR v->'resolution'->>'code'=$7::text)
+ AND ($8::text='' OR v->'resolution'->>'operation'=$8::text)),'[]'::jsonb),'escalations',escalations.items,'dependency_attention',dependencies.items,
  'state',jsonb_build_object(
   'workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
-  'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
+  'sla',sla.value,'terminal',config.terminal,'stale',attention.stale,'overdue',attention.overdue,'overdue_seconds',attention.overdue_seconds,
   'occurred_at',r.occurred_at,'stale_after_seconds',config.stale_after_seconds,
   'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
-  'evidence_milestones',r.evidence_milestones,'blockers',r.blockers,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
+  'evidence_milestones',r.evidence_milestones,'blockers',CASE WHEN $4::text='awaiting_verification' THEN '[]'::jsonb ELSE CASE WHEN $5::text<>'' OR $6::boolean OR $1::text='owner' OR $3::text<>'' OR $4::text IN ('escalated','unacknowledged','follow_up_overdue') THEN COALESCE((SELECT jsonb_agg(b) FROM jsonb_array_elements(r.blockers) b WHERE ($5::text='' OR COALESCE(b->>'owner','')=$5::text)
+ AND (NOT $6::boolean OR COALESCE(b->>'owner','')='')
+ AND ($3::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=$3::text)
+ AND ($7::text='' OR b->>'code'=$7::text)
+ AND ($8::text='' OR b->>'operation'=$8::text)
+ AND ($4::text<>'unacknowledged' OR COALESCE(b->>'acknowledged_at','')='')
+ AND ($4::text<>'follow_up_overdue' OR NULLIF(b->>'follow_up_at','')::timestamptz<=$2::timestamptz)
+ AND ($4::text<>'escalated' OR EXISTS (SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE e->>'code'=b->>'code' AND e->>'operation'=b->>'operation'))),'[]'::jsonb) ELSE r.blockers END END,'blockers_only',r.blockers_only,'blocker_resolutions',r.blocker_resolutions,'deadline_at',r.deadline_at,'deadline_only',r.deadline_only,'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'outcome_only',r.outcome_only,'depends_on',r.depends_on,'dependencies_only',r.dependencies_only,'updated_at',s.updated_at
  )
 ) AS entry, identity.cursor_key
 FROM customer_operation_workflow_states s
@@ -66898,7 +68409,9 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s
 JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
 CROSS JOIN LATERAL (
  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
- COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+ COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_budget_seconds,
+ COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint) FILTER (WHERE COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0::bigint) AS sla_warning_percent
  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS steps(step)
  WHERE step->>'workflow'=s.workflow
 ) config
@@ -66909,6 +68422,82 @@ CROSS JOIN LATERAL (
  CASE WHEN NOT config.terminal AND NULLIF(r.deadline_at,'')::timestamptz<=$2::timestamptz
  THEN GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-r.deadline_at::timestamptz)))::bigint) ELSE 0::bigint END AS overdue_seconds
 ) attention
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.value ORDER BY h.revision DESC,h.operation_id DESC,h.id DESC),'[]'::jsonb) AS items FROM (
+  SELECT hr.id,hr.operation_id,hr.revision,jsonb_build_object('id',hr.id,'operation_id',hr.operation_id,'revision',hr.revision,'state',hr.state,'from_state',hr.from_state,'contract_version',hr.contract_version,'occurred_at',hr.occurred_at,
+  'budget',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0),
+  'warning',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>hr.state)::bigint) FROM jsonb_array_elements(COALESCE(hd.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=hr.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=hr.contract_version),0)) value
+  FROM customer_operation_workflow_state_reports hr
+  JOIN customer_operations ho ON ho.id=hr.operation_id
+  JOIN customer_operation_definitions hd ON hd.id=ho.definition_id AND hd.account_id=ho.account_id AND hd.app_id=ho.app_id
+  WHERE config.sla_budget_seconds>0 AND NOT config.terminal
+  AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
+  AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
+  AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=$2::timestamptz
+  AND (ho.state IN ('accepted','running') OR ho.expires_at>$9::timestamptz)
+  ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT $10::integer
+ ) h
+) sla_history
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((value->>'revision')::bigint) FILTER (WHERE value->>'state'<>s.state OR (value->>'contract_version')::integer<>r.contract_version),0::bigint) AS revision
+ FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+ WHERE n<$10::integer
+) sla_boundary
+CROSS JOIN LATERAL (
+ SELECT min(revision) AS entry_revision,max(revision) AS latest_revision,min(occurred_at) AS entered_at,
+ count(*) AS reports,count(DISTINCT revision) AS unique_reports,
+ bool_and(state=s.state AND version=r.contract_version AND budget=config.sla_budget_seconds AND warning=config.sla_warning_percent AND occurred_at<>'0001-01-01T00:00:00Z'::timestamptz AND occurred_at<=$2::timestamptz
+ AND (previous_time IS NULL OR occurred_at>=previous_time)
+ AND (previous_state IS NULL OR from_state='' OR from_state=previous_state)) AS timeline_valid,
+ bool_or(id=r.id::text AND operation_id=r.operation_id::text AND revision=s.revision) AS contains_current
+ FROM (
+  SELECT value->>'id' AS id,value->>'operation_id' AS operation_id,(value->>'revision')::bigint AS revision,value->>'state' AS state,COALESCE(value->>'from_state','') AS from_state,
+  (value->>'contract_version')::integer AS version,(value->>'budget')::bigint AS budget,(value->>'warning')::bigint AS warning,(value->>'occurred_at')::timestamptz AS occurred_at,
+  lag((value->>'occurred_at')::timestamptz) OVER (ORDER BY (value->>'revision')::bigint) AS previous_time,
+  lag(value->>'state') OVER (ORDER BY (value->>'revision')::bigint) AS previous_state
+  FROM jsonb_array_elements(sla_history.items) WITH ORDINALITY AS h(value,n)
+  WHERE n<$10::integer AND (value->>'revision')::bigint>=sla_boundary.revision
+ ) ordered
+ WHERE revision>sla_boundary.revision
+) sla_suffix
+CROSS JOIN LATERAL (
+ SELECT count(*) AS reports,bool_and(value->>'state'<>s.state AND (value->>'contract_version')::integer=r.contract_version AND (value->>'occurred_at')::timestamptz<>'0001-01-01T00:00:00Z'::timestamptz
+ AND (value->>'occurred_at')::timestamptz<=sla_suffix.entered_at) AS valid
+ FROM jsonb_array_elements(sla_history.items) AS h(value)
+ WHERE (value->>'revision')::bigint=sla_boundary.revision
+) sla_border
+CROSS JOIN LATERAL (
+ SELECT COALESCE(sla_suffix.timeline_valid AND sla_suffix.contains_current AND sla_suffix.latest_revision=s.revision
+ AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(sla_history.items) AS h(value) WHERE (value->>'revision')::bigint>=sla_suffix.entry_revision GROUP BY (value->>'revision')::bigint HAVING count(*)>1)
+ AND sla_suffix.reports=sla_suffix.unique_reports AND sla_suffix.reports=s.revision-sla_suffix.entry_revision+1
+ AND (sla_suffix.entry_revision=1 AND sla_boundary.revision=0 OR sla_border.reports=1 AND sla_border.valid AND sla_boundary.revision=sla_suffix.entry_revision-1),false) AS known,
+ sla_suffix.entered_at + make_interval(secs=>config.sla_budget_seconds::double precision) AS due_at,
+ sla_suffix.entered_at + make_interval(secs=>(config.sla_budget_seconds*config.sla_warning_percent)::double precision/100) AS warning_at,
+ GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-sla_suffix.entered_at))))::bigint AS elapsed
+) sla_clock
+CROSS JOIN LATERAL (
+ SELECT CASE WHEN config.sla_budget_seconds<1 OR config.terminal THEN NULL::jsonb ELSE
+ jsonb_build_object('evaluated_at',$2::timestamptz,'budget_seconds',config.sla_budget_seconds,'history_complete',sla_clock.known,'status',CASE WHEN NOT sla_clock.known THEN 'unknown' WHEN sla_clock.due_at<=$2::timestamptz THEN 'breached' WHEN config.sla_warning_percent>0 AND sla_clock.warning_at<=$2::timestamptz THEN 'at_risk' ELSE 'within_budget' END)
+ || CASE WHEN config.sla_warning_percent>0 THEN jsonb_build_object('warning_percent',config.sla_warning_percent) ELSE '{}'::jsonb END
+ || CASE WHEN sla_clock.known AND config.sla_warning_percent>0 THEN jsonb_build_object('warning_at',sla_clock.warning_at) ELSE '{}'::jsonb END
+ || CASE WHEN NOT sla_clock.known THEN '{}'::jsonb ELSE jsonb_build_object('entered_at',sla_suffix.entered_at,'due_at',sla_clock.due_at,'elapsed_seconds',sla_clock.elapsed,'remaining_seconds',GREATEST(0,config.sla_budget_seconds-sla_clock.elapsed),'breached_seconds',GREATEST(0,sla_clock.elapsed-config.sla_budget_seconds)) END END AS value,
+ (config.sla_budget_seconds>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.due_at<=$2::timestamptz) IS TRUE AS breached,
+ (config.sla_budget_seconds>0 AND config.sla_warning_percent>0 AND NOT config.terminal AND sla_clock.known AND sla_clock.warning_at<=$2::timestamptz AND sla_clock.due_at>$2::timestamptz) IS TRUE AS at_risk
+) sla
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(jsonb_build_object('code',b->>'code','operation',b->>'operation','owner',policy.value->>'owner',
+ 'after_seconds',(policy.value->>'after_seconds')::bigint,
+ 'escalated_at',NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision))
+ ORDER BY b->>'operation',b->>'code'),'[]'::jsonb) AS items
+ FROM jsonb_array_elements(r.blockers) b
+ CROSS JOIN LATERAL (
+  SELECT step->'blocker_escalations'->(b->>'code') AS value
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) steps(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version LIMIT 1
+ ) policy
+ WHERE NOT config.terminal AND (policy.value->>'after_seconds')::bigint>0
+ AND NULLIF(b->>'first_observed_at','')::timestamptz + make_interval(secs => (policy.value->>'after_seconds')::double precision)<=$2::timestamptz
+) escalations
 CROSS JOIN LATERAL (
  SELECT COALESCE(jsonb_agg(jsonb_build_object('dependency',link.value,'status',resolved.status) ORDER BY link.value->>'subject_type',link.value->>'subject_id',link.value->>'workflow',link.value->>'instance_id')
  FILTER (WHERE NOT config.terminal AND resolved.status IN ('unknown','waiting','outcome_mismatch')), '[]'::jsonb) AS items
@@ -66926,7 +68515,7 @@ CROSS JOIN LATERAL (
   WHERE target.account_id=s.account_id AND target.app_id=s.app_id AND target.platform_tenant_id=s.platform_tenant_id AND target.scope=s.scope
    AND target.subject_type=link.value->>'subject_type' AND target.subject_id=link.value->>'subject_id'
    AND target.workflow=link.value->>'workflow' AND target.instance_id=link.value->>'instance_id'
-   AND (top.state IN ('accepted','running') OR top.expires_at>$3::timestamptz)
+   AND (top.state IN ('accepted','running') OR top.expires_at>$9::timestamptz)
  ) retained ON true
  CROSS JOIN LATERAL (
   SELECT CASE WHEN retained.terminal IS NULL THEN 'unknown' WHEN NOT retained.terminal THEN 'waiting'
@@ -66936,36 +68525,99 @@ CROSS JOIN LATERAL (
  ) resolved
 ) dependencies
 CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$2::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>$9::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=$2::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>$9::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+CROSS JOIN LATERAL (
  SELECT encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
 ) identity
-WHERE s.account_id=$4::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
- AND ($7::text='' OR s.platform_tenant_id::text=$7::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$3::timestamptz)
- AND ($8::text='' OR s.workflow=$8::text)
- AND ($9::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=$9::text))
- AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR jsonb_array_length(dependencies.items)>0)
- AND ($10::text='' OR $10::text='blocked' AND jsonb_array_length(r.blockers)>0 OR $10::text='stale' AND attention.stale OR $10::text='overdue' AND attention.overdue OR $10::text='dependency' AND jsonb_array_length(dependencies.items)>0)
- AND (($11::text='' AND $12::text='') OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
-   ($11::text='' OR dep->>'status'=$11::text)
-   AND ($12::text='' OR dep->'dependency'->>'required_outcome_code'=$12::text)
+WHERE s.account_id=$11::uuid AND s.app_id=$12::uuid AND s.scope=$13::text
+ AND ($14::text='' OR s.platform_tenant_id::text=$14::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND ($15::text='' OR s.workflow=$15::text)
+ AND (((($5::text='' AND NOT $6::boolean AND $3::text='') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE ($5::text='' OR COALESCE(b->>'owner','')=$5::text)
+ AND (NOT $6::boolean OR COALESCE(b->>'owner','')='')
+ AND ($3::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=$3::text)
+ AND ($7::text='' OR b->>'code'=$7::text)
+ AND ($8::text='' OR b->>'operation'=$8::text)
  ))
- AND ($13::text='' OR EXISTS (
-  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=$13::text
- ) OR (attention.stale OR attention.overdue) AND EXISTS (
+ AND ($7::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=$7::text))
+ AND (jsonb_array_length(r.blockers)>0 OR attention.stale OR attention.overdue OR sla.breached OR sla.at_risk OR jsonb_array_length(dependencies.items)>0)
+ AND ($4::text NOT IN ('unacknowledged','follow_up_overdue') OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE
+ ($5::text='' OR COALESCE(b->>'owner','')=$5::text)
+ AND (NOT $6::boolean OR COALESCE(b->>'owner','')='')
+ AND ($3::text='' OR COALESCE(NULLIF(b->>'priority',''),'normal')=$3::text)
+ AND ($7::text='' OR b->>'code'=$7::text)
+ AND ($8::text='' OR b->>'operation'=$8::text)
+ AND ($4::text='unacknowledged' AND COALESCE(b->>'acknowledged_at','')='' OR $4::text='follow_up_overdue' AND NULLIF(b->>'follow_up_at','')::timestamptz<=$2::timestamptz)))
+ AND ($4::text IN ('','unacknowledged','follow_up_overdue') OR $4::text='blocked' AND jsonb_array_length(r.blockers)>0 OR $4::text='stale' AND attention.stale OR $4::text='sla_breached' AND sla.breached OR $4::text='sla_at_risk' AND sla.at_risk OR $4::text='overdue' AND attention.overdue OR $4::text='dependency' AND jsonb_array_length(dependencies.items)>0 OR $4::text='escalated' AND jsonb_array_length(escalations.items)>0)
+ AND ($4::text<>'escalated' OR EXISTS (
+ SELECT 1 FROM jsonb_array_elements(escalations.items) e WHERE
+ ($5::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=$5::text))
+ AND (NOT $6::boolean OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(b->>'owner','')=''))
+ AND ($3::text='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'code'=e->>'code' AND b->>'operation'=e->>'operation' AND COALESCE(NULLIF(b->>'priority',''),'normal')=$3::text))
+ AND ($7::text='' OR e->>'code'=$7::text)
+ AND ($8::text='' OR e->>'operation'=$8::text)
+ ))
+ AND ($8::text='' OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE b->>'operation'=$8::text
+ ) OR (attention.stale OR attention.overdue OR sla.breached OR sla.at_risk) AND EXISTS (
   SELECT 1 FROM customer_operation_definitions producer
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
   WHERE producer.account_id=s.account_id AND producer.app_id=s.app_id AND producer.scope=s.scope
-   AND producer.spec->>'name'=$13::text AND step->>'workflow'=s.workflow
+   AND producer.spec->>'name'=$8::text AND step->>'workflow'=s.workflow
    AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version AND edge->>'from'=s.state
+ ))) OR EXISTS (SELECT 1 FROM jsonb_array_elements(verifications.items) v WHERE v->>'status'='awaiting_verification' AND $3::text='' AND $4::text IN ('','awaiting_verification')
+ AND ($5::text='' OR COALESCE(v->'resolution'->>'verification_owner','')=$5::text)
+ AND (NOT $6::boolean OR COALESCE(v->'resolution'->>'verification_owner','')='')
+ AND ($7::text='' OR v->'resolution'->>'code'=$7::text)
+ AND ($8::text='' OR v->'resolution'->>'operation'=$8::text))) AND (($16::text='' AND $17::text='') OR EXISTS (
+  SELECT 1 FROM jsonb_array_elements(dependencies.items) dep WHERE
+   ($16::text='' OR dep->>'status'=$16::text)
+   AND ($17::text='' OR dep->'dependency'->>'required_outcome_code'=$17::text)
  ))
+
 
 ), members AS (
  SELECT CASE WHEN $1::text IN ('dependency_status','required_outcome_code') THEN
    jsonb_set(e.entry,'{dependency_attention}',COALESCE((SELECT jsonb_agg(dep) FROM jsonb_array_elements(e.entry->'dependency_attention') dep
-    WHERE ($11::text='' OR dep->>'status'=$11::text)
-     AND ($12::text='' OR dep->'dependency'->>'required_outcome_code'=$12::text)
+    WHERE ($16::text='' OR dep->>'status'=$16::text)
+     AND ($17::text='' OR dep->'dependency'->>'required_outcome_code'=$17::text)
      AND CASE WHEN $1::text='dependency_status' THEN dep->>'status' ELSE dep->'dependency'->>'required_outcome_code' END=g.value),'[]'::jsonb))
    ELSE e.entry END AS entry,e.cursor_key,g.value
  FROM eligible e
@@ -66974,79 +68626,111 @@ WHERE s.account_id=$4::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
    UNION SELECT CASE WHEN $1::text='dependency_status' THEN dep->>'status' ELSE dep->'dependency'->>'required_outcome_code' END
     FROM jsonb_array_elements(e.entry->'dependency_attention') dep
     WHERE $1::text IN ('dependency_status','required_outcome_code')
-     AND ($11::text='' OR dep->>'status'=$11::text)
-     AND ($12::text='' OR dep->'dependency'->>'required_outcome_code'=$12::text)
+     AND ($16::text='' OR dep->>'status'=$16::text)
+     AND ($17::text='' OR dep->'dependency'->>'required_outcome_code'=$17::text)
      AND CASE WHEN $1::text='dependency_status' THEN dep->>'status' ELSE COALESCE(dep->'dependency'->>'required_outcome_code','') END<>''
+   UNION SELECT COALESCE(b->>'owner','') FROM jsonb_array_elements(e.entry->'state'->'blockers') b WHERE $1::text='owner'
    UNION SELECT e.entry->>'platform_tenant_id' WHERE $1::text='customer'
    UNION SELECT b->>'code' FROM jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b
-     WHERE $1::text='blocker_code' AND ($9::text='' OR b->>'code'=$9::text)
+     WHERE $1::text='blocker_code' AND ($7::text='' OR b->>'code'=$7::text)
    UNION SELECT b->>'operation' FROM jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b
-     WHERE $1::text='target_operation' AND ($13::text='' OR b->>'operation'=$13::text)
+     WHERE $1::text='target_operation' AND ($8::text='' OR b->>'operation'=$8::text)
+   UNION SELECT CASE $1::text WHEN 'owner' THEN COALESCE(v->'resolution'->>'verification_owner','') WHEN 'blocker_code' THEN v->'resolution'->>'code' ELSE v->'resolution'->>'operation' END
+    FROM jsonb_array_elements(e.entry->'resolution_verifications') v WHERE $1::text IN ('owner','blocker_code','target_operation')
    UNION SELECT producer.spec->>'name'
      FROM customer_operation_definitions producer
      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(producer.spec->'workflow_steps')='array' THEN producer.spec->'workflow_steps' ELSE '[]'::jsonb END) steps(step)
      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(step->'transitions','[]'::jsonb)) edges(edge)
-     WHERE $1::text='target_operation' AND ((e.entry->'state'->>'stale')::boolean OR (e.entry->'state'->>'overdue')::boolean)
-       AND producer.account_id=$4::uuid AND producer.app_id=$5::uuid AND producer.scope=$6::text
+     WHERE $1::text='target_operation' AND $5::text='' AND NOT $6::boolean AND $3::text='' AND $4::text NOT IN ('escalated','unacknowledged','follow_up_overdue','awaiting_verification') AND ((e.entry->'state'->>'stale')::boolean OR (e.entry->'state'->>'overdue')::boolean OR COALESCE(e.entry #>> '{state,sla,status}','') IN ('breached','at_risk'))
+       AND producer.account_id=$11::uuid AND producer.app_id=$12::uuid AND producer.scope=$13::text
        AND step->>'workflow'=e.entry->'state'->>'workflow'
        AND COALESCE(NULLIF((step->>'version')::integer,0),1)=(e.entry->'state'->>'contract_version')::integer
        AND edge->>'from'=e.entry->'state'->>'state'
-       AND ($13::text='' OR producer.spec->>'name'=$13::text)
+       AND ($8::text='' OR producer.spec->>'name'=$8::text)
  ) g
 ), facts AS (
- SELECT ''::text value,e.cursor_key,(e.entry->'state'->>'stale')::boolean stale,(e.entry->'state'->>'overdue')::boolean overdue,NULLIF(e.entry->'state'->>'deadline_at','')::timestamptz deadline_at,jsonb_array_length(e.entry->'dependency_attention') dependency_count,b.blocker
+ SELECT true is_total,''::text value,e.cursor_key,COALESCE(e.entry #>> '{state,sla,status}','') AS sla_status,(e.entry->'state'->>'stale')::boolean stale,(e.entry->'state'->>'overdue')::boolean overdue,NULLIF(e.entry->'state'->>'deadline_at','')::timestamptz deadline_at,jsonb_array_length(e.entry->'dependency_attention') dependency_count,b.blocker,EXISTS (SELECT 1 FROM jsonb_array_elements(e.entry->'escalations') escalation WHERE escalation->>'code'=b.blocker->>'code' AND escalation->>'operation'=b.blocker->>'operation') AS escalated
  FROM eligible e LEFT JOIN LATERAL jsonb_array_elements((e.entry->'state'->'blockers')::jsonb) b(blocker) ON true
  UNION ALL
- SELECT m.value,m.cursor_key,(m.entry->'state'->>'stale')::boolean,(m.entry->'state'->>'overdue')::boolean,NULLIF(m.entry->'state'->>'deadline_at','')::timestamptz,jsonb_array_length(m.entry->'dependency_attention'),b.blocker
+ SELECT false,m.value,m.cursor_key,COALESCE(m.entry #>> '{state,sla,status}',''),(m.entry->'state'->>'stale')::boolean,(m.entry->'state'->>'overdue')::boolean,NULLIF(m.entry->'state'->>'deadline_at','')::timestamptz,jsonb_array_length(m.entry->'dependency_attention'),b.blocker,EXISTS (SELECT 1 FROM jsonb_array_elements(m.entry->'escalations') escalation WHERE escalation->>'code'=b.blocker->>'code' AND escalation->>'operation'=b.blocker->>'operation')
  FROM members m LEFT JOIN LATERAL jsonb_array_elements((m.entry->'state'->'blockers')::jsonb) b(blocker)
- ON ($1::text NOT IN ('blocker_code','target_operation')
+ ON ($1::text NOT IN ('blocker_code','target_operation','owner')
      OR $1::text='blocker_code' AND b.blocker->>'code'=m.value
-     OR $1::text='target_operation' AND b.blocker->>'operation'=m.value)
+     OR $1::text='target_operation' AND b.blocker->>'operation'=m.value
+     OR $1::text='owner' AND COALESCE(b.blocker->>'owner','')=m.value)
+), verification_facts AS (
+ SELECT true is_total,''::text value,e.cursor_key,v.item
+ FROM eligible e CROSS JOIN LATERAL jsonb_array_elements(e.entry->'resolution_verifications') v(item)
+ UNION ALL
+ SELECT false,m.value,m.cursor_key,v.item
+ FROM members m CROSS JOIN LATERAL jsonb_array_elements(m.entry->'resolution_verifications') v(item)
+ WHERE $1::text NOT IN ('owner','blocker_code','target_operation')
+ OR $1::text='owner' AND COALESCE(v.item->'resolution'->>'verification_owner','')=m.value
+ OR $1::text='blocker_code' AND v.item->'resolution'->>'code'=m.value
+ OR $1::text='target_operation' AND v.item->'resolution'->>'operation'=m.value
+), verification_counts AS (
+ SELECT is_total,value,count(DISTINCT cursor_key) awaiting_workflows,count(*) awaiting_resolutions FROM verification_facts GROUP BY is_total,value
 ), dependency_counts AS (
- SELECT value,sum(dependency_count) dependency_count
- FROM (SELECT DISTINCT value,cursor_key,dependency_count FROM facts) unique_dependencies
- GROUP BY value
+ SELECT is_total,value,sum(dependency_count) dependency_count
+ FROM (SELECT DISTINCT is_total,value,cursor_key,dependency_count FROM facts) unique_dependencies
+ GROUP BY is_total,value
 ), counts AS (
- SELECT value,count(DISTINCT cursor_key) workflow_count,
+ SELECT is_total,value,count(DISTINCT cursor_key) workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='at_risk') sla_at_risk_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='breached') sla_breached_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE sla_status='unknown') sla_unknown_workflow_count,
+ count(DISTINCT cursor_key) FILTER (WHERE escalated) escalated_workflow_count,
+ count(blocker) FILTER (WHERE escalated) escalated_blocker_count,
  count(DISTINCT cursor_key) FILTER (WHERE dependency_count>0) dependency_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE blocker IS NOT NULL) blocked_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE stale) stale_workflow_count,
  count(DISTINCT cursor_key) FILTER (WHERE overdue) overdue_workflow_count,
  min(deadline_at) FILTER (WHERE overdue) earliest_overdue_deadline_at,
+ count(blocker) FILTER (WHERE COALESCE(blocker->>'acknowledged_at','')='') unacknowledged_blocker_count,
+ count(blocker) FILTER (WHERE NULLIF(blocker->>'follow_up_at','')::timestamptz<=$2::timestamptz) follow_up_overdue_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='low') low_blocker_count,
+ count(blocker) FILTER (WHERE COALESCE(NULLIF(blocker->>'priority',''),'normal')='normal') normal_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='high') high_blocker_count,
+ count(blocker) FILTER (WHERE blocker->>'priority'='urgent') urgent_blocker_count,
  count(blocker) blocker_count,
  count(blocker) FILTER (WHERE COALESCE(blocker->>'first_observed_at','')='') unknown_age_blockers,
  min(NULLIF(blocker->>'first_observed_at','')::timestamptz) oldest_blocker_at
- FROM facts GROUP BY value
+ FROM facts GROUP BY is_total,value
 ), stats AS (
- SELECT counts.value AS value,jsonb_build_object('workflow_count',workflow_count,'blocked_workflow_count',blocked_workflow_count,
+ SELECT counts.is_total,counts.value AS value,jsonb_build_object('sla_at_risk_workflow_count',sla_at_risk_workflow_count,'sla_breached_workflow_count',sla_breached_workflow_count,'sla_unknown_workflow_count',sla_unknown_workflow_count,'awaiting_verification_workflow_count',COALESCE(verification_counts.awaiting_workflows,0),'awaiting_verification_resolution_count',COALESCE(verification_counts.awaiting_resolutions,0),'low_blocker_count',low_blocker_count,'normal_blocker_count',normal_blocker_count,'high_blocker_count',high_blocker_count,'urgent_blocker_count',urgent_blocker_count,'unacknowledged_blocker_count',unacknowledged_blocker_count,'follow_up_overdue_blocker_count',follow_up_overdue_blocker_count,'escalated_workflow_count',escalated_workflow_count,'escalated_blocker_count',escalated_blocker_count,'workflow_count',workflow_count,'blocked_workflow_count',blocked_workflow_count,
  'dependency_workflow_count',dependency_workflow_count,'dependency_count',dependency_counts.dependency_count,'stale_workflow_count',stale_workflow_count,'overdue_workflow_count',overdue_workflow_count,'blocker_count',blocker_count,'unknown_age_blockers',unknown_age_blockers)
  || CASE WHEN earliest_overdue_deadline_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('earliest_overdue_deadline_at',earliest_overdue_deadline_at,'longest_overdue_seconds',GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-earliest_overdue_deadline_at)))::bigint)) END
  || CASE WHEN oldest_blocker_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('oldest_blocker_at',oldest_blocker_at,
  'oldest_blocker_age_seconds',GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-oldest_blocker_at)))::bigint)) END data
- FROM counts JOIN dependency_counts ON dependency_counts.value=counts.value
+ FROM counts LEFT JOIN verification_counts ON verification_counts.is_total=counts.is_total AND verification_counts.value=counts.value JOIN dependency_counts ON dependency_counts.value=counts.value AND dependency_counts.is_total=counts.is_total
 ), page AS (
- SELECT value,data FROM stats WHERE value<>'' AND ($14::text='' OR value COLLATE "C">$14::text COLLATE "C")
- ORDER BY value COLLATE "C" LIMIT $15::integer
+ SELECT value,data FROM stats WHERE NOT is_total AND (NOT $18::boolean OR value COLLATE "C">$19::text COLLATE "C")
+ ORDER BY value COLLATE "C" LIMIT $20::integer
 )
 SELECT jsonb_build_object('group_by',$1::text,'evaluated_at',$2::timestamptz,
- 'totals',COALESCE((SELECT data FROM stats WHERE value=''),jsonb_build_object('dependency_workflow_count',0,'dependency_count',0,'workflow_count',0,'blocked_workflow_count',0,'stale_workflow_count',0,'overdue_workflow_count',0,'blocker_count',0,'unknown_age_blockers',0)),
+ 'totals',COALESCE((SELECT data FROM stats WHERE is_total),jsonb_build_object('sla_at_risk_workflow_count',0,'sla_breached_workflow_count',0,'sla_unknown_workflow_count',0,'awaiting_verification_workflow_count',0,'awaiting_verification_resolution_count',0,'low_blocker_count',0,'normal_blocker_count',0,'high_blocker_count',0,'urgent_blocker_count',0,'unacknowledged_blocker_count',0,'follow_up_overdue_blocker_count',0,'escalated_workflow_count',0,'escalated_blocker_count',0,'dependency_workflow_count',0,'dependency_count',0,'workflow_count',0,'blocked_workflow_count',0,'stale_workflow_count',0,'overdue_workflow_count',0,'blocker_count',0,'unknown_age_blockers',0)),
  'groups',COALESCE((SELECT jsonb_agg(jsonb_build_object('value',value,'stats',data) ORDER BY value COLLATE "C") FROM page),'[]'::jsonb)) AS summary
 `
 
 type SummarizeCustomerOperationWorkflowAttentionParams struct {
 	GroupBy             string
 	EvaluatedAt         pgtype.Timestamptz
+	Priority            string
+	Reason              string
+	Owner               string
+	Unassigned          bool
+	BlockerCode         string
+	TargetOperation     string
 	Now                 pgtype.Timestamptz
+	SlaHistoryLimit     int32
 	AccountID           pgtype.UUID
 	AppID               pgtype.UUID
 	Scope               string
 	TenantID            string
 	WorkflowName        string
-	BlockerCode         string
-	Reason              string
 	DependencyStatus    string
 	RequiredOutcomeCode string
-	TargetOperation     string
+	HasAfter            bool
 	AfterGroup          string
 	PageLimit           int32
 }
@@ -67055,17 +68739,22 @@ func (q *Queries) SummarizeCustomerOperationWorkflowAttention(ctx context.Contex
 	row := db.QueryRow(ctx, summarizeCustomerOperationWorkflowAttention,
 		arg.GroupBy,
 		arg.EvaluatedAt,
+		arg.Priority,
+		arg.Reason,
+		arg.Owner,
+		arg.Unassigned,
+		arg.BlockerCode,
+		arg.TargetOperation,
 		arg.Now,
+		arg.SlaHistoryLimit,
 		arg.AccountID,
 		arg.AppID,
 		arg.Scope,
 		arg.TenantID,
 		arg.WorkflowName,
-		arg.BlockerCode,
-		arg.Reason,
 		arg.DependencyStatus,
 		arg.RequiredOutcomeCode,
-		arg.TargetOperation,
+		arg.HasAfter,
 		arg.AfterGroup,
 		arg.PageLimit,
 	)
@@ -67162,6 +68851,151 @@ func (q *Queries) SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context
 	var summary []byte
 	err := row.Scan(&summary)
 	return summary, err
+}
+
+const summarizeCustomerOperationWorkflowPerformance = `-- name: SummarizeCustomerOperationWorkflowPerformance :many
+WITH candidates AS (
+ SELECT s.account_id, s.app_id, s.platform_tenant_id, s.scope, s.subject_type, s.subject_id, s.workflow, s.instance_id, s.state, s.revision, s.operation_id, s.report_id, s.updated_at, config.terminal, config.sla_configured, config.sla_budget_seconds, config.sla_warning_percent,
+ jsonb_build_object('workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
+ 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
+ 'terminal',config.terminal,'stale_after_seconds',config.stale_after_seconds,'occurred_at',r.occurred_at,'updated_at',s.updated_at,
+ 'blockers',r.blockers,'blocker_resolutions',r.blocker_resolutions,'depends_on',r.depends_on,
+ 'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'deadline_at',r.deadline_at,
+ 'blockers_only',r.blockers_only,'dependencies_only',r.dependencies_only,'outcome_only',r.outcome_only,'deadline_only',r.deadline_only,
+ 'evidence_milestones',r.evidence_milestones) AS current_state,
+ encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
+ FROM customer_operation_workflow_states s
+ JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id AND o.platform_tenant_id=s.platform_tenant_id
+ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s.account_id AND d.app_id=s.app_id AND d.scope=s.scope
+ JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
+ CROSS JOIN LATERAL (
+  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
+  COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+  COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint),0::bigint) AS sla_budget_seconds,
+  COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint),0::bigint) AS sla_warning_percent,
+  COALESCE(bool_or(COALESCE(step->'state_sla_budget_seconds','{}'::jsonb)<>'{}'::jsonb),false) AS sla_configured
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ ) config
+ WHERE s.account_id=$4::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
+ AND ($7::text='' OR s.platform_tenant_id::text=$7::text)
+ AND s.workflow=$8::text
+ AND s.updated_at<=$1::timestamptz AND r.created_at<=$1::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
+), ranked AS (
+ SELECT candidates.account_id, candidates.app_id, candidates.platform_tenant_id, candidates.scope, candidates.subject_type, candidates.subject_id, candidates.workflow, candidates.instance_id, candidates.state, candidates.revision, candidates.operation_id, candidates.report_id, candidates.updated_at, candidates.terminal, candidates.sla_configured, candidates.sla_budget_seconds, candidates.sla_warning_percent, candidates.current_state, candidates.cursor_key, count(*) OVER (PARTITION BY terminal) AS cohort_total,
+ row_number() OVER (PARTITION BY terminal ORDER BY updated_at DESC,cursor_key DESC) AS position
+ FROM candidates
+), selected AS (
+ SELECT account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, workflow, instance_id, state, revision, operation_id, report_id, updated_at, terminal, sla_configured, sla_budget_seconds, sla_warning_percent, current_state, cursor_key, cohort_total, position FROM ranked WHERE position<=$9::integer
+)
+SELECT jsonb_build_object('current',s.current_state,'tenant',s.platform_tenant_id,
+ 'subject',jsonb_build_object('type',s.subject_type,'id',s.subject_id),'cohort_total',s.cohort_total,
+ 'observations',history.items,'verifications',verifications.items,'sla_configured',s.sla_configured,'current_sla_budget_seconds',s.sla_budget_seconds,'current_sla_warning_percent',s.sla_warning_percent)::jsonb AS instance
+FROM selected s
+CROSS JOIN LATERAL (
+ SELECT COALESCE(jsonb_agg(h.observation),'[]'::jsonb) AS items FROM (
+SELECT jsonb_build_object('history',jsonb_build_object(
+ 'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
+ 'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
+ 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
+ 'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),false)) AS observation
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=s.account_id AND o.app_id=s.app_id
+ AND o.platform_tenant_id=s.platform_tenant_id AND d.scope=s.scope
+ AND o.record #>> '{subject,type}'=s.subject_type AND o.record #>> '{subject,id}'=s.subject_id
+ AND r.workflow=s.workflow AND r.instance_id=s.instance_id
+ AND r.created_at<=$1::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
+ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT $3::integer
+ ) h
+) history
+CROSS JOIN LATERAL (
+SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resolution_operation_id',c.operation_id,'resolution_report_id',c.report_id,'resolution_revision',c.revision,
+  'status',CASE WHEN proof.created_at IS NULL THEN 'awaiting_verification' ELSE 'verified' END)
+  || CASE WHEN proof.created_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('verified_at',proof.created_at) END
+  ORDER BY proof.created_at IS NOT NULL,c.claim_key),'[]'::jsonb) AS items
+ FROM (
+  SELECT DISTINCT ON (jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name')) jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name') AS claim_key,value AS resolution,rr.operation_id,rr.id AS report_id,rr.revision,rr.contract_version
+  FROM customer_operation_workflow_state_reports rr
+  JOIN customer_operations ro ON ro.id=rr.operation_id
+  JOIN customer_operation_definitions rd ON rd.id=ro.definition_id AND rd.account_id=ro.account_id AND rd.app_id=ro.app_id
+  CROSS JOIN LATERAL jsonb_array_elements(rr.blocker_resolutions) AS resolutions(value)
+  WHERE ro.account_id=s.account_id AND ro.app_id=s.app_id AND ro.platform_tenant_id=s.platform_tenant_id AND rd.scope=s.scope
+   AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
+   AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$1::timestamptz
+   AND COALESCE(value->>'verification_milestone_id','')<>''
+   AND jsonb_array_length(history.items)<$3::integer
+   AND (ro.state IN ('accepted','running') OR ro.expires_at>$2::timestamptz)
+  ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
+ ) c
+ LEFT JOIN LATERAL (
+  SELECT pm.created_at
+  FROM customer_operations po
+  JOIN customer_operation_definitions pd ON pd.id=po.definition_id AND pd.account_id=po.account_id AND pd.app_id=po.app_id
+  JOIN customer_operation_milestones pm ON pm.operation_id=po.id
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE po.id=COALESCE(NULLIF(c.resolution->>'verification_operation_id',''),c.operation_id::text)::uuid
+   AND pm.id=(c.resolution->>'verification_milestone_id')::uuid AND pm.name=c.resolution->>'verification_milestone_name'
+   AND po.account_id=s.account_id AND po.app_id=s.app_id AND po.platform_tenant_id=s.platform_tenant_id AND pd.scope=s.scope
+   AND po.record #>> '{subject,type}'=s.subject_type AND po.record #>> '{subject,id}'=s.subject_id
+   AND step->>'workflow'=s.workflow AND step->>'milestone'=pm.name AND COALESCE(NULLIF((step->>'version')::integer,0),1)=c.contract_version
+   AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
+    CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
+   AND pm.created_at<=$1::timestamptz
+   AND (po.state IN ('accepted','running') OR po.expires_at>$2::timestamptz)
+  LIMIT 1
+ ) proof ON true
+) verifications
+ORDER BY s.terminal,s.updated_at DESC,s.cursor_key DESC
+`
+
+type SummarizeCustomerOperationWorkflowPerformanceParams struct {
+	EvaluatedAt  pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+	WindowLimit  int32
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	TenantID     string
+	WorkflowName string
+	CohortLimit  int32
+}
+
+func (q *Queries) SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, summarizeCustomerOperationWorkflowPerformance,
+		arg.EvaluatedAt,
+		arg.Now,
+		arg.WindowLimit,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.TenantID,
+		arg.WorkflowName,
+		arg.CohortLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var instance []byte
+		if err := rows.Scan(&instance); err != nil {
+			return nil, err
+		}
+		items = append(items, instance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const supersedeEnvironmentGitOpsRuns = `-- name: SupersedeEnvironmentGitOpsRuns :exec
@@ -68386,7 +70220,7 @@ func (q *Queries) UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
-const updateSpansSummary = `-- name: UpdateSpansSummary :exec
+const updateSpansSummary = `-- name: UpdateSpansSummary :execrows
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -68452,9 +70286,12 @@ type UpdateSpansSummaryParams struct {
 // lookup still hits request_telemetry_trace_idx for the trace_id
 // selectivity; the residual account_id check is a post-fetch
 // row-level filter (one row, microseconds).
-func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error {
-	_, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
-	return err
+func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateTenantWorkflowScheduleLastAdmittedAt = `-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
@@ -68799,6 +70636,34 @@ func (q *Queries) UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertEnvironmentWorkloadServingRoute = `-- name: UpsertEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_routes (graph_id, app_id, deployment_id, route_generation, cutover_required)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+        $4::bigint, $5::boolean)
+ON CONFLICT (graph_id, app_id) DO UPDATE
+SET deployment_id = EXCLUDED.deployment_id, route_generation = EXCLUDED.route_generation,
+    cutover_required = EXCLUDED.cutover_required
+`
+
+type UpsertEnvironmentWorkloadServingRouteParams struct {
+	GraphID         pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	RouteGeneration int64
+	CutoverRequired bool
+}
+
+func (q *Queries) UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error {
+	_, err := db.Exec(ctx, upsertEnvironmentWorkloadServingRoute,
+		arg.GraphID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RouteGeneration,
+		arg.CutoverRequired,
+	)
+	return err
 }
 
 const upsertEventSubscription = `-- name: UpsertEventSubscription :one
@@ -69174,17 +71039,19 @@ const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now()
+    $7, 'active', now(), now(), $8::jsonb
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- Keep the last known suspect when a pass could not compute one.
+    suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
         WHEN debug_regression_observations.state = 'resolved'
           OR (debug_regression_observations.state = 'dismissed'
@@ -69223,6 +71090,7 @@ type UpsertRegressionObservationParams struct {
 	P95BaseMs        int32
 	AffectedCount    int32
 	RegressionFactor pgtype.Numeric
+	Column8          []byte
 }
 
 // PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
@@ -69254,6 +71122,7 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.P95BaseMs,
 		arg.AffectedCount,
 		arg.RegressionFactor,
+		arg.Column8,
 	)
 	return err
 }

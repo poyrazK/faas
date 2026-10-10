@@ -5,11 +5,13 @@
 import type { EnvironmentGitOpsRun } from './EnvironmentGitOpsRun.js';
 import type { EnvironmentGitRevisionApproval } from './EnvironmentGitRevisionApproval.js';
 import type { EnvironmentGitSource } from './EnvironmentGitSource.js';
+import type { EnvironmentWorkloadActivationEvidence } from './EnvironmentWorkloadActivationEvidence.js';
 /**
- * Source authority and the twenty most recent durable reconciliation attempts.
+ * Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation attempts.
  */
 export type EnvironmentGitOpsStatusResponse = {
   approval?: EnvironmentGitRevisionApproval;
+  workload_evidence?: EnvironmentWorkloadActivationEvidence;
   source: EnvironmentGitSource;
   runs: Array<EnvironmentGitOpsRun>;
 };

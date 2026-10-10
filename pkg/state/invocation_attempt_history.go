@@ -24,7 +24,7 @@ type InvocationClaimCompletionStore interface {
 }
 
 func (s *PgStore) CompleteInvocationClaim(ctx context.Context, id string, claim InvocationClaim, result json.RawMessage) error {
-	return s.completeInvocation(ctx, id, 0, &claim, result)
+	return s.completeInvocation(ctx, id, claim.Attempt, &claim, result)
 }
 
 func (m *MemStore) CompleteInvocationClaim(_ context.Context, id string, claim InvocationClaim, result json.RawMessage) error {

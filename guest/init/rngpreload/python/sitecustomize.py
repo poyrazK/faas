@@ -76,7 +76,11 @@ def _chain_customer_sitecustomize():
     import importlib.machinery
     import importlib.util
 
-    search = [p for p in sys.path if os.path.abspath(p or os.curdir) != here]
+    # Search only entries after this directory: a stacked platform bootstrap
+    # earlier on sys.path would otherwise be found again and recurse.
+    resolved = [os.path.abspath(p or os.curdir) for p in sys.path]
+    start = resolved.index(here) + 1 if here in resolved else 0
+    search = [p for p, r in zip(sys.path[start:], resolved[start:]) if r != here]
     spec = importlib.machinery.PathFinder.find_spec("sitecustomize", search)
     if spec is None or spec.loader is None or not spec.origin:
         return

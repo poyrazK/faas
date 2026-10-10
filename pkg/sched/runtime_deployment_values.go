@@ -84,7 +84,7 @@ func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app sta
 			return runtimeDeploymentValues{}, err
 		}
 	}
-	result.MainSecrets, err = sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release, intent)
+	result.MainSecrets, err = sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release, intent, true)
 	if err != nil {
 		return runtimeDeploymentValues{}, err
 	}

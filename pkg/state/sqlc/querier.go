@@ -36,9 +36,12 @@ type Querier interface {
 	AccountPendingDeletionEmail(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentGitOpsEffectParams) (int64, error)
+	AcknowledgeEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentWorkloadServingRouteParams) error
 	// Legacy scheduler subscribers cannot acknowledge another worker's lease.
 	AcknowledgePendingNotification(ctx context.Context, db DBTX, id int64) error
 	ActivateRetainedRollbackDeployment(ctx context.Context, db DBTX, arg ActivateRetainedRollbackDeploymentParams) (int64, error)
+	ActiveEnvironmentWorkloadReleaseMembers(ctx context.Context, db DBTX, arg ActiveEnvironmentWorkloadReleaseMembersParams) ([]ActiveEnvironmentWorkloadReleaseMembersRow, error)
+	ActiveEnvironmentWorkloadReleaseSet(ctx context.Context, db DBTX, graphID pgtype.UUID) (string, error)
 	ActiveManagedPostgresResize(ctx context.Context, db DBTX, arg ActiveManagedPostgresResizeParams) (ManagedPostgresResize, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
@@ -263,6 +266,7 @@ type Querier interface {
 	CompleteCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg CompleteCustomerOperationWorkflowStepAttemptParams) (int64, error)
 	CompleteEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsEffectParams) (int64, error)
 	CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsRuntimeParams) (int64, error)
+	CompleteEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (int64, error)
 	CompleteLayerArtifactDeletion(ctx context.Context, db DBTX, arg CompleteLayerArtifactDeletionParams) (int64, error)
 	CompleteManagedPostgresResize(ctx context.Context, db DBTX, arg CompleteManagedPostgresResizeParams) (int64, error)
 	CompleteManagedWorkflowAttempt(ctx context.Context, db DBTX, arg CompleteManagedWorkflowAttemptParams) (int64, error)
@@ -287,7 +291,7 @@ type Querier interface {
 	CountActiveTenantWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveTenantWorkflowRunsForAdmissionParams) (int64, error)
 	CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error)
 	CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error)
-	// References and plaintext variables share the app's environment-key quota.
+	// Bindings, references and plaintext variables share the app's environment-key quota.
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
@@ -483,6 +487,7 @@ type Querier interface {
 	DeleteEnvironmentWorkDomains(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	DeleteEnvironmentWorkFairnessLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	DeleteEnvironmentWorkKeyLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
+	DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error
@@ -559,12 +564,24 @@ type Querier interface {
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
 	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
+	EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
+	EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error)
 	EnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error)
 	// Caller already holds the request (when present) and then the frame lock.
 	// Use the database clock so host clock skew cannot expire a current lease.
 	EnvironmentQualificationExecutionRecoverable(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.Bool, error)
+	EnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error)
 	EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	EnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
+	// An observed source address may name exactly one current network incarnation.
+	// Holding a deployment is independent of whether its execution lease expired.
+	EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error)
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
+	EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error)
+	EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
+	EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error)
+	EnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
+	EnvironmentQualificationSnapshotReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationSnapshotReceiptRow, error)
 	EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error)
 	EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
@@ -575,16 +592,30 @@ type Querier interface {
 	EnvironmentSecretReferenceWriteOwned(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceWriteOwnedParams) (bool, error)
 	EnvironmentWorkloadGraphByIDForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadGraphForPreparation(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForPreparationParams) (EnvironmentWorkloadGraph, error)
+	// Status reads use a read-only transaction and must not lock the candidate graph.
+	EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForStatusParams) (EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error)
 	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)
 	// Called after qualificationCurrentTx locks the source and its mapped apps.
 	EnvironmentWorkloadQualificationAppOwner(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationAppOwnerRow, error)
 	EnvironmentWorkloadQualificationArtifactCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
+	// Qualification receipts are written only while candidates are held in
+	// snapshotting. Evidence remains current after activation only while the exact
+	// candidates belong to the active environment release set.
+	EnvironmentWorkloadQualificationEvidenceCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationRequest, error)
 	EnvironmentWorkloadQualificationInputsCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error)
 	EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error)
+	EnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingAcksRow, error)
+	// A previous gateway acknowledgement becomes stale if managed candidate
+	// traffic drifts. Retained routes are intentionally excluded because their
+	// traffic policy is not owned by the environment definition.
+	EnvironmentWorkloadServingCutoverWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error)
+	EnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (EnvironmentWorkloadServingReceiptRow, error)
+	EnvironmentWorkloadServingRoutes(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingRoutesRow, error)
+	EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error)
 	EventAgeOrderedBinding(ctx context.Context, db DBTX, subscriptionID pgtype.UUID) (bool, error)
 	EventAgeReplayTarget(ctx context.Context, db DBTX, arg EventAgeReplayTargetParams) (EventAgeReplayTargetRow, error)
 	EventAgeScopedReplayTarget(ctx context.Context, db DBTX, arg EventAgeScopedReplayTargetParams) (EventAgeScopedReplayTargetRow, error)
@@ -945,12 +976,15 @@ type Querier interface {
 	GetCustomerOperationRecoveryDecision(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryDecisionParams) (GetCustomerOperationRecoveryDecisionRow, error)
 	GetCustomerOperationRelatedWorkflowStates(ctx context.Context, db DBTX, arg GetCustomerOperationRelatedWorkflowStatesParams) ([]GetCustomerOperationRelatedWorkflowStatesRow, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
+	GetCustomerOperationResolutionVerifications(ctx context.Context, db DBTX, arg GetCustomerOperationResolutionVerificationsParams) ([]byte, error)
+	GetCustomerOperationWorkflowBottleneckHistory(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowBottleneckHistoryParams) ([][]byte, error)
 	GetCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) (CustomerOperationWorkflowClaim, error)
 	GetCustomerOperationWorkflowDependencyImpact(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowDependencyImpactParams) ([]byte, error)
 	// One dispatch binding per native attempt; no upsert or replacement after a
 	// lost response. The parent run lock serializes binding and report mutations.
 	GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowGuestParams) (CustomerOperationWorkflowGuestClaim, error)
 	GetCustomerOperationWorkflowResolutionSource(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowResolutionSourceParams) ([]byte, error)
+	GetCustomerOperationWorkflowSLABudget(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowSLABudgetParams) (GetCustomerOperationWorkflowSLABudgetRow, error)
 	GetCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStateReportParams) (GetCustomerOperationWorkflowStateReportRow, error)
 	GetCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepParams) (WorkflowStep, error)
 	GetCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepAttemptParams) (WorkflowStepAttempt, error)
@@ -966,6 +1000,7 @@ type Querier interface {
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetDevSourceManifest(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DevSourceManifest, error)
 	GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error)
+	GetEntityOutboxAcceptanceFingerprint(ctx context.Context, db DBTX, messageID string) (string, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
 	GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg GetEnvironmentGitRevisionApprovalParams) (EnvironmentGitRevisionApproval, error)
@@ -1195,12 +1230,17 @@ type Querier interface {
 	// Generations are dense per base deployment. A concurrent insert for the same
 	// base collides on the unique key and the caller retries.
 	InsertDevSourcePatch(ctx context.Context, db DBTX, arg InsertDevSourcePatchParams) (InsertDevSourcePatchRow, error)
+	InsertEntityOutboxAcceptance(ctx context.Context, db DBTX, arg InsertEntityOutboxAcceptanceParams) (int64, error)
+	InsertEntityOutboxWebhookDelivery(ctx context.Context, db DBTX, arg InsertEntityOutboxWebhookDeliveryParams) (int64, error)
 	InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	InsertEnvironmentGitOpsConfig(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsConfigParams) error
 	InsertEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsEffectParams) error
 	InsertEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRunParams) (EnvironmentGitopsRun, error)
 	InsertEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRuntimeEffectParams) (int64, error)
 	InsertEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg InsertEnvironmentGitRevisionApprovalParams) error
+	InsertEnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationConfigReceiptParams) (EnvironmentQualificationConfigReceipt, error)
+	InsertEnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error)
+	InsertEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadServingReceiptParams) (int64, error)
 	InsertEventWorkflowReceipt(ctx context.Context, db DBTX, arg InsertEventWorkflowReceiptParams) error
 	InsertEventWorkflowRun(ctx context.Context, db DBTX, arg InsertEventWorkflowRunParams) error
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
@@ -1682,11 +1722,17 @@ type Querier interface {
 	// (the column is JSONB; empty/null means "no filter").
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
+	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
 	ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg ListEnvironmentGitOpsRunsParams) ([]EnvironmentGitopsRun, error)
 	// Discovery does not authorize cleanup. Recheck under the original request
 	// and immutable frame locks before any native retirement RPC.
 	ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, db DBTX, arg ListEnvironmentQualificationExecutionsForRecoveryParams) ([]EnvironmentQualificationExecution, error)
 	ListEnvironmentQueueCleanupInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
+	ListEnvironmentServingGatewayNames(ctx context.Context, db DBTX) ([]string, error)
+	// Graph discovery is advisory. Every member is claimed atomically by the
+	// graph claim method, which rechecks source authority, artifacts, smoke policy
+	// and owners. Job contracts use a distinct private one-shot execution path.
+	ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationGraphsForDispatchParams) ([]pgtype.UUID, error)
 	// Discovery grants no execution authority. Claim rechecks the full observation
 	// and cohort under source/app/request locks before issuing a new attempt.
 	ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationsForDispatchParams) ([]pgtype.UUID, error)
@@ -1860,6 +1906,7 @@ type Querier interface {
 	ListWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListWorkflowScheduleCandidatesParams) ([]ListWorkflowScheduleCandidatesRow, error)
 	ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowScheduleCursor, error)
 	ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg ListWorkflowScheduleOccurrencesParams) ([]WorkflowScheduleOccurrence, error)
+	LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Context, db DBTX, arg LiveEnvironmentWorkloadDeploymentsForServingParams) ([]LiveEnvironmentWorkloadDeploymentsForServingRow, error)
 	LockAlertRollback(ctx context.Context, db DBTX, fireID pgtype.UUID) ([]byte, error)
 	LockAlertRollbackFireApp(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]pgtype.UUID, error)
 	LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error)
@@ -1913,6 +1960,7 @@ type Querier interface {
 	LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
 	LockEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsLeaseParams) (EnvironmentGitopsJob, error)
 	LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsRuntimeEffectParams) (EnvironmentGitopsRuntimeEffect, error)
+	LockEnvironmentGitOpsServingProject(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsServingProjectParams) (pgtype.UUID, error)
 	LockEnvironmentGitSource(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceParams) (EnvironmentGitSource, error)
 	LockEnvironmentGitSourceForQueueMutation(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForQueueMutationParams) ([]pgtype.UUID, error)
 	LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForScopeParams) ([]pgtype.UUID, error)
@@ -2119,6 +2167,7 @@ type Querier interface {
 	// Backend row first, operation row second. A current custody lease prevents
 	// another worker claiming a callback wake or parked state early.
 	NextCustomerOperationWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
+	NextDeploymentRouteGenerationTx(ctx context.Context, db DBTX) (int64, error)
 	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
 	NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextFairDueWorkflowRunParams) (NextFairDueWorkflowRunRow, error)
@@ -2873,6 +2922,10 @@ type Querier interface {
 	RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (int64, error)
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
+	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
+	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
+	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
+	RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error
 	RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
@@ -3057,10 +3110,12 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
+	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
 	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)
 	ResetCustomerOperationDelivery(ctx context.Context, db DBTX, arg ResetCustomerOperationDeliveryParams) (int64, error)
+	ResetEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg ResetEnvironmentWorkloadServingReceiptParams) (int64, error)
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
 	ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error
@@ -3209,8 +3264,10 @@ type Querier interface {
 	SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, arg SetEnvironmentApprovedRevisionParams) (EnvironmentGitSource, error)
 	SetEnvironmentGitApprovalContext(ctx context.Context, db DBTX, approvalID string) error
 	SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX, leaseToken string) (string, error)
+	SetEnvironmentGitOpsServingContext(ctx context.Context, db DBTX, leaseToken string) (string, error)
 	SetEnvironmentQualificationCleanupContext(ctx context.Context, db DBTX, token string) (string, error)
 	SetEnvironmentWorkloadQualificationContext(ctx context.Context, db DBTX, token string) (string, error)
+	SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
 	// The caller retains the natural-key upsert's row lock in the same transaction.
 	SetInvoiceDetailLifecycle(ctx context.Context, db DBTX, arg SetInvoiceDetailLifecycleParams) error
@@ -3253,6 +3310,7 @@ type Querier interface {
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
 	SummarizeCustomerOperationWorkflowAttention(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowAttentionParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowOutcomesParams) ([]byte, error)
+	SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error)
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
@@ -3398,7 +3456,7 @@ type Querier interface {
 	// lookup still hits request_telemetry_trace_idx for the trace_id
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
-	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error
+	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Review finding MED-1 (PR #993): the inline SQL at
 	// pkg/state/pgstore.go::UpdateTrigger is the source of truth
@@ -3421,6 +3479,7 @@ type Querier interface {
 	// ADR-740 developer live source patches.
 	UpsertDevSourceManifest(ctx context.Context, db DBTX, arg UpsertDevSourceManifestParams) error
 	UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, arg UpsertEnvironmentQueueDeliveryReceiptParams) (int64, error)
+	UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error
 	// (xmax = 0) distinguishes a declaration first installed by this deploy from
 	// an idempotent replay of the same manifest row.
 	UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error)

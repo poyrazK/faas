@@ -147,6 +147,7 @@ type triggerDispatchResponse struct {
 type triggerDispatchResult struct {
 	ItemIdentifier string `json:"item_identifier"`
 	Status         string `json:"status"`
+	DeploymentID   string `json:"deployment_id,omitempty"`
 	Error          string `json:"error,omitempty"`
 	// Code (audit #8) is the structured counterpart to Error —
 	// a stable machine-readable string the dispatch tick
@@ -228,6 +229,30 @@ type triggerConsumerHealthWriter interface {
 
 type terminalNacker interface {
 	NackTerminal(context.Context, sqlc.Trigger, []string, string) error
+}
+
+type queueDispatchAcknowledgement struct {
+	ItemIdentifier string
+	DeploymentID   string
+}
+
+type deploymentAwareQueueAcknowledger interface {
+	AckWithDeployment(context.Context, sqlc.Trigger, []queueDispatchAcknowledgement) error
+}
+
+func acknowledgeSuccessfulQueueItems(ctx context.Context, poller triggerSource, trigger sqlc.Trigger,
+	itemIDs []string, results map[string]triggerDispatchResult) error {
+	acknowledger, ok := poller.(deploymentAwareQueueAcknowledger)
+	if !ok {
+		return poller.Ack(ctx, trigger, itemIDs)
+	}
+	acknowledgements := make([]queueDispatchAcknowledgement, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		acknowledgements = append(acknowledgements, queueDispatchAcknowledgement{
+			ItemIdentifier: itemID, DeploymentID: results[itemID].DeploymentID,
+		})
+	}
+	return acknowledger.AckWithDeployment(ctx, trigger, acknowledgements)
 }
 
 // triggerWakeup is the channel-side wakeup signal the schedd's
@@ -907,9 +932,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 
 	if len(succeedIDs) > 0 {
 		if isQueuePoller {
-			if err := poller.Ack(ctx, t, succeedItems); err != nil {
+			if ackErr := acknowledgeSuccessfulQueueItems(ctx, poller, t, succeedItems, statusByID); ackErr != nil {
 				l.log.Warn("sched trigger tick: finalize successful queue invocations",
-					"trigger_id", t.ID.String(), "err", err)
+					"trigger_id", t.ID.String(), "err", ackErr)
 				return nil
 			}
 		}

@@ -21,6 +21,11 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// ErrRequestTelemetryRowNotFound reports that a spans summary arrived before
+// (or without) the request_telemetry row it enriches. Producers retry it on
+// their next flush instead of treating the write as delivered (ADR-934).
+var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
+
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most
 // recent runtime configuration change. The notification is safe to discard.
 var ErrSnapshotRuntimeStale = errors.New("state: snapshot runtime config stale")
@@ -1884,7 +1889,10 @@ type Store interface {
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
+	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
 	// PruneScenarioTestMembers removes abandoned namespaces only after every

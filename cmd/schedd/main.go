@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -609,6 +610,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
+	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
@@ -617,6 +623,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
 	engine.WithNodeRegistry(nodeRegistry)
+	engine.WithEnvironmentQualificationServiceProxyForTransport(environmentQualificationServiceProxyResolver(store, ownerNodeID,
+		os.Getenv(environmentQualificationServiceProxyHTTPEnv), os.Getenv(environmentQualificationServiceProxyHTTPSEnv)))
+	// Qualification execution recovery is cleanup-only. Run it on the durable
+	// owner that created each frame so an abandoned VM remains charged until
+	// vmmd confirms attempt-bound native retirement.
+	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -932,12 +944,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
-
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
+	seedLedgerReady := true
 	if err := engine.SeedLedger(ctx); err != nil {
+		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
 	}
+	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
+	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)
+	qualificationDispatchEnabled := environmentQualificationDispatchAllowed(qualificationDispatchValue, seedLedgerReady)
+	if qualificationDispatchEnabled {
+		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
+	} else if qualificationDispatchRequested {
+		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
+	} else {
+		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
+	}
+	startEnvironmentQualificationDispatch(ctx, engine, store, ownerNodeID, qualificationDispatchEnabled, log)
 
 	// gRPC surface for gatewayd-internal (ADR-018): unix socket by default;
 	// tcp requires the tls_* cluster and is issue #95.

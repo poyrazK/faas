@@ -24,6 +24,7 @@ class EnvironmentQueueBinding:
 
     queue_name: str
     workload_class: str
+    """worker or job, or http for push-only bindings on function workloads"""
     mode: EnvironmentQueueBindingMode | Unset = UNSET
     enabled: bool | Unset = UNSET
     max_concurrency: int | Unset = UNSET

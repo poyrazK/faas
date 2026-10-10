@@ -302,3 +302,33 @@ func TestDisposableRunCapabilityMatchesAdmissionGate(t *testing.T) {
 		})
 	}
 }
+
+type capabilitiesLegacyStore struct{ state.Store }
+
+func TestGetCapabilitiesConditionalParkingBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store state.Store
+		want  bool
+	}{
+		{name: "unconfigured"},
+		{name: "legacy backend", store: &capabilitiesLegacyStore{state.NewMemStore()}},
+		{name: "atomic backend", store: state.NewMemStore(), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &server{store: tc.store}
+			recorder := httptest.NewRecorder()
+			s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanFree})
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if got, exists := body["conditional_parking"]; !exists || got != tc.want {
+				t.Fatalf("conditional parking=%v exists=%v want=%v", got, exists, tc.want)
+			}
+		})
+	}
+}

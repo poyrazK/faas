@@ -49,7 +49,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`consumers`](#consumers) | Meter, price, and bill your API&#39;s consumers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
+| [`edge-rule-lists`](#edge-rule-lists) | Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list\|get\|create\|update\|rm) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback\|stats\|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -121,18 +122,21 @@ Scaffold, deploy and verify stateless MCP servers
 
 ### mcp init
 
-Create the Node MCP starter
+Create a Node, Go, or Python MCP starter
 
-`gregale mcp init --path <DIR>`
+`gregale mcp init --path <DIR> [--language <LANGUAGE>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | empty destination directory | required |
+| `--language <LANGUAGE>` | starter language (default node) | one of `node` · `go` · `python` |
 
 Examples:
 
 ```sh
 gregale mcp init --path ./my-mcp
+gregale mcp init --language go --path ./my-mcp-go
+gregale mcp init --language python --path ./my-mcp-python
 ```
 
 ### mcp deploy
@@ -499,7 +503,26 @@ gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe
 
 ### mcp tasks
 
-Configure and inspect durable task worker scaling
+Configure, release and inspect durable task workers
+
+#### mcp tasks release
+
+Deploy and resume a gated web and worker release
+
+`gregale mcp tasks release [--resume] --plan <PATH> --state <PATH> [run|status|recover|restore|quarantine|retire]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--resume` | resume a healthy failed rollout (recover only) |  |
+| `--plan <PATH>` | native deployment plan JSON | required |
+| `--state <PATH>` | persistent release journal outside source directories | required |
+
+Examples:
+
+```sh
+gregale mcp tasks release --plan release.json --state ./release-state.json
+gregale mcp tasks release status --plan release.json --state ./release-state.json
+```
 
 #### mcp tasks setup
 
@@ -5084,7 +5107,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -5562,7 +5585,7 @@ Inject bounded faults into isolated real-VM scenario tests
 
 Run one scenario profile with a scoped service fault
 
-`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
+`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--tcp-port <PORT>] [--direction <DIRECTION>] [--bandwidth <N>] [--timeout] [--reset] [--reset-after <DURATION>] [--connect-timeout] [--connect-refused] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5572,7 +5595,15 @@ Run one scenario profile with a scoped service fault
 | `--from <SERVICE>` | only affect calls from this workload |  |
 | `--latency <DURATION>` | add this delay to selected requests, such as 1500ms |  |
 | `--error <CODE>` | return this synthetic HTTP 5xx status |  |
-| `--percent <N>` | fraction of matching requests affected (1..100) |  |
+| `--tcp-port <PORT>` | target TCP port; selects TCP latency |  |
+| `--direction <DIRECTION>` | TCP traffic direction | one of `upstream` · `downstream` · `both` |
+| `--bandwidth <N>` | TCP throughput cap in KiB/s |  |
+| `--timeout` | stall TCP traffic until the lease expires |  |
+| `--reset` | reset selected TCP connections |  |
+| `--reset-after <DURATION>` | delay before a TCP reset |  |
+| `--connect-timeout` | hold new service connections until timeout or fault clear |  |
+| `--connect-refused` | reset new service connections before reaching the target |  |
+| `--percent <N>` | fraction of matching requests or TCP connections affected (1..100) |  |
 | `--duration <DURATION>` | maximum fault lease duration (1s..5m) |  |
 | `--profile <PROFILE>` | real-VM lifecycle profile | one of `warm` · `cold` · `restored` |
 | `--seed <N>` | deterministic fault-selection seed |  |
@@ -5580,8 +5611,11 @@ Run one scenario profile with a scoped service fault
 Examples:
 
 ```sh
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --bandwidth 64 --direction downstream
 gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m
 gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-timeout --duration 8s
+gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-refused
 ```
 
 
@@ -6421,9 +6455,66 @@ Record your invoice reference for a finalized revision
 | `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
 
 
+## edge-rule-lists
+
+Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list|get|create|update|rm)
+
+`gregale edge-rule-lists [<subcommand>]`
+
+### edge-rule-lists list
+
+List the account&#39;s edge-rule lists
+
+### edge-rule-lists get
+
+Show one list with its items
+
+`gregale edge-rule-lists get <name>`
+
+### edge-rule-lists create
+
+Create a list
+
+`gregale edge-rule-lists create --kind <KIND> [--item <VALUE>] [--items-file <path|->] [--description <TEXT>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--kind <KIND>` | list kind | required; one of `ip` · `country` · `host` · `string` · `asn` |
+| `--item <VALUE>` | list item (repeat) |  |
+| `--items-file <path|->` | file with one item per line (# comments allowed), or - for stdin |  |
+| `--description <TEXT>` | free-text description |  |
+
+Examples:
+
+```sh
+gregale edge-rule-lists create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
+gregale edge-rule-lists create blocked --kind country --items-file countries.txt
+gregale edge-rules create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
+```
+
+### edge-rule-lists update
+
+Edit a list; referencing rules pick up the change within seconds
+
+`gregale edge-rule-lists update [--add <VALUE>] [--remove <VALUE>] [--replace-file <path|->] [--description <TEXT>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <VALUE>` | item to add (repeat) |  |
+| `--remove <VALUE>` | item to remove (repeat) |  |
+| `--replace-file <path|->` | replace every item from a file, or - for stdin |  |
+| `--description <TEXT>` | new description |  |
+
+### edge-rule-lists rm
+
+Delete a list no rule references
+
+`gregale edge-rule-lists rm <name>`
+
+
 ## edge-rules
 
-Per-app edge rules (edge-rules list|trace|create|get|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -6447,7 +6538,7 @@ List edge rules
 
 Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--header <Name:Value>] [--body-file <path|->]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6457,14 +6548,24 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
+| `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
+| `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |
+| `--add-rule <JSON|@FILE>` | compare against adding this rule (create-request JSON or @file; repeat) |  |
+| `--remove-rule <ID>` | compare against removing this rule id (repeat) |  |
+
+Examples:
+
+```sh
+gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-rule '{"kind":"maintenance","match_host":"api.example.com","match_path":"/admin/*","action":{"maintenance":{"message":"migrating"}}}'
+```
 
 ### edge-rules create
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>]`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6478,7 +6579,7 @@ Add an edge rule
 | `--enabled[=true|false]` | whether the rule is enabled (default true) | one of `true` · `false` |
 | `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate in requests per second |  |
 | `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
-| `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country) |  |
+| `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country\|ip\|composite) |  |
 | `--redirect-status <CODE>` | kind=redirect: 301\|302\|307\|308 |  |
 | `--redirect-to <URL>` | kind=redirect: Location URL |  |
 | `--rewrite-from <PATH>` | kind=rewrite: from path |  |
@@ -6519,6 +6620,8 @@ Add an edge rule
 | `--throttle-jwt-claim <CLAIM>` | kind=throttle: JWT claim when key-by is jwt_claim |  |
 | `--throttle-max-keys-per-rule <N>` | kind=throttle: maximum distinct consumer buckets |  |
 | `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
+| `--throttle-key-field <FIELD>` | kind=throttle: composite key field (ip\|country\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|method\|path\|header:&lt;name&gt;; repeat) |  |
+| `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
 | `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (max 300) |  |
 | `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
 | `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
@@ -6531,11 +6634,14 @@ Add an edge rule
 | `--circuit-max-open-seconds <SECONDS>` | kind=circuit_breaker: maximum open interval |  |
 | `--maintenance-retry-after-seconds <SECONDS>` | kind=maintenance: Retry-After hint |  |
 | `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
+| `--match <JSON|@FILE|->` | match condition ANDed with the selectors (ADR-962 JSON, @file, or -) |  |
+| `--mode <MODE>` | enforce (default) or log: a log-mode rule only counts matches | one of `enforce` · `log` |
 
 Examples:
 
 ```sh
 gregale edge-rules create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
+gregale edge-rules create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
 gregale edge-rules create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new
 gregale edge-rules create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60
 gregale edge-rules create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
@@ -6553,7 +6659,7 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] <id>`
+`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6598,10 +6704,12 @@ Update one edge rule
 | `--limit-max-body-bytes-streaming <BYTES>` | kind=limit: streaming body cap (0 inherits buffered cap) |  |
 | `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate |  |
 | `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
-| `--throttle-key-by <KEY>` | kind=throttle: bucket key | one of `none` · `api_key` · `consumer_id` · `jwt_subject` · `jwt_claim` · `country` |
+| `--throttle-key-by <KEY>` | kind=throttle: bucket key | one of `none` · `api_key` · `consumer_id` · `jwt_subject` · `jwt_claim` · `country` · `ip` · `composite` |
 | `--throttle-jwt-claim <CLAIM>` | kind=throttle: JWT claim when key-by is jwt_claim |  |
 | `--throttle-max-keys-per-rule <N>` | kind=throttle: maximum distinct consumer buckets |  |
 | `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
+| `--throttle-key-field <FIELD>` | kind=throttle: composite key field (ip\|country\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|method\|path\|header:&lt;name&gt;; repeat) |  |
+| `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
 | `--cache-max-age-seconds <SECONDS>` | kind=cache: fresh window |  |
 | `--cache-stale-while-revalidate-seconds <SECONDS>` | kind=cache: stale-while-revalidate window |  |
 | `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure |  |
@@ -6637,6 +6745,9 @@ Update one edge rule
 | `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+| `--match <JSON|@FILE|->` | replace the match condition (ADR-962 JSON, @file, or -) |  |
+| `--clear-match` | remove the match condition |  |
+| `--mode <MODE>` | enforce or log (log-mode rules only count matches) | one of `enforce` · `log` |
 
 Examples:
 
@@ -6654,6 +6765,67 @@ Delete one edge rule
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+### edge-rules history
+
+List recorded versions of an app&#39;s edge-rule set (--version N shows its rules)
+
+`gregale edge-rules history --app <slug> [--version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--version <N>` | show the rules recorded in this version |  |
+
+### edge-rules stats
+
+Per-rule match counts (matched for enforced rules, logged for log-mode rules)
+
+`gregale edge-rules stats --app <slug> [--window <WINDOW>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--window <WINDOW>` | window | one of `1h` · `24h` · `7d` |
+
+### edge-rules events
+
+Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)
+
+`gregale edge-rules events --app <slug> [--rule <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--rule <ID>` | only this rule id |  |
+| `--outcome <OUTCOME>` | outcome filter | one of `matched` · `logged` |
+| `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
+| `--limit <N>` | events per page (1..200) |  |
+| `--cursor <CURSOR>` | continue from a previous page&#39;s next cursor |  |
+
+Examples:
+
+```sh
+gregale edge-rules events --app my-api --outcome logged --since 7d
+```
+
+### edge-rules rollback
+
+Restore an app&#39;s edge rules to a recorded version (recorded as a new version)
+
+`gregale edge-rules rollback --app <slug> --to <N> [--quiet]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--to <N>` | version to restore | required |
+| `--quiet` | skip the typed confirmation (for scripts) |  |
+
+Examples:
+
+```sh
+gregale edge-rules rollback --app my-api --to 12
+```
 
 
 ## openapi
@@ -7584,7 +7756,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -8030,7 +8202,7 @@ Summarize explicit business outcomes
 
 List workflows needing attention
 
-`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8043,8 +8215,12 @@ List workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 
@@ -8052,11 +8228,11 @@ List workflows needing attention
 
 Summarize workflows needing attention
 
-`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--group-by <DIMENSION>` | summary grouping | one of `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--group-by <DIMENSION>` | summary grouping | one of `owner` · `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
 | `--app <SLUG>` | owned app in account mode |  |
 | `--self` | authenticated customer queue |  |
 | `--app-id <UUID>` | required with --self |  |
@@ -8066,8 +8242,12 @@ Summarize workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 

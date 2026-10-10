@@ -97,8 +97,8 @@ def sync_detailed(
 
      The assignment takes effect from effective_from (default the next minute; never in the past) and
     requires the target plan to have a rate card in force then. Statements price each minute with the
-    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns
-    the consumer to the default plan.
+    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id
+    returns the consumer to the default plan.
 
     Args:
         slug (str):
@@ -141,8 +141,8 @@ def sync(
 
      The assignment takes effect from effective_from (default the next minute; never in the past) and
     requires the target plan to have a rate card in force then. Statements price each minute with the
-    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns
-    the consumer to the default plan.
+    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id
+    returns the consumer to the default plan.
 
     Args:
         slug (str):
@@ -180,8 +180,8 @@ async def asyncio_detailed(
 
      The assignment takes effect from effective_from (default the next minute; never in the past) and
     requires the target plan to have a rate card in force then. Statements price each minute with the
-    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns
-    the consumer to the default plan.
+    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id
+    returns the consumer to the default plan.
 
     Args:
         slug (str):
@@ -222,8 +222,8 @@ async def asyncio(
 
      The assignment takes effect from effective_from (default the next minute; never in the past) and
     requires the target plan to have a rate card in force then. Statements price each minute with the
-    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns
-    the consumer to the default plan.
+    plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id
+    returns the consumer to the default plan.
 
     Args:
         slug (str):

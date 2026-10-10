@@ -32,6 +32,7 @@ type Metrics struct {
 	duration       *prometheus.HistogramVec
 	bytes          *prometheus.CounterVec
 	idleTimeouts   prometheus.Counter
+	chaosInjected  *prometheus.CounterVec
 	tlsReady       prometheus.Gauge
 	tlsNotReady    prometheus.Gauge
 	tlsExpiry      prometheus.Gauge
@@ -84,6 +85,10 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 			Name: prefix + "_tcp_idle_timeouts_total",
 			Help: "Number of raw TCP sessions terminated by the idle timeout.",
 		}),
+		chaosInjected: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_tcp_chaos_injected_total",
+			Help: "TCP scenario faults actually applied, once per connection, lease, kind and direction.",
+		}, []string{"kind", "direction"}),
 	}
 	m.tlsReady = prometheus.NewGauge(prometheus.GaugeOpts{Name: prefix + "_tcp_tls_listeners_ready", Help: "Enabled TLS listeners with a currently valid hostname certificate."})
 	m.tlsNotReady = prometheus.NewGauge(prometheus.GaugeOpts{Name: prefix + "_tcp_tls_listeners_not_ready", Help: "Enabled TLS listeners without a currently valid hostname certificate."})
@@ -98,6 +103,7 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 		m.duration,
 		m.bytes,
 		m.idleTimeouts,
+		m.chaosInjected,
 	)
 	for _, reason := range []string{"global_limit", "route_missing", "route_error", "invalid_route", "account_limit", "target_error", "tls_handshake"} {
 		m.rejected.WithLabelValues(reason)
@@ -110,6 +116,13 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 		m.bytes.WithLabelValues(direction)
 	}
 	return m
+}
+
+// ObserveChaosInjection records a stream impairment without run or payload labels.
+func (m *Metrics) ObserveChaosInjection(kind, direction string) {
+	if m != nil {
+		m.chaosInjected.WithLabelValues(kind, direction).Inc()
+	}
 }
 
 // SetTLSReadiness replaces aggregate observations without hostname labels.

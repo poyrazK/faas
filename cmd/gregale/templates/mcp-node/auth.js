@@ -1,6 +1,17 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { createPromptPolicy, createResourcePolicy, createToolPolicy, validateScopes } from './tool-policy.js';
 
+// Only call this with authInfo created by the verified bearer-token middleware.
+// It intentionally omits the token and all raw JWT claims from handler-facing identity.
+export function verifiedCallerIdentity(authInfo) {
+  const subject = authInfo?.extra?.subject;
+  if (typeof subject !== 'string' || !subject) return undefined;
+  return Object.freeze({
+    subject,
+    clientId: typeof authInfo.clientId === 'string' ? authInfo.clientId : '',
+  });
+}
+
 // The provider owns login, consent, PKCE, discovery and access-token issuance.
 // This application is an OAuth resource server and never accepts CLI credentials.
 export function createAuth(config, keyResolver) {
@@ -13,15 +24,37 @@ export function createAuth(config, keyResolver) {
     // Read the actual JSON-RPC call, never a caller-supplied Mcp-Name header.
     const request = req.body;
     const method = request?.method;
-    const policy = method === 'tools/call' ? toolPolicy
-      : method === 'resources/read' ? resourcePolicy
-        : method === 'prompts/get' ? promptPolicy : undefined;
-    const identifier = method === 'resources/read' ? request?.params?.uri : request?.params?.name;
+    let policy;
+    let identifier;
+    let kind;
+    if (method === 'tools/call') {
+      policy = toolPolicy;
+      identifier = request?.params?.name;
+      kind = 'tool';
+    } else if (method === 'resources/read') {
+      policy = resourcePolicy;
+      identifier = request?.params?.uri;
+      kind = 'resource';
+    } else if (method === 'prompts/get') {
+      policy = promptPolicy;
+      identifier = request?.params?.name;
+      kind = 'prompt';
+    } else if (method === 'completion/complete') {
+      const ref = request?.params?.ref;
+      if (ref?.type === 'ref/prompt') {
+        policy = promptPolicy;
+        identifier = ref.name;
+        kind = 'prompt';
+      } else if (ref?.type === 'ref/resource') {
+        policy = resourcePolicy;
+        identifier = ref.uri;
+        kind = 'resource';
+      }
+    }
     if (!policy || typeof identifier !== 'string' || policy.canAccess(identifier, req.auth)) return next();
     const scopes = policy.requiredScopes(identifier);
     if (auth.mode === 'external-oauth' && scopes) return reject(res, 403, 'insufficient_scope', [...new Set([...auth.scopes, ...scopes])]);
     res.setHeader('Cache-Control', 'no-store');
-    const kind = method === 'tools/call' ? 'tool' : method === 'resources/read' ? 'resource' : 'prompt';
     return res.status(403).json({ error: `${kind}_access_denied` });
   }
   if (auth.mode === 'open') {

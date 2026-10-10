@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -259,6 +260,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return dep.RootfsPath == leasePath, nil
 		},
 	)
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
 	b := builderdpkg.New(store, notif, driver, cache, nil, resid, builderdpkg.Config{
 		CacheDir:            cfg.CacheDir,
 		SourceSpoolDir:      cfg.SourceSpoolDir,
@@ -274,7 +279,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// "default-local" in LoadConfig; multi-node deployments
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
-	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage)
+	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err

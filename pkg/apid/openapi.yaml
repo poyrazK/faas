@@ -8244,6 +8244,194 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/workflow-performance/instances:
+    get:
+      tags: [operations]
+      operationId: listAccountWorkflowPerformanceInstances
+      summary: List ranked contributors to a workflow performance group.
+      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Declared business workflow to investigate.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      - name: cohort
+        in: query
+        description: Completed or ongoing cohort.
+        required: true
+        schema: {type: string, enum: [completed, ongoing]}
+      - name: dimension
+        in: query
+        description: Overall measure or exact breakdown dimension.
+        required: true
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+      - name: contract_version
+        in: query
+        description: Required for state and blocker dimensions.
+        schema: {type: integer, minimum: 1, maximum: 1000000}
+      - name: state
+        in: query
+        description: Exact contributing state. Required for the state dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: operation
+        in: query
+        description: Exact blocker target Operation. Required for the blocker dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: code
+        in: query
+        description: Exact blocker code. Required for the blocker dimension.
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: Exact public owner. Mutually exclusive with unassigned.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Select the empty owner group. Mutually exclusive with owner.
+        schema: {type: boolean, enum: [true]}
+      - name: cohort_token
+        in: query
+        description: Opaque selector-bound cohort token from the summary or a previous contributor response.
+        schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        '200':
+          description: Ranked complete-history contributors and exact selected group distribution.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstancesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The retained cohort changed. Refresh the summary and use its new cohort_token.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/workflow-performance/instances:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfWorkflowPerformanceInstances
+      summary: List ranked performance contributors for the authenticated customer.
+      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: "Declared workflow to investigate for the authenticated customer."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: cohort
+        in: query
+        description: "Completed or ongoing customer workflow cohort."
+        required: true
+        schema: {type: string, enum: [completed, ongoing]}
+      - name: dimension
+        in: query
+        description: "Customer cohort duration measure or exact breakdown dimension."
+        required: true
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+      - name: contract_version
+        in: query
+        description: "Contract version required when selecting a customer state or blocker group."
+        schema: {type: integer, minimum: 1, maximum: 1000000}
+      - name: state
+        in: query
+        description: "Contributing state in the customer's state dimension."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: operation
+        in: query
+        description: "Blocker target Operation in the authenticated customer's blocker dimension."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: code
+        in: query
+        description: "Blocker code selecting the customer's exact blocker group."
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: "Public owner of the customer's selected group; mutually exclusive with unassigned."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Select an empty-owner customer group; mutually exclusive with owner."
+        schema: {type: boolean, enum: [true]}
+      - name: cohort_token
+        in: query
+        description: "Customer selector-bound cohort token from a prior summary or contributor response."
+        schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        '200':
+          description: Ranked complete-history contributors within the authenticated customer's selected group.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstancesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The customer's retained cohort changed; refresh its performance summary for a new cohort_token.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/workflow-performance/summary:
+    get:
+      tags: [operations]
+      operationId: summarizeAccountWorkflowPerformance
+      summary: Summarize business workflow performance across retained instances.
+      description: Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Declared workflow name to compare across instances.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      responses:
+        '200':
+          description: Separate completed and ongoing cohorts with coverage and ranked durations.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceSummary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/workflow-performance/summary:
+    get:
+      tags: [operations]
+      operationId: summarizePlatformTenantSelfWorkflowPerformance
+      summary: Summarize retained business workflow performance for the authenticated customer.
+      description: Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        in: query
+        required: true
+        description: Business workflow to compare within the authenticated customer app and environment.
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      responses:
+        '200':
+          description: Authenticated customer performance cohorts with observed durations and retained-history coverage.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowPerformanceSummary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/workflow-outcomes/summary:
     get:
       tags: [operations]
@@ -8488,6 +8676,22 @@ paths:
         description: "For the account attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the account attention queue, restrict attention to this application-reported blocker code."
         in: query
@@ -8495,7 +8699,7 @@ paths:
       - name: reason
         description: "For the account attention queue, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
@@ -8522,7 +8726,7 @@ paths:
       - name: group_by
         description: "For the account attention summary, dimension used to aggregate matching workflow instances."
         in: query
-        schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
+        schema: {type: string, default: workflow, enum: [owner, workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
       - name: workflow
         description: "For the account attention summary, restrict results to this declared workflow name."
         in: query
@@ -8539,6 +8743,22 @@ paths:
         description: "For the account attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Account attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Account attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Account attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Account attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the account attention summary, restrict attention to this application-reported blocker code."
         in: query
@@ -8546,7 +8766,7 @@ paths:
       - name: reason
         description: "For the account attention summary, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
@@ -8586,6 +8806,22 @@ paths:
         description: "For the customer attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Customer attention queue. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Customer attention queue. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Customer attention queue. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Customer attention queue. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the customer attention queue, restrict attention to this application-reported blocker code."
         in: query
@@ -8593,7 +8829,7 @@ paths:
       - name: reason
         description: "For the customer attention queue, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
@@ -8619,7 +8855,7 @@ paths:
       - name: group_by
         description: "For the customer attention summary, dimension used to aggregate matching workflow instances."
         in: query
-        schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, dependency_status, required_outcome_code]}
+        schema: {type: string, default: workflow, enum: [owner, workflow, blocker_code, target_operation, dependency_status, required_outcome_code]}
       - name: workflow
         description: "For the customer attention summary, restrict results to this declared workflow name."
         in: query
@@ -8636,6 +8872,22 @@ paths:
         description: "For the customer attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: priority
+        in: query
+        description: "Customer attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal."
+        schema: {type: string, enum: [low, normal, high, urgent]}
+      - name: sort
+        in: query
+        description: "Customer attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order."
+        schema: {type: string, enum: [updated_at, deadline], default: updated_at}
+      - name: owner
+        in: query
+        description: "Customer attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker."
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: "Customer attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false."
+        schema: {type: boolean}
       - name: blocker_code
         description: "For the customer attention summary, restrict attention to this application-reported blocker code."
         in: query
@@ -8643,7 +8895,7 @@ paths:
       - name: reason
         description: "For the customer attention summary, select the attention reason to include in the queue."
         in: query
-        schema: {type: string, enum: [blocked, stale, overdue, dependency]}
+        schema: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
@@ -10912,7 +11164,7 @@ paths:
     put:
       tags: [dev]
       operationId: injectScenarioTestChaos
-      summary: Install a bounded request-level fault plan for an isolated scenario run.
+      summary: Install a bounded fault plan for an isolated scenario run.
       description: Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
       requestBody:
         required: true
@@ -10925,6 +11177,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/InjectScenarioTestChaosResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [dev]
+      operationId: clearScenarioTestChaos
+      summary: Clear the active fault plan for an isolated scenario run.
+      description: Removes the run's active faults immediately. The run must still have at least one live registered member.
+      responses:
+        '204': { description: Fault plan cleared. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/dev/test-runs/{run_id}/chaos/matches:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    get:
+      tags: [dev]
+      operationId: getScenarioTestChaosMatches
+      summary: Read fault-match counts for the current scenario plan.
+      description: Returns run-scoped counts of HTTP requests and TCP connections matched by the current or most recently cleared fault plan.
+      responses:
+        '200':
+          description: Fault-match evidence for the current plan generation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioTestChaosMatchesResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -15523,10 +15807,59 @@ paths:
       parameters:
         - name: fresh
           in: query
+          description: For isolated previews, invalidate snapshots after drain so the next request cold-boots from the artifact. Production apps reject fresh parking.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expected_deployment_id:
+                  type: string
+                  format: uuid
+                  description: The deployment UUID to compare atomically before parking. A stale or absent current deployment returns 409 without parking; reuse this UUID on drain retries.
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '204': { description: All matching instances were parked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/park/conditional:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: parkAppIfDeployment
+      summary: Park instances only if the latest deployment matches.
+      description: Unsupported control planes reject this route without parking. Clients must never fall back to unconditional parking.
+      parameters:
+        - name: fresh
+          in: query
           description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
           schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_deployment_id]
+              properties:
+                expected_deployment_id:
+                  type: string
+                  format: uuid
+                  description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
       responses:
-        '204': { description: Parked. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '204': { description: Parked only when the deployment UUID matched. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -25602,6 +25935,119 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/edge-rule-lists:
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleLists
+      summary: List the account's reusable edge-rule lists.
+      description: |
+        ADR-963. Items are omitted here; fetch one list for its items.
+        referenced_by names the rules whose match conditions use the list.
+      responses:
+        '200':
+          description: The account's lists, by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListEdgeRuleListsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [edge_rules]
+      operationId: createEdgeRuleList
+      summary: Create a reusable edge-rule list.
+      description: |
+        ADR-963. Items are validated for the list kind and stored
+        canonicalized, deduplicated and sorted. Lists per account and items
+        per list are plan limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEdgeRuleListRequest' }
+      responses:
+        '201':
+          description: The created list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: edge_rule_list_exists'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/edge-rule-lists/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: Edge-rule list name, unique within the account.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleList
+      summary: Get one edge-rule list with its items.
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [edge_rules]
+      operationId: updateEdgeRuleList
+      summary: Edit an edge-rule list.
+      description: |
+        ADR-963. items replaces the list; add and remove edit it in place
+        (remove applies after add) and cannot be combined with items.
+        Gateways pick up the change for every referencing rule within a few
+        seconds; no rule-set version is recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEdgeRuleListRequest' }
+      responses:
+        '200':
+          description: The updated list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: deleteEdgeRuleList
+      summary: Delete an unreferenced edge-rule list.
+      responses:
+        '204': { description: The list was deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
+        '409':
+          description: 'code: edge_rule_list_in_use (rules still reference the list)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25612,6 +26058,8 @@ paths:
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
+          headers:
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
           content:
             application/json:
               schema:
@@ -25624,6 +26072,8 @@ paths:
       tags: [edge_rules]
       operationId: createEdgeRule
       summary: Create an edge rule on an app.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
         validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
@@ -25661,6 +26111,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25684,6 +26135,8 @@ paths:
       tags: [edge_rules]
       operationId: updateEdgeRule
       summary: Partial-update an edge rule.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
@@ -25703,17 +26156,190 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
       tags: [edge_rules]
       operationId: deleteEdgeRule
       summary: Delete an edge rule.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       responses:
         '204':
           description: The cors preset was deleted. Referencing edge_rules.cors_preset_id was atomically cleared via ON DELETE SET NULL; the gateway compile path fails closed until the customer wires a new preset or inlines fallback values.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleSetVersions
+      summary: List recorded versions of an app's edge-rule set, newest first.
+      description: |
+        Every committed change to an app's edge rules records the whole rule
+        set as a new version (ADR-961). Up to the 50 newest versions are
+        returned, without rule bodies; the newest 100 are retained.
+      responses:
+        '200':
+          description: Versions, newest first.
+          headers:
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: version
+        in: path
+        required: true
+        description: Rule-set version number, from the versions listing.
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleSetVersion
+      summary: Fetch one recorded edge-rule set version with its rules.
+      responses:
+        '200':
+          description: The version and the rules it recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleEvents
+      summary: Sampled requests each edge rule matched, newest first.
+      description: |
+        ADR-964. Gateways keep the first 10 matches of each rule per minute
+        as full events (request ID, method, host, path without query string,
+        trusted client IP, country, user agent); hit counts (stats) cover
+        every match. Events are kept 7 days; how far back a plan can read is
+        a plan limit (Free 24 h, Hobby 72 h, Pro and Scale 7 days), and a
+        longer since is clamped (the response reports the effective start).
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          description: Only events for this edge rule id.
+          schema: { type: string, format: uuid }
+        - name: outcome
+          in: query
+          required: false
+          description: Only matched (enforced) or logged (log-mode) events.
+          schema: { type: string, enum: [matched, logged] }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 1h, 24h or 7d.
+          schema: { type: string, default: '24h' }
+        - name: limit
+          in: query
+          required: false
+          description: Events per page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: next_cursor from the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/stats:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleStats
+      summary: Per-rule match counts for an app over a window.
+      description: |
+        ADR-960. Gateways count each rule's matches (matched for enforced
+        rules, logged for log-mode rules), at most once per rule per request,
+        and flush them into hourly buckets once a minute; buckets are kept
+        for 14 days. Rules with no matches in the window are omitted.
+      parameters:
+        - name: window
+          in: query
+          required: false
+          description: How far back to total hit counts.
+          schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
+      responses:
+        '200':
+          description: Per-rule counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleStatsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/rollback:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [edge_rules]
+      operationId: rollbackEdgeRules
+      summary: Restore an app's edge rules to a recorded version.
+      description: |
+        Replaces every current rule with the version's rules in one
+        transaction, preserving rule IDs, behind fleet convergence. The
+        restore is recorded as a new version. Refused when the version
+        exceeds the current plan's edge-rule quotas or references a deleted
+        CORS preset.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackEdgeRulesRequest' }
+      responses:
+        '200':
+          description: The rules now in force.
+          headers:
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The version references a CORS preset that no longer exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/throttle-suggestions:
@@ -27979,6 +28605,458 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
+  /v1/apps/{slug}/entities/inspect:
+    get:
+      tags: [invocations]
+      operationId: inspectDurableEntity
+      summary: Inspect one durable entity's state and recovery metadata.
+      description: |
+        Account-owner read preview, requiring apps:read or admin, MFA where
+        applicable, and the explicit durable entity app allowlist. Resolves the
+        current immutable environment and same-account optional customer. Owner
+        inspection permits suspended customers and plan downgrades for diagnosis;
+        it does not authorize execution. Customer self-service tokens are excluded.
+        Returns state version, alarm and pending-outbox recovery metadata only.
+        No business data, receipts, payloads, credentials, claim tokens or bucket
+        paths are exposed. Inspection acquires no ownership, writes no objects,
+        repairs no indexes and runs no guest code. A missing entity returns 404
+        without creating it; corrupt committed state fails closed with 503.
+        Head delivery status is a separate, later observation of retained transport
+        history. Unknown includes absent/pruned history or read failures and never
+        proves a message was not accepted. An empty pending queue does not prove
+        receiver completion. These observations are not atomic across stores.
+        Inspection does not retry work. Use its recovery_revision for the separate
+        owner-only retry endpoint. Responses are not cacheable.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: namespace
+          in: query
+          required: true
+          description: Entity namespace, bounded to 256 UTF-8 bytes.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: key
+          in: query
+          required: true
+          description: Logical entity key, bounded to 256 UTF-8 bytes.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: environment
+          in: query
+          description: Current registered project environment; defaults to production.
+          schema: { type: string, minLength: 1 }
+        - name: platform_tenant_id
+          in: query
+          description: Optional customer owned by the authenticated account, including suspended customers.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Metadata-only entity and head delivery observations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityInspectResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview disabled, bucket unavailable, corrupt committed state or retryable reclamation race.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Inspection deadline elapsed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/backups:
+    get:
+      tags: [invocations]
+      operationId: listDurableEntityBackups
+      summary: List retained backup metadata.
+      description: |
+        This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for backup listing.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for backup listing.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for backup listing; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for backup listing.", in: query, schema: { type: string } }
+        - { name: cursor, description: "Opaque continuation cursor from the previous backup page.", in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Backup listing observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private backup listing response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityBackupPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Backup listing observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Backup listing observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/backups/get:
+    get:
+      tags: [invocations]
+      operationId: getDurableEntityBackup
+      summary: Read one private application-state backup.
+      description: |
+        This backup retrieval operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for backup retrieval.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for backup retrieval.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for backup retrieval; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for backup retrieval.", in: query, schema: { type: string } }
+        - { name: backup_id, description: "Identifier of the retained backup to retrieve.", in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Backup retrieval observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private backup retrieval response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityBackup' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Backup retrieval observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Backup retrieval observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore/preview:
+    post:
+      tags: [invocations]
+      operationId: previewDurableEntityRestore
+      summary: Preview a restore without writes or execution.
+      description: |
+        This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+        applicable. Requires durable entity app enablement. Private, no-store.
+        No ownership acquisition, guest execution or writes. Backup listing is
+        bounded and metadata-only; backup reads contain sensitive application data.
+        Restore preview reports observed versions, recognized schema envelopes and
+        preserved pending work. Compatibility is always unverified; schema equality
+        does not validate application data. Preview grants no restore authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Restore preview observation. Observational result; subsequent restore still requires a fenced commit.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private restore preview response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestorePreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Restore preview observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Restore preview observation. Observation deadline elapsed. Retry the read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Preview body exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/export:
+    get:
+      tags: [invocations]
+      operationId: exportDurableEntity
+      summary: Export committed application state from one durable entity.
+      description: |
+        Owner-only preview requiring apps:read or admin and MFA where applicable.
+        Resolves immutable account, app, environment and tenant identity. Requires
+        app enablement. Diagnostic reads permit held/suspended scopes and plan
+        downgrades. Performs no writes or guest invocation. Contains sensitive
+        application JSON; responses are private, no-store. Excludes alarms,
+        receipts, outbox and ownership. Checksum detects corruption, not authority.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: namespace, description: "Entity namespace for state export.", in: query, required: true, schema: { type: string } }
+        - { name: key, description: "Logical entity key for state export.", in: query, required: true, schema: { type: string } }
+        - { name: environment, description: "Registered environment for state export; defaults to production.", in: query, schema: { type: string } }
+        - { name: platform_tenant_id, description: "Optional account-owned customer scope for state export.", in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: One committed state export. No version-zero entity is exported.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private state export response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityStateExport' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: State export preview is unavailable, ownership is busy or storage failed. Retry the export read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: State export deadline elapsed. Retry the export read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore/validate:
+    post:
+      tags: [invocations]
+      operationId: validateDurableEntityRestore
+      summary: Ask the live application deployment to validate exported state.
+      description: |
+        Operator-gated preview requiring deploy:write or admin, MFA where applicable,
+        app enablement, execution plan and active-tenant/account rules. Enqueues
+        a pinned invocation to the distinct private validation path. The synchronous
+        application validator must be pure and returns only a versioned boolean
+        verdict. Gregale commits no state, alarm, outbox or request receipt here;
+        invocation rows and normal execution resource use still occur. External
+        application I/O is not independently disabled by the current runtime.
+        Validate needs an existing committed entity and matching expected_version.
+        Returned deployment_id identifies the checked deployment, not a permission
+        token. Restore revalidates under its claim and rejects deployment drift;
+        preview/validation does not reserve a version. Keep candidate data private.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Application verdict without entity publication; false rejects the candidate.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private restore validation response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestoreValidationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: validateDurableEntityRestore requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Current state or selected deployment changed. Resolve the observation before starting a new operation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Validation request exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Application validation failed or returned a malformed verdict.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Application validation preview is disabled or storage/execution is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Validation deadline elapsed. No entity commit occurs for validation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/restore:
+    post:
+      tags: [invocations]
+      operationId: restoreDurableEntity
+      summary: Restore exported application data with a fenced expected-version check.
+      description: |
+        Owner-only mutation preview requiring deploy:write or admin and MFA where
+        applicable. Applies app enablement, execution plan, account hold and active
+        tenant rules. Export identity must exactly match resolved target scope.
+        Requires an existing committed entity, positive expected_version and stable
+        request_id. Commits only application data, preserving current receipts,
+        alarms, outbox and delivery attempts. Advances business version once; invokes
+        no guest unless application restore validation is enabled. With
+        FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1, every new restore requires
+        validation_deployment_id and a fresh pure validator verdict under the claim.
+        The chosen deployment is resolved before and after validation; publication
+        still uses the entity ownership/version CAS. Deployment routing and bucket
+        publication are not one atomic transaction. Receipt replay skips validation.
+        Receipt replay precedes expected-version comparison. Retry uncertain
+        outcomes with the identical request body and ID. Check application schema
+        compatibility before restoring. Audit is best effort after acknowledged
+        success, not atomic with the object-store commit. Responses are private,
+        no-store; request/response state must not be logged.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRestoreRequest' }
+      responses:
+        '200':
+          description: Restore committed or an existing receipt was replayed.
+          headers:
+            Cache-Control: { schema: { type: string }, description: Private state restore response; caches must not retain application state. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRestoreResponse' }
+        '409':
+          description: Expected version is stale, request identity conflicts or storage budget is exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Restore request exceeds the central invocation byte limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: restoreDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview unavailable, busy ownership, storage failure or uncertain outcome. Retry restore with identical request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Deadline elapsed. Retry restore with identical request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/entities/retry:
+    post:
+      tags: [invocations]
+      operationId: retryDurableEntity
+      summary: Re-arm exactly one exhausted alarm or outgoing message.
+      description: |
+        Account-owner mutation preview requiring deploy:write or admin, MFA where
+        applicable, durable entity app enablement and the existing execution plan
+        and active-customer rules. Account holds block recovery. Requires a fresh
+        inspection's version and opaque recovery_revision plus alarm_at or head_id.
+        The revision changes on every manifest write, including ownership and
+        retry metadata changes. Only exhausted work on an unowned entity can be
+        re-armed. A stale observation or non-exhausted target returns 409; an
+        active owner returns 503. No missing entity is created.
+        Recovery changes retry metadata only, preserving state, receipts, deadlines,
+        message identities, payloads and durable transport acceptance. It does not
+        invoke the guest, send a webhook or retry a terminal receiver delivery.
+        Existing workers must be enabled separately. Responses are not cacheable.
+        A repeated request after success returns 409. After an uncertain response,
+        inspect again before deciding whether another recovery is needed.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityRetryRequest' }
+      responses:
+        '200':
+          description: Retry metadata was re-armed; execution or delivery is not confirmed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityRetryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: retryDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Observation changed, target changed or work is not exhausted. Inspect again.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Recovery request exceeds the central durable entity metadata size limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Preview unavailable, active owner, corrupt state or uncertain recovery outcome. Inspect before retrying.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Recovery deadline elapsed. Inspect before retrying.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/entities/invoke:
     post:
       tags: [invocations]
@@ -28031,8 +29109,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '402':
+          description: invokeDurableEntity requires an eligible plan and an account without a billing or abuse hold.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.
@@ -36368,6 +37452,9 @@ components:
       description: Browser dashboard session cookie. The browser sends this HttpOnly cookie automatically.
 
   headers:
+    EdgeRuleSetETag:
+      description: The app's current edge-rule set version, for If-Match on later mutations (ADR-961).
+      schema: { type: string }
     WWWAuthenticate:
       description: |
         RFC 6750 Bearer challenge emitted when a protected API resource
@@ -36421,6 +37508,12 @@ components:
     ManagedRealtimePrincipalQueryBounded: {"name": "principal", "description": "Verified push principal ID", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 256}}
     ManagedRealtimeProviderPath: {"name": "provider", "description": "Push provider name", "in": "path", "required": true, "schema": {"type": "string", "enum": ["fcm", "apns", "webpush"]}}
     ManagedRealtimeDevicePath: {"name": "device", "description": "Registered device ID", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
+    EdgeRuleSetIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+      schema: { type: string }
     OperationArtifact:
       name: artifact
       in: path
@@ -38320,6 +39413,12 @@ components:
       additionalProperties: false
       required: [workflow, title, step, label, milestone, position]
       properties:
+        blocker_escalations:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {$ref: '#/components/schemas/OperationWorkflowBlockerEscalationPolicy'}
+          description: Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend escalation for active workflows with known blocker age.
         allow_reconciliation: {type: boolean, description: Explicit permission for evidence-backed state reconciliation snapshots.}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         title: {type: string, minLength: 1, maxLength: 128}
@@ -38336,6 +39435,18 @@ components:
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           description: App-declared terminal states, which must be in states and cannot have outgoing transitions.
+        state_sla_warning_percent:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, format: int64, minimum: 1, maximum: 99}
+          description: Optional whole-percent warning thresholds for states with SLA budgets. At the threshold a known current visit becomes at_risk until its budget is breached. Omitted states have no early warning. All steps must agree; publish a new workflow contract version when changing thresholds.
+        state_sla_budget_seconds:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+          description: Optional observed state visit budgets. Keys must be declared nonterminal states. All workflow steps in one definition must agree; publish a new workflow contract version for budget changes. Metadata updates do not reset a visit clock. Unknown retained entry times do not imply a breach.
         state_stale_after_seconds:
           type: object
           maxProperties: 32
@@ -38442,12 +39553,35 @@ components:
         workflow_count: {type: integer, format: int64, minimum: 0}
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowOutcomeGroup'}}
         next_cursor: {type: string, maxLength: 512}
+    OperationWorkflowBlockerEscalationPolicy:
+      type: object
+      additionalProperties: false
+      required: [after_seconds, owner]
+      description: Application-declared recommendation to escalate a blocker once its known age reaches a threshold. Does not assign work or execute actions.
+      properties:
+        after_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000, description: "Whole seconds from first_observed_at, bounded to ten years."}
+        owner: {type: string, minLength: 1, maxLength: 128, description: "Public recommended escalation team or person identifier, limited to 128 UTF-8 bytes without control characters."}
+    OperationWorkflowBlockerEscalation:
+      type: object
+      additionalProperties: false
+      required: [code, operation, owner, after_seconds, escalated_at]
+      description: Read-only threshold finding evaluated at the attention cursor time against the current retained report and its pinned definition. Owner is the recommended escalation recipient, not the blocker assignee.
+      properties:
+        code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        operation: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        owner: {type: string, minLength: 1, maxLength: 128}
+        after_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+        escalated_at: {type: string, format: date-time, description: Time when the reported blocker first reached its declared threshold.}
     OperationWorkflowAttentionEntry:
       description: "One active workflow instance requiring attention, including its reasons and unresolved prerequisites."
       type: object
       additionalProperties: false
       required: [app_id, scope, subject, operation_id, state, reasons]
       properties:
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Bounded preview with pending obligations first. Exact counts cover all retained distinct obligations.}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
+        escalations: {type: array, maxItems: 16, description: Passed blocker escalation thresholds; missing observation times do not produce findings., items: {$ref: "#/components/schemas/OperationWorkflowBlockerEscalation"}}
         dependency_attention: {type: array, maxItems: 16, description: Unresolved direct references on an active source. These entries carry dependency and status; target state is available in the workflow instance detail., items: {$ref: '#/components/schemas/OperationWorkflowRelatedInstance'}}
         app_id: {type: string, format: uuid}
         scope: {type: string}
@@ -38455,13 +39589,26 @@ components:
         subject: {$ref: '#/components/schemas/OperationSubject'}
         operation_id: {type: string, format: uuid, description: "For this attention entry, operation that published the current state report."}
         state: {$ref: '#/components/schemas/OperationWorkflowState'}
-        reasons: {type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: {type: string, enum: [blocked, stale, overdue, dependency]}}
+        reasons: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string, enum: [blocked, stale, overdue, dependency, escalated, unacknowledged, follow_up_overdue, awaiting_verification, sla_breached, sla_at_risk]}}
     OperationWorkflowAttentionStats:
       description: "Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."
       type: object
       additionalProperties: false
-      required: [dependency_workflow_count, dependency_count, overdue_workflow_count, workflow_count, blocked_workflow_count, stale_workflow_count, blocker_count, unknown_age_blockers]
+      required: [sla_at_risk_workflow_count, sla_breached_workflow_count, sla_unknown_workflow_count, awaiting_verification_workflow_count, awaiting_verification_resolution_count, low_blocker_count, normal_blocker_count, high_blocker_count, urgent_blocker_count, unacknowledged_blocker_count, follow_up_overdue_blocker_count, escalated_workflow_count, escalated_blocker_count, dependency_workflow_count, dependency_count, overdue_workflow_count, workflow_count, blocked_workflow_count, stale_workflow_count, blocker_count, unknown_age_blockers]
       properties:
+        sla_at_risk_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_unknown_workflow_count: {type: integer, format: int64, minimum: 0}
+        escalated_workflow_count: {type: integer, format: int64, minimum: 0}
+        awaiting_verification_workflow_count: {type: integer, format: int64, minimum: 0}
+        awaiting_verification_resolution_count: {type: integer, format: int64, minimum: 0}
+        low_blocker_count: {type: integer, format: int64, minimum: 0}
+        normal_blocker_count: {type: integer, format: int64, minimum: 0}
+        high_blocker_count: {type: integer, format: int64, minimum: 0}
+        urgent_blocker_count: {type: integer, format: int64, minimum: 0}
+        unacknowledged_blocker_count: {type: integer, format: int64, minimum: 0}
+        follow_up_overdue_blocker_count: {type: integer, format: int64, minimum: 0}
+        escalated_blocker_count: {type: integer, format: int64, minimum: 0}
         dependency_workflow_count: {type: integer, format: int64, minimum: 0}
         dependency_count: {type: integer, format: int64, minimum: 0}
         overdue_workflow_count: {type: integer, format: int64, minimum: 0}
@@ -38475,7 +39622,7 @@ components:
         oldest_blocker_at: {type: string, format: date-time}
         oldest_blocker_age_seconds: {type: integer, format: int64, minimum: 0}
     OperationWorkflowAttentionGroup:
-      description: "Attention statistics for one value of the selected grouping dimension."
+      description: "Attention statistics for one value of the selected grouping dimension. Owner grouping uses an empty value for unassigned blockers; owner counts and ages cover that owner only."
       type: object
       additionalProperties: false
       required: [value, stats]
@@ -38488,7 +39635,7 @@ components:
       additionalProperties: false
       required: [group_by, evaluated_at, totals, groups]
       properties:
-        group_by: {type: string, enum: [workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
+        group_by: {type: string, enum: [owner, workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
         evaluated_at: {type: string, format: date-time}
         totals: {$ref: '#/components/schemas/OperationWorkflowAttentionStats'}
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionGroup'}}
@@ -38502,12 +39649,237 @@ components:
         items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionEntry'}}
         evaluated_at: {type: string, format: date-time, description: Staleness evaluation time retained across cursor pages.}
         next_cursor: {type: string, description: Opaque continuation bound to account/customer role and every queue filter.}
+    OperationWorkflowPerformanceGroup:
+      description: Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads.
+      type: object
+      additionalProperties: false
+      required: [dimension]
+      properties:
+        dimension: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        state: {type: string, maxLength: 64}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128}
+        unassigned: {type: boolean}
+    OperationWorkflowPerformanceInstance:
+      type: object
+      additionalProperties: false
+      description: Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
+      required: [subject, operation_id, state, observed_seconds, resolution_verifications, awaiting_verification_count, resolution_verification_count]
+      properties:
+        platform_tenant_id: {type: string, format: uuid}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        operation_id: {type: string, format: uuid}
+        state: {$ref: '#/components/schemas/OperationWorkflowState'}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceInstancesResponse:
+      type: object
+      additionalProperties: false
+      description: Coverage counts cover the selected cohort before dimension selection. Duration statistics and ranked items include only complete-history instances contributing to the exact dimension. Overall dimensions include eligible zero values. The token binds both sampled cohorts and evidence at evaluated_at; it does not store a database snapshot.
+      required: [evaluated_at, cohort_token, workflow, cohort, group, matching_workflow_count, sampled_workflow_count, complete_history_workflow_count, excluded_incomplete_workflow_count, cohort_truncated, exclusions, duration, items]
+      properties:
+        evaluated_at: {type: string, format: date-time}
+        cohort_token: {type: string, maxLength: 512}
+        workflow: {type: string, maxLength: 63}
+        cohort: {type: string, enum: [completed, ongoing]}
+        group: {$ref: '#/components/schemas/OperationWorkflowPerformanceGroup'}
+        matching_workflow_count: {type: integer, format: int64, minimum: 0}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        complete_history_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        cohort_truncated: {type: boolean}
+        exclusions: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceCoverageReason'}}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceInstance'}}
+    OperationWorkflowPerformanceSummary:
+      description: Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
+      type: object
+      additionalProperties: false
+      required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
+      properties:
+        cohort_token: {type: string, maxLength: 512, description: Opaque selector-bound token for opening consistent contributor views.}
+        evaluated_at: {type: string, format: date-time}
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        cohort_limit: {type: integer, minimum: 1, maximum: 100}
+        completed: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+        ongoing: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+    OperationWorkflowDurationDistribution:
+      type: object
+      additionalProperties: false
+      description: One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is zero.
+      required: [workflow_count, total_seconds, p50_seconds, p95_seconds]
+      properties:
+        workflow_count: {type: integer, format: int64, minimum: 0}
+        total_seconds: {type: integer, format: int64, minimum: 0}
+        p50_seconds: {type: integer, format: int64, minimum: 0}
+        p95_seconds: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceCoverageReason:
+      description: Count of sampled workflows excluded for one retained-history coverage reason.
+      type: object
+      additionalProperties: false
+      required: [reason, workflow_count]
+      properties:
+        reason: {type: string, enum: [missing_start, missing_latest, revision_gap, duplicate_revision, out_of_order_time, future_observation, contract_changed, state_discontinuity, history_window_truncated, verification_start_missing]}
+        workflow_count: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowPerformanceCohort:
+      type: object
+      additionalProperties: false
+      description: Counts distinguish all matches from the latest retained sample and complete eligible histories. Every duration excludes incomplete histories. Groups are ranked by total duration descending with stable identity ties. Overall distributions include eligible zero-duration instances; group distributions include only instances that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
+      required: [sla_configured_workflow_count, sla_evaluated_workflow_count, sla_breached_workflow_count, sla_unknown_workflow_count, matching_workflow_count, sampled_workflow_count, complete_history_workflow_count, excluded_incomplete_workflow_count, cohort_truncated, exclusions, state_time, blocked_time, verification_wait, states, blockers, verification_owners, states_truncated, blockers_truncated, verification_owners_truncated]
+      properties:
+        sla_configured_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_evaluated_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_workflow_count: {type: integer, format: int64, minimum: 0}
+        sla_unknown_workflow_count: {type: integer, format: int64, minimum: 0}
+        matching_workflow_count: {type: integer, format: int64, minimum: 0}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        complete_history_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        cohort_truncated: {type: boolean}
+        exclusions: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/OperationWorkflowPerformanceCoverageReason'}}
+        state_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        blocked_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        verification_wait: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        states: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowStatePerformance'}}
+        blockers: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowBlockerPerformance'}}
+        verification_owners: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowVerificationPerformance'}}
+        states_truncated: {type: boolean}
+        blockers_truncated: {type: boolean}
+        verification_owners_truncated: {type: boolean}
+    OperationWorkflowStatePerformance:
+      description: Cohort duration distribution and evaluated SLA visits for one state and contract version.
+      type: object
+      additionalProperties: false
+      required: [sla_evaluated_visit_count, sla_breached_visit_count, contract_version, state, duration]
+      properties:
+        sla_evaluated_visit_count: {type: integer, format: int64, minimum: 0}
+        sla_breached_visit_count: {type: integer, format: int64, minimum: 0}
+        contract_version: {type: integer, minimum: 1}
+        state: {type: string, maxLength: 64}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowBlockerPerformance:
+      description: Cohort duration distribution for one blocker target, code, contract version and observed owner.
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, code, owner, duration]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128, description: Application-reported blocker owner for this cohort group; empty means unassigned.}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowVerificationPerformance:
+      description: Cohort verification-wait distribution and pending obligations for one verification owner.
+      type: object
+      additionalProperties: false
+      required: [owner, pending_resolution_count, duration]
+      properties:
+        owner: {type: string, maxLength: 128, description: Verification recipient for this cohort group; empty means unassigned.}
+        pending_resolution_count: {type: integer, format: int64, minimum: 0}
+        duration: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+    OperationWorkflowStateSLA:
+      type: object
+      additionalProperties: false
+      description: Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state metadata reports preserve entry time. Known history establishes the current visit from revision 1 or a contiguous prior different state. Gaps or inconsistent times/versions/budgets yield unknown status and omit inferred timestamps/durations. Breached at due_at or later. Terminal states have no current SLA.
+      required: [evaluated_at, budget_seconds, status, history_complete]
+      properties:
+        warning_percent: {type: integer, format: int64, minimum: 1, maximum: 99, description: Pinned warning percentage when configured.}
+        warning_at: {type: string, format: date-time, description: Warning time for a known state visit with a configured threshold.}
+        evaluated_at: {type: string, format: date-time}
+        budget_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+        status: {type: string, enum: [within_budget, at_risk, breached, unknown]}
+        history_complete: {type: boolean, description: Retained evidence establishes the current state visit entry. Earlier workflow history can still be incomplete.}
+        entered_at: {type: string, format: date-time}
+        due_at: {type: string, format: date-time}
+        elapsed_seconds: {type: integer, format: int64, minimum: 0}
+        remaining_seconds: {type: integer, format: int64, minimum: 0, description: Ceiling of remaining elapsed time. Zero at or after the due time.}
+        breached_seconds: {type: integer, format: int64, minimum: 0, description: Whole seconds elapsed beyond the budget.}
+    OperationWorkflowBottlenecks:
+      type: object
+      additionalProperties: false
+      description: Observed durations for one retained workflow instance. State/blocker intervals use application occurrence time. Verification waits use platform publication time. Gaps are excluded and incomplete histories are marked. Groups are sorted by observed duration and bounded independently of exact window totals.
+      required: [evaluated_at, history_complete, incomplete_reasons, reports_in_window, history_truncated, ongoing, state_seconds, blocked_seconds, verification_unknown_start_count, verification_wait_seconds, states, blockers, verification_owners, states_truncated, blockers_truncated, verification_owners_truncated]
+      properties:
+        evaluated_at: {type: string, format: date-time}
+        history_complete: {type: boolean, description: True only when the retained window starts at revision 1 and reaches the current report without gaps or invalid interval boundaries.}
+        incomplete_reasons: {type: array, maxItems: 10, uniqueItems: true, items: {type: string, enum: [missing_start, missing_latest, revision_gap, duplicate_revision, out_of_order_time, future_observation, contract_changed, state_discontinuity, history_window_truncated, verification_start_missing]}}
+        observed_from: {type: string, format: date-time}
+        observed_through: {type: string, format: date-time}
+        reports_in_window: {type: integer, minimum: 0, maximum: 1024}
+        history_truncated: {type: boolean}
+        ongoing: {type: boolean, description: Current workflow state is nonterminal. Ongoing duration is evaluated as of evaluated_at.}
+        state_seconds: {type: integer, format: int64, minimum: 0}
+        blocked_seconds: {type: integer, format: int64, minimum: 0, description: Union of measured intervals with at least one active blocker. Overlapping blocker groups can sum to more than this total.}
+        verification_unknown_start_count: {type: integer, format: int64, minimum: 0}
+        verification_wait_seconds: {type: integer, format: int64, minimum: 0, description: Sum of whole observed wait seconds across obligations with known publication starts in the history window. Overlapping waits are counted separately.}
+        states: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowStateDuration'}}
+        blockers: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowBlockerDuration'}}
+        verification_owners: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/OperationWorkflowVerificationDuration'}}
+        states_truncated: {type: boolean}
+        blockers_truncated: {type: boolean}
+        verification_owners_truncated: {type: boolean}
+    OperationWorkflowStateDuration:
+      description: Observed time and interval count for one state and contract version within a selected workflow instance.
+      type: object
+      additionalProperties: false
+      required: [contract_version, state, observed_seconds, observation_count, ongoing]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        state: {type: string, maxLength: 64}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        observation_count: {type: integer, format: int64, minimum: 0}
+        ongoing: {type: boolean}
+    OperationWorkflowBlockerDuration:
+      description: Observed blocked time and interval count for one target, code, contract version and owner within an instance.
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, code, owner, observed_seconds, observation_count, ongoing]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        operation: {type: string, maxLength: 64}
+        code: {type: string, maxLength: 64}
+        owner: {type: string, maxLength: 128, description: Blocker owner observed in this instance interval; empty means unassigned.}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        observation_count: {type: integer, format: int64, minimum: 0}
+        ongoing: {type: boolean}
+    OperationWorkflowVerificationDuration:
+      description: Publication-based proof waiting time and coverage counts for one verification owner within an instance.
+      type: object
+      additionalProperties: false
+      required: [owner, observed_seconds, resolution_count, pending_count, unknown_start_count]
+      properties:
+        owner: {type: string, maxLength: 128, description: Application-assigned verification owner. Empty means unassigned.}
+        observed_seconds: {type: integer, format: int64, minimum: 0}
+        resolution_count: {type: integer, format: int64, minimum: 0}
+        pending_count: {type: integer, format: int64, minimum: 0}
+        unknown_start_count: {type: integer, format: int64, minimum: 0, description: Retained obligations whose start report is outside the history window. No wait duration is inferred for these obligations.}
+    OperationWorkflowResolutionVerification:
+      description: Retained resolution claim and its exact proof-verification status under the original scoped workflow contract.
+      type: object
+      additionalProperties: false
+      required: [resolution, resolution_operation_id, resolution_report_id, resolution_revision, status]
+      properties:
+        resolution: {$ref: '#/components/schemas/OperationWorkflowBlockerResolution'}
+        resolution_operation_id: {type: string, format: uuid}
+        resolution_report_id: {type: string, format: uuid}
+        resolution_revision: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [awaiting_verification, verified]}
+        verified_at: {type: string, format: date-time, description: Retained proof publication time.}
     OperationWorkflowBlockerResolution:
       type: object
       additionalProperties: false
       required: [code, operation, description, blocker_operation_id, blocker_report_id, blocker_revision]
       description: Explicit application explanation for clearing one prior blocker occurrence. The source must be a retained report in the same owner/business-reference/workflow-instance/contract-version boundary and must contain this target/code. The containing state report supplies the resolution identity and timestamps. A cleared list alone does not imply a resolution fact.
       properties:
+        verification_milestone_id: {type: string, format: uuid, description: Exact expected milestone ID paired with verification_milestone_name. Missing retained evidence leaves verification pending.}
+        verification_milestone_name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Expected milestone name paired with its exact ID.}
+        verification_operation_id: {type: string, format: uuid, description: Optional evidence Operation ID. Defaults to the Operation containing this resolution. Evidence must match the same account/customer/app/scope/subject/workflow-instance/contract boundary.}
+        verification_owner: {type: string, maxLength: 128, description: Public application-assigned verification owner limited to 128 UTF-8 bytes without control characters. Requires a verification milestone. Omitted means unassigned.}
+        resolved_by: {type: string, maxLength: 128, description: "Optional public application-reported resolver identifier or team, limited to 128 UTF-8 bytes without control characters. This is not verified platform identity."}
         code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         operation: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 explanation limited to 512 bytes without control characters.}
@@ -38520,6 +39892,13 @@ components:
       required: [code, description, operation]
       description: Public application-reported reason a named target Operation must wait. Reports replace the entire prior blocker list at their state revision; these observations do not grant or enforce execution authority.
       properties:
+        priority: {type: string, enum: [low, normal, high, urgent], description: Application-assigned urgency. Omitted means normal for queue filtering and counts.}
+        business_impact: {type: string, maxLength: 512, description: Public application-reported impact limited to 512 UTF-8 bytes without control characters.}
+        acknowledged_at: {type: string, format: date-time, description: Application acknowledgement time paired with acknowledged_by. Must be at or after known first observation and at or before report time.}
+        acknowledged_by: {type: string, maxLength: 128, description: Public application actor identifier paired with acknowledged_at. Limited to 128 UTF-8 bytes without control characters.}
+        follow_up_at: {type: string, format: date-time, description: Optional follow-up deadline at or after acknowledgement. Does not resolve the blocker or reset its age.}
+        owner: {type: string, maxLength: 128, description: "Optional public application-assigned person or team identifier, limited to 128 UTF-8 bytes without control characters. Empty or omitted means unassigned; this grants no execution authority."}
+        next_action: {type: string, maxLength: 512, description: "Optional public application-suggested resolution step, limited to 512 UTF-8 bytes without control characters. This is guidance rather than an executable command."}
         first_observed_at: {type: string, format: date-time, description: "Optional application observation time at or before the containing report. Upgraded transactional SDKs preserve it across repeats of the same target/code until cleared. Omitted means unknown."}
         code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 text limited to 512 bytes without control characters.}
@@ -38778,6 +40157,10 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, contract_version, steps, transitions, has_more]
       properties:
+        bottlenecks: {$ref: '#/components/schemas/OperationWorkflowBottlenecks'}
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Selected instance proof preview with pending obligations first; exact counts include all distinct retained claims.}
+        awaiting_verification_count: {type: integer, format: int64, minimum: 0}
+        resolution_verification_count: {type: integer, format: int64, minimum: 0}
         readiness: {$ref: '#/components/schemas/OperationWorkflowReadinessOverview'}
         dependency_trace: {$ref: '#/components/schemas/OperationWorkflowDependencyTrace'}
         dependency_impact: {$ref: '#/components/schemas/OperationWorkflowDependencyImpact'}
@@ -38922,6 +40305,7 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, overdue, occurred_at, revision, contract_version, updated_at]
       properties:
+        sla: {$ref: '#/components/schemas/OperationWorkflowStateSLA'}
         depends_on: {type: array, maxItems: 16, description: "In the latest retained state, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "In the latest retained state, explicit application-defined business result for a declared terminal state."}
@@ -38957,6 +40341,7 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
+        resolution_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Current retained-evidence status for verification obligations in this history report.}
         depends_on: {type: array, maxItems: 16, description: "At this retained historical revision, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
         dependencies_only: {type: boolean, description: "At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only flags."}
         outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "At this retained historical revision, explicit application-defined business result for a declared terminal state."}
@@ -39987,10 +41372,12 @@ components:
       - revision
     EnvironmentGitOpsStatusResponse:
       type: object
-      description: Source authority and the twenty most recent durable reconciliation attempts.
+      description: Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation attempts.
       properties:
         approval:
           $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
+        workload_evidence:
+          $ref: '#/components/schemas/EnvironmentWorkloadActivationEvidence'
         source:
           $ref: '#/components/schemas/EnvironmentGitSource'
         runs:
@@ -40000,6 +41387,88 @@ components:
       required:
       - source
       - runs
+    EnvironmentWorkloadActivationEvidence:
+      type: object
+      description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
+      properties:
+        graph_id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        definition_digest:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        intent_version:
+          type: integer
+          format: int64
+        plan_hash:
+          type: string
+        graph_phase:
+          type: string
+        graph_error_code:
+          type: string
+        artifacts_prepared:
+          type: boolean
+        candidates:
+          type: integer
+        retained_workloads_recorded:
+          type: integer
+          description: Unchanged graph members verified against their exact live active release-set deployments.
+        captures_recorded:
+          type: integer
+        guest_config_acknowledgements_recorded:
+          type: integer
+        restores_recorded:
+          type: integer
+        smokes_recorded:
+          type: integer
+        job_smokes_recorded:
+          type: integer
+        framework_ready_acknowledgements_recorded:
+          type: integer
+        qualified:
+          type: boolean
+        activated:
+          type: boolean
+        serving:
+          type: boolean
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - graph_id
+      - source_id
+      - environment_id
+      - revision_id
+      - definition_digest
+      - generation
+      - intent_version
+      - plan_hash
+      - graph_phase
+      - artifacts_prepared
+      - candidates
+      - retained_workloads_recorded
+      - captures_recorded
+      - guest_config_acknowledgements_recorded
+      - restores_recorded
+      - smokes_recorded
+      - job_smokes_recorded
+      - framework_ready_acknowledgements_recorded
+      - qualified
+      - activated
+      - serving
+      - blocking_reasons
     EnvironmentGitRevisionApproval:
       type: object
       description: Immutable reviewed-merge evidence bound to the approved definition and source generation.
@@ -40489,6 +41958,15 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/EnvironmentQueueBinding'
+        queue_smoke:
+          type: object
+          description: Reviewed synthetic JSON input for each enabled push worker queue binding. Qualification sends it directly to the private candidate VM and never enqueues a customer message.
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentQueueSmoke'
+        job_smoke:
+          $ref: '#/components/schemas/EnvironmentJobSmoke'
+        schedule:
+          $ref: '#/components/schemas/EnvironmentJobSchedule'
         queue_recoveries:
           type: object
           description: Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself preserves the retirement hold.
@@ -40502,7 +41980,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree or an immutable OCI digest.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -40510,6 +41988,11 @@ components:
           - source
           - dockerfile
           - image
+          - function
+        runtime:
+          type: string
+          description: Supported runner; required only when kind is function.
+          enum: [node22, python312, go124, go124-alpine, node24, python313]
         directory:
           type: string
         dockerfile:
@@ -40585,6 +42068,7 @@ components:
           - push
         workload_class:
           type: string
+          description: worker or job, or http for push-only bindings on function workloads
         enabled:
           type: boolean
         max_concurrency:
@@ -40596,6 +42080,61 @@ components:
       required:
       - queue_name
       - workload_class
+      additionalProperties: false
+    EnvironmentQueueSmoke:
+      type: object
+      description: Bounded customer-authored JSON payload used only for isolated push/pull-worker or HTTP-function qualification. Do not include secrets.
+      properties:
+        payload:
+          description: One JSON value, limited to 64 KiB, delivered to the candidate through its frozen queue invocation contract.
+          oneOf:
+          - type: object
+            additionalProperties: true
+          - type: array
+            items: {}
+          - type: string
+          - type: number
+          - type: boolean
+          - type: 'null'
+      required: [payload]
+      additionalProperties: false
+    EnvironmentJobSmoke:
+      type: object
+      description: Reviewed argv-only command and short timeout for a job qualification attempt. The contract is frozen with the candidate; isolated execution and exit evidence are not yet available.
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 4096
+          description: Executable and arguments passed directly without a shell.
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Explicit qualification wall-clock limit.
+      required: [command, timeout_seconds]
+      additionalProperties: false
+    EnvironmentJobSchedule:
+      type: object
+      description: Reviewed recurring schedule for a job workload. Cron and timezone map to Gregale's durable Job schedule; production dispatch remains gated until the managed Job adapter is available.
+      properties:
+        cron:
+          type: string
+          description: Five-field cron expression evaluated in timezone.
+          example: "0 3 * * *"
+        timezone:
+          type: string
+          description: IANA timezone. Empty or omitted uses UTC.
+          default: UTC
+          example: Europe/Istanbul
+        schedule_policy:
+          $ref: '#/components/schemas/SchedulePolicy'
+        failure_rules:
+          $ref: '#/components/schemas/FailureRules'
+      required: [cron]
       additionalProperties: false
     EnvironmentServiceBinding:
       type: object
@@ -41669,6 +43208,7 @@ components:
           - outbound_integration
           - guest_transport
           - platform_internal
+          - app_dependency
         kind:
           type: string
           maxLength: 64
@@ -45433,6 +46973,10 @@ components:
       type: object
       required: [registry_version, plan, capabilities]
       properties:
+        conditional_parking:
+          type: boolean
+          default: false
+          description: The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use the conditional parking endpoint, including in mixed-version fleets.
         registry_version: { type: integer, minimum: 1, description: Version of the embedded product capability catalog. }
         plan: { type: string, enum: [free, hobby, pro, scale] }
         capabilities:
@@ -48436,6 +49980,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         slug:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
@@ -48840,25 +50386,48 @@ components:
           items: { $ref: '#/components/schemas/ScenarioTestChaosRule' }
 
     ScenarioTestChaosRule:
-      description: One bounded latency or synthetic server-error fault for matching internal service calls.
+      description: One bounded HTTP request, TCP stream, or new TCP connection fault for matching internal scenario services.
       type: object
       required: [to, kind, percent, seed]
       properties:
         from: { type: string, minLength: 3, maxLength: 40 }
         to: { type: string, minLength: 3, maxLength: 40 }
-        kind: { type: string, enum: [latency, http_status] }
+        kind: { type: string, enum: [latency, http_status, tcp_latency, tcp_bandwidth, tcp_timeout, tcp_reset, tcp_connect_timeout, tcp_connect_refused] }
         percent: { type: integer, minimum: 1, maximum: 100 }
         latency_ms: { type: integer, minimum: 1, maximum: 30000 }
         status_code: { type: integer, minimum: 500, maximum: 599 }
         seed: { type: integer, minimum: 0 }
+        port: { type: integer, minimum: 1, maximum: 65535, description: Required target port for TCP rules. }
+        direction: { type: string, enum: [upstream, downstream, both], description: TCP direction relative to the calling application. Defaults to both; connection faults require both. }
+        rate_kib_per_second: { type: integer, minimum: 1, maximum: 1000000, description: Required per-connection directional throughput cap for tcp_bandwidth. }
+        reset_after_ms: { type: integer, minimum: 0, maximum: 30000, description: Delay before tcp_reset. Defaults to an immediate reset. }
 
     InjectScenarioTestChaosResponse:
-      description: Receipt confirming the number of rules installed and the automatic expiry time.
+      description: Receipt confirming the plan generation, number of rules installed, and automatic expiry time.
       type: object
-      required: [expires_at, rules_installed]
+      required: [expires_at, rules_installed, generation]
       properties:
         expires_at: { type: string, format: date-time }
         rules_installed: { type: integer, minimum: 1, maximum: 16 }
+        generation: { type: string, format: uuid }
+
+    ScenarioTestChaosMatchesResponse:
+      description: Run-scoped counts of HTTP requests and TCP connections that matched the current or most recently cleared plan.
+      type: object
+      required: [matches]
+      properties:
+        generation: { type: string, format: uuid }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/ScenarioTestChaosMatch' }
+
+    ScenarioTestChaosMatch:
+      description: Count of matches for one fault rule in the scenario run.
+      type: object
+      required: [rule_id, count]
+      properties:
+        rule_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        count: { type: integer, minimum: 0 }
 
     DevPostgresRequest:
       description: Opts the developer environment into an isolated managed PostgreSQL database.
@@ -48992,6 +50561,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         visibility:
           type: [string, "null"]
           enum: [public, internal, null]
@@ -49686,6 +51257,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         entrypoint:
           type: array
           items: { type: string }
@@ -49699,6 +51272,9 @@ components:
           description: "Env override via sealed-secret refs. Each value is \"secret:NAME\"; the host resolver looks up NAME against the app_secrets table at wake."
         working_dir: { type: [string, "null"] }
         port: { type: [integer, "null"], minimum: 0, maximum: 65535 }
+        service_binding_transport:
+          $ref: '#/components/schemas/ServiceBindingTransport'
+          description: "Scheme for canonical service binding URLs. Omitted manifests retain the legacy HTTP behavior."
         ports:
           type: array
           maxItems: 16
@@ -50321,11 +51897,23 @@ components:
         expires_at: { type: string, format: date-time }
         deployment_id: { type: [string, "null"] }
 
+    DurableEntityValidatorDeploymentInfo:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: Observational validator readiness on deployment detail; not a reservation or code-purity attestation.
+      properties:
+        status: { type: string, enum: [disabled, unavailable, ready] }
+        source: { type: string, enum: [registry, object_storage] }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        durable_entity_validator:
+          $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
           type: object
           description: >-
@@ -60094,6 +61682,12 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        name: { type: string, description: Operator-facing rule name. }
+        description: { type: string, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -60157,6 +61751,11 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
+        description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
+        expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -60200,6 +61799,177 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Replacement rule name. }
+        description: { type: string, maxLength: 1000, description: Replacement rule notes. }
+        expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
+        clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        clear_match: { type: boolean, description: Remove the match condition. }
+        mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+
+    EdgeRuleMatchExpr:
+      description: |
+        ADR-962 match condition, ANDed with the rule's fixed selectors. A node
+        is exactly one of all, any, not, or a field/op leaf. Fields: method,
+        path, host, client_ip, country, asn (ADR-966: the client IP's
+        autonomous system, e.g. 13335 or AS13335), header:<name>,
+        cookie:<name>, query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
+        list names an account list whose kind fits the field). Depth at most 4,
+        at most 32 nodes, 64 values per leaf, values and regexes at most 256
+        bytes. An untrusted client IP, or its unknown country or ASN, is absent.
+      type: object
+      properties:
+        all:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        any:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        not: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        field: { type: string, example: "cookie:beta" }
+        op:
+          type: string
+          enum: [eq, ne, in, not_in, prefix, suffix, contains, exists, missing, regex, cidr, in_list]
+        value: { type: string, maxLength: 256 }
+        values:
+          type: array
+          maxItems: 64
+          items: { type: string, maxLength: 256 }
+        list: { type: string, description: Account list name for op in_list. }
+
+    EdgeRuleListResponse:
+      description: A reusable account-level list (ADR-963).
+      type: object
+      required: [id, name, kind, item_count, referenced_by, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [ip, country, host, string, asn] }
+        description: { type: string }
+        item_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          description: Present when one list is fetched.
+          items: { type: string }
+        referenced_by:
+          type: array
+          description: IDs of rules whose match conditions use the list.
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ListEdgeRuleListsResponse:
+      description: The account's edge-rule lists, without items (ADR-963).
+      type: object
+      required: [lists]
+      properties:
+        lists:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+
+    CreateEdgeRuleListRequest:
+      description: Create an edge-rule list (ADR-963).
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+        kind:
+          type: string
+          enum: [ip, country, host, string, asn]
+          description: ip (addresses and CIDRs, for client_ip), country (ISO 3166-1 alpha-2), host (exact hosts and *.suffix patterns), string (exact values, for path, header, cookie and query fields), asn (autonomous system numbers such as 13335 or AS13335, for asn).
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          items: { type: string, maxLength: 256 }
+
+    UpdateEdgeRuleListRequest:
+      description: 'Edit an edge-rule list: replace items, or add and remove some (ADR-963).'
+      type: object
+      properties:
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          description: Replace every item. Cannot be combined with add or remove.
+          items: { type: string, maxLength: 256 }
+        add:
+          type: array
+          items: { type: string, maxLength: 256 }
+        remove:
+          type: array
+          items: { type: string, maxLength: 256 }
+
+    EdgeRuleEventsResponse:
+      description: A page of sampled edge-rule matches (ADR-964).
+      type: object
+      required: [since, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after the plan clamp. }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleEventResponse' }
+        next_cursor: { type: string }
+
+    EdgeRuleEventResponse:
+      description: One sampled request an edge rule matched (ADR-964).
+      type: object
+      required: [id, rule_id, outcome, occurred_at]
+      properties:
+        id: { type: string }
+        rule_id: { type: string }
+        rule_name: { type: string, description: Empty once the rule is deleted. }
+        rule_kind: { type: string }
+        outcome: { type: string, enum: [matched, logged] }
+        occurred_at: { type: string, format: date-time }
+        request_id: { type: string }
+        method: { type: string }
+        host: { type: string }
+        path: { type: string, description: Request path without the query string. }
+        client_ip: { type: string, description: 'Trusted client IP, when known.' }
+        country: { type: string }
+        user_agent: { type: string }
+
+    EdgeRuleStatsResponse:
+      description: Per-rule match counts over a window (ADR-960).
+      type: object
+      required: [window, since, rules]
+      properties:
+        window: { type: string, enum: ['1h', '24h', '7d'] }
+        since: { type: string, format: date-time }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleHitStatsResponse' }
+
+    EdgeRuleHitStatsResponse:
+      description: One rule's match counts over the window (ADR-960).
+      type: object
+      required: [rule_id, matched, logged]
+      properties:
+        rule_id: { type: string }
+        matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
+        logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
+
+    EdgeRuleSetVersionResponse:
+      description: One recorded state of an app's whole edge-rule set (ADR-961).
+      type: object
+      required: [version, rule_count, rules_sha256, created_at, current]
+      properties:
+        version: { type: integer, minimum: 1 }
+        rule_count: { type: integer, minimum: 0 }
+        rules_sha256: { type: string, description: Digest of the recorded rule set. }
+        created_at: { type: string, format: date-time }
+        current: { type: boolean, description: True for the app's latest version. }
+        rules:
+          type: array
+          description: The recorded rules; present only when a single version is fetched.
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+
+    RollbackEdgeRulesRequest:
+      description: Restore an app's edge rules to a recorded rule-set version (ADR-961).
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1, description: The version to restore. }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -60571,6 +62341,9 @@ components:
           maxLength: 128
           pattern: '^[^\s]{1,128}$'
           description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
+        require_exp:
+          type: boolean
+          description: 'Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token minted without one never expires unless this is set.'
 
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
@@ -61171,7 +62944,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip", "composite"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -61184,7 +62957,11 @@ components:
             When `"jwt_claim"`, one bucket per value of the
             claim named by `jwt_claim_name`. When `"country"`, one
             bucket per ISO 3166-1 alpha-2 country resolved from the
-            gateway's trusted client IP. Each non-empty
+            gateway's trusted client IP. When `"ip"`, one bucket per
+            trusted client IP (IPv6 clients keyed by their /64).
+            When `"composite"`, one bucket per combination of
+            `key_fields` (ADR-965).
+            Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse
@@ -61221,6 +62998,29 @@ components:
             `plan.ThrottleMaxKeysPerRule`. Must be 0 when
             `key_by` is `""` or `"none"` — the cap is moot for
             non-per-consumer rules.
+        key_fields:
+          type: array
+          maxItems: 4
+          description: |
+            ADR-965. Required iff `key_by="composite"`: the request
+            fields combined into one bucket identity. Each is one of
+            ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+            (with `jwt_claim_name`), method, path or `header:<name>`.
+            A field the request lacks makes the identity missing, so
+            `missing_key_policy` applies.
+          items: { type: string }
+          example: ["ip", "path"]
+        count_statuses:
+          type: array
+          maxItems: 16
+          description: |
+            ADR-965. When set, requests are admitted while the bucket
+            has a token but only responses with one of these statuses
+            charge it, e.g. [401, 403] to limit failed logins without
+            limiting successful ones. Across gateways the admission
+            check uses each gateway's last-known shared balance.
+          items: { type: integer, minimum: 100, maximum: 599 }
+          example: [401]
         missing_key_policy:
           type: string
           enum: ["shared", "reject"]
@@ -64998,6 +66798,196 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
+    DurableEntityInspectResponse:
+      description: Metadata-only observation of entity state, recovery work and retained head-delivery history.
+      type: object
+      required: [entity, version, recovery_revision, state_committed, alarm, outbox]
+      properties:
+        recovery_revision:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque comparison value that changes on any manifest write; not ownership authority.
+        entity: { $ref: '#/components/schemas/DurableEntityScope' }
+        version: { type: integer, minimum: 0, description: "Business state uint64 version; zero means no transition has committed." }
+        state_committed: { type: boolean, description: "Whether a business transition has committed; does not imply delivery." }
+        alarm: { $ref: '#/components/schemas/DurableEntityAlarmInspection' }
+        outbox: { $ref: '#/components/schemas/DurableEntityOutboxInspection' }
+
+    DurableEntityScope:
+      description: Immutable account, application, environment and optional customer identity of a logical entity.
+      type: object
+      required: [account_id, app_id, environment_id, namespace, key]
+      properties:
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        namespace: { type: string }
+        key: { type: string }
+
+    DurableEntityAlarmInspection:
+      description: Observed alarm timing and bounded recovery attempt metadata.
+      type: object
+      required: [attempts, exhausted]
+      properties:
+        alarm_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time }
+        exhausted: { type: boolean }
+
+    DurableEntityOutboxInspection:
+      description: Pending outgoing work and retry metadata for the current queue head.
+      type: object
+      required: [pending, attempts, exhausted]
+      properties:
+        pending: { type: integer, minimum: 0, maximum: 128 }
+        head_id: { type: string, format: uuid }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        next_attempt_at: { type: string, format: date-time }
+        exhausted: { type: boolean }
+        head_delivery: { $ref: '#/components/schemas/DurableEntityHeadDelivery' }
+
+    DurableEntityHeadDelivery:
+      description: "Separate observation for the pending head only; absent when no head is pending. Unknown includes unavailable/pruned history, not proof of non-acceptance."
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [unknown, pending, in_flight, succeeded, failed, dead] }
+
+    DurableEntityBackup:
+      description: Private application-state export captured in a retained hourly backup slot.
+      type: object
+      additionalProperties: false
+      required: [captured_at, export]
+      properties:
+        captured_at: { type: string, format: date-time, description: UTC hourly slot start. }
+        export: { $ref: '#/components/schemas/DurableEntityStateExport' }
+    DurableEntityBackupInfo:
+      description: Backup identifier, capture slot and business version without application data.
+      type: object
+      additionalProperties: false
+      required: [id, captured_at, version]
+      properties:
+        id: { type: string }
+        captured_at: { type: string, format: date-time }
+        version: { type: integer, format: int64, minimum: 1 }
+    DurableEntityBackupPage:
+      description: Bounded page of retained backup metadata with an optional continuation cursor.
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DurableEntityBackupInfo' }
+        next_cursor: { type: string }
+    DurableEntityRestorePreview:
+      description: Read-only comparison of candidate and current state; compatibility remains unverified.
+      type: object
+      additionalProperties: false
+      required: [current_version, source_version, expected_version_matches, schema_relation, compatibility, alarm_pending, outbox_pending, alarm_exhausted, outbox_exhausted]
+      properties:
+        current_version: { type: integer, format: int64, minimum: 1 }
+        source_version: { type: integer, format: int64, minimum: 1 }
+        expected_version_matches: { type: boolean }
+        current_schema_version: { type: integer, minimum: 1 }
+        source_schema_version: { type: integer, minimum: 1 }
+        schema_relation: { type: string, enum: [same, older, newer, unknown] }
+        compatibility: { type: string, enum: [unverified] }
+        alarm_pending: { type: boolean }
+        outbox_pending: { type: integer, minimum: 0 }
+        alarm_exhausted: { type: boolean }
+        outbox_exhausted: { type: boolean }
+
+    DurableEntityStateExport:
+      description: Checksummed committed application data with immutable entity identity; excludes recovery and delivery history.
+      type: object
+      additionalProperties: false
+      required: [format, entity, version, data, checksum]
+      properties:
+        format: { type: integer, enum: [1] }
+        entity: { $ref: '#/components/schemas/DurableEntityScope' }
+        version: { type: integer, format: int64, minimum: 1 }
+        data:
+          description: Opaque application JSON, including any application schema envelope.
+        checksum: { type: string, pattern: '^[0-9a-f]{64}$' }
+    DurableEntityRestoreRequest:
+      description: Candidate export and comparison identity used for restore preview, validation or fenced publication.
+      type: object
+      additionalProperties: false
+      required: [namespace, key, request_id, expected_version, export]
+      properties:
+        namespace: { type: string, minLength: 1 }
+        key: { type: string, minLength: 1 }
+        environment: { type: string }
+        platform_tenant_id: { type: string }
+        request_id: { type: string, minLength: 1 }
+        validation_bundle_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Registered validator bundle digest. Required for isolated restores.
+        validation_deployment_id:
+          type: string
+          format: uuid
+          description: Explicit deployment pin. Required for restores when application validation is enabled.
+        expected_version: { type: integer, format: int64, minimum: 1 }
+        export: { $ref: '#/components/schemas/DurableEntityStateExport' }
+    DurableEntityRestoreValidationResponse:
+      description: Application validator verdict and deployment pin; does not reserve or commit entity state.
+      type: object
+      additionalProperties: false
+      required: [valid, deployment_id, expected_version, source_version]
+      properties:
+        bundle_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        isolation: { type: string, enum: [networkless] }
+        valid: { type: boolean }
+        deployment_id: { type: string, format: uuid }
+        expected_version: { type: integer, format: int64, minimum: 1 }
+        source_version: { type: integer, format: int64, minimum: 1 }
+
+    DurableEntityRestoreResponse:
+      description: Acknowledged business version and whether an existing restore receipt was replayed.
+      type: object
+      additionalProperties: false
+      required: [version, replayed]
+      properties:
+        version: { type: integer, format: int64, minimum: 1 }
+        replayed: { type: boolean }
+
+    DurableEntityRetryRequest:
+      type: object
+      additionalProperties: false
+      required: [namespace, key, target, expected_version, expected_recovery_revision]
+      description: |
+        For target alarm provide alarm_at and omit head_id; for outbox provide
+        head_id and omit alarm_at. Copy comparison fields from fresh inspection.
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 256 }
+        key: { type: string, minLength: 1, maxLength: 256 }
+        environment: { type: string, minLength: 1 }
+        platform_tenant_id: { type: string, format: uuid }
+        target: { type: string, enum: [alarm, outbox] }
+        expected_version:
+          type: integer
+          minimum: 1
+          description: Exact business uint64 version from inspection.
+        expected_recovery_revision:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque revision from the same inspection, invalidated by every manifest write.
+        head_id: { type: string, format: uuid }
+        alarm_at: { type: string, format: date-time }
+    DurableEntityRetryResponse:
+      description: Acknowledged recovery metadata reset for one exhausted alarm or outgoing message.
+      type: object
+      additionalProperties: false
+      required: [version, target, rearmed]
+      properties:
+        version: { type: integer, minimum: 1 }
+        target: { type: string, enum: [alarm, outbox] }
+        rearmed:
+          type: boolean
+          description: Retry metadata was reset; no execution or receiver completion is implied.
     DurableEntityInvokeRequest:
       description: "Preview entity invocation; request_id and payload identify durable retries."
       type: object
@@ -69731,6 +71721,13 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+    TracingConfig:
+      description: "Opt-in zero-config request tracing baked into each deployment (ADR-934). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        sample_ratio: { type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports." }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object
@@ -70127,8 +72124,9 @@ components:
         duration_nanos: { type: integer, format: int64, minimum: 0 }
         status: { type: string, maxLength: 256 }
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal], description: "Allowlisted platform-owned dependency classification." }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
+        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
 
     DebugCriticalPathSpan:
       type: object
@@ -70139,8 +72137,9 @@ components:
         parent_span_id: { type: string, maxLength: 256 }
         name: { type: string, maxLength: 256 }
         kind: { type: string, maxLength: 256 }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal] }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        dependency_name: { type: string, maxLength: 96 }
         status: { type: string, maxLength: 256 }
         start_time: { type: string, format: date-time }
         end_time: { type: string, format: date-time }
@@ -70169,7 +72168,7 @@ components:
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
       required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, format: int64, minimum: 1 }
@@ -70263,13 +72262,32 @@ components:
           type: array
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugDependencyImpactEdge' }
+        deployment_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
+
+    DebugDependencyDeploymentComparison:
+      type: object
+      description: "Dependency latency split by deployment (ADR-934): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
+      required: [current_deployment_id, previous_deployment_id, dependencies, truncated]
+      properties:
+        current_deployment_id: { type: string }
+        current_deployment_tag: { type: string }
+        current_commit_sha: { type: string }
+        previous_deployment_id: { type: string }
+        previous_deployment_tag: { type: string }
+        previous_commit_sha: { type: string }
+        route: { type: string }
+        dependencies:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
+        truncated: { type: boolean }
 
     DebugCriticalPathSegment:
       type: object
       description: "One redacted span identity in a canonical historical critical-path signature."
       required: [type, name]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
 
@@ -70350,7 +72368,7 @@ components:
       description: "Bounded latency aggregate for one retained dependency span group. Total duration may include overlapping child spans and is not a critical-path sum."
       required: [type, name, calls, total_duration_ms, max_duration_ms]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, minimum: 1, maximum: 100 }
@@ -70365,7 +72383,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -70477,6 +72495,7 @@ components:
           maxItems: 16
           items: { $ref: '#/components/schemas/DebugRequestDependencyLatency' }
         dependency_latency_truncated: { type: boolean, description: "True when more than 16 dependency groups were retained." }
+        dependency_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
         spans:
           type: array
           maxItems: 100
@@ -70514,6 +72533,19 @@ components:
         acknowledged_at: { type: string, format: date-time }
         dismissed_until: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time }
+        suspected_dependency: { $ref: '#/components/schemas/DebugSuspectedDependency' }
+
+    DebugSuspectedDependency:
+      type: object
+      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-934). Bounded and redacted; also sent in debug.regression.* webhooks."
+      required: [type, name, p95_base_ms, p95_ms, regression_factor]
+      properties:
+        type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
+        kind: { type: string, maxLength: 64 }
+        name: { type: string, maxLength: 96 }
+        p95_base_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        regression_factor: { type: number, minimum: 0 }
 
     DebugRegressionActionRequest:
       type: object
@@ -71141,6 +73173,16 @@ components:
         maximum_change_percentage_points: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 20 }
 
   responses:
+    EdgeRulesVersionMismatch:
+      description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    EdgeRuleListNotFound:
+      description: 'code: edge_rule_list_not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     OperationConflict:
       description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.
       content:
