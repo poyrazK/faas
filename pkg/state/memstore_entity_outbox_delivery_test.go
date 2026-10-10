@@ -167,8 +167,8 @@ func TestMemEntityOutboxAcceptanceRechecksAdmissionAtInsert(t *testing.T) {
 	}
 }
 
-// The acceptance boundary requires canonical UUIDs, whereas legacy MemStore
-// fixtures generate compact hexadecimal IDs. Keep production validation strict.
+// Use PostgreSQL-shaped canonical UUID fixtures for transport acceptance.
+// Legacy compact account/application records are covered separately below.
 func entityOutboxFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
 	t.Helper()
 	m, ctx, account, app := webhookFixture(t)

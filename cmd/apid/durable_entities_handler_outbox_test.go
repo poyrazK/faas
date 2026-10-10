@@ -139,14 +139,14 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 				if err != nil {
 					t.Fatal(err)
 				}
-				hook, err = e.store.CreateAppWebhook(t.Context(), state.AppWebhook{AccountID: owner.ID, AppID: other.ID, TargetURL: "https://other.example.test/", SecretSealed: []byte("sealed"), Enabled: true})
+				hook, err = e.store.CreateAppWebhook(t.Context(), state.AppWebhook{ID: uuid.NewString(), AccountID: owner.ID, AppID: other.ID, TargetURL: "https://other.example.test/", SecretSealed: []byte("sealed"), Enabled: true})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			if kind == "account-hook" {
 				var err error
-				hook, err = e.store.CreateAccountReleaseWebhookIfUnderQuota(t.Context(), state.AppWebhook{AccountID: e.acct.ID, TargetURL: "https://account.example.test/", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{"deployment.live"}}, api.MustLimitsFor(e.acct.Plan))
+				hook, err = e.store.CreateAccountReleaseWebhookIfUnderQuota(t.Context(), state.AppWebhook{ID: uuid.NewString(), AccountID: e.acct.ID, TargetURL: "https://account.example.test/", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{"deployment.live"}}, api.MustLimitsFor(e.acct.Plan))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,8 +198,8 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 			}
 			dispatch.guest = entityOutgoingGuest(t, api.DurableEntityOutboxProtocolVersion, []durableentity.OutboxIntent{guestIntent(hook.ID)}, beforeReturn)
 			rec := e.do(t, http.MethodPost, "/v1/apps/entity-counter/entities/invoke", request, nil)
-			if rec.Code == http.StatusOK {
-				t.Fatal("invalid outgoing destination/admission committed")
+			if rec.Code == http.StatusOK || dispatch.calls.Load() != 1 {
+				t.Fatal("outgoing admission rejection did not exercise the guest", rec.Code, dispatch.calls.Load())
 			}
 			view, err := e.s.durableEntities.Read(t.Context(), id)
 			if err != nil || view.Version != 0 || string(view.Data) != "{}" {
