@@ -142,7 +142,7 @@ type RouteMonitorPreviewDetailsStore interface {
 	PreviewRouteMonitorWithCustomerDetails(context.Context, string, string, api.PreviewRouteMonitorRequest, bool) (api.RouteMonitorPreview, error)
 }
 
-// RouteMonitorRollbackClaim is one incident apid must roll back (ADR-845).
+// RouteMonitorRollbackClaim is one incident apid must roll back (ADR-943).
 type RouteMonitorRollbackClaim struct {
 	IncidentID, DeploymentID, TargetDeploymentID, Route string
 }

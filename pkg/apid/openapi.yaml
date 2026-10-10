@@ -14823,6 +14823,63 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/routes/advice:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteAdvice
+      summary: Suggest edge rules for observed routes with what-if estimates.
+      description: |
+        Read-only route advisor (ADR-940). Reads retained request telemetry for
+        the app's busiest observed routes across deployments and suggests three
+        kinds of edge rules: cache for anonymous, successful GET routes with
+        repeat traffic; async for POST routes that time out or exceed a 10 s
+        p95; and a per-consumer throttle when one consumer dominates a route and
+        a limit exists that no other observed consumer reaches. A route needs at
+        least 200 requests in the window, and routes that already have a rule of
+        the suggested kind (enabled or not) are skipped.
+
+        Each suggestion carries its evidence, an estimate replayed from the same
+        window, cautions, and ready-to-create rule bodies: one per hostname (the
+        platform hostname and every verified custom domain), always disabled.
+        Nothing is applied; create the rules with POST /v1/apps/{slug}/edge-rules
+        and enable them after review. Suggestion IDs are stable for the same
+        kind, method and route. Estimates are observed_only and upper bounds:
+        the cache estimate cannot see credential headers or query strings.
+        Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
+        plan gate.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 168h }
+          description: "Positive lookback duration (for example 7d) or RFC3339 start timestamp; clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end of the advice window, default now; must be within retained telemetry and not in the future."
+        - name: cache_max_age
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 3600, default: 60 }
+          description: "What-if cache lifetime in seconds for cache estimates and proposed cache rules."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Route advisor suggestions for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteAdviceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/route-monitor/report:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42671,7 +42728,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
-        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default report-only action."}
+        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-943). Omitted for the default report-only action."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -42717,8 +42774,67 @@ components:
         error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
-        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
+        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RouteAdviceResponse:
+      type: object
+      description: "Route advisor suggestions derived from retained request telemetry (ADR-940). Nothing is applied."
+      required: [slug, from, until, cache_max_age_seconds, routes_analyzed, suggestions]
+      properties:
+        slug: {"type": "string"}
+        from: {"type": "string", "format": "date-time"}
+        until: {"type": "string", "format": "date-time"}
+        window_clamped: {"type": "boolean", "description": "The requested window was shortened to plan retention."}
+        cache_max_age_seconds: {"type": "integer", "minimum": 1, "maximum": 3600}
+        routes_analyzed: {"type": "integer", "minimum": 0}
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
+    RouteAdviceSuggestion:
+      type: object
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      required: [id, kind, method, route, title, rationale, evidence, impact, rules]
+      properties:
+        id: {"type": "string", "description": "Stable for the same kind, method and route."}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
+        title: {"type": "string"}
+        rationale: {"type": "string"}
+        evidence: { $ref: '#/components/schemas/RouteAdviceEvidence' }
+        impact: { $ref: '#/components/schemas/RouteAdviceImpact' }
+        cautions:
+          type: array
+          items: {"type": "string"}
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+    RouteAdviceEvidence:
+      type: object
+      description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
+      required: [requests, anonymous_requests, server_errors, timeouts, cold_boots, p95_latency_ms]
+      properties:
+        requests: {"type": "integer", "format": "int64"}
+        anonymous_requests: {"type": "integer", "format": "int64"}
+        server_errors: {"type": "integer", "format": "int64"}
+        timeouts: {"type": "integer", "format": "int64"}
+        cold_boots: {"type": "integer", "format": "int64"}
+        p95_latency_ms: {"type": "integer"}
+        consumers: {"type": "integer", "format": "int64"}
+        top_consumer_id: {"type": "string", "format": "uuid"}
+        top_consumer_requests: {"type": "integer", "format": "int64"}
+        top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+        next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+    RouteAdviceImpact:
+      type: object
+      description: "What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."
+      required: [summary, estimated_cache_hits, estimated_wakes_avoided, estimated_throttled_requests, timeouts_affected]
+      properties:
+        summary: {"type": "string", "description": "One-sentence what-if estimate for the suggested rule."}
+        estimated_cache_hits: {"type": "integer", "format": "int64"}
+        estimated_wakes_avoided: {"type": "integer", "format": "int64"}
+        estimated_throttled_requests: {"type": "integer", "format": "int64"}
+        timeouts_affected: {"type": "integer", "format": "int64"}
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -42860,7 +42976,7 @@ components:
         rollback: {"$ref": "#/components/schemas/RouteMonitorIncidentRollback"}
     RouteMonitorIncidentRollback:
       type: object
-      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is transient while the checked rollback is requested."
+      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-943). claimed is transient while the checked rollback is requested."
       required: [status, decided_at]
       properties:
         status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
@@ -42966,7 +43082,7 @@ components:
         probe: { $ref: '#/components/schemas/RouteHealthProbe' }
     RouteHealthProbe:
       type: object
-      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
+      description: 'Opt-in synthetic probe for a GET or HEAD selector (ADR-945). While a canary is in flight and organic evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request. At most 5 selectors per app.'
       additionalProperties: false
       required: [path]
       properties:
@@ -43313,7 +43429,7 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
-        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are unchanged." }
+        evidence_window: { type: string, enum: [pooled, synthetic], description: "pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944); synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-945). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
         pooled_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse." }
         synthetic_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They settle the 5xx signal only." }

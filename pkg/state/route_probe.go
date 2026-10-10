@@ -13,7 +13,7 @@ import (
 )
 
 // RouteProbeTarget is an app with probe selectors and an in-flight canary
-// (ADR-847).
+// (ADR-945).
 type RouteProbeTarget struct {
 	AccountID, AppID, Slug, CandidateID string
 }

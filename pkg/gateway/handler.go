@@ -5947,7 +5947,7 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
-	// ADR-847: a route probe pins one live deployment and keeps every customer
+	// ADR-945: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
 	if deploymentSmoke {
@@ -7151,7 +7151,7 @@ haveApp:
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	} else if routeProbe && target.DeploymentID == probeDeploymentID {
 		// The same upstream-only proof lets the prober attribute a response
-		// to the probed deployment (ADR-847).
+		// to the probed deployment (ADR-945).
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
@@ -7803,7 +7803,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	// Route probes (ADR-847) record their own results; they never become
+	// Route probes (ADR-945) record their own results; they never become
 	// customer telemetry or usage.
 	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())

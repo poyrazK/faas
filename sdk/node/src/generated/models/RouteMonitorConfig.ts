@@ -14,7 +14,7 @@ export type RouteMonitorConfig = {
    */
   customer_group_by?: 'tenant' | 'consumer';
   /**
-   * Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default report-only action.
+   * Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-943). Omitted for the default report-only action.
    */
   on_violation?: 'rollback';
   revision: number;

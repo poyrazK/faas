@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is transient while the checked rollback is requested.
+ * The single automatic rollback decision for an incident when on_violation is rollback (ADR-943). claimed is transient while the checked rollback is requested.
  */
 export type RouteMonitorIncidentRollback = {
   status: 'claimed' | 'requested' | 'skipped';

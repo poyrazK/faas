@@ -1540,6 +1540,10 @@ export type { RotateManagedRealtimeAuthRequest } from './models/RotateManagedRea
 export type { RotateManagedRealtimeAuthResponse } from './models/RotateManagedRealtimeAuthResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';
+export type { RouteAdviceEvidence } from './models/RouteAdviceEvidence.js';
+export type { RouteAdviceImpact } from './models/RouteAdviceImpact.js';
+export type { RouteAdviceResponse } from './models/RouteAdviceResponse.js';
+export type { RouteAdviceSuggestion } from './models/RouteAdviceSuggestion.js';
 export type { RouteAssignedCheck } from './models/RouteAssignedCheck.js';
 export type { RouteAssignment } from './models/RouteAssignment.js';
 export type { RouteBudgetRequirement } from './models/RouteBudgetRequirement.js';

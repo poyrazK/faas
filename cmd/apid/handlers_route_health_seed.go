@@ -22,7 +22,7 @@ type routeHealthStableReader interface {
 
 // seedDefaultRouteHealthGate saves report-mode selectors for an app that has
 // never configured route health, when its first canary stage advances
-// (ADR-844). Seeding is advisory: report mode cannot hold a rollout, so every
+// (ADR-942). Seeding is advisory: report mode cannot hold a rollout, so every
 // failure is logged and the advance continues. Revision 0 is the only seedable
 // state; a customer who saves any configuration, including an empty selector
 // list, is never re-seeded.

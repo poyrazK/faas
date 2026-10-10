@@ -9193,13 +9193,13 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 const RouteGroupPlanMaxChanges = 32
 
 // RouteHealthSeed bounds the report-mode selectors apid saves for an app that
-// never configured route health when its first canary advances (ADR-844).
+// never configured route health when its first canary advances (ADR-942).
 const (
 	RouteHealthSeedRoutes   = 10
 	RouteHealthSeedLookback = 7 * 24 * time.Hour
 )
 
-// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-945): at most
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
@@ -9216,11 +9216,39 @@ const (
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
-// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// (ADR-944): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.
 const (
 	RouteHealthPooledMinSpan = 4 * time.Minute
 	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
+// RouteAdvice bounds the route advisor (ADR-940): it reads retained request
+// telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
+// rule for a route with at least RouteAdviceMinRequests in the window.
+const (
+	RouteAdviceDefaultSince = 7 * 24 * time.Hour
+	RouteAdviceMaxRoutes    = 50
+	RouteAdviceMinRequests  = 200
+	// A cache suggestion needs this share of anonymous 2xx traffic and an
+	// estimated hit share of at least RouteAdviceCacheMinHitShare.
+	RouteAdviceCacheMinAnonymousShare = 0.95
+	RouteAdviceCacheMinHitShare       = 0.2
+	// An async suggestion needs this share of timed-out requests (and at
+	// least RouteAdviceAsyncMinTimeouts of them) or a p95 at or above
+	// RouteAdviceAsyncMinP95.
+	RouteAdviceAsyncMinTimeoutShare = 0.01
+	RouteAdviceAsyncMinTimeouts     = 5
+	RouteAdviceAsyncMinP95          = 10 * time.Second
+	// A throttle suggestion needs one consumer with at least this share of
+	// the route, another consumer to protect, anonymous traffic at or below
+	// RouteAdviceThrottleMaxAnonymousShare, and an estimated throttled share
+	// of at least RouteAdviceThrottleMinExcessShare. The suggested limit is
+	// RouteAdviceThrottleHeadroom times the next busiest consumer's peak.
+	RouteAdviceThrottleMinTopShare       = 0.5
+	RouteAdviceThrottleMaxAnonymousShare = 0.01
+	RouteAdviceThrottleMinExcessShare    = 0.01
+	RouteAdviceThrottleHeadroom          = 2
 )
 
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
@@ -9278,7 +9306,7 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
-// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-943): an
 // error-budget incident must open within this long after the deployment
 // started serving all traffic.
 const RouteMonitorRollbackWindow = 30 * time.Minute

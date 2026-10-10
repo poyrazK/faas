@@ -1,8 +1,8 @@
-# ADR-846: Stage-pooled evidence for low-traffic critical routes
+# ADR-944: Stage-pooled evidence for low-traffic critical routes
 
 - Status: Accepted
 - Date: 2026-10-09
-- Related: ADR-454, ADR-455, ADR-844, ADR-845
+- Related: ADR-454, ADR-455, ADR-942, ADR-943
 - Amends: ADR-454 and ADR-498 (fixed one-minute observation windows)
 
 ## Context
@@ -12,7 +12,7 @@ and needs at least 20 requests per route, side and window. A critical route
 with a few requests per minute, or a candidate at an early 1–10% stage, never
 meets that bound. Its evidence stays `unknown`: in report mode it is never
 judged, and in enforce mode it holds the rollout until someone removes the
-selector. ADR-844 now seeds selectors by customer reach, not request volume,
+selector. ADR-942 now seeds selectors by customer reach, not request volume,
 which makes such routes more common.
 
 ## Decision
@@ -45,7 +45,7 @@ Production route monitoring (ADR-498) applies the same rule to its absolute
 budgets, also treating `insufficient_errors` as sparse. Its span starts at the
 monitor's observation anchor, so a long-serving deployment is judged over the
 newest 30 minutes in two 15-minute halves. A pooled error-budget violation can
-open an incident and, within ADR-845's 30-minute window, request a rollback.
+open an incident and, within ADR-943's 30-minute window, request a rollback.
 Customer cohorts, watched status codes and investigations keep one-minute
 windows.
 

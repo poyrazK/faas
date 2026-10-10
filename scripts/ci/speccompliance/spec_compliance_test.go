@@ -1238,6 +1238,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_customer_health.go"),
 		filepath.Join(root, "pkg", "api", "route_health_history.go"),
 		filepath.Join(root, "pkg", "api", "route_health_notifications.go"),
+		filepath.Join(root, "pkg", "api", "route_advice.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

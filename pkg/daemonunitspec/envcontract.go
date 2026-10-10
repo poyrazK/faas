@@ -508,7 +508,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_RESTORE_PREFETCH", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; \"shared\" covers pkg/e2etest forwarding it"},
 	{Name: "FAAS_RETENTION_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-847 synthetic route probes; unset disables probes"},
+	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-945 synthetic route probes; unset disables probes"},
 	{Name: "FAAS_RUNTIME_KIND", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695)"},

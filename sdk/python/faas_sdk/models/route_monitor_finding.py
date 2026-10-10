@@ -43,7 +43,7 @@ class RouteMonitorFinding:
     latency_status: RouteMonitorFindingLatencyStatus
     windows: list[RouteMonitorWindow]
     evidence_window: RouteMonitorFindingEvidenceWindow | Unset = UNSET
-    """Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846).
+    """Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-944).
     Budgets are unchanged."""
     pooled_windows: list[RouteMonitorWindow] | Unset = UNSET
     """Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes
