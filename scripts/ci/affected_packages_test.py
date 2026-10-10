@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for affected_packages.py package selection and sharding."""
 import importlib.util
+import io
 import pathlib
+import sys
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "affected_packages", pathlib.Path(__file__).with_name("affected_packages.py"))
@@ -73,22 +76,52 @@ class SelectTest(unittest.TestCase):
 
 class ShardTest(unittest.TestCase):
     def test_shards_partition_the_set_deterministically(self):
-        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/apid"]
+        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/gregale"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
         flat = sorted(d for s in shards for d in s)
         self.assertEqual(flat, sorted(dirs))
         self.assertEqual(shards, [ap.shard(dirs, i, 3) for i in (1, 2, 3)])
 
     def test_heaviest_package_gets_a_shard_to_itself(self):
-        dirs = ["cmd/apid", "pkg/x", "pkg/y"]
+        dirs = ["cmd/gregale", "pkg/x", "pkg/y"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
-        self.assertIn(["cmd/apid"], shards)
+        self.assertIn(["cmd/gregale"], shards)
 
     def test_split_packages_are_never_assigned_whole(self):
-        # pkg/state runs by test name across every shard instead.
-        shards = [ap.shard(["pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
-        self.assertNotIn("pkg/state", [d for s in shards for d in s])
+        # The large API/state suites run by name across every shard.
+        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
+        self.assertEqual([d for s in shards for d in s], ["pkg/x"])
+        self.assertIn("cmd/apid", ap.SPLIT_PACKAGES)
         self.assertIn("pkg/state", ap.SPLIT_PACKAGES)
+
+
+class CommandTest(unittest.TestCase):
+    def run_command(self, kind, paths, shard=1):
+        output = io.StringIO()
+        with mock.patch.object(ap, "go_packages", return_value=PKGS), \
+                mock.patch.object(sys, "argv", ["affected_packages.py", kind, "--shard", str(shard), "--shards", "3"]), \
+                mock.patch.object(sys, "stdin", io.StringIO("\n".join(paths))), \
+                mock.patch.object(sys, "stdout", output):
+            ap.main()
+        return output.getvalue().split()
+
+    def test_split_command_selects_only_affected_large_packages(self):
+        for paths, want in [
+            (["cmd/apid/handler_test.go"], ["./cmd/apid"]),
+            (["pkg/state/store_test.go"], ["./pkg/state"]),
+            (["cmd/apid/handler_test.go", "pkg/state/store_test.go"], ["./cmd/apid", "./pkg/state"]),
+            (["pkg/util/helper.go"], []),
+        ]:
+            with self.subTest(paths=paths):
+                self.assertEqual(self.run_command("split", paths), want)
+
+    def test_standard_and_name_split_commands_cover_selected_packages_once(self):
+        paths = ["cmd/apid/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]
+        ordinary = [p for i in (1, 2, 3) for p in self.run_command("test", paths, i)]
+        large = self.run_command("split", paths)
+        self.assertEqual(sorted(ordinary), ["./pkg/util", "./tests/property"])
+        self.assertEqual(large, ["./cmd/apid", "./pkg/state"])
+        self.assertEqual(len(ordinary + large), len(set(ordinary + large)))
 
 
 if __name__ == "__main__":

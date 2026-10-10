@@ -12,8 +12,8 @@ package lists derived from `go list`:
   split    selected packages too slow for one shard, tested by name per shard
 
 Global inputs (go.mod, go.sum, this selector and the light workflow) vet
-every package; tests still cover changed packages only. The light tier keeps a pull request under ~10 minutes by
-compile-checking importers instead of testing them; the mega tier (ci.yml)
+every package; tests still cover changed packages only. The light tier
+compile-checks importers instead of testing them; the mega tier (ci.yml)
 runs every package's -race tests nightly and before every release.
 
 Usage:
@@ -46,16 +46,16 @@ EXCLUDED_TEST_PREFIXES = ("cmd/e2e", "migrations")
 # they import a changed package directly, and on every global-input change.
 INVARIANT_PACKAGES = ("tests/property",)
 
-# Packages too slow under -race for one shard's budget. Instead of being
+# Large suites partitioned to bound per-process runtime and race-instrumented
+# resource use. Instead of being
 # assigned whole, each one's tests are split by name across every shard
 # (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
 # the ones a change selects.
-SPLIT_PACKAGES = ("pkg/state",)
+SPLIT_PACKAGES = ("cmd/apid", "pkg/state")
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
-    "cmd/apid": 40,
     "cmd/gregale": 8,
     "pkg/e2etest": 6,
     "pkg/sched": 5,
