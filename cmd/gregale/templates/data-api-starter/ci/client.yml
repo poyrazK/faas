@@ -9,7 +9,7 @@ permissions:
 jobs:
   client:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,8 +19,10 @@ jobs:
           node-version: "22"
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
-      - name: Restore and verify the pinned SDK
-        run: node tools/artifacts.mjs restore
+      - name: Restore and verify the pinned CLI and SDK
+        run: node tools/artifacts.mjs restore --cli
       - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck --prefix client
       - run: npm test --prefix client
+      - name: Replay local CRUD, RLS and RPC scenarios
+        run: ./.gregale-tools/gregale data-api dev --port 0 --once --replay data-api.requests.json

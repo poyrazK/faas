@@ -222,40 +222,39 @@ func generateDataAPIContract(ctx context.Context, client *api.Client, slug strin
 func cmdDataAPIDiff(args []string) int {
 	fs := newFlagSet("data-api diff", flag.ContinueOnError)
 	baseline := fs.String("baseline", "", "saved JSON contract from data-api types --snapshot")
+	current := fs.String("current", "", "compare a saved current contract offline instead of inspecting an app")
 	check := fs.Bool("check", false, "fail if the database contract contains breaking changes")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum private inspection task wait")
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *baseline == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api diff NAME --baseline FILE [--check] [--timeout DURATION]", "data-api")
+	validTarget := (*current == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*current != "" && fs.NArg() == 0)
+	if !validTarget || *baseline == "" || *timeout <= 0 || *timeout > time.Hour {
+		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	// Read and validate the baseline before starting any remote task.
-	file, err := openCustomerFile(*baseline)
-	if err != nil {
-		return printErr("Could not read baseline", err)
-	}
-	content, err := io.ReadAll(io.LimitReader(file, api.AppTaskDefaultMaxOutputBytes+1))
-	_ = file.Close()
-	if err != nil {
-		return printErr("Could not read baseline", err)
-	}
-	before, err := parseDataAPIContract(content)
+	before, err := readDataAPIContractFile(*baseline)
 	if err != nil {
 		return printErr("Invalid baseline", err)
 	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
+	var after dataAPIContract
+	var task api.AppTaskResponse
+	if *current != "" {
+		after, err = readDataAPIContractFile(*current)
+	} else {
+		client, clientErr := authedClient()
+		if clientErr != nil {
+			return printErr("Not logged in", clientErr)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		task, err = generateDataAPIContract(ctx, client, fs.Arg(0))
+		if err != nil {
+			return printErr("Schema inspection failed", err)
+		}
+		after, err = parseDataAPIContract([]byte(task.StdoutTail))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	task, err := generateDataAPIContract(ctx, client, fs.Arg(0))
-	if err != nil {
-		return printErr("Schema inspection failed", err)
-	}
-	after, err := parseDataAPIContract([]byte(task.StdoutTail))
 	if err != nil {
 		return printErr("Invalid current contract", err)
 	}
@@ -288,6 +287,19 @@ func cmdDataAPIDiff(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func readDataAPIContractFile(path string) (dataAPIContract, error) {
+	file, err := openCustomerFile(path)
+	if err != nil {
+		return dataAPIContract{}, err
+	}
+	defer func() { _ = file.Close() }()
+	content, err := io.ReadAll(io.LimitReader(file, api.AppTaskDefaultMaxOutputBytes+1))
+	if err != nil {
+		return dataAPIContract{}, err
+	}
+	return parseDataAPIContract(content)
 }
 
 func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {

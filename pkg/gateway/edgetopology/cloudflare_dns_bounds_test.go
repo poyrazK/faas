@@ -145,6 +145,12 @@ func TestCloudflareDNSInventoryBoundsResponsesCollectionAndOpaqueDepth(t *testin
 				body["opaque"] = strings.Repeat("x", api.RuntimeUpgradeDNSResponseMaxBytes*3/4)
 				dnsServe(t, w, body)
 			})
+			if mode == "collection" {
+				// Reaching the real 16 MiB budget takes ~21 sequential
+				// pages, which hit the 10 s collection deadline first under
+				// -race on a loaded runner ("provider request failed").
+				p.collectionMaxBytes = 3 * api.RuntimeUpgradeDNSResponseMaxBytes
+			}
 			err := assertDNSFailure(t, p)
 			if mode == "collection" && !strings.Contains(err.Error(), "response budget") && !strings.Contains(err.Error(), "bounded provider response") {
 				t.Fatal("collection did not fail on its response byte budget", err)
