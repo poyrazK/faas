@@ -3036,3 +3036,17 @@ When guarded, responses include the normalized expected timestamp and an indepen
 Content/routing `status` remains separate. A response can contain `status=match` and `acceptance=replacement_acceptance`: the content matches a newer acceptance. Returned receipt and consumer evidence describe that current acceptance and must not be used as proof of the original's outcome. Replacement returns CLI exit 3; unavailable returns 2; otherwise the existing command exits apply. Unguarded responses omit both new fields and preserve earlier behavior.
 
 Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-932](adr/932-app-publication-acceptance-guards.md).
+
+
+## Transactional event consumer writes (Go SDK)
+
+Application subscription consumers can commit a deduplication receipt and their
+PostgreSQL business writes together with `WithEventConsumerTransaction`. A lost
+response after commit is recovered by returning the saved result on redelivery.
+Consumer and acceptance identity keep independent recipients separate, and a new
+acceptance after producer-key reuse is distinct. Existing deliveries without the
+new acceptance header cannot use the helper.
+
+See [transactional event consumers](event-consumer-transactions.md) for setup,
+identity framing, replay behavior, application-owned retention, and the limits
+of the database transaction guarantee. Node and Python helpers are a follow-up.

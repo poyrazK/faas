@@ -9618,3 +9618,11 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// EventConsumerInbox bounds application-owned transactional consumer receipts.
+// The inbox schema generator packages these limits with the standalone SDK.
+const (
+	EventConsumerRequestMaxBytes  = 1 << 20
+	EventConsumerResultMaxBytes   = 1 << 20
+	EventConsumerIdentityMaxBytes = 4096
+)

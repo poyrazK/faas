@@ -725,3 +725,23 @@ retains its immutable copy; replay the same declaration after response loss.
 A private receipt is published on host-confirmed success with a typed result
 or explicit account success recovery. Approved Job retry clears file receipts.
 Published files use the existing customer-scoped artifact download methods.
+
+### Transactional event consumers
+
+Install `EventConsumerReceiptSchema` in your application PostgreSQL database.
+For authenticated internal subscription deliveries, construct an immutable
+request with `EventConsumerRequestFromHTTP(r, body, accountID, appID)` and call
+`WithEventConsumerTransaction(ctx, db, input, handler)`. The handler receives an
+`EventConsumerSQLTransaction` and returns `json.RawMessage`. Business writes and
+the receipt commit together; duplicate deliveries return the exact saved
+`EventConsumerTransactionResult.Body` with `Replayed=true`. Acknowledge only after
+the helper succeeds. The helper never installs or prunes application receipts.
+
+Identity includes the subscription and durable acceptance ID, so consumers remain
+independent and later reuse of a producer event ID is a new acceptance. Preserve
+original body bytes on retry. Old deliveries without an acceptance header fail
+closed. Authenticate the route; the header factory is not authentication for an
+arbitrary public server. Callback code must use only its supplied transaction and
+must not perform external effects or control the transaction lifecycle.
+
+See [the transaction contract and retention rules](../../docs/event-consumer-transactions.md).
