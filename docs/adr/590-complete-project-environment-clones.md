@@ -9250,3 +9250,36 @@ authority. Workload runtime/configuration retirement and atomic terminal proof
 persistence remain outstanding. The generic checkpoint compensation transition
 and public full-stage admission remain closed; native provider qualification stays
 deferred at the user's request.
+
+### Original workload retirement proof contract
+
+The private workload retirement plan now pins the original frozen source revision
+and completed source-compensation digest/time, target scope, optional original
+materialization environment/digest and release set, and each original workload's
+source deployment/hash, target deployment/settings hash and desired spec/hash.
+The non-secret plan and native observation are each bounded by
+`CheckpointWorkloadRetirementMaxBytes` (2 MiB). A missing materialization or target
+deployment remains missing; an observer cannot discover a replacement deployment
+and attach it to this plan. Ownership aliases to source deployments, Apps,
+operation/account/project IDs, duplicate targets and noncanonical workload order
+are rejected.
+
+Native retirement must permanently fence the entire original operation's
+deployment request namespace, close all queued scheduler operations and prove no
+owned instances, cgroups, network resources, routes or native publication remain.
+Instance absence covers parked instances and their native runtime artifacts in the
+original owner namespace, rather than just currently running processes.
+Each recorded target deployment also requires its original permanent fence and
+complete runtime-operation closure. These checks apply to unknown instance
+creation outcomes; local deployment labels and process/instance not-found are
+insufficient. Source resources must remain unchanged. Proof time follows the
+committed claim and original source compensation, and terminal replay requires
+the exact saved observation digest.
+
+This is a proof contract, not a durable journal, native dispatch coordinator or
+configuration deletion authority. A future store must authenticate the original
+frozen records, materialization receipt and deployment ownership under the
+compensation lease before claiming cleanup. Catalogue retirement must separately
+verify removal of owned settings, values and policies; native observations cannot
+assert that SQL state was deleted. Whole-stage terminal compensation and public
+full-stage admission remain gated. Native qualification remains deferred.

@@ -8839,3 +8839,6 @@ const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20
 
 // Original PostgreSQL copy ownership and permanent retirement observations.
 const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
+
+// Non-secret original workload ownership and native retirement observations.
+const CheckpointWorkloadRetirementMaxBytes = 2 << 20
