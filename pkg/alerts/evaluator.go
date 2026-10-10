@@ -721,6 +721,9 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsEventRetentionAlertMetric(string(rule.Metric)) {
+		return e.observeEventRetention(ctx, rule)
+	}
 	if api.IsEventRecoveryAlertMetric(string(rule.Metric)) {
 		return e.observeEventRecovery(ctx, rule)
 	}

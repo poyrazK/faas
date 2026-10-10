@@ -190,7 +190,7 @@ jobs:
     # GitHub's job-lifecycle guarantees.
     services:
       registry:
-        image: registry:2
+        image: mirror.gcr.io/library/registry:2
         ports:
           - 5000:5000
     env:

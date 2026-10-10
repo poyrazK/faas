@@ -554,6 +554,12 @@ const (
 	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
 	DevBridgeWebhookReplayTimeout  = 30 * time.Second
 	DevBridgeReplayResponseBytes   = 64 << 10
+	// WebSocket upgrades (ADR-742) share one per-session budget across the
+	// scoped-traffic and dependency directions. Upgraded tunnels hold their
+	// own HTTP/2 streams, so the laptop accepts requests + upgrades streams.
+	DevBridgeMaxUpgradedConnections = 8
+	DevBridgeUpgradeIdleTimeout     = 5 * time.Minute
+	DevBridgeUpgradeMaxBytes        = 64 << 20 // per connection, per direction
 )
 
 // Flags qualification safeguards, independent from billing allowances.
@@ -806,6 +812,19 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
+	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
+	// using the normal developer build.
+	DevPatchMaxEntries       = 200
+	DevPatchMaxBytes   int64 = 8 << 20
+	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
+	// sessions per developer app, the quiet period after which a session is
+	// closed, the per-direction byte cap, and how long the tunnel waits for a
+	// parked developer app to wake.
+	DevDebugSessionsPerApp       = 4
+	DevDebugIdleTimeout          = 30 * time.Minute
+	DevDebugMaxBytes       int64 = 256 << 20
+	DevDebugWakeTimeout          = 60 * time.Second
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
@@ -1158,6 +1177,12 @@ type Limits struct {
 	RAMMB              int // max ram_mb per app (memory.max = RAMMB + PerVMOverheadMB)
 	AppLayerMaxMB      int // drive1 ext4 cap (spec §4.6)
 	SourceTarballMaxMB int // upload cap; >cap => 413 (spec §4.2)
+
+	// DeveloperLeaseMaxHours is the longest lease a `gregale dev`
+	// environment may request (`--ttl`, `dev.ttl`). Every sync renews the
+	// lease; the preview janitor tears down an environment once it lapses.
+	// A request without a lease gets DeveloperLeaseDefault.
+	DeveloperLeaseMaxHours int
 
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// upper bound on concurrent in-flight requests one VM can handle
@@ -2623,6 +2648,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		OutboundRequestsPerDayMax: 100_000,
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
+		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -3017,6 +3044,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		OutboundRequestsPerDayMax: 1_000_000,
 		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
+		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -3429,6 +3458,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		OutboundRequestsPerDayMax: 10_000_000,
 		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
+		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -3803,6 +3834,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
 		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
+		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -7960,6 +7993,26 @@ func (p Plan) RateLimitPerAccountRPM() int {
 	return l.RateLimitPerAccountRPM
 }
 
+// DeveloperLeaseDefault is the `gregale dev` environment lease used when a
+// session request does not choose one; it is also the pre-`--ttl` behavior.
+// DeveloperLeaseMin is the shortest lease a request may choose, so a typo
+// such as `--ttl 1m` cannot make an environment vanish between two saves.
+// The per-plan ceiling is Limits.DeveloperLeaseMaxHours.
+const (
+	DeveloperLeaseDefault = 24 * time.Hour
+	DeveloperLeaseMin     = time.Hour
+)
+
+// DeveloperLeaseMax returns the longest `gregale dev` lease the plan allows.
+// Unknown plans fail closed to the default lease.
+func (p Plan) DeveloperLeaseMax() time.Duration {
+	l, ok := LimitsFor(p)
+	if !ok || l.DeveloperLeaseMaxHours <= 0 {
+		return DeveloperLeaseDefault
+	}
+	return time.Duration(l.DeveloperLeaseMaxHours) * time.Hour
+}
+
 // DeploysPerHour returns the account-wide deploy admission budget for the
 // plan. Unknown plans fail closed.
 func (p Plan) DeploysPerHour() int {
@@ -9476,4 +9529,75 @@ const (
 const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
+)
+
+// Event publication batches bound synchronous acceptance work (ADR-911).
+const (
+	EventPublishBatchMaxEvents          = 100
+	EventPublishBatchBodyMaxBytes int64 = 1 << 20
+	EventPublishBatchTimeout            = 30 * time.Second
+)
+
+// Retention observations are bounded read-only snapshots (ADR-912).
+const (
+	EventRetentionDefaultWindow  = 24 * time.Hour
+	EventRetentionMaxWindow      = 30 * 24 * time.Hour
+	EventRetentionSampleMax      = 100
+	EventRetentionSourceMaxBytes = 256
+	EventRetentionRequestTimeout = 15 * time.Second
+)
+
+// Recheck unresolved execution recovery jobs without scanning retained history on every tick.
+const EventRecoveryExecutionNotificationPollInterval = 10 * time.Second
+
+const (
+	EventRecoveryExecutionHealthJobsMax    = 50
+	EventRecoveryExecutionHealthSampleMax  = 3
+	EventRecoveryExecutionWaitWarning      = 15 * time.Minute
+	EventRecoveryExecutionRetentionWarning = 24 * time.Hour
+)
+
+// EventRecoveryNotificationReceiversMax bounds each notification report.
+const EventRecoveryNotificationReceiversMax = 100
+
+const (
+	EventRecoveryNotificationHealthJobsMax   = 50
+	EventRecoveryNotificationHealthSampleMax = 3
+	EventRecoveryNotificationOverdueGrace    = 15 * time.Minute
+)
+
+const (
+	EventRecoveryNotificationRetryTargetsMax   = 100
+	EventRecoveryNotificationRetryReceiptsMax  = 100
+	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
+)
+
+// CLI polling for the immutable requested notification retry generations (ADR-923).
+const (
+	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
+	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
+)
+
+// Bounded job pages for app-wide notification retry evidence (ADR-926).
+const (
+	EventRecoveryNotificationRetryBacklogJobsDefault = 5
+	EventRecoveryNotificationRetryBacklogJobsMax     = 10
+)
+
+// CLI selected notification retry workflow bounds.
+const (
+	EventRecoveryNotificationRetryBatchJobsMax      = 10
+	EventRecoveryNotificationRetryBatchBodyMaxBytes = 1 << 20
+)
+
+// Application-scoped producer-key publication bounds.
+const (
+	AppEventPublishKeyMaxBytes        = 256
+	AppEventPublishBodyMaxBytes int64 = 1 << 20
+)
+
+// App producer-key status uses existing receipt pagination and cursor format.
+const (
+	AppEventPublishStatusRecipientsDefault = 100
+	AppEventPublishStatusCursorMaxBytes    = 8192
 )

@@ -481,6 +481,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 	}
+	l.runEventRecoveryExecutionNotifications(ctx, now)
 	l.runEventReplayBackfillSweep(ctx, now)
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
 		now := time.Now().UTC()

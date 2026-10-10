@@ -341,11 +341,10 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # A PR touching pkg/state runs a third of its race tests (~10-12 min)
-    # beside its other packages after a cold compile; 20 min cancels it.
-    # When cmd/apid is in the shard the split waits for it, which ran past
-    # 30 min.
-    timeout-minutes: 45
+    # Cold API race compilation can take 14 minutes. A change touching both
+    # cmd/apid and pkg/state then runs a third of each, one after the other,
+    # beside its other packages; that needed more than 30 minutes.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -432,6 +431,17 @@ jobs:
           set -euo pipefail
           PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
           SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          # The API integration suite also needs test-name sharding. Keep every
+          # selected API test while avoiding a whole-suite run on shard 1.
+          SELECTED_PKGS="$(python3 scripts/ci/affected_packages.py test --shard 1 --shards 1 < "$RUNNER_TEMP/changed-paths.txt")"
+          if [[ " $SELECTED_PKGS " == *" ./cmd/apid "* ]]; then
+            read -r -a TEST_PACKAGES <<< "$PKGS"
+            PKGS=""
+            for pkg in "${TEST_PACKAGES[@]}"; do
+              if [[ "$pkg" != ./cmd/apid ]]; then PKGS+=" $pkg"; fi
+            done
+            SPLIT="$SPLIT ./cmd/apid"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
@@ -441,30 +451,19 @@ jobs:
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
           status=0
-          pids=()
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS &
-            pids+=("$!")
-          fi
-          # The cmd/apid race tests alone peak near 19 GB RSS; alongside a
-          # split package they exhaust the 16 GB runner, which is killed with
-          # exit 143. Finish that package set before starting the split.
-          if [[ " $PKGS " == *" ./cmd/apid "* ]]; then
-            wait "${pids[0]}" || status=1
-            pids=()
+            go test -race -count=1 -p 4 -timeout=16m $PKGS || status=1
           fi
           # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above unless it held cmd/apid.
+          # after the package set above. Run concurrently with it (cmd/apid's
+          # race tests beside a third of pkg/state), the unbounded run phase
+          # exhausted hosted-runner memory and the runner was shut down.
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=16m -run "$run" "$pkg" &
-            pids+=("$!")
-          done
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
+            go test -race -count=1 -timeout=16m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache

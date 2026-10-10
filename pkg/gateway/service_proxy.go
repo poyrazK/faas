@@ -1196,6 +1196,31 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID s
 	return serviceEndpointsForDeployment(endpoints, deploymentID), err
 }
 
+// ErrNoServiceTarget reports that an app has no routable instance even after
+// a wake.
+var ErrNoServiceTarget = errors.New("gateway: no routable instance after wake")
+
+// WakeTarget returns one routable instance of appID, waking the app when none
+// is running, addressed at the given guest port. The ADR-741 debugger tunnel
+// uses it to reach a developer app's inspector port through the same
+// endpoint registry and wake path as internal service calls.
+func (p *ServiceProxy) WakeTarget(ctx context.Context, appID string, port int) (Target, error) {
+	endpoints, err := p.endpoints(ctx, appID)
+	if err != nil {
+		return Target{}, err
+	}
+	if endpoints = serviceEndpointsForDeployment(endpoints, ""); len(endpoints) == 0 {
+		if endpoints, err = p.wakeAndRefresh(ctx, appID, ""); err != nil {
+			return Target{}, err
+		}
+	}
+	if len(endpoints) == 0 {
+		return Target{}, ErrNoServiceTarget
+	}
+	endpoint := endpoints[0]
+	return Target{AppID: appID, NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, DeploymentID: endpoint.DeploymentID, Port: port}, nil
+}
+
 func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {
 	if deploymentID == "" {
 		filtered := make([]ServiceEndpoint, 0, len(endpoints))

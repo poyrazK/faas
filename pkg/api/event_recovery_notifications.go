@@ -19,3 +19,12 @@ type EventRecoveryFinishedWebhookPayload struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	CompletedAt    time.Time `json:"completed_at"`
 }
+
+// EventRecoveryExecutionFinishedWebhookPayload contains confirmed terminal results,
+// independently of admission completion and webhook acknowledgement.
+type EventRecoveryExecutionFinishedWebhookPayload struct {
+	EventRecoveryFinishedWebhookPayload
+	Execution           EventRecoveryExecutionSummary `json:"execution"`
+	ExecutionFinishedAt time.Time                     `json:"execution_finished_at"`
+	UnresolvedCount     int64                         `json:"unresolved_count"`
+}
