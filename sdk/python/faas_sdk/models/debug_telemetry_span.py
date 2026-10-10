@@ -40,6 +40,9 @@ class DebugTelemetrySpan:
     dependency_name: str | Unset = UNSET
     """Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method
     or messaging destination. Never contains literals, paths, query strings or credentials."""
+    error_type: str | Unset = UNSET
+    """Failure class of an error span, from the error.type attribute or the first recorded exception.type (for
+    example QueryTimeout or 503). Exception messages and stack traces are never retained."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +78,8 @@ class DebugTelemetrySpan:
 
         dependency_name = self.dependency_name
 
+        error_type = self.error_type
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -102,6 +107,8 @@ class DebugTelemetrySpan:
             field_dict["dependency_kind"] = dependency_kind
         if dependency_name is not UNSET:
             field_dict["dependency_name"] = dependency_name
+        if error_type is not UNSET:
+            field_dict["error_type"] = error_type
 
         return field_dict
 
@@ -149,6 +156,8 @@ class DebugTelemetrySpan:
 
         dependency_name = d.pop("dependency_name", UNSET)
 
+        error_type = d.pop("error_type", UNSET)
+
         debug_telemetry_span = cls(
             trace_id=trace_id,
             span_id=span_id,
@@ -163,6 +172,7 @@ class DebugTelemetrySpan:
             dependency_type=dependency_type,
             dependency_kind=dependency_kind,
             dependency_name=dependency_name,
+            error_type=error_type,
         )
 
         debug_telemetry_span.additional_properties = d

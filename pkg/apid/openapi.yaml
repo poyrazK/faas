@@ -72127,6 +72127,7 @@ components:
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
         dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
+        error_type: { type: string, maxLength: 96, pattern: '^[A-Za-z0-9._:$/-]+$', description: "Failure class of an error span, from the error.type attribute or the first recorded exception.type (for example QueryTimeout or 503). Exception messages and stack traces are never retained." }
 
     DebugCriticalPathSpan:
       type: object
@@ -72166,7 +72167,7 @@ components:
     DebugDependencyLatencyItem:
       type: object
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
-      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
+      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression, failure_regression]
       properties:
         type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
@@ -72191,6 +72192,8 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
+        failure_regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline." }
+        top_error_type: { type: string, maxLength: 96, description: "Most frequent span failure class, from the current side when it has failures." }
 
     DebugDependencyImpactEdge:
       type: object
@@ -72383,7 +72386,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [dependency_failure, request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -72537,7 +72540,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-934). Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency most likely behind this route regression (ADR-934): the one whose p95 regressed most between the previous and the regressed deployment, else one that started failing more often. Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
@@ -72546,6 +72549,10 @@ components:
         p95_base_ms: { type: integer, format: int64, minimum: 0 }
         p95_ms: { type: integer, format: int64, minimum: 0 }
         regression_factor: { type: number, minimum: 0 }
+        reason: { type: string, enum: [latency, failures], description: "latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded before failure attribution, which are latency suspects." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_type: { type: string, maxLength: 96 }
 
     DebugRegressionActionRequest:
       type: object

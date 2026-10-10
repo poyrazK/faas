@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.debug_suspected_dependency_reason import (
+    DebugSuspectedDependencyReason,
+    check_debug_suspected_dependency_reason,
+)
 from ..models.debug_suspected_dependency_type import DebugSuspectedDependencyType, check_debug_suspected_dependency_type
 from ..types import UNSET, Unset
 
@@ -14,8 +18,9 @@ T = TypeVar("T", bound="DebugSuspectedDependency")
 
 @_attrs_define
 class DebugSuspectedDependency:
-    """The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route
-    (ADR-934). Bounded and redacted; also sent in debug.regression.* webhooks.
+    """The classified dependency most likely behind this route regression (ADR-934): the one whose p95 regressed most
+    between the previous and the regressed deployment, else one that started failing more often. Bounded and redacted;
+    also sent in debug.regression.* webhooks.
 
     """
 
@@ -25,6 +30,12 @@ class DebugSuspectedDependency:
     p95_ms: int
     regression_factor: float
     kind: str | Unset = UNSET
+    reason: DebugSuspectedDependencyReason | Unset = UNSET
+    """latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded
+    before failure attribution, which are latency suspects."""
+    baseline_error_rate_pct: float | Unset = UNSET
+    error_rate_pct: float | Unset = UNSET
+    error_type: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +51,16 @@ class DebugSuspectedDependency:
 
         kind = self.kind
 
+        reason: str | Unset = UNSET
+        if not isinstance(self.reason, Unset):
+            reason = self.reason
+
+        baseline_error_rate_pct = self.baseline_error_rate_pct
+
+        error_rate_pct = self.error_rate_pct
+
+        error_type = self.error_type
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +74,14 @@ class DebugSuspectedDependency:
         )
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if baseline_error_rate_pct is not UNSET:
+            field_dict["baseline_error_rate_pct"] = baseline_error_rate_pct
+        if error_rate_pct is not UNSET:
+            field_dict["error_rate_pct"] = error_rate_pct
+        if error_type is not UNSET:
+            field_dict["error_type"] = error_type
 
         return field_dict
 
@@ -71,6 +100,19 @@ class DebugSuspectedDependency:
 
         kind = d.pop("kind", UNSET)
 
+        _reason = d.pop("reason", UNSET)
+        reason: DebugSuspectedDependencyReason | Unset
+        if isinstance(_reason, Unset):
+            reason = UNSET
+        else:
+            reason = check_debug_suspected_dependency_reason(_reason)
+
+        baseline_error_rate_pct = d.pop("baseline_error_rate_pct", UNSET)
+
+        error_rate_pct = d.pop("error_rate_pct", UNSET)
+
+        error_type = d.pop("error_type", UNSET)
+
         debug_suspected_dependency = cls(
             type_=type_,
             name=name,
@@ -78,6 +120,10 @@ class DebugSuspectedDependency:
             p95_ms=p95_ms,
             regression_factor=regression_factor,
             kind=kind,
+            reason=reason,
+            baseline_error_rate_pct=baseline_error_rate_pct,
+            error_rate_pct=error_rate_pct,
+            error_type=error_type,
         )
 
         debug_suspected_dependency.additional_properties = d

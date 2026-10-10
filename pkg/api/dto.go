@@ -10910,6 +10910,10 @@ type DebugTelemetrySpan struct {
 	// span (ADR-934): "SELECT orders", an HTTP host, an RPC method. It never
 	// carries literals, paths, query strings or credentials.
 	DependencyName string `json:"dependency_name,omitempty"`
+	// ErrorType is the failure class of an error span ("QueryTimeout",
+	// "503"), from error.type or the first recorded exception.type. Exception
+	// messages and stack traces are never retained.
+	ErrorType string `json:"error_type,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -10985,6 +10989,13 @@ type DebugDependencyLatencyItem struct {
 	BaselineErrorRatePct   float64 `json:"baseline_error_rate_pct,omitempty"`
 	CurrentErrorRatePct    float64 `json:"current_error_rate_pct,omitempty"`
 	ErrorRateDeltaPct      float64 `json:"error_rate_delta_pct,omitempty"`
+	// FailureRegression is the error-rate counterpart of Regression: enough
+	// calls on both sides, at least 3 failed current calls, and an error rate
+	// at least 5 points and 2x above baseline.
+	FailureRegression bool `json:"failure_regression"`
+	// TopErrorType is the most frequent span failure class, from the current
+	// side when it has failures.
+	TopErrorType string `json:"top_error_type,omitempty"`
 }
 
 // DebugDependencyImpactEdge is a bounded parent-to-child rollup reconstructed
@@ -11532,6 +11543,13 @@ type DebugSuspectedDependency struct {
 	P95BaseMS        int64   `json:"p95_base_ms"`
 	P95MS            int64   `json:"p95_ms"`
 	RegressionFactor float64 `json:"regression_factor"`
+	// Reason is "latency" when the dependency's p95 regressed and "failures"
+	// when it started failing more often. Empty on suspects stored before
+	// failure attribution, which were all latency suspects.
+	Reason               string  `json:"reason,omitempty"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	ErrorRatePct         float64 `json:"error_rate_pct,omitempty"`
+	ErrorType            string  `json:"error_type,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug

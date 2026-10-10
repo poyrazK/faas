@@ -33,6 +33,9 @@ class DebugDependencyLatencyItem:
     regression: bool
     """True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and
     25ms above baseline."""
+    failure_regression: bool
+    """True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed
+    calls, and the current error rate is at least 5 percentage points and 2x above baseline."""
     kind: str | Unset = UNSET
     exclusive_p50_ms: int | Unset = UNSET
     """P50 wall time not covered by overlapping direct child spans."""
@@ -50,6 +53,8 @@ class DebugDependencyLatencyItem:
     baseline_error_rate_pct: float | Unset = UNSET
     current_error_rate_pct: float | Unset = UNSET
     error_rate_delta_pct: float | Unset = UNSET
+    top_error_type: str | Unset = UNSET
+    """Most frequent span failure class, from the current side when it has failures."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +75,8 @@ class DebugDependencyLatencyItem:
         p99_ms = self.p99_ms
 
         regression = self.regression
+
+        failure_regression = self.failure_regression
 
         kind = self.kind
 
@@ -99,6 +106,8 @@ class DebugDependencyLatencyItem:
 
         error_rate_delta_pct = self.error_rate_delta_pct
 
+        top_error_type = self.top_error_type
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -112,6 +121,7 @@ class DebugDependencyLatencyItem:
                 "p95_ms": p95_ms,
                 "p99_ms": p99_ms,
                 "regression": regression,
+                "failure_regression": failure_regression,
             }
         )
         if kind is not UNSET:
@@ -142,6 +152,8 @@ class DebugDependencyLatencyItem:
             field_dict["current_error_rate_pct"] = current_error_rate_pct
         if error_rate_delta_pct is not UNSET:
             field_dict["error_rate_delta_pct"] = error_rate_delta_pct
+        if top_error_type is not UNSET:
+            field_dict["top_error_type"] = top_error_type
 
         return field_dict
 
@@ -165,6 +177,8 @@ class DebugDependencyLatencyItem:
         p99_ms = d.pop("p99_ms")
 
         regression = d.pop("regression")
+
+        failure_regression = d.pop("failure_regression")
 
         kind = d.pop("kind", UNSET)
 
@@ -194,6 +208,8 @@ class DebugDependencyLatencyItem:
 
         error_rate_delta_pct = d.pop("error_rate_delta_pct", UNSET)
 
+        top_error_type = d.pop("top_error_type", UNSET)
+
         debug_dependency_latency_item = cls(
             type_=type_,
             name=name,
@@ -204,6 +220,7 @@ class DebugDependencyLatencyItem:
             p95_ms=p95_ms,
             p99_ms=p99_ms,
             regression=regression,
+            failure_regression=failure_regression,
             kind=kind,
             exclusive_p50_ms=exclusive_p50_ms,
             exclusive_p95_ms=exclusive_p95_ms,
@@ -218,6 +235,7 @@ class DebugDependencyLatencyItem:
             baseline_error_rate_pct=baseline_error_rate_pct,
             current_error_rate_pct=current_error_rate_pct,
             error_rate_delta_pct=error_rate_delta_pct,
+            top_error_type=top_error_type,
         )
 
         debug_dependency_latency_item.additional_properties = d

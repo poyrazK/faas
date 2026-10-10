@@ -314,6 +314,11 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 		dur = end - start
 	}
 	attrs := stripPlatformAttributes(flattenAttributes(sp.GetAttributes()))
+	status := spanStatus(sp.GetStatus().GetCode())
+	errorType := ""
+	if status == "error" {
+		errorType = spanErrorType(attrs, sp.GetEvents())
+	}
 	return summarizedSpan{
 		TraceID:           formatTraceID(sp.GetTraceId()),
 		SpanID:            formatSpanID(sp.GetSpanId()),
@@ -323,11 +328,47 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 		StartTimeUnixNano: start,
 		EndTimeUnixNano:   end,
 		DurationNanos:     dur,
-		Status:            sp.GetStatus().GetCode().String(),
+		Status:            status,
 		StatusMessage:     sp.GetStatus().GetMessage(),
 		Attributes:        attrs,
 		DBStatement:       extractDBStatement(attrs),
+		ErrorType:         errorType,
 	}
+}
+
+// spanStatus maps an OTLP status code to the vocabulary the retained
+// service-spans exporter already writes ("ok", "error", unset as ""), so
+// customer and platform spans count failures the same way.
+func spanStatus(code tracepb.Status_StatusCode) string {
+	switch code {
+	case tracepb.Status_STATUS_CODE_ERROR:
+		return "error"
+	case tracepb.Status_STATUS_CODE_OK:
+		return "ok"
+	default:
+		return ""
+	}
+}
+
+// spanErrorType returns the failure class of an error span: the semantic
+// convention error.type attribute, else the exception.type of its first
+// recorded exception event. Exception messages and stack traces are never
+// retained; they routinely carry request data.
+func spanErrorType(attrs map[string]string, events []*tracepb.Span_Event) string {
+	if value := strings.TrimSpace(attrs["error.type"]); value != "" {
+		return value
+	}
+	for _, event := range events {
+		if event.GetName() != "exception" {
+			continue
+		}
+		for _, kv := range event.GetAttributes() {
+			if kv.GetKey() == "exception.type" {
+				return strings.TrimSpace(attrAnyToString(kv.GetValue()))
+			}
+		}
+	}
+	return ""
 }
 
 // formatTraceID hex-encodes an OTLP trace_id (16 bytes) into the

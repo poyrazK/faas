@@ -41,5 +41,13 @@ export type DebugDependencyLatencyItem = {
   baseline_error_rate_pct?: number;
   current_error_rate_pct?: number;
   error_rate_delta_pct?: number;
+  /**
+   * True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline.
+   */
+  failure_regression: boolean;
+  /**
+   * Most frequent span failure class, from the current side when it has failures.
+   */
+  top_error_type?: string;
 };
 

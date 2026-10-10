@@ -180,6 +180,30 @@ app cannot present its own spans as managed bindings, outbound integrations
 or guest transport. Platform producers use the retained service-spans
 exporter, which is not affected.
 
+**Failure attribution (amendment, 2026-10-10).** Customer ingest now stores
+span status in the platform exporter's vocabulary (`ok`, `error`, unset as
+empty) instead of the raw OTLP enum name. Before this, the rollups compared
+against `error` and counted no customer span as failed. The read path also
+normalizes rows already stored as `STATUS_CODE_ERROR`. An error span keeps a
+bounded failure class: `error.type`, else the first `exception.type` event
+attribute, allowlisted to type-name characters and ≤ 96 bytes. Exception
+messages and stack traces are never retained.
+
+Rollup items gain `failure_regression`: ≥ 5 calls on each side, ≥ 3 failed
+current calls, and a current error rate ≥ 5 percentage points and ≥ 2× above
+baseline. They also gain `top_error_type`. The synthesis reports
+`dependency_failure` in two cases:
+
+- A failed request (HTTP ≥ 500 or a failed guest outcome) contains a failed
+  classified dependency span. This is high confidence and outranks the
+  generic `request_failure`.
+- Only a failure regression is present. This is medium confidence, ranked
+  after a latency `dependency_regression`.
+
+The suspected dependency prefers a latency regression and otherwise names a
+failure regression. It gains `reason` (`latency`/`failures`), error rates and
+`error_type`. Route regression detection itself stays latency-only.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the

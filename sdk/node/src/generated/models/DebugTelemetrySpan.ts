@@ -37,5 +37,9 @@ export type DebugTelemetrySpan = {
    * Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials.
    */
   dependency_name?: string;
+  /**
+   * Failure class of an error span, from the error.type attribute or the first recorded exception.type (for example QueryTimeout or 503). Exception messages and stack traces are never retained.
+   */
+  error_type?: string;
 };
 

@@ -48,12 +48,39 @@ The event payload is metadata-only:
 ```
 
 `suspected_dependency` names the database, cache, HTTP, RPC or messaging
-dependency whose p95 regressed most between the previous and the regressed
-deployment on that route. It is present when the app's spans reach the
-debugger (for example with [request tracing](tracing.md)) and a dependency
-crossed the regression thresholds; otherwise it is `null`. The name is a
-bounded identity such as `SELECT orders` or an HTTP host, never a query value,
-key, URL path or credential.
+dependency most likely behind the regression on that route. It is present when
+the app's spans reach the debugger (for example with
+[request tracing](tracing.md)) and a dependency crossed the regression
+thresholds; otherwise it is `null`. The name is a bounded identity such as
+`SELECT orders` or an HTTP host, never a query value, key, URL path or
+credential.
+
+`reason` says why the dependency was named:
+
+- `latency`: its p95 regressed most between the previous and the regressed
+  deployment. This is preferred, because the route regression itself is a
+  latency signal.
+- `failures`: none of its dependencies slowed down, but this one started
+  failing more often. The suspect then also carries `baseline_error_rate_pct`,
+  `error_rate_pct` and, when the spans report one, `error_type`:
+
+```json
+"suspected_dependency": {
+  "type": "app_dependency",
+  "kind": "http",
+  "name": "api.stripe.com",
+  "p95_base_ms": 40,
+  "p95_ms": 41,
+  "regression_factor": 1.03,
+  "reason": "failures",
+  "baseline_error_rate_pct": 0,
+  "error_rate_pct": 12.5,
+  "error_type": "503"
+}
+```
+
+Suspects recorded before failure attribution have no `reason`; they are
+latency suspects.
 
 The detector does not include request bodies, user identifiers, IP addresses,
 or trace/span contents in these webhook payloads. Delivery is at least once;

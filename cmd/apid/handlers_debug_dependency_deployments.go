@@ -168,18 +168,32 @@ func compareDependencyDeployments(scoped []sqlc.ListRequestTelemetryDependencySp
 
 // suspectedDependency picks the regressed dependency to name in a route
 // regression: a classified dependency (app or platform), never an
-// anonymous application span. Items arrive regressions-first by current p95.
+// anonymous application span. A latency regression is preferred, since the
+// route regression itself is a p95 signal; a dependency that started failing
+// more often is the fallback. Items arrive regressions-first by current p95.
 func suspectedDependency(comparison *api.DebugDependencyDeploymentComparison) *api.DebugSuspectedDependency {
 	if comparison == nil {
 		return nil
 	}
-	for _, item := range comparison.Dependencies {
-		if !item.Regression || item.Type == "" || item.Type == "application" {
-			continue
-		}
-		return &api.DebugSuspectedDependency{
-			Type: item.Type, Kind: item.Kind, Name: item.Name,
-			P95BaseMS: item.BaselineP95MS, P95MS: item.CurrentP95MS, RegressionFactor: item.RegressionFactor,
+	for _, failures := range []bool{false, true} {
+		for _, item := range comparison.Dependencies {
+			if item.Type == "" || item.Type == "application" {
+				continue
+			}
+			if (!failures && !item.Regression) || (failures && !item.FailureRegression) {
+				continue
+			}
+			suspect := &api.DebugSuspectedDependency{
+				Type: item.Type, Kind: item.Kind, Name: item.Name,
+				P95BaseMS: item.BaselineP95MS, P95MS: item.CurrentP95MS, RegressionFactor: item.RegressionFactor,
+				Reason: "latency",
+			}
+			if failures {
+				suspect.Reason = "failures"
+				suspect.BaselineErrorRatePct, suspect.ErrorRatePct = item.BaselineErrorRatePct, item.CurrentErrorRatePct
+				suspect.ErrorType = item.TopErrorType
+			}
+			return suspect
 		}
 	}
 	return nil

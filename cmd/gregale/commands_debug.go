@@ -1153,8 +1153,9 @@ func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse)
 	_ = tw.Flush()
 }
 
-// formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`,
-// or "-" when the detector named no dependency.
+// formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`
+// for a latency suspect, `postgresql "SELECT orders" errors 0→12.5% QueryTimeout`
+// for a failure suspect, or "-" when the detector named no dependency.
 func formatSuspectedDependency(suspect *api.DebugSuspectedDependency) string {
 	if suspect == nil {
 		return "-"
@@ -1162,6 +1163,14 @@ func formatSuspectedDependency(suspect *api.DebugSuspectedDependency) string {
 	kind := suspect.Kind
 	if kind == "" {
 		kind = suspect.Type
+	}
+	if suspect.Reason == "failures" {
+		out := fmt.Sprintf("%s %q errors %s→%s%%", kind, suspect.Name,
+			strconv.FormatFloat(suspect.BaselineErrorRatePct, 'f', -1, 64), strconv.FormatFloat(suspect.ErrorRatePct, 'f', -1, 64))
+		if suspect.ErrorType != "" {
+			out += " " + suspect.ErrorType
+		}
+		return out
 	}
 	return fmt.Sprintf("%s %q %d→%dms", kind, suspect.Name, suspect.P95BaseMS, suspect.P95MS)
 }
