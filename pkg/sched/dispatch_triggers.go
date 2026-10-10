@@ -795,7 +795,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			}
 		}
 		// Settled and logged above. The sentinel tells push-queue lanes
-		// (ADR-829) to back off; the serial path ignores it.
+		// (ADR-933) to back off; the serial path ignores it.
 		return fmt.Errorf("%w: %v", errTriggerGatewayDispatch, postErr)
 	}
 

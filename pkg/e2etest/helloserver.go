@@ -20,11 +20,6 @@ var (
 	helloServerErr   error
 )
 
-// helloServerBinaryEnv names a prebuilt fixture server. Metal hosts run a
-// cross-compiled test binary with no source tree or module cache, so the
-// harness cannot build the fixture there.
-const helloServerBinaryEnv = "FAAS_E2E_HELLO_SERVER_BINARY"
-
 // helloServerBinary returns the fixture server built once per process as a
 // static Linux/amd64 binary matching the fixture OCI platform and production
 // fleet, independently of the developer machine architecture.

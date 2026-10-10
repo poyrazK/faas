@@ -116,7 +116,7 @@ var workSpecs = map[workKind]workSpec{
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
-	// Push-queue lanes (ADR-829) claim durable leases; a dropped lane is
+	// Push-queue lanes (ADR-933) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
 	workEventFanout:       {slots: 1, overflow: overflowDrop},

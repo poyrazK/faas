@@ -96,7 +96,7 @@ type Loop struct {
 	triggerPollersMu sync.Mutex
 	triggerPollers   map[string]triggerSource
 	// queuePushLanes holds each push-queue trigger's lane allowance
-	// (ADR-829). In memory and per schedd; a restart ramps from one lane.
+	// (ADR-933). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and

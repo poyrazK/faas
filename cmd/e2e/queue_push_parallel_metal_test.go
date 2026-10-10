@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
-// TestQueuePushParallelDispatchMetal is the ADR-829 acceptance: a slow push
+// TestQueuePushParallelDispatchMetal is the ADR-933 acceptance: a slow push
 // handler behind a binding with max_concurrency > 1 receives deliveries in
 // parallel through the real schedd → gatewayd → guest path, every message
 // completes on its first attempt, and nothing is dead-lettered.
@@ -120,7 +120,7 @@ func TestQueuePushParallelDispatchMetal(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	elapsed := time.Since(started)
-	t.Logf("ADR-829 evidence: %d messages settled in %s; peak in-flight %d; peak live instances %d",
+	t.Logf("ADR-933 evidence: %d messages settled in %s; peak in-flight %d; peak live instances %d",
 		messages, elapsed.Round(100*time.Millisecond), peakInFlight, peakInstances)
 
 	rows, err := h.Pool.Query(context.Background(),
@@ -148,7 +148,7 @@ func TestQueuePushParallelDispatchMetal(t *testing.T) {
 		t.Fatalf("found %d queue rows, sent %d", count, messages)
 	}
 	if peakInFlight < 2 {
-		t.Fatalf("deliveries never overlapped (peak in-flight %d); ADR-829 lanes did not run in parallel", peakInFlight)
+		t.Fatalf("deliveries never overlapped (peak in-flight %d); ADR-933 lanes did not run in parallel", peakInFlight)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestQueuePushParallelDispatchMetal(t *testing.T) {
 // invocation for two seconds, so overlapping deliveries are observable.
 func slowFunctionFixture(t *testing.T) []byte {
 	t.Helper()
-	return buildTarGz(t, map[string]string{"handler.js": `// ADR-829 slow push consumer.
+	return buildTarGz(t, map[string]string{"handler.js": `// ADR-933 slow push consumer.
 exports.handler = async () => {
   await new Promise((resolve) => setTimeout(resolve, 2000));
   return { statusCode: 200, body: 'done' };

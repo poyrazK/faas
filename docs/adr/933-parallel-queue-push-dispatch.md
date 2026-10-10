@@ -1,4 +1,4 @@
-# ADR-829 · Parallel queue push dispatch with backlog-driven concurrency
+# ADR-933 · Parallel queue push dispatch with backlog-driven concurrency
 
 - **Status:** accepted
 - **Date:** 2026-10-09

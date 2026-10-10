@@ -281,7 +281,7 @@ const ServiceBindingCheckIntervalSeconds = 2
 const QueueBindingMaxConcurrency = 10000
 
 // QueuePushDispatchSlotsPerNode bounds concurrent push-queue dispatch lanes
-// across every trigger one schedd serves (ADR-829). It also caps the lanes
+// across every trigger one schedd serves (ADR-933). It also caps the lanes
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
