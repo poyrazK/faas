@@ -65,6 +65,7 @@ native_e2e_phase_files() {
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       wake_burst_metal_test.go \
+      wake_platform_bench_metal_test.go \
       after_restore_metal_test.go \
       exclusive_operations_restore_metal_test.go \
       durable_entities_restore_metal_test.go \

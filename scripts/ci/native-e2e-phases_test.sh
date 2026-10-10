@@ -34,6 +34,11 @@ for phase in "${NATIVE_E2E_PHASES[@]}"; do
   [[ "${n}" -gt 0 ]] || fail "phase ${phase} selects no tests"
 done
 
+# The platform benchmark shares the native wake lifecycle. Keep it in the
+# wake phase so a new benchmark scenario is derived from its file as well.
+native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
+  fail "platform wake benchmark is no longer included in the wake phase"
+
 # 4. Every required test must live in some phase, or the gate would require a
 #    test it never runs.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
