@@ -63,7 +63,7 @@ type FlushLoopConfig struct {
 type pendingEntry struct {
 	traceID   string
 	accountID uuid.UUID
-	summary   []summarizedSpan
+	spans     []summarizedSpan
 	retries   int
 }
 
@@ -168,11 +168,11 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 		// merged, not substituted, then re-bounded below the
 		// same per-trace cap. The writer dedupes by span identity.
 		if existing, ok := pending[traceID]; ok {
-			existing.summary = append(existing.summary, spans...)
+			existing.spans = append(existing.spans, spans...)
 			if cfg.MaxSpansPerTrace != nil {
-				if max := cfg.MaxSpansPerTrace(planFromAccountID(accountID)); max > 0 && len(existing.summary) > max {
-					sortSpansByDurationDesc(existing.summary)
-					existing.summary = existing.summary[:max]
+				if max := cfg.MaxSpansPerTrace(planFromAccountID(accountID)); max > 0 && len(existing.spans) > max {
+					sortSpansByDurationDesc(existing.spans)
+					existing.spans = existing.spans[:max]
 				}
 			}
 			existing.accountID = accountID
@@ -180,7 +180,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			pending[traceID] = &pendingEntry{
 				traceID:   traceID,
 				accountID: accountID,
-				summary:   spans,
+				spans:     spans,
 			}
 		}
 		return true
@@ -201,7 +201,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			delete(pending, traceID)
 			continue
 		}
-		summaryJSON, err := json.Marshal(entry.summary)
+		summaryJSON, err := json.Marshal(entry.spans)
 		if err != nil {
 			cfg.Log.Error("otel spans marshal failed",
 				"trace_id", traceID, "err", err)
