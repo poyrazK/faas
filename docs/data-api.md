@@ -343,11 +343,37 @@ gregale data-api types notes-data --output src/database.types.ts --check
 The owner-authenticated command runs a bounded task on the app's current live
 deployment. It reads a consistent database catalog snapshot using the
 restricted runtime binding. It exports tables, views, enums, domains, arrays,
-nullability, defaults, generated columns and foreign-key relationships.
+nullability, defaults, generated columns, foreign-key relationships and named
+composite types in exposed schemas.
 Generated `Insert` and `Update` types exclude generated-always fields.
 Unrecognized PostgreSQL relation types become `unknown`. Supported opted-in
-RPC signatures are generated; arbitrary composite types are not. Numeric types become JavaScript `number`, so values beyond
+RPC signatures are generated, including supported named composite arguments and
+results. Numeric types become JavaScript `number`, so values beyond
 JavaScript's exact numeric range need an application-specific representation.
+
+For example, a PostgreSQL `CREATE TYPE api.address AS (city text, postcode text)`
+generates `Database['api']['CompositeTypes']['address']`. Use the generated helper
+for application values:
+
+```ts
+import type { CompositeTypes } from './database.types.js'
+const address: CompositeTypes<'address'> = { city: 'Istanbul', postcode: null }
+```
+
+Nested composites and arrays reference their generated types. Composite fields
+are nullable, including domain attributes: an empty composite RPC result expands
+to an object of null fields. All object keys are required in the generated type.
+Types without schema/type usage are excluded; inaccessible or unsupported nested
+fields become `unknown` and exclude RPCs that depend on them. Standalone
+composites are types rather than REST resources. Table row types continue to use
+the relation contract filtered by column privileges.
+
+New schema exports use normalized snapshot version 2 inside the unchanged
+version 1 contract envelope. The current CLI can compare both snapshot versions.
+Upgrade the CLI before consuming new exports, regenerate types after upgrading
+the runtime, and review the diff before approving a new baseline. A format-only
+upgrade for a schema without composites produces no structural changes, though
+its fingerprint changes.
 
 `@gregale/data` is packaged in `sdk/data` and follows the existing
 [SDK publishing policy](../sdk/README-publishing.md). It has not been published
@@ -828,9 +854,12 @@ idempotency. Abort and token callbacks work as they do for CRUD.
 Type export and fresh startup include only annotated, executable security-
 invoker functions in exposed schemas. Supported signatures have unique names
 without overloads, named input arguments of recognized types, and scalar, void,
-scalar-set or exposed-relation-set results. Defaults make arguments optional;
+scalar-set, named-composite or exposed-relation-set results. Named composites
+return objects; `SETOF` composites return arrays. Composite arguments accept JSON
+objects, and nested fields use the generated contract. Defaults make arguments optional;
 PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
-OUT/INOUT, arbitrary composite and non-set composite signatures are excluded.
+OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
+relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,
 and their RPC routes return 404. OpenAPI advertises approved calls as POST only.
 
@@ -1175,7 +1204,10 @@ invalid baselines and failed inspections also exit nonzero. JSON output includes
 baseline/current fingerprints, task/deployment identifiers, the breaking count
 and a deterministic array of changes. No changes produces an empty array.
 
-Removed schemas, relations, columns, RPCs and RPC arguments are breaking.
+Removed schemas, relations, columns, RPCs, RPC arguments, composite types and
+composite fields are breaking. Composite field type/nullability changes and new
+required object keys are also breaking, even when the containing table or RPC
+still references the same named type. New composite types are compatible.
 Type changes (including enum changes), nullability changes in either direction,
 removed write privileges, table/view changes, relationship changes, newly
 required insert fields, and required RPC arguments are conservatively breaking.

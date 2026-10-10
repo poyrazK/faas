@@ -37,13 +37,38 @@ type Function struct {
 	Args    []Argument `json:"args"`
 	Returns string     `json:"returns"`
 }
-type Snapshot struct {
-	Version   int                 `json:"version"`
-	Schemas   []string            `json:"schemas"`
-	Tables    []Table             `json:"tables"`
-	Functions []Function          `json:"functions"`
-	Enums     map[string][]string `json:"enums"`
+type CompositeField struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Nullable bool   `json:"nullable"`
 }
+type Composite struct {
+	Schema string           `json:"schema"`
+	Name   string           `json:"name"`
+	Fields []CompositeField `json:"fields"`
+}
+type Snapshot struct {
+	Version    int                 `json:"version"`
+	Schemas    []string            `json:"schemas"`
+	Tables     []Table             `json:"tables"`
+	Functions  []Function          `json:"functions"`
+	Enums      map[string][]string `json:"enums"`
+	Composites []Composite         `json:"composites,omitempty"`
+}
+
+// Version 1 stays byte-compatible when serialized; version 2 requires the
+// composites array even for schemas without any standalone composite types.
+func (s Snapshot) MarshalJSON() ([]byte, error) {
+	type snapshot Snapshot
+	if s.Version == 2 {
+		return json.Marshal(struct {
+			snapshot
+			Composites []Composite `json:"composites"`
+		}{snapshot(s), s.Composites})
+	}
+	return json.Marshal(snapshot(s))
+}
+
 type Contract struct {
 	Version     int             `json:"version"`
 	Fingerprint string          `json:"fingerprint"`
@@ -112,6 +137,20 @@ func validateShape(raw json.RawMessage) error {
 	if err != nil {
 		return err
 	}
+	var version int
+	if json.Unmarshal(root["version"], &version) != nil {
+		return errors.New("invalid snapshot version")
+	}
+	switch version {
+	case 1:
+		if _, present := root["composites"]; present {
+			return errors.New("composite metadata requires snapshot version 2")
+		}
+	case 2:
+		if _, err := requiredFields(raw, "composites"); err != nil {
+			return err
+		}
+	}
 	for _, group := range []struct {
 		key         string
 		fields      []string
@@ -120,7 +159,11 @@ func validateShape(raw json.RawMessage) error {
 	}{
 		{"tables", []string{"schema", "name", "view", "columns", "relationships"}, "columns", []string{"name", "type", "nullable", "optional", "insertable", "updatable"}},
 		{"functions", []string{"schema", "name", "args", "returns"}, "args", []string{"name", "type", "optional"}},
+		{"composites", []string{"schema", "name", "fields"}, "fields", []string{"name", "type", "nullable"}},
 	} {
+		if group.key == "composites" && version == 1 {
+			continue
+		}
 		var entries []json.RawMessage
 		if json.Unmarshal(root[group.key], &entries) != nil {
 			return errors.New("invalid snapshot entries")
@@ -157,7 +200,7 @@ func validateShape(raw json.RawMessage) error {
 
 func validateSnapshot(snapshot Snapshot) error {
 	invalid := errors.New("invalid normalized schema snapshot")
-	if snapshot.Version != 1 || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil {
+	if (snapshot.Version != 1 && snapshot.Version != 2) || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil || (snapshot.Version == 2 && snapshot.Composites == nil) {
 		return invalid
 	}
 	schemas := map[string]bool{}
@@ -195,6 +238,21 @@ func validateSnapshot(snapshot Snapshot) error {
 				return invalid
 			}
 			args[arg.Name] = true
+		}
+	}
+	names = map[string]bool{}
+	for _, composite := range snapshot.Composites {
+		key := composite.Schema + "." + composite.Name
+		if !schemas[composite.Schema] || composite.Name == "" || names[key] || composite.Fields == nil {
+			return invalid
+		}
+		names[key] = true
+		fields := map[string]bool{}
+		for _, field := range composite.Fields {
+			if field.Name == "" || field.Type == "" || fields[field.Name] {
+				return invalid
+			}
+			fields[field.Name] = true
 		}
 	}
 	return nil

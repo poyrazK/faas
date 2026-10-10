@@ -70,6 +70,10 @@ See [the Data API guide](../../docs/data-api.md).
 Opted-in PostgreSQL functions appear in the generated `Functions` contract.
 Call `db.rpc('function_name', { named_argument: value }).retry(false)` using an
 application JWT. Gregale permits POST RPC only; omit `get` and `head` options.
+Generated `CompositeTypes<'name'>` helpers describe named PostgreSQL composite
+objects, including nested values and arrays. Approved RPCs use these types for
+arguments and results; a composite result is an object and a SETOF result is an
+array. Composite fields remain nullable, including domain attributes.
 Arguments, defaults and results are inferred from the database. Each call is
 one transaction. See the guide for opt-in comments, execution grants, supported
 signatures, RLS and fresh-restart requirements.

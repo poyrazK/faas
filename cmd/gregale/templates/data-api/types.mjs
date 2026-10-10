@@ -21,9 +21,22 @@ const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relki
 const typesQuery = `SELECT t.oid::text AS id, t.typname AS name, n.nspname AS schema,
  t.typtype AS kind, t.typbasetype::text AS base, t.typelem::text AS element,
  t.typnotnull AS required,
+ has_schema_privilege(COALESCE($1::name,current_user),n.oid,'USAGE')
+ AND has_type_privilege(COALESCE($1::name,current_user),t.oid,'USAGE') AS accessible,
  ARRAY(SELECT e.enumlabel::text FROM pg_enum e WHERE e.enumtypid=t.oid ORDER BY e.enumsortorder) AS labels
  FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
  ORDER BY t.oid LIMIT ${limits.types + 1}`
+
+// Standalone CREATE TYPE ... AS (...) objects only. Table row types must keep
+// using the privilege-filtered relation contract, never unrestricted attributes.
+const compositesQuery = `SELECT t.oid::text AS id, n.nspname AS schema, t.typname AS name,
+ a.attname AS field, a.atttypid::text AS type, a.attnotnull AS required
+ FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+ JOIN pg_class c ON c.oid=t.typrelid AND c.relkind='c'
+ LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+ WHERE n.nspname=ANY($1::text[]) AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
+ AND has_type_privilege(COALESCE($2::name,current_user),t.oid,'USAGE')
+ ORDER BY n.nspname,t.typname,a.attnum LIMIT ${limits.columns + 1}`
 
 const relationsQuery = `SELECT n.nspname AS schema, c.relname AS relation, x.conname AS name,
  rn.nspname AS referenced_schema, rc.relname AS referenced_relation,
@@ -65,24 +78,36 @@ export async function inspect(connection, schemas) {
   } finally { await client.end() }
 }
 
-export async function inspectClient(client, schemas, { includeUnexecutable = false } = {}) {
+export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null } = {}) {
   const columns = (await client.query(columnsQuery, [schemas])).rows
-  const types = (await client.query(typesQuery)).rows
+  const types = (await client.query(typesQuery, [privilegeRole])).rows
   const relations = (await client.query(relationsQuery, [schemas])).rows
   if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
   const functions = (await client.query(functionsQuery, [schemas, includeUnexecutable])).rows
   if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
-  return normalize(columns, types, relations, schemas, functions)
+  const composites = (await client.query(compositesQuery, [schemas, privilegeRole])).rows
+  if (columns.length + composites.length > limits.columns) throw new Error('Schema exceeds generation limits')
+  return normalize(columns, types, relations, schemas, functions, composites)
 }
 
-export function normalize(columns, types, relationships, schemas, functions = []) {
+export function normalize(columns, types, relationships, schemas, functions = [], compositeFields = []) {
   const byID = new Map(types.map(t => [t.id, t]))
+  const compositeByID = new Map()
+  for (const field of compositeFields) {
+    const type = byID.get(field.id)
+    if (type?.kind !== 'c' || type.accessible === false || !schemas.includes(field.schema)) continue
+    const composite = compositeByID.get(field.id) ?? { schema: field.schema, name: field.name, fields: [] }
+    if (field.field !== null) composite.fields.push(field)
+    compositeByID.set(field.id, composite)
+  }
+  const compositeRef = c => `Database[${JSON.stringify(c.schema)}]["CompositeTypes"][${JSON.stringify(c.name)}]`
   const enums = {}
   const seen = new Set()
   function tsType(id, depth = 0) {
     const t = byID.get(id)
-    if (!t || depth > 12) return 'unknown'
+    if (!t || t.accessible === false || depth > 12) return 'unknown'
     if (t.kind === 'd') return tsType(t.base, depth + 1)
+    if (t.kind === 'c') return compositeByID.has(id) ? compositeRef(compositeByID.get(id)) : 'unknown'
     if (t.kind === 'e') {
       if (schemas.includes(t.schema)) enums[`${t.schema}.${t.name}`] = t.labels
       return t.labels.map(JSON.stringify).join(' | ') || 'never'
@@ -99,7 +124,7 @@ export function normalize(columns, types, relationships, schemas, functions = []
   for (const c of columns) {
     const key = `${c.schema}.${c.relation}`
     seen.add(key)
-    if (seen.size > limits.relations) throw new Error('Too many exposed relations')
+    if (seen.size + compositeByID.size > limits.relations) throw new Error('Too many exposed relations or composite types')
     const table = tables.get(key) ?? { schema: c.schema, name: c.relation, view: ['v', 'm'].includes(c.kind), columns: [], relationships: [] }
     const column = { name: c.name, type: tsType(c.type), nullable: !(c.required || byID.get(c.type)?.required),
       optional: c.defaulted || c.identity !== '' || !(c.required || byID.get(c.type)?.required),
@@ -116,13 +141,18 @@ export function normalize(columns, types, relationships, schemas, functions = []
     if (!table || !target || !r.columns.every(n => table.columns.some(c => c.name === n)) || !r.referenced_columns.every(n => target.columns.some(c => c.name === n))) continue
     table.relationships.push({ foreignKeyName: r.name, columns: r.columns, isOneToOne: r.one_to_one, referencedRelation: r.referenced_relation, referencedColumns: r.referenced_columns })
   }
+  const supportCache = new Map()
   function supported(id, depth = 0) {
     const type = byID.get(id)
-    if (!type || depth > 12) return false
-    if (type.kind === 'd') return supported(type.base, depth + 1)
-    if (type.kind === 'e') return type.labels.length > 0
-    if (type.element !== '0') return supported(type.element, depth + 1)
-    return tsType(id) !== 'unknown'
+    if (!type || type.accessible === false || depth > 12) return false
+    const key = `${id}:${depth}`
+    if (supportCache.has(key)) return supportCache.get(key)
+    const result = type.kind === 'd' ? supported(type.base, depth + 1)
+      : type.kind === 'c' ? compositeByID.has(id) && compositeByID.get(id).fields.every(f => supported(f.type, depth + 1))
+        : type.kind === 'e' ? type.labels.length > 0
+          : type.element !== '0' ? supported(type.element, depth + 1) : tsType(id) !== 'unknown'
+    supportCache.set(key, result)
+    return result
   }
   const callable = []
   for (const f of functions) {
@@ -131,15 +161,22 @@ export function normalize(columns, types, relationships, schemas, functions = []
     const args = f.arguments.map((id, i) => ({ name: f.names[i], type: tsType(id), optional: i >= f.arguments.length - f.defaults }))
     if (args.some(a => !a.name) || f.arguments.some(id => !supported(id))) continue
     const result = byID.get(f.return_type)
+    const composite = result?.kind === 'c' ? compositeByID.get(f.return_type) : null
     const table = result?.kind === 'c' ? tables.get(`${result.schema}.${result.name}`) : null
-    if (result?.kind === 'c' && (!table || !f.setof)) continue
+    if (result?.kind === 'c' && !composite && (!table || !f.setof)) continue
     let returns = table ? `Database[${JSON.stringify(table.schema)}][${JSON.stringify(table.view ? 'Views' : 'Tables')}][${JSON.stringify(table.name)}]['Row']` : tsType(f.return_type)
     if (result?.schema === 'pg_catalog' && result.name === 'void') returns = 'undefined'
     if (!table && returns !== 'undefined' && !supported(f.return_type)) continue
-    returns = f.setof ? table ? `${returns}[]` : `(${returns} | null)[]` : returns === 'undefined' ? returns : `${returns} | null`
+    returns = f.setof ? table || composite ? `${returns}[]` : `(${returns} | null)[]` : composite || returns === 'undefined' ? returns : `${returns} | null`
     callable.push({ schema: f.schema, name: f.name, args, returns })
   }
-  return { version: 1, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) }
+  if (compositeByID.size > limits.relations) throw new Error('Too many exposed composite types')
+  const composites = [...compositeByID.values()].map(c => ({ schema: c.schema, name: c.name,
+    // Composite attributes have no NOT NULL constraints. A NULL composite RPC
+    // result expands to an object of nulls, including attributes using domains.
+    fields: c.fields.map(f => ({ name: f.field, type: tsType(f.type), nullable: true }))
+  })).sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`))
+  return { version: 2, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))), composites }
 }
 
 export function fingerprint(snapshot) {
@@ -178,7 +215,13 @@ export function generate(snapshot) {
     }
     lines.push('    }', '    Enums: {')
     for (const [key, labels] of Object.entries(snapshot.enums)) if (key.startsWith(`${schema}.`)) lines.push(`      ${JSON.stringify(key.slice(schema.length + 1))}: ${labels.map(JSON.stringify).join(' | ')}`)
-    lines.push('    }', '    CompositeTypes: Record<string, never>', '  }')
+    lines.push('    }', '    CompositeTypes: {')
+    for (const c of snapshot.composites ?? []) if (c.schema === schema) {
+      lines.push(`      ${JSON.stringify(c.name)}: {`)
+      for (const f of c.fields) lines.push(`        ${JSON.stringify(f.name)}: ${f.type}${f.nullable ? ' | null' : ''}`)
+      lines.push('      }')
+    }
+    lines.push('    }', '  }')
   }
   lines.push('}', '')
   const defaultSchema = JSON.stringify(snapshot.schemas.includes('api') ? 'api' : snapshot.schemas[0])
@@ -188,6 +231,7 @@ export function generate(snapshot) {
     `export type TablesInsert<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Insert: infer Insert } ? Insert : never`,
     `export type TablesUpdate<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Update: infer Update } ? Update : never`,
     `export type Enums<Name extends keyof Database[S]["Enums"], S extends keyof Database = ${defaultSchema}> = Database[S]["Enums"][Name]`,
+    `export type CompositeTypes<Name extends keyof Database[S]["CompositeTypes"], S extends keyof Database = ${defaultSchema}> = Database[S]["CompositeTypes"][Name]`,
     ''
   )
   const result = lines.join('\n')
@@ -209,6 +253,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export function contractSchema(type) {
   if (type.endsWith(' | null')) return { ...contractSchema(type.slice(0, -7)), 'x-nullable': true }
   if (type.endsWith(')[]') && type.startsWith('(')) return { type: 'array', items: contractSchema(type.slice(1, -3)) }
+  const composite = /^Database\[("(?:[^"\\]|\\.)*")\]\["CompositeTypes"\]\[("(?:[^"\\]|\\.)*")\](\[\])?$/.exec(type)
+  if (composite) {
+    const ref = { $ref: `#/definitions/${pointer(`${JSON.parse(composite[1])}.${JSON.parse(composite[2])}.Composite`)}` }
+    return composite[3] ? { type: 'array', items: ref } : ref
+  }
   const row = /^Database\[("(?:[^"\\]|\\.)*")\]\[("Tables"|"Views")\]\[("(?:[^"\\]|\\.)*")\]\['Row'\](\[\])?$/.exec(type)
   if (row) {
     const ref = { $ref: `#/definitions/${pointer(`${JSON.parse(row[1])}.${JSON.parse(row[3])}.Row`)}` }
@@ -231,6 +280,12 @@ export function enrichOpenAPI(document, snapshot, schema) {
   document.security = [{ bearer: [] }]
   document.definitions ??= {}
   const ref = name => ({ $ref: `#/definitions/${pointer(name)}` })
+  // Nested references may cross exposed schemas. Include their definitions,
+  // while paths remain restricted to the selected profile.
+  for (const c of snapshot.composites ?? []) document.definitions[`${c.schema}.${c.name}.Composite`] = {
+    type: 'object', properties: Object.fromEntries(c.fields.map(f => [f.name, { ...contractSchema(f.type), ...(f.nullable ? { 'x-nullable': true } : {}) }])),
+    ...(c.fields.length ? { required: c.fields.map(f => f.name) } : {}), additionalProperties: false,
+  }
   const object = (columns, kind) => {
     const properties = Object.fromEntries(columns.filter(c => kind === 'Row' || (kind === 'Insert' ? c.insertable : c.updatable)).map(c => [c.name, { ...contractSchema(c.type), ...(c.nullable ? { 'x-nullable': true } : {}), ...(kind === 'Insert' && c.optional ? { description: 'May be omitted; the database default or null applies.' } : {}) }]))
     const required = columns.filter(c => kind === 'Row' || kind === 'Insert' && c.insertable && !c.optional).map(c => c.name)

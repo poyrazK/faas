@@ -12,13 +12,24 @@ test('generated helpers enforce rows, write permissions, enums and explicit sche
   const directory = await mkdtemp(join(tmpdir(), 'data-api-type-helpers-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const column = { name: 'id', type: 'number', nullable: false, optional: true, insertable: false, updatable: false }
-  const snapshot = { version: 1, schemas: ['api', 'other'], functions: [], enums: { 'api.state': ['open', 'closed'] }, tables: [
+  const snapshot = { version: 2, schemas: ['api', 'other'], functions: [], enums: { 'api.state': ['open', 'closed'] }, composites: [
+    { schema: 'api', name: 'address', fields: [{ name: 'city', type: 'string', nullable: true }] },
+    { schema: 'other', name: 'address', fields: [{ name: 'postcode', type: 'number', nullable: true }] },
+  ], tables: [
     { schema: 'api', name: 'orders', view: false, relationships: [], columns: [column, { name: 'state', type: '"open" | "closed"', nullable: false, optional: false, insertable: true, updatable: true }] },
     { schema: 'api', name: 'order_ids', view: true, relationships: [], columns: [column] },
     { schema: 'other', name: 'items', view: false, relationships: [], columns: [column] },
   ] }
   await writeFile(join(directory, 'database.types.ts'), generate(snapshot))
-  await writeFile(join(directory, 'inference.ts'), `import type {Tables,TablesInsert,TablesUpdate,Enums} from './database.types.js';
+  await writeFile(join(directory, 'inference.ts'), `import type {Tables,TablesInsert,TablesUpdate,Enums,CompositeTypes} from './database.types.js';
+const address: CompositeTypes<'address'> = {city:null};
+const otherAddress: CompositeTypes<'address','other'> = {postcode:123};
+// @ts-expect-error Composite helpers preserve schema namespaces.
+const wrongAddress: CompositeTypes<'address','other'> = {city:'Istanbul'};
+// @ts-expect-error Composite keys remain required, even when nullable.
+const missingField: CompositeTypes<'address'> = {};
+// @ts-expect-error Unknown composite names are rejected.
+type MissingComposite = CompositeTypes<'missing'>;
 const row: Tables<'orders'> = {id:1,state:'open'};
 const view: Tables<'order_ids'> = {id:1};
 const other: Tables<'items','other'> = {id:2};
@@ -35,7 +46,7 @@ type Unknown = Tables<'missing'>;
 type WritableView = TablesUpdate<'order_ids'>;
 // @ts-expect-error Enum values come from the schema.
 const wrongState: Enums<'state'> = 'invalid';
-void [row,view,other,insert,update,state,wrongID,missing,wrongState];`)
+void [row,view,other,insert,update,state,wrongID,missing,wrongState,address,otherAddress,wrongAddress,missingField];`)
   const tsc = fileURLToPath(new URL('../../sdk/data/node_modules/typescript/bin/tsc', import.meta.url))
   assert.doesNotThrow(() => execFileSync(process.execPath, [tsc, '--strict', '--noEmit', '--skipLibCheck', join(directory, 'inference.ts')], { encoding: 'utf8' }))
 })

@@ -88,11 +88,11 @@ func TestDashboardDataAPIOperationsAreOwnerScopedAndCSRFBound(t *testing.T) {
 	if !strings.Contains(progress.Body.String(), `http-equiv="refresh"`) {
 		t.Fatal("queued operation did not refresh")
 	}
-	snapshot := `{"version":1,"schemas":["api"],"tables":[],"functions":[],"enums":{}}`
+	snapshot := `{"version":2,"schemas":["api"],"tables":[],"functions":[],"enums":{},"composites":[{"schema":"api","name":"location","fields":[{"name":"x","type":"number","nullable":true}]}]}`
 	contract := fmt.Sprintf(`{"version":1,"fingerprint":"%x","snapshot":%s}`, sha256.Sum256([]byte(snapshot)), snapshot)
 	finishDataAPIDashboardTask(t, e, rows[0], contract, false)
 	result := restartProgressDashboardGET(e, cookie, post.Header().Get("Location"))
-	if !strings.Contains(result.Body.String(), "Schema fingerprint:") || strings.Contains(result.Body.String(), `http-equiv="refresh"`) {
+	if !strings.Contains(result.Body.String(), "Schema fingerprint:") || !strings.Contains(result.Body.String(), "Composite api.location") || strings.Contains(result.Body.String(), `http-equiv="refresh"`) {
 		t.Fatalf("completed result = %s", result.Body)
 	}
 }

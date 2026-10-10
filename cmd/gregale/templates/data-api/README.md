@@ -17,6 +17,14 @@ DDL. Define row-level policies using the subject in `request.jwt.claims` before
 exposing user data. Use `gregale data-api refresh NAME` after migrations to
 request a fresh restart, then regenerate the client types.
 
+Type export includes named PostgreSQL composites in exposed schemas with schema
+and type usage privileges. `CompositeTypes<'name'>` describes nested object
+fields and arrays. Approved invoker RPCs can use these objects as inputs/results;
+single composite results are objects and SETOF results are arrays. Composite
+fields remain nullable, including domain attributes. Hidden dependencies become
+`unknown` and exclude dependent RPCs. Upgrade the CLI before reading new
+normalized version 2 snapshots; the current CLI also accepts version 1 baselines.
+
 Build with the included Dockerfile through Gregale's builder. For local
 development, install dependencies with `npm ci --ignore-scripts`, provide
 the restricted database connection and authentication settings, and set

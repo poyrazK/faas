@@ -603,11 +603,28 @@ idempotency. Abort and token callbacks work as they do for CRUD.
 Type export and fresh startup include only annotated, executable security-
 invoker functions in exposed schemas. Supported signatures have unique names
 without overloads, named input arguments of recognized types, and scalar, void,
-scalar-set or exposed-relation-set results. Defaults make arguments optional;
+scalar-set, named-composite or exposed-relation-set results. Named composites
+return objects; `SETOF` composites return arrays. Composite arguments accept JSON
+objects. Defaults make arguments optional;
 PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
-OUT/INOUT, arbitrary composite and non-set composite signatures are excluded.
+OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
+relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,
 and their RPC routes return 404. OpenAPI advertises approved calls as POST only.
+
+Named `CREATE TYPE api.address AS (...)` objects generate
+`Database['api']['CompositeTypes']['address']` and a
+`CompositeTypes<'address'>` helper. Nested fields and arrays use these types.
+Composite fields remain nullable, including domain attributes, because a NULL
+composite RPC result expands to an object of null fields. All object keys are
+required by the generated contract. Hidden dependencies become `unknown` and
+exclude dependent RPCs. These types do not add REST table endpoints.
+
+New exports use normalized snapshot version 2 in the version 1 contract envelope.
+Upgrade the CLI before consuming them. The current diff command also reads
+legacy version 1 baselines and flags nested composite changes even when the RPC
+return type name stays unchanged. Removed fields, changed field types/nullability
+and added required keys are breaking; new composite types are compatible.
 
 Function bodies remain owner-authored application code: invoker status alone
 cannot prove a body safe. Schema-qualify objects, review all called functions,

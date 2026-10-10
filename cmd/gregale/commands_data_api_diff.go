@@ -20,6 +20,8 @@ type dataAPIColumn = dataapi.Column
 type dataAPIArgument = dataapi.Argument
 type dataAPITable = dataapi.Table
 type dataAPIFunction = dataapi.Function
+type dataAPIComposite = dataapi.Composite
+type dataAPICompositeField = dataapi.CompositeField
 type dataAPISnapshot = dataapi.Snapshot
 type dataAPIContract = dataapi.Contract
 
@@ -252,12 +254,59 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 			add(key, "enum added", false)
 		}
 	}
+	changes = append(changes, diffDataAPIComposites(before.Composites, after.Composites)...)
 	sort.Slice(changes, func(i, j int) bool {
 		if changes[i].Path == changes[j].Path {
 			return changes[i].Reason < changes[j].Reason
 		}
 		return changes[i].Path < changes[j].Path
 	})
+	return changes
+}
+
+func diffDataAPIComposites(before, after []dataAPIComposite) []dataAPIChange {
+	changes := []dataAPIChange{}
+	add := func(path, reason string, breaking bool) {
+		changes = append(changes, dataAPIChange{path, breaking, reason})
+	}
+	types := map[string]dataAPIComposite{}
+	for _, composite := range after {
+		types[composite.Schema+"."+composite.Name] = composite
+	}
+	for _, old := range before {
+		key := old.Schema + "." + old.Name
+		current, ok := types[key]
+		if !ok {
+			add(key, "composite type removed; update readers, writes and RPC calls", true)
+			continue
+		}
+		delete(types, key)
+		fields := map[string]dataAPICompositeField{}
+		for _, field := range current.Fields {
+			fields[field.Name] = field
+		}
+		for _, field := range old.Fields {
+			next, ok := fields[field.Name]
+			path := key + "." + field.Name
+			if !ok {
+				add(path, "composite field removed", true)
+				continue
+			}
+			delete(fields, field.Name)
+			if field.Type != next.Type {
+				add(path, "composite field type changed; review nested values and RPCs", true)
+			}
+			if field.Nullable != next.Nullable {
+				add(path, "composite field nullability changed", true)
+			}
+		}
+		for name := range fields {
+			add(key+"."+name, "composite field added; generated objects now require this key", true)
+		}
+	}
+	for key := range types {
+		add(key, "composite type added", false)
+	}
 	return changes
 }
 
