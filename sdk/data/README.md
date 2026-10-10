@@ -70,6 +70,11 @@ including renamed columns and view chains in the same exposed schema. Aliased
 embeds and FK hints use the normal PostgREST select syntax. Cardinality follows
 the underlying key constraint; view column types remain nullable. Expressions
 and partial keys have no inferred path, and ambiguous embeds can fail at runtime.
+Approved same-schema computed relationships use generated `SetofOptions` for
+source, target and cardinality. A `ROWS 1` function embeds an object or null,
+while its direct RPC returns an array. Relation-set RPCs support typed nested
+joins, projections and filters on their result relation. Upgrade the CLI/runtime
+for normalized version 3 contracts; version 1/2 baselines remain readable.
 See [the Data API guide](../../docs/data-api.md).
 
 Opted-in PostgreSQL functions appear in the generated `Functions` contract.

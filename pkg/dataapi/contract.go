@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
 	"io"
+	"strings"
 )
 
 type Column struct {
@@ -36,6 +37,12 @@ type Function struct {
 	Name    string     `json:"name"`
 	Args    []Argument `json:"args"`
 	Returns string     `json:"returns"`
+	Setof   *Setof     `json:"setof,omitempty"`
+}
+type Setof struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	OneToOne bool   `json:"one_to_one"`
 }
 type CompositeField struct {
 	Name     string `json:"name"`
@@ -56,11 +63,11 @@ type Snapshot struct {
 	Composites []Composite         `json:"composites,omitempty"`
 }
 
-// Version 1 stays byte-compatible when serialized; version 2 requires the
+// Version 1 stays byte-compatible when serialized; versions 2 and 3 require the
 // composites array even for schemas without any standalone composite types.
 func (s Snapshot) MarshalJSON() ([]byte, error) {
 	type snapshot Snapshot
-	if s.Version == 2 {
+	if s.Version >= 2 {
 		return json.Marshal(struct {
 			snapshot
 			Composites []Composite `json:"composites"`
@@ -146,7 +153,7 @@ func validateShape(raw json.RawMessage) error {
 		if _, present := root["composites"]; present {
 			return errors.New("composite metadata requires snapshot version 2")
 		}
-	case 2:
+	case 2, 3:
 		if _, err := requiredFields(raw, "composites"); err != nil {
 			return err
 		}
@@ -172,6 +179,16 @@ func validateShape(raw json.RawMessage) error {
 			entry, err := requiredFields(rawEntry, group.fields...)
 			if err != nil {
 				return err
+			}
+			if group.key == "functions" {
+				if setof, present := entry["setof"]; present {
+					if version < 3 {
+						return errors.New("result relation metadata requires snapshot version 3")
+					}
+					if _, err := requiredFields(setof, "from", "to", "one_to_one"); err != nil {
+						return err
+					}
+				}
 			}
 			var children []json.RawMessage
 			if json.Unmarshal(entry[group.children], &children) != nil {
@@ -200,7 +217,7 @@ func validateShape(raw json.RawMessage) error {
 
 func validateSnapshot(snapshot Snapshot) error {
 	invalid := errors.New("invalid normalized schema snapshot")
-	if (snapshot.Version != 1 && snapshot.Version != 2) || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil || (snapshot.Version == 2 && snapshot.Composites == nil) {
+	if snapshot.Version < 1 || snapshot.Version > 3 || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil || (snapshot.Version >= 2 && snapshot.Composites == nil) {
 		return invalid
 	}
 	schemas := map[string]bool{}
@@ -211,12 +228,27 @@ func validateSnapshot(snapshot Snapshot) error {
 		schemas[schema] = true
 	}
 	names := map[string]bool{}
+	relations := map[string]Table{}
+	shadowed := map[string]bool{}
 	for _, table := range snapshot.Tables {
 		key := table.Schema + "." + table.Name
 		if !schemas[table.Schema] || table.Name == "" || names[key] || len(table.Columns) == 0 || len(table.Relationships) == 0 {
 			return invalid
 		}
 		names[key] = true
+		relations[key] = table
+		shadowed[key] = true
+		if snapshot.Version == 3 {
+			var keys []struct {
+				Name string `json:"foreignKeyName"`
+			}
+			if json.Unmarshal(table.Relationships, &keys) != nil {
+				return invalid
+			}
+			for _, constraint := range keys {
+				shadowed[table.Schema+"."+constraint.Name] = true
+			}
+		}
 		columns := map[string]bool{}
 		for _, column := range table.Columns {
 			if column.Name == "" || column.Type == "" || columns[column.Name] {
@@ -232,6 +264,29 @@ func validateSnapshot(snapshot Snapshot) error {
 			return invalid
 		}
 		names[key] = true
+		if fn.Setof != nil {
+			if !strings.HasSuffix(fn.Returns, "[]") || fn.Setof.To == "" {
+				return invalid
+			}
+			if _, exists := relations[fn.Schema+"."+fn.Setof.To]; !exists {
+				return invalid
+			}
+			if fn.Setof.From == "" {
+				if fn.Setof.OneToOne {
+					return invalid
+				}
+			} else {
+				source, exists := relations[fn.Schema+"."+fn.Setof.From]
+				if !exists || shadowed[key] || len(fn.Args) != 1 || fn.Args[0].Optional {
+					return invalid
+				}
+				for _, column := range source.Columns {
+					if column.Name == fn.Name {
+						return invalid
+					}
+				}
+			}
+		}
 		args := map[string]bool{}
 		for _, arg := range fn.Args {
 			if arg.Name == "" || arg.Type == "" || args[arg.Name] {

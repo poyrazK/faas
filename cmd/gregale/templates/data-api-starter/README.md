@@ -263,6 +263,19 @@ An absent details row yields null, and notes without replies return an empty
 array. Add `!inner` to an embed to omit rows without a visible match. Nested
 projection types only expose the selected columns.
 
+Approved relation-set RPCs also support typed nested projections and filters.
+A uniquely named `@gregale:rpc` STABLE/IMMUTABLE security-invoker function with
+one named, required source-row argument and a SETOF readable relation result
+defines a computed relationship in the same exposed schema. Source fields must
+use recognized types. `ROWS 1` embeds an object or null; direct RPC responses
+remain arrays. Names cannot shadow relations, FKs or source columns. The owner
+permission workflow grants supported functions and blocks executable unapproved
+relationships, including PUBLIC execution. Revoke those grants or make the
+function eligible, then fresh-restart and regenerate contracts. Snapshot version
+3 carries this metadata; upgrade the CLI and owner dashboard with the runtime.
+Function bodies still need owner review and subject RLS; supplying a row as an
+RPC argument does not prove the caller owns that row.
+
 Both child tables enforce their own subject RLS. Their composite foreign keys
 include the same subject as the parent, so a user cannot attach a comment or
 details to another user's note. Deleting a note cascades to its children. The
@@ -615,7 +628,8 @@ without overloads, named input arguments of recognized types, and scalar, void,
 scalar-set, named-composite or exposed-relation-set results. Named composites
 return objects; `SETOF` composites return arrays. Composite arguments accept JSON
 objects. Defaults make arguments optional;
-PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
+PostgreSQL permits null arguments and scalar results. Eligible computed
+relationships may accept their source relation row. Variadic, unnamed,
 OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
 relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,
@@ -629,9 +643,9 @@ composite RPC result expands to an object of null fields. All object keys are
 required by the generated contract. Hidden dependencies become `unknown` and
 exclude dependent RPCs. These types do not add REST table endpoints.
 
-New exports use normalized snapshot version 2 in the version 1 contract envelope.
+New exports use normalized snapshot version 3 in the version 1 contract envelope.
 Upgrade the CLI before consuming them. The current diff command also reads
-legacy version 1 baselines and flags nested composite changes even when the RPC
+legacy version 1/2 baselines and flags nested composite changes even when the RPC
 return type name stays unchanged. Removed fields, changed field types/nullability
 and added required keys are breaking; new composite types are compatible.
 

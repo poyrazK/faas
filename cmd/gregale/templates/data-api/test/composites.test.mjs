@@ -19,7 +19,7 @@ const ref = name => `Database["api"]["CompositeTypes"]["${name}"]`
 
 test('named composite fields, nullable nested arrays, RPC shapes and OpenAPI share one contract', () => {
   const snapshot = normalize([], types, [], ['api'], [fn], fields)
-  assert.equal(snapshot.version, 2)
+  assert.equal(snapshot.version, 3)
   assert.deepEqual(snapshot.composites, [
     { schema: 'api', name: 'location', fields: [{ name: 'label', type: 'string', nullable: true }] },
     { schema: 'api', name: 'profile', fields: [{ name: 'home', type: ref('location'), nullable: true }, { name: 'history', type: `(${ref('location')} | null)[]`, nullable: true }] },

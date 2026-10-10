@@ -3,6 +3,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -88,11 +90,20 @@ func TestDashboardDataAPIOperationsAreOwnerScopedAndCSRFBound(t *testing.T) {
 	if !strings.Contains(progress.Body.String(), `http-equiv="refresh"`) {
 		t.Fatal("queued operation did not refresh")
 	}
-	snapshot := `{"version":2,"schemas":["api"],"tables":[],"functions":[],"enums":{},"composites":[{"schema":"api","name":"location","fields":[{"name":"x","type":"number","nullable":true}]}]}`
+	snapshot, err := json.Marshal(dataapi.Snapshot{Version: 3, Schemas: []string{"api"}, Enums: map[string][]string{},
+		Tables: []dataapi.Table{{Schema: "api", Name: "orders", Columns: []dataapi.Column{{Name: "id", Type: "number"}}, Relationships: json.RawMessage(`[]`)}},
+		Functions: []dataapi.Function{{Schema: "api", Name: "latest_order", Args: []dataapi.Argument{{Name: "source_row", Type: `Database["api"]["Tables"]["orders"]['Row']`}},
+			Returns: `Database["api"]["Tables"]["orders"]['Row'][]`, Setof: &dataapi.Setof{From: "orders", To: "orders", OneToOne: true}}},
+		Composites: []dataapi.Composite{{Schema: "api", Name: "location", Fields: []dataapi.CompositeField{{Name: "x", Type: "number", Nullable: true}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	contract := fmt.Sprintf(`{"version":1,"fingerprint":"%x","snapshot":%s}`, sha256.Sum256([]byte(snapshot)), snapshot)
 	finishDataAPIDashboardTask(t, e, rows[0], contract, false)
 	result := restartProgressDashboardGET(e, cookie, post.Header().Get("Location"))
-	if !strings.Contains(result.Body.String(), "Schema fingerprint:") || !strings.Contains(result.Body.String(), "Composite api.location") || strings.Contains(result.Body.String(), `http-equiv="refresh"`) {
+	if !strings.Contains(result.Body.String(), "Schema fingerprint:") || !strings.Contains(result.Body.String(), "Composite api.location") ||
+		!strings.Contains(result.Body.String(), "RPC api.latest_order") || !strings.Contains(result.Body.String(), "Relationship from <code>orders</code>: one row or null") || strings.Contains(result.Body.String(), `http-equiv="refresh"`) {
 		t.Fatalf("completed result = %s", result.Body)
 	}
 }

@@ -368,11 +368,11 @@ fields become `unknown` and exclude RPCs that depend on them. Standalone
 composites are types rather than REST resources. Table row types continue to use
 the relation contract filtered by column privileges.
 
-New schema exports use normalized snapshot version 2 inside the unchanged
-version 1 contract envelope. The current CLI can compare both snapshot versions.
+New schema exports use normalized snapshot version 3 inside the unchanged
+version 1 contract envelope. The current CLI can also compare version 1 and 2 baselines.
 Upgrade the CLI before consuming new exports, regenerate types after upgrading
 the runtime, and review the diff before approving a new baseline. A format-only
-upgrade for a schema without composites produces no structural changes, though
+upgrade without new composite or result-relation metadata produces no structural changes, though
 its fingerprint changes.
 
 `@gregale/data` is packaged in `sdk/data` and follows the existing
@@ -475,7 +475,8 @@ generated helpers. Use security-invoker views and RLS on every underlying table.
 Computed key expressions, incomplete composite keys, unions, inaccessible
 origins, materialized views and unsupported definitions do not gain inferred
 relationships. Chains require readable objects in exposed schemas; cross-schema
-paths and computed relationships remain omitted. Multiple foreign keys require
+paths remain omitted. SQL-defined relationships use the explicit contract below.
+Multiple foreign keys require
 constraint hints. Repeated aliases of a composite key may still return
 `PGRST201` even with a constraint hint; avoid duplicating key projections when
 you need one unambiguous embed. Inference preserves the engine's alternatives
@@ -500,6 +501,79 @@ when its FK column is NOT NULL, so handle missing embeds at runtime or use
 `!inner` when a visible parent is required; static nullability follows the FK
 columns. The starter uses subject-bound composite FKs to prevent cross-user
 attachments as well as subject RLS on every table.
+
+## Typed computed relationships and RPC projections
+
+Use an opted-in SQL function to define a relationship without a foreign key:
+
+```sql
+CREATE FUNCTION api.latest_invoice(source_row api.orders)
+RETURNS SETOF api.invoices ROWS 1
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog
+AS $$
+  SELECT i.* FROM api.invoices i
+  WHERE i.subject=source_row.subject AND i.order_id=source_row.id
+  ORDER BY i.id DESC LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION api.latest_invoice(api.orders) FROM PUBLIC;
+COMMENT ON FUNCTION api.latest_invoice(api.orders) IS '@gregale:rpc';
+GRANT EXECUTE ON FUNCTION api.latest_invoice(api.orders) TO your_data_api_login;
+```
+
+The existing owner permission dry-run/apply workflow can grant the annotated
+function instead of the final manual `GRANT`. Keep RLS on source and target
+tables; use `security_invoker=true` for views. Function bodies remain
+owner-authored code and must enforce the intended relationship under the
+verified JWT subject. Passing a row to an RPC does not prove the caller owns it.
+
+```ts
+const orders = await db.from('orders')
+  .select('id,latest:latest_invoice(id,total)')
+// latest is the selected invoice object or null.
+
+const invoices = await db.rpc('search_invoices', { min_total: 100 })
+  .select('id,total,orders(id)').order('total').limit(10)
+// search_invoices must return SETOF api.invoices; its result is an array.
+```
+
+Generated source/target metadata lets the SDK infer aliases, nested joins,
+`!inner`, filters and projections. A computed relationship requires exactly one
+named, non-defaulted input of a fully readable exposed relation row type, with
+recognized field types, and a `SETOF` fully readable relation result. The source,
+target and function must share one exposed schema. Functions must be security
+invokers, `STABLE` or `IMMUTABLE`, uniquely named without overloads, executable by
+the binding and annotated exactly `@gregale:rpc`. Tables and ordinary readable
+views work as endpoints. Names cannot shadow an exposed relation, foreign-key
+constraint or source column. Overrides, cross-schema relationships, scalar
+computed fields, materialized/foreign-table endpoints and unsupported signatures
+are outside this contract.
+
+PostgREST uses `ROWS 1` for an object-or-null embed; other estimates produce
+arrays. Declare `ROWS 1` only when the body returns at most one row. A direct
+POST RPC call still returns an array, including for `ROWS 1`. The generated
+client accounts for both shapes; `.single()`/`.maybeSingle()` request object
+responses explicitly. Approved ordinary relation-set RPCs gain target metadata
+for nested projections too, without becoming computed relationships.
+
+Relationship functions can run inside `select`, outside the RPC route guard.
+Inspection and fresh startup therefore reject executable, engine-recognized
+relationship signatures that are not supported and opted in. Owner permission
+checks report `computed_relationship_not_approved` blockers and refuse apply
+until the serving role loses those grants, including inherited `PUBLIC`
+execution, or the function is made eligible. Private functions with execution
+revoked are omitted. Check permissions and fresh-restart after changing
+annotations, signatures, grants or security modes; this check assesses the
+current serving grants at inspection/startup and does not continuously monitor
+owner changes to them.
+
+Normalized snapshot version 3 carries optional function `setof` metadata with
+source, target and embed cardinality. Upgrade the CLI, runtime and owner
+dashboard together; the current parser accepts version 1 and 2 baselines.
+Regenerate types and review fingerprints after upgrading. Removing or changing
+existing result metadata is a breaking structural diff, even when `ROWS`
+changes leave the RPC's array return type unchanged. Adding result metadata is
+compatible. The local inspector, owner dashboard and OpenAPI extensions show
+the same relationship contract without function bodies or catalog identifiers.
 
 ## Automate migrations and client validation
 
@@ -893,7 +967,8 @@ without overloads, named input arguments of recognized types, and scalar, void,
 scalar-set, named-composite or exposed-relation-set results. Named composites
 return objects; `SETOF` composites return arrays. Composite arguments accept JSON
 objects, and nested fields use the generated contract. Defaults make arguments optional;
-PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
+PostgreSQL permits null arguments and scalar results. Eligible computed
+relationships may accept their source relation row. Variadic, unnamed,
 OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
 relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,

@@ -1,7 +1,7 @@
 import pg from 'pg'
 import { realpath } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { inspectClient } from './rpc-runtime/types.mjs'
+import { inspectClient, computedPermissionBlockers } from './rpc-runtime/types.mjs'
 import { limits } from './rpc-runtime/config.mjs'
 
 export function options(args) {
@@ -82,6 +82,7 @@ export async function permissions(connectionString, { role: requested, apply = f
     const { role, owner } = await rolePlan(client, requested)
     const issues = await blockers(client, role)
     const snapshot = await inspectClient(client, ['api'], { includeUnexecutable: true, privilegeRole: role.name })
+    issues.push(...await computedPermissionBlockers(client, ['api'], role.name, snapshot))
     const supported = new Set(snapshot.functions.map(f => f.name))
     const functions = (await client.query(`SELECT p.oid, p.proname AS name, r.rolname AS owner,
       EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=$1::oid AND a.privilege_type='EXECUTE') AS granted,

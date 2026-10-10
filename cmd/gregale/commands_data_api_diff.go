@@ -202,6 +202,9 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 		if old.Returns != current.Returns {
 			add(key, "RPC return type changed", true)
 		}
+		if !reflect.DeepEqual(old.Setof, current.Setof) {
+			add(key, "RPC result relationship metadata changed; review projections and computed embeds", old.Setof != nil)
+		}
 		args := map[string]dataAPIArgument{}
 		for _, arg := range current.Args {
 			args[arg.Name] = arg
