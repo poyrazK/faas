@@ -36,6 +36,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	clientIP := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
 	asnFlag := fs.String("asn", "", "simulated client autonomous system for asn conditions, e.g. AS13335")
+	verifiedBot := fs.Bool("verified-bot", false, "simulate a client IP that passes crawler verification, so verified_bot is the crawler the User-Agent header claims")
 	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
@@ -74,7 +75,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--verified-bot] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)
@@ -106,7 +107,7 @@ func cmdEdgeRulesTrace(args []string) int {
 			asn = uint32(n)
 		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
-			Project: *project, Environment: *environment, ASN: asn,
+			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,

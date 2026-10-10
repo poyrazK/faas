@@ -95,6 +95,12 @@ type EdgeRuleMatchContext struct {
 	asnLookup func(net.IP) uint32
 	asn       uint32
 
+	// ADR-968: verified crawler, resolved at most once and only when a
+	// verified_bot condition is evaluated.
+	verifiedBot func() string
+	botOnce     sync.Once
+	bot         string
+
 	// ADR-960: hit recording, deduplicated per request (a kind can be looked
 	// up more than once while serving one request).
 	hits     EdgeRuleHitRecorder
@@ -319,6 +325,7 @@ func edgeRuleMatchInputFor(ctx context.Context, requestPath, method string) api.
 		input.Host, input.Headers, input.Query, input.ClientIP = m.Host, m.Headers, m.Query, m.ClientIP
 		input.Country = m.resolvedCountry()
 		input.ASN = m.resolvedASN()
+		input.VerifiedBot = m.verifiedBot
 	}
 	return input
 }

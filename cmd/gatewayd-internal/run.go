@@ -2846,6 +2846,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.asnReader != nil {
 		handler.WithASNReader(deps.asnReader)
 	}
+	// ADR-968 — verified crawlers via forward-confirmed reverse DNS.
+	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.

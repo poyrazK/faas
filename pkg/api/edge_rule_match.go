@@ -51,6 +51,10 @@ type EdgeRuleMatchInput struct {
 	Country  string
 	// ASN is the client IP's autonomous system (ADR-966); 0 is absent.
 	ASN uint32
+	// VerifiedBot returns the known crawler the request was verified as
+	// (ADR-968), or "". It is called only when a verified_bot leaf is
+	// evaluated, because verification can cost a DNS lookup; nil is absent.
+	VerifiedBot func() string
 }
 
 type matchFieldKind int
@@ -65,6 +69,8 @@ const (
 	fieldCookie
 	fieldQuery
 	fieldASN
+	fieldUAFamily
+	fieldVerifiedBot
 )
 
 // EdgeRuleMatchProgram is a validated, compiled condition. It is immutable
@@ -199,7 +205,7 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 		return matchNode{}, fmt.Errorf("%s: %w", at, err)
 	}
 	n := matchNode{op: e.Op, field: kind, name: name}
-	n.foldCase = kind == fieldMethod || kind == fieldHost || kind == fieldCountry
+	n.foldCase = kind == fieldMethod || kind == fieldHost || kind == fieldCountry || kind == fieldUAFamily || kind == fieldVerifiedBot
 	if e.Op == "in_list" || e.List != "" {
 		return c.listLeaf(n, e, at)
 	}
@@ -274,6 +280,11 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 			return matchNode{}, fmt.Errorf("%s: asn supports eq, ne, in, not_in, exists, missing, in_list", at)
 		}
 	}
+	if kind == fieldUAFamily || kind == fieldVerifiedBot {
+		if err := checkBotLeaf(kind, e.Op, values); err != nil {
+			return matchNode{}, fmt.Errorf("%s: %w", at, err)
+		}
+	}
 	if kind == fieldClientIP {
 		switch e.Op {
 		case "cidr", "exists", "missing":
@@ -343,6 +354,10 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 		return fieldCountry, "", nil
 	case "asn":
 		return fieldASN, "", nil
+	case "ua_family":
+		return fieldUAFamily, "", nil
+	case "verified_bot":
+		return fieldVerifiedBot, "", nil
 	}
 	prefix, name, ok := strings.Cut(field, ":")
 	if ok && name != "" && len(name) <= edgeRuleMatchMaxSelectorLen {
@@ -355,7 +370,7 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 			return fieldQuery, name, nil
 		}
 	}
-	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, asn, header:<name>, cookie:<name>, query:<name>)", field)
+	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, asn, ua_family, verified_bot, header:<name>, cookie:<name>, query:<name>)", field)
 }
 
 // Matches evaluates the condition. A nil program always matches.
@@ -472,6 +487,15 @@ func (n *matchNode) fieldValues(in EdgeRuleMatchInput) ([]string, bool) {
 			return nil, false
 		}
 		return []string{strconv.FormatUint(uint64(in.ASN), 10)}, true
+	case fieldUAFamily:
+		f := ClassifyUserAgent(in.Headers.Get("User-Agent"))
+		return []string{f}, f != ""
+	case fieldVerifiedBot:
+		if in.VerifiedBot == nil {
+			return nil, false
+		}
+		b := in.VerifiedBot()
+		return []string{b}, b != ""
 	case fieldClientIP:
 		if in.ClientIP == nil {
 			return nil, false
@@ -510,4 +534,31 @@ func anyMatchValue(values []string, f func(string) bool) bool {
 		}
 	}
 	return false
+}
+
+// checkBotLeaf restricts ua_family and verified_bot (ADR-968) to equality
+// ops over their closed value sets, so a typo fails at write time instead of
+// never matching.
+func checkBotLeaf(kind matchFieldKind, op string, values []string) error {
+	name, known, set := "ua_family", func(v string) bool { return containsMatchValue(UAFamilies, v) }, strings.Join(UAFamilies, ", ")
+	if kind == fieldVerifiedBot {
+		names := make([]string, len(EdgeRuleKnownBots))
+		for i, b := range EdgeRuleKnownBots {
+			names[i] = b.Name
+		}
+		name, known, set = "verified_bot", knownEdgeRuleBot, strings.Join(names, ", ")
+	}
+	switch op {
+	case "exists", "missing":
+		return nil
+	case "eq", "ne", "in", "not_in":
+	default:
+		return fmt.Errorf("%s supports eq, ne, in, not_in, exists, missing", name)
+	}
+	for _, v := range values {
+		if !known(strings.ToLower(v)) {
+			return fmt.Errorf("%s: unknown value %q (%s)", name, v, set)
+		}
+	}
+	return nil
 }
