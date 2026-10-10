@@ -42,14 +42,10 @@ type APIConsumerUsageChargeBucket struct {
 // falls back to the app-level price. The output records which pricing source
 // determined each immutable statement line.
 func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
-	for _, card := range appCards {
-		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
-			// Allowances, tiers, weights, and plans are per consumer; a cross-app statement mixes sources
-			// and prices only usage deltas, so it cannot apply them correctly.
-			return APIConsumerUsageQuote{}, ErrAPIConsumerAllowanceInTenantStatement
-		}
-	}
 	if len(tenantCards) == 0 {
+		if err := requireFlatAppCards(appCards); err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
 		return QuoteAPIConsumerUsage(appCards, usage)
 	}
 	orderedTenantCards := append([]state.PlatformTenantRateCard(nil), tenantCards...)
@@ -100,6 +96,11 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	var fallbackQuote APIConsumerUsageQuote
 	var err error
 	if len(fallbackUsage) > 0 {
+		// Only minutes no tenant card prices fall back to app cards, so an
+		// app card's allowance, tiers, weights, or plan matter only then.
+		if err := requireFlatAppCards(appCards); err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
 		fallbackQuote, err = QuoteAPIConsumerUsage(appCards, fallbackUsage)
 		if err != nil {
 			return APIConsumerUsageQuote{}, err
@@ -146,6 +147,18 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	}
 	quote.Priced = quote.BillableUnits > 0 && quote.UnpricedUnits == 0 && quote.Currency != ""
 	return quote, nil
+}
+
+// requireFlatAppCards rejects app cards a cross-app statement cannot apply:
+// allowances, tiers, weights, and plans are per consumer, while a tenant
+// statement mixes sources and prices only usage deltas.
+func requireFlatAppCards(cards []state.APIConsumerRateCard) error {
+	for _, card := range cards {
+		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
+			return ErrAPIConsumerAllowanceInTenantStatement
+		}
+	}
+	return nil
 }
 
 // APIConsumerUsageQuote is a deterministic estimate, not an invoice or a

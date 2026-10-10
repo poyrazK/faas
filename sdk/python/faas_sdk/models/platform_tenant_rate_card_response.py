@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -12,6 +12,11 @@ from ..models.platform_tenant_rate_card_response_unit import (
     PlatformTenantRateCardResponseUnit,
     check_platform_tenant_rate_card_response_unit,
 )
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+
 
 T = TypeVar("T", bound="PlatformTenantRateCardResponse")
 
@@ -25,8 +30,12 @@ class PlatformTenantRateCardResponse:
     currency: str
     unit: PlatformTenantRateCardResponseUnit
     price_millicents_per_unit: int
+    included_units_per_month: int
+    """Free units per tenant per UTC calendar month (ADR-939)."""
     effective_from: datetime.datetime
     created_at: datetime.datetime
+    tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+    """Graduated ladder counted per tenant per UTC calendar month (ADR-939); absent for flat cards."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,9 +49,18 @@ class PlatformTenantRateCardResponse:
 
         price_millicents_per_unit = self.price_millicents_per_unit
 
+        included_units_per_month = self.included_units_per_month
+
         effective_from = self.effective_from.isoformat()
 
         created_at = self.created_at.isoformat()
+
+        tiers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.tiers, Unset):
+            tiers = []
+            for tiers_item_data in self.tiers:
+                tiers_item = tiers_item_data.to_dict()
+                tiers.append(tiers_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -53,15 +71,20 @@ class PlatformTenantRateCardResponse:
                 "currency": currency,
                 "unit": unit,
                 "price_millicents_per_unit": price_millicents_per_unit,
+                "included_units_per_month": included_units_per_month,
                 "effective_from": effective_from,
                 "created_at": created_at,
             }
         )
+        if tiers is not UNSET:
+            field_dict["tiers"] = tiers
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -73,9 +96,20 @@ class PlatformTenantRateCardResponse:
 
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
+        included_units_per_month = d.pop("included_units_per_month")
+
         effective_from = datetime.datetime.fromisoformat(d.pop("effective_from"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _tiers = d.pop("tiers", UNSET)
+        tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+        if _tiers is not UNSET:
+            tiers = []
+            for tiers_item_data in _tiers:
+                tiers_item = APIConsumerRateCardTier.from_dict(tiers_item_data)
+
+                tiers.append(tiers_item)
 
         platform_tenant_rate_card_response = cls(
             id=id,
@@ -83,8 +117,10 @@ class PlatformTenantRateCardResponse:
             currency=currency,
             unit=unit,
             price_millicents_per_unit=price_millicents_per_unit,
+            included_units_per_month=included_units_per_month,
             effective_from=effective_from,
             created_at=created_at,
+            tiers=tiers,
         )
 
         platform_tenant_rate_card_response.additional_properties = d

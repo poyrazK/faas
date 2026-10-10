@@ -15,7 +15,46 @@ const PlatformTenantRateCardUnitRequest = "request"
 // tenant-wide: one effective price applies to attributed usage from every app.
 type PlatformTenantRateCardStore interface {
 	CreatePlatformTenantRateCard(context.Context, string, string, string, int64, time.Time) (PlatformTenantRateCard, error)
+	// CreatePlatformTenantRateCardVersion creates a card with an optional
+	// tenant-wide monthly allowance or graduated ladder (ADR-939).
+	CreatePlatformTenantRateCardVersion(context.Context, PlatformTenantRateCardInput) (PlatformTenantRateCard, error)
 	ListPlatformTenantRateCards(context.Context, string, string) ([]PlatformTenantRateCard, error)
+}
+
+// PlatformTenantRateCardInput is one immutable tenant price version. With
+// Tiers set, the ladder prices usage, IncludedUnitsPerMonth must be zero, and
+// PriceMillicentsPerUnit records the last step's price.
+type PlatformTenantRateCardInput struct {
+	AccountID              string
+	TenantID               string
+	Currency               string
+	PriceMillicentsPerUnit int64
+	IncludedUnitsPerMonth  int64
+	Tiers                  []APIConsumerRateCardTier
+	EffectiveFrom          time.Time
+}
+
+func normalizePlatformTenantRateCardInput(in PlatformTenantRateCardInput) (PlatformTenantRateCardInput, error) {
+	const op = "CreatePlatformTenantRateCard"
+	in.Currency = normalizePlatformTenantRateCardCurrency(in.Currency)
+	in.EffectiveFrom = in.EffectiveFrom.UTC()
+	if len(in.Tiers) > 0 {
+		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
+			return in, fmt.Errorf("%s: %w: %w", op, ErrInvalidArgument, err)
+		}
+		if in.IncludedUnitsPerMonth != 0 {
+			return in, fmt.Errorf("%s: %w: tiers replace included_units_per_month", op, ErrInvalidArgument)
+		}
+		in.PriceMillicentsPerUnit = in.Tiers[len(in.Tiers)-1].PriceMillicentsPerUnit
+	}
+	if in.IncludedUnitsPerMonth < 0 {
+		return in, fmt.Errorf("%s: %w: included_units_per_month must be non-negative", op, ErrInvalidArgument)
+	}
+	if err := validatePlatformTenantRateCardInput(op, in.AccountID, in.TenantID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {
+		return in, err
+	}
+	in.Tiers = cloneRateCardTiers(in.Tiers)
+	return in, nil
 }
 
 var (

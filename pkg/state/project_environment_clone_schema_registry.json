@@ -6374,8 +6374,10 @@
       "currency",
       "effective_from",
       "id",
+      "included_units_per_month",
       "platform_tenant_id",
       "price_millicents_per_unit",
+      "tiers",
       "unit"
     ],
     "kind": "configuration"

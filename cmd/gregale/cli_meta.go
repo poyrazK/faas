@@ -2445,6 +2445,8 @@ var cliCommands = []cliCommand{
 				platformTenantIDFlag,
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
 				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "included-units", Short: "free requests per tenant per UTC calendar month across all apps", Value: "N"},
+				{Name: "tier", Short: "graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{

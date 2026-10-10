@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -10,7 +12,7 @@ import (
 )
 
 const platformTenantRateCardSelectCols = `id, account_id, platform_tenant_id, currency, unit,
-	price_millicents_per_unit, effective_from, created_at`
+	price_millicents_per_unit, included_units_per_month, tiers, effective_from, created_at`
 
 type platformTenantRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -18,10 +20,17 @@ type platformTenantRateCardRowScanner interface {
 
 func scanPlatformTenantRateCardRow(row platformTenantRateCardRowScanner) (PlatformTenantRateCard, error) {
 	var card PlatformTenantRateCard
+	var tiers []byte
 	err := row.Scan(&card.ID, &card.AccountID, &card.TenantID, &card.Currency, &card.Unit,
-		&card.PriceMillicentsPerUnit, &card.EffectiveFrom, &card.CreatedAt)
+		&card.PriceMillicentsPerUnit, &card.IncludedUnitsPerMonth, &tiers, &card.EffectiveFrom, &card.CreatedAt)
 	if err != nil {
 		return PlatformTenantRateCard{}, err
+	}
+	if err := json.Unmarshal(tiers, &card.Tiers); err != nil {
+		return PlatformTenantRateCard{}, fmt.Errorf("decode platform tenant rate card tiers: %w", err)
+	}
+	if len(card.Tiers) == 0 {
+		card.Tiers = nil
 	}
 	card.EffectiveFrom = card.EffectiveFrom.UTC()
 	card.CreatedAt = card.CreatedAt.UTC()
@@ -29,10 +38,22 @@ func scanPlatformTenantRateCardRow(row platformTenantRateCardRowScanner) (Platfo
 }
 
 func (s *PgStore) CreatePlatformTenantRateCard(ctx context.Context, accountID, tenantID, currency string, price int64, effectiveFrom time.Time) (PlatformTenantRateCard, error) {
-	currency = normalizePlatformTenantRateCardCurrency(currency)
-	effectiveFrom = effectiveFrom.UTC()
-	if err := validatePlatformTenantRateCardInput("CreatePlatformTenantRateCard", accountID, tenantID, currency, price, effectiveFrom); err != nil {
+	return s.CreatePlatformTenantRateCardVersion(ctx, PlatformTenantRateCardInput{AccountID: accountID, TenantID: tenantID,
+		Currency: currency, PriceMillicentsPerUnit: price, EffectiveFrom: effectiveFrom})
+}
+
+func (s *PgStore) CreatePlatformTenantRateCardVersion(ctx context.Context, in PlatformTenantRateCardInput) (PlatformTenantRateCard, error) {
+	in, err := normalizePlatformTenantRateCardInput(in)
+	if err != nil {
 		return PlatformTenantRateCard{}, err
+	}
+	accountID, tenantID, currency, effectiveFrom := in.AccountID, in.TenantID, in.Currency, in.EffectiveFrom
+	tiers, err := json.Marshal(in.Tiers)
+	if err != nil {
+		return PlatformTenantRateCard{}, err
+	}
+	if in.Tiers == nil {
+		tiers = []byte("[]")
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -56,11 +77,13 @@ func (s *PgStore) CreatePlatformTenantRateCard(ctx context.Context, accountID, t
 	}
 	card, err := scanPlatformTenantRateCardRow(tx.QueryRow(ctx,
 		`insert into platform_tenant_rate_cards
-			(account_id, platform_tenant_id, currency, unit, price_millicents_per_unit, effective_from)
-		 select account_id, id, $3, $4, $5, $6 from platform_tenants
+			(account_id, platform_tenant_id, currency, unit, price_millicents_per_unit, effective_from,
+			 included_units_per_month, tiers)
+		 select account_id, id, $3, $4, $5, $6, $7, $8::jsonb from platform_tenants
 		 where account_id = $1::uuid and id = $2::uuid
 		 returning `+platformTenantRateCardSelectCols,
-		accountID, tenantID, currency, PlatformTenantRateCardUnitRequest, price, effectiveFrom))
+		accountID, tenantID, currency, PlatformTenantRateCardUnitRequest, in.PriceMillicentsPerUnit, effectiveFrom,
+		in.IncludedUnitsPerMonth, string(tiers)))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

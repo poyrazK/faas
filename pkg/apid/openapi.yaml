@@ -47559,18 +47559,29 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1500 }
-        effective_from: { type: [string, "null"], format: date-time, description: UTC minute at which the version starts; omitted means the next UTC minute. }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order (ADR-939). Statements for periods it prices must cover one calendar month." }
+        tiers:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-939). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
       type: object
-      required: [id, tenant_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, tenant_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-939)." }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Graduated ladder counted per tenant per UTC calendar month (ADR-939); absent for flat cards."
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -47789,7 +47800,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
-      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present. Each line is billable_units × price_millicents_per_unit; free allowance units and each ladder step have their own line. In an adjustment that re-prices a month for a tenant allowance or tiers (ADR-939), a line is the difference from finalized revisions and can be negative, while the revision total never is.
       type: object
       required: [app_id, window_start, window_end, billable_units, amount_millicents]
       properties:
@@ -47799,12 +47810,12 @@ components:
         jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time, description: Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage. }
-        billable_units: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, description: "Units on this line; negative only in a re-priced month adjustment (ADR-939)." }
         rate_card_id: { type: string, format: uuid }
         platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, description: "billable_units × price_millicents_per_unit; negative only in a re-priced month adjustment (ADR-939)." }
 
     PlatformTenantStatementResponse:
       description: One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines and private minute-level adjustment coverage.
