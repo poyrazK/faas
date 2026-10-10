@@ -92,7 +92,8 @@ Every unit, drop-in and config task notifies a `try-restart` handler (ADR-143):
 active daemons pick the change up, disabled ones are left alone.
 
 `node_join.yml` fingerprints the compute bootstrap plays, their referenced
-roles and shared files, and pinned collection requirements. After a successful full convergence it
+roles and shared files, pinned collection requirements, and the operator
+variables file (`--ansible-vars-file`, cd-compute's `COMPUTE_ANSIBLE_VARS_B64`). After a successful full convergence it
 records that contract on the compute host. A later rollout skips the OS and
 role convergence only when the fingerprint still matches and the KVM device,
 fast-root mount, release link, runtime configuration, and enabled compute

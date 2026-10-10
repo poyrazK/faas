@@ -712,7 +712,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	opts.RolloutPhase = rolloutPhase
 	ansibleDir := filepath.Join(opts.RepoRoot, "deploy/ansible")
-	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir)
+	bootstrapContractSHA256, err := joinBootstrapContractHash(ansibleDir, opts.AnsibleVarsFile)
 	if err != nil {
 		return 3, err
 	}
@@ -1148,7 +1148,13 @@ func joinPeerContractHash(ansibleDir string, m *manifest.Manifest, inputFiles ..
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func joinBootstrapContractHash(ansibleDir string) (string, error) {
+// joinBootstrapContractHash fingerprints every input of the compute
+// bootstrap play. The operator vars file (cd-compute's
+// COMPUTE_ANSIBLE_VARS_B64) is an input: a variable-only change used to leave
+// the fingerprint unchanged, so the release-only fast path skipped role
+// convergence and the new value never reached a node. An empty varsFile
+// (no operator vars) contributes nothing, keeping that hash unchanged.
+func joinBootstrapContractHash(ansibleDir, varsFile string) (string, error) {
 	bootstrapBody, err := os.ReadFile(filepath.Join(ansibleDir, "bootstrap.yml"))
 	if err != nil {
 		return "", fmt.Errorf("read compute bootstrap playbook: %w", err)
@@ -1196,6 +1202,15 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 		if _, err := hash.Write([]byte{0}); err != nil {
 			return "", fmt.Errorf("hash bootstrap contract separator: %w", err)
 		}
+	}
+	if strings.TrimSpace(varsFile) != "" {
+		vars, err := os.ReadFile(varsFile)
+		if err != nil {
+			return "", fmt.Errorf("read compute Ansible variables: %w", err)
+		}
+		_, _ = io.WriteString(hash, "operator-vars\x00")
+		_, _ = hash.Write(vars)
+		_, _ = hash.Write([]byte{0})
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
