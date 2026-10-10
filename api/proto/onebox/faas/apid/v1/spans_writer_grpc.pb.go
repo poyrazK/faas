@@ -64,7 +64,7 @@ type SpansWriterClient interface {
 	//   - Internal on Postgres errors.
 	WriteSpansSummary(ctx context.Context, in *WriteSpansSummaryRequest, opts ...grpc.CallOption) (*WriteSpansSummaryResponse, error)
 	// IngestGuestSpans accepts one raw OTLP/HTTP trace export from the
-	// in-guest bridge (ADR-957). vmmd is the only caller: it bounds the
+	// in-guest bridge (ADR-958). vmmd is the only caller: it bounds the
 	// frame and supplies the host-owned principal, but never decodes the
 	// payload. apid checks the plan and per-account rate cap, decodes with
 	// the public-ingest codec, and merges spans through its own flush loop.
@@ -123,7 +123,7 @@ type SpansWriterServer interface {
 	//   - Internal on Postgres errors.
 	WriteSpansSummary(context.Context, *WriteSpansSummaryRequest) (*WriteSpansSummaryResponse, error)
 	// IngestGuestSpans accepts one raw OTLP/HTTP trace export from the
-	// in-guest bridge (ADR-957). vmmd is the only caller: it bounds the
+	// in-guest bridge (ADR-958). vmmd is the only caller: it bounds the
 	// frame and supplies the host-owned principal, but never decodes the
 	// payload. apid checks the plan and per-account rate cap, decodes with
 	// the public-ingest codec, and merges spans through its own flush loop.

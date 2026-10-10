@@ -9,7 +9,7 @@ import (
 )
 
 // traceSpansWriterTarget resolves apid's SpansWriter endpoint for guest
-// trace exports (ADR-957). Single-box hosts use the local Unix socket.
+// trace exports (ADR-958). Single-box hosts use the local Unix socket.
 // Split-box compute nodes dial apid's private mTLS listener — the one
 // gatewayd-internal already uses for spans — with vmmd's node-identity
 // apid-client leaf, which apid's node verifier binds to compute_nodes.name.

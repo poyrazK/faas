@@ -337,7 +337,7 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 // from customer-submitted spans. Only platform producers (the retained
 // service-spans exporter) may classify a span as a managed binding,
 // outbound integration or guest transport; a customer span claiming that
-// identity would otherwise be presented as platform evidence (ADR-957).
+// identity would otherwise be presented as platform evidence (ADR-958).
 // This path serves only customer ingest: the public OTLP endpoint and the
 // in-guest bridge.
 func stripPlatformAttributes(attrs map[string]string) map[string]string {

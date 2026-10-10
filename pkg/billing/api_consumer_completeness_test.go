@@ -11,7 +11,7 @@ func usageWithErrors(minute time.Time, requests, errs int64) state.APIConsumerUs
 	return state.APIConsumerUsageBucket{WindowStart: minute, RequestCount: requests, ErrorCount: errs, BillableUnits: requests}
 }
 
-// adr: 955
+// adr: 954
 func TestCheckAPIConsumerUsageCompleteness(t *testing.T) {
 	h0 := allowanceStart
 	h1, h2 := h0.Add(time.Hour), h0.Add(2*time.Hour)

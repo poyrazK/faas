@@ -16,7 +16,7 @@ import (
 var ErrAPIConsumerUsageRegressed = errors.New("API consumer usage is below a finalized statement")
 
 // ErrAPIConsumerChargeDecreased reports that re-rating a tiered period would
-// lower its total below what finalized revisions billed (ADR-952). Gregale
+// lower its total below what finalized revisions billed (ADR-951). Gregale
 // never issues credits, so the period cannot take an adjustment.
 var ErrAPIConsumerChargeDecreased = errors.New("API consumer charges would fall below a finalized statement")
 
@@ -33,7 +33,7 @@ func MonthStart(t time.Time) time.Time {
 }
 
 // WeightAPIConsumerUsage converts each minute's billable requests into
-// weighted units (ADR-953): a request on a route the effective card weights
+// weighted units (ADR-952): a request on a route the effective card weights
 // counts that many units, every other request counts one. Weighted units are
 // what allowances, tiers, and statements then measure. Route rows never add
 // more requests than the minute's total; an unattributed remainder counts at
@@ -92,9 +92,9 @@ func IsCalendarMonth(start, end time.Time) bool {
 // that no finalized revision has billed yet. Drafts and superseded drafts
 // never reserve usage. Per minute, the delta holds the units added since
 // finalization and the extra units charged: late usage earlier in a month
-// can exhaust the monthly allowance (ADR-951) sooner, so a minute may charge
+// can exhaust the monthly allowance (ADR-950) sooner, so a minute may charge
 // units it previously received free without adding any. A tiered minute
-// (ADR-952) is re-rated: its delta is the difference in each ladder step's
+// (ADR-951) is re-rated: its delta is the difference in each ladder step's
 // units and in amount, which can be negative when late usage pushed billed
 // units into a cheaper step. The revision as a whole never credits.
 func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.APIConsumerUsageStatement) (APIConsumerUsageQuote, error) {

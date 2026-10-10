@@ -1,4 +1,4 @@
-# ADR-957: Zero-config in-guest tracing for the debugger
+# ADR-958: Zero-config in-guest tracing for the debugger
 
 - **Status:** accepted for internal implementation; production acceptance pending
 - **Date:** 2026-10-09
@@ -10,6 +10,8 @@
   Python auto-instrumentation on managed runtimes. Export batches cross a
   dedicated vsock port; vmmd adds the host-owned identity without parsing them,
   and apid decodes, rate-limits and merges the spans into `request_telemetry`.
+
+Migration `20261009183654862_debug_regression_suspected_dependency.sql` retains its published ADR-934 header to preserve migration bytes. This tracing decision is now ADR-958; ADR-934 remains the durable entity guest outbox decision.
 
 ## Context
 

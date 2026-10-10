@@ -225,7 +225,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 		case outcome == "db_error":
 			entry.retries++
 		case outcome == "no_row":
-			// ADR-957: the request_telemetry row is published on
+			// ADR-958: the request_telemetry row is published on
 			// its own cadence and may land after the spans. Keep
 			// the entry and retry on the next tick, bounded by
 			// MaxRetries like any transient failure.

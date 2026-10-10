@@ -16,7 +16,7 @@ import (
 )
 
 // startTraceBridge serves the guest-local OTLP endpoint for apps that opted
-// into tracing (ADR-957). A bind failure (the app owns 4318) only disables
+// into tracing (ADR-958). A bind failure (the app owns 4318) only disables
 // tracing for this instance.
 func startTraceBridge(cfg *api.TracingConfig, log *slog.Logger) error {
 	if cfg == nil || !cfg.Enabled {

@@ -1,4 +1,4 @@
-// tracingserver is the ADR-957 native acceptance fixture: a scratch-image
+// tracingserver is the ADR-958 native acceptance fixture: a scratch-image
 // HTTP app with an OpenTelemetry SDK compiled in and no tracing
 // configuration of its own. It relies entirely on the OTEL_* environment
 // guest-init stamps, so a span reaching the debugger proves the guest bridge,

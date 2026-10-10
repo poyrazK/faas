@@ -160,12 +160,15 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	return cloneObjectUploadCompletion(old), nil
 }
 func (m *MemStore) FinishTrackedObjectUpload(_ context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	return m.finishTrackedObjectUpload(c, false)
+	return m.finishTrackedObjectUpload(c, false, false)
 }
 func (m *MemStore) FinishTrackedObjectUploadRecovery(_ context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	return m.finishTrackedObjectUpload(c, true)
+	return m.finishTrackedObjectUpload(c, true, false)
 }
-func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery bool) (ObjectUploadCompletion, error) {
+func (m *MemStore) FailPreparedObjectUpload(_ context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	return m.finishTrackedObjectUpload(c, false, true)
+}
+func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery, preparedOnly bool) (ObjectUploadCompletion, error) {
 	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
@@ -174,6 +177,9 @@ func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery 
 	old, ok := m.objectUploadCompletions[c.ID]
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return cloneObjectUploadCompletion(old), ErrNotFound
+	}
+	if preparedOnly && (c.Status != "failed" || old.WritePhase != ObjectUploadPrepared && old.Status != "failed") {
+		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
 		return cloneObjectUploadCompletion(old), ErrConflict

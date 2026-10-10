@@ -105,6 +105,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -go=1.26.9 && \
       go mod edit -require=golang.org/x/net@v0.60.0 && \
       go mod edit -require=golang.org/x/crypto@v0.57.0 && \
+      GOTOOLCHAIN=local go mod tidy && \
       GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         GOMAXPROCS=2 GOMEMLIMIT=2GiB GOGC=10 \
         go build -p 1 -mod=mod -buildvcs=false -trimpath \

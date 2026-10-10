@@ -4,7 +4,7 @@
 faas_networkd_dispatcher_ephemeral_filter: true
 faas_networkd_dispatcher_log_filter_min_systemd: 253
 
-# ADR-957 split-box guest trace exports reuse vmmd's node-identity
+# ADR-958 split-box guest trace exports reuse vmmd's node-identity
 # apid-client leaf (pkg/pki RoleUsesNodeIdentity).
 vmmd_apid_client_tls_cert_path: /etc/faas/tls/vmmd/apid-client.crt
 vmmd_apid_client_tls_key_path: /etc/faas/tls/vmmd/apid-client.key

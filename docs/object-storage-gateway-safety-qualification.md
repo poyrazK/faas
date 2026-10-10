@@ -38,7 +38,7 @@ API/gateway journey uses the built CLI against caller-provisioned disposable
 GCS buckets. It covers file upload/download, automatic multipart, receipt and
 session inspection, encryption controls, copy grants, deletion, inventories
 and safety usage. Neither journey qualifies production routing or every CLI
-argument. Object Lock, KMS/DSSE, conditional writes, version-specific tagging
+argument. Object Lock, KMS/DSSE, conditional multipart completion, version-specific tagging
 and checksum-mode version reads remain unsupported by the GCS adapter.
 
 ## Production preparation

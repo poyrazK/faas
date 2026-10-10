@@ -41,7 +41,7 @@ type Event struct {
 	DiscoveredRoute                      string         `json:"discovered_route,omitempty"`
 	DiscoveredAtUnixMs                   int64          `json:"discovered_at_unix_ms,omitempty"`
 	// BillingRoute is the bounded route label of consumer-attributed
-	// traffic, kept as route-level billable minutes for weights (ADR-953).
+	// traffic, kept as route-level billable minutes for weights (ADR-952).
 	BillingRoute string `json:"billing_route,omitempty"`
 }
 

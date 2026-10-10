@@ -1,4 +1,4 @@
-// Managed Node request tracing bootstrap (ADR-957). Failures affect
+// Managed Node request tracing bootstrap (ADR-958). Failures affect
 // diagnostics only and never prevent the application from starting.
 'use strict';
 function resolvable(specifier) {

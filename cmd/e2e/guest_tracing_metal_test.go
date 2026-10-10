@@ -1,6 +1,6 @@
 //go:build metal
 
-// guest_tracing_metal_test.go — ADR-957 native acceptance for zero-config
+// guest_tracing_metal_test.go — ADR-958 native acceptance for zero-config
 // in-guest tracing. Each scenario deploys an app with `tracing.enabled`,
 // wakes it from its init snapshot with one request carrying an unsampled
 // traceparent, and requires the app's span on the debugger evidence:
@@ -50,7 +50,7 @@ type guestTracingScenario struct {
 	evidenceOK func(detail string) bool
 }
 
-// adr: 957 — in-guest spans reach the debugger with no app tracing config.
+// adr: 958 — in-guest spans reach the debugger with no app tracing config.
 func TestGuestTracingMetal(t *testing.T) {
 	runGuestTracingScenario(t, guestTracingScenario{
 		slug: "guest-tracing",
@@ -63,7 +63,7 @@ func TestGuestTracingMetal(t *testing.T) {
 	})
 }
 
-// adr: 957 — the Node preload instruments an app that has no tracing code.
+// adr: 958 — the Node preload instruments an app that has no tracing code.
 func TestGuestTracingNodePreloadMetal(t *testing.T) {
 	dir := os.Getenv("FAAS_E2E_NODE_TRACING_IMAGE_DIR")
 	if dir == "" {

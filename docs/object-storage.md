@@ -378,7 +378,7 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional PUTs/completion return 501 explicitly. GCS tracked copies
+GCS conditional single PUTs support create-only `If-None-Match: *` and replacement `If-Match` through signed native generation fences (ADR-955). GCS conditional multipart completion returns 501 explicitly. GCS tracked copies
 support source conditions using a captured generation and metageneration.
 S3 copies support `x-amz-copy-source-if-match` and
 `x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
@@ -1362,7 +1362,7 @@ grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding
 enrollment to an existing backend changes its immutable placement fingerprint;
 preserve existing placement configuration and use the normal adoption process.
 Native generations remain private, and ordinary deletion does not manufacture
-S3 delete markers. GCS Object Lock, CMEK and conditional PUT/completion remain
+S3 delete markers. GCS Object Lock, CMEK and conditional multipart completion remain
 unsupported. See [ADR-628](adr/628-gcs-tracked-writes-and-native-generations.md).
 
 ## Multipart copy admission
@@ -2259,3 +2259,26 @@ Accepted receipts preserve these snapshots through disabled enrollment, changing
 defaults, restarts and missing acknowledgments. Settlement requires exact-version
 readback with the correct status, duration, private receipt and retention bound;
 recovery does not resend the body. See [ADR-622](adr/622-event-protection-for-new-object-versions.md).
+
+## Conditional single PUTs
+
+Use `gregale bucket upload APP BUCKET_ID KEY FILE --if-none-match '*'`
+to create an object only if no live object exists, or `--if-match '"ETAG"'`
+to replace a matching object. The API signed-URL request accepts `if_match` or
+`if_none_match`, and the returned condition header must be sent unchanged.
+These flags are mutually exclusive and apply to single PUTs. Transfers above
+the advertised single-PUT limit are rejected before multipart admission;
+combining a condition with `--resume` is rejected.
+
+Use the XML ETag returned by a gateway HEAD or CLI upload/download result for
+`--if-match`. The current GCS object-listing ETag comes from JSON metadata and
+cannot be used as this content predicate.
+
+GCS resolves a strong XML ETag (or the existence wildcard `*`) with a metered
+HEAD and signs the exact content generation for the native PUT. A concurrent
+replacement is rejected with 412 even when its ETag is unchanged. GCS weak
+ETags and ETag lists are unsupported. Missing destinations return 404; an
+ETag mismatch returns 412. Failed observations issue no native PUT, and
+uncertain dispatched writes retain their receipt for recovery. Conditional
+GCS multipart completion requires a separate durable staging/publication
+implementation and still returns 501. See [ADR-955](adr/955-gcs-conditional-put-capabilities.md).

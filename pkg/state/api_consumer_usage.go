@@ -23,7 +23,7 @@ type ConsumerUsageStore interface {
 }
 
 // ConsumerRouteUsageStore reads route-level billable minutes for rate-card
-// route weights (ADR-953). Optional, like ConsumerUsageStore.
+// route weights (ADR-952). Optional, like ConsumerUsageStore.
 type ConsumerRouteUsageStore interface {
 	ListAPIConsumerRouteUsage(ctx context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerRouteUsageBucket, error)
 }

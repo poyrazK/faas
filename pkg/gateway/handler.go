@@ -947,7 +947,7 @@ type Handler struct {
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
-	// consumerPlanStore and its policy cache enforce consumer plans (ADR-954).
+	// consumerPlanStore and its policy cache enforce consumer plans (ADR-953).
 	consumerPlanStore          ConsumerPlanStore
 	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
@@ -6053,7 +6053,7 @@ haveApp:
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
 	// Consumer-attributed traffic always carries a bounded billing route so
-	// rate cards can weight routes (ADR-953); consumer auth ran above.
+	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
 	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
 		path := inferredObservedPath(r.URL.Path)

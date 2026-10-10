@@ -37,7 +37,7 @@ class DebugRegressionItem:
     resolved_at: datetime.datetime | Unset = UNSET
     suspected_dependency: DebugSuspectedDependency | Unset = UNSET
     """The classified dependency whose p95 regressed most between the previous and the regressed deployment on this
-    route (ADR-957). Bounded and redacted; also sent in debug.regression.* webhooks."""
+    route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

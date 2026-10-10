@@ -721,7 +721,7 @@ test-postmortems: ## Validate completed post-mortems and INDEX links
 	bash scripts/ci/check_postmortems.sh $(CURDIR)
 
 .PHONY: test-runtime-bootstraps
-test-runtime-bootstraps: ## Startup-safety checks for the guest Node/Python profiling and tracing preloads (ADR-819, ADR-957)
+test-runtime-bootstraps: ## Startup-safety checks for the guest Node/Python profiling and tracing preloads (ADR-819, ADR-958)
 	python3 tests/profiling/bootstrap_test.py
 	python3 tests/tracing/bootstrap_test.py
 

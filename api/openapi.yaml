@@ -46038,6 +46038,8 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
         version_id: { type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object. }
+        if_match: { type: string, minLength: 1, maxLength: 256, description: 'PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.' }
+        if_none_match: { type: string, enum: ['*'], description: PUT only. Create only if no live object exists. Mutually exclusive with if_match. }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }
@@ -49721,7 +49723,7 @@ components:
         as_of: { type: string, format: date-time }
 
     APIConsumerUsageCompletenessResponse:
-      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-955)."
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-954)."
       type: object
       required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
       properties:
@@ -71722,7 +71724,7 @@ components:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
     TracingConfig:
-      description: "Opt-in zero-config request tracing baked into each deployment (ADR-957). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
+      description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
       required: [enabled]
       properties:
@@ -72126,7 +72128,7 @@ components:
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
-        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-957): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
+        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
 
     DebugCriticalPathSpan:
       type: object
@@ -72266,7 +72268,7 @@ components:
 
     DebugDependencyDeploymentComparison:
       type: object
-      description: "Dependency latency split by deployment (ADR-957): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
+      description: "Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
       required: [current_deployment_id, previous_deployment_id, dependencies, truncated]
       properties:
         current_deployment_id: { type: string }
@@ -72537,7 +72539,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-957). Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }

@@ -24,6 +24,9 @@ no traffic means unknown. Operations overlap: validation is part of restore.
 
 Busy/conflict outcomes are normal under contention. Inspect the exact entity using
 known application selectors; check pending work and owner status before retrying.
+
+## Recover uncertain outcomes
+
 For uncertain outcomes, retry the identical stable request and payload. A timeout
 is not proof that a write failed. Never change the request identity to bypass an
 uncertain restore. Corruption is distinct from missing state; never replace a

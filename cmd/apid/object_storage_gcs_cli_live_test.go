@@ -265,6 +265,47 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		return
 	}
 	rebase(t)
+	// adr: 955
+	if !t.Run("CLI native conditional writes", func(t *testing.T) {
+		key := "qualification/conditional/世界 +%.txt"
+		source, target := filepath.Join(t.TempDir(), "source"), filepath.Join(t.TempDir(), "download")
+		write := func(body string) {
+			t.Helper()
+			if err := os.WriteFile(source, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reject := func(object, predicate, value, status string) {
+			t.Helper()
+			command := newCommand("bucket", "upload", app.Slug, b.ID, object, source, predicate, value)
+			_, err := command.Output()
+			var failure *exec.ExitError
+			if !errors.As(err, &failure) || !bytes.Contains(failure.Stderr, []byte("HTTP "+status)) {
+				t.Fatal("native conditional CLI request did not reject its stale or missing target")
+			}
+		}
+		write("first native body")
+		first := run(t, "bucket", "upload", app.Slug, b.ID, key, source, "--if-none-match", "*")
+		var etag string
+		if err := json.Unmarshal(first["etag"], &etag); err != nil || etag == "" || string(first["status"]) != `"completed"` {
+			t.Fatal("conditional create did not return its native ETag")
+		}
+		rebase(t)
+		reject(key, "--if-none-match", "*", "412")
+		write("replacement native body")
+		run(t, "bucket", "upload", app.Slug, b.ID, key, source, "--if-match", etag)
+		rebase(t)
+		reject(key, "--if-match", etag, "412")
+		reject("qualification/conditional/absent", "--if-match", "*", "404")
+		run(t, "bucket", "download", app.Slug, b.ID, key, target)
+		if data, err := os.ReadFile(target); err != nil || string(data) != "replacement native body" {
+			t.Fatal("rejected conditional write changed native bytes", err)
+		}
+		run(t, "bucket", "deletions", "start", app.Slug, b.ID, key, uuid.NewString())
+		rebase(t)
+	}) {
+		return
+	}
 	for _, tc := range []struct {
 		name string
 		size int

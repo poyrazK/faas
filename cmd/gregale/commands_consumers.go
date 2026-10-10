@@ -434,7 +434,7 @@ func callConsumerStatements(ctx context.Context, client *Client, verb string, ar
 }
 
 // warnUsageGaps checks a drafted or finalized statement's period against
-// request telemetry (ADR-955) and warns on stderr when telemetry saw
+// request telemetry (ADR-954) and warns on stderr when telemetry saw
 // successful requests the billing ledger lacks. It is advisory: a failed
 // check never fails the command.
 func warnUsageGaps(ctx context.Context, client *Client, verb string, args []string, out any) {
@@ -572,7 +572,7 @@ func printStatementSummary(tw *tabwriter.Writer, id string, start, end time.Time
 	}
 }
 
-// printUsageCompleteness explains a completeness check (ADR-955) in terms
+// printUsageCompleteness explains a completeness check (ADR-954) in terms
 // of what the operator should do before invoicing.
 func printUsageCompleteness(tw *tabwriter.Writer, v api.APIConsumerUsageCompletenessResponse) {
 	_, _ = fmt.Fprintf(tw, "Status\t%s\n", v.Status)

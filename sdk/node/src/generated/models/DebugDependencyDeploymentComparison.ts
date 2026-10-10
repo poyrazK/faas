@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DebugDependencyLatencyItem } from './DebugDependencyLatencyItem.js';
 /**
- * Dependency latency split by deployment (ADR-957): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95.
+ * Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95.
  */
 export type DebugDependencyDeploymentComparison = {
   current_deployment_id: string;

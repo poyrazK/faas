@@ -81,6 +81,10 @@ func (u *ObjectURLCapability) Clone() *ObjectURLCapability {
 }
 
 func validObjectURLRequest(r api.ObjectSignRequest) bool {
+	conditions := api.ObjectWriteConditions{IfMatch: r.IfMatch, IfNoneMatch: r.IfNoneMatch}
+	if !conditions.Valid() || !conditions.Empty() && r.Method != http.MethodPut {
+		return false
+	}
 	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !ValidObjectVersionID(r.VersionID)) {
 		return false
 	}
@@ -200,7 +204,7 @@ func validObjectURLMultipartRequest(u *ObjectURLCapability) bool {
 	}
 	id, err := uuid.Parse(u.Multipart.UploadID)
 	r := u.Request
-	return err == nil && id != uuid.Nil && r.Method == http.MethodPut && r.SizeBytes != nil && *r.SizeBytes > 0 && r.ContentType == "application/octet-stream" && r.Protection == nil && r.Encryption == nil && len(r.Metadata) == 0 && len(r.Tags) == 0 && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == ""
+	return err == nil && id != uuid.Nil && r.Method == http.MethodPut && r.IfMatch == "" && r.IfNoneMatch == "" && r.SizeBytes != nil && *r.SizeBytes > 0 && r.ContentType == "application/octet-stream" && r.Protection == nil && r.Encryption == nil && len(r.Metadata) == 0 && len(r.Tags) == 0 && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == ""
 }
 
 func validObjectURLMultipartUpload(c ObjectS3Credential, u ObjectMultipartUpload, now time.Time) bool {

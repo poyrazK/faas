@@ -1,4 +1,4 @@
-# ADR-949 · Scenario TCP fault injection
+# ADR-967 · Scenario TCP fault injection
 
 - **Status:** accepted
 - **Date:** 2026-10-07

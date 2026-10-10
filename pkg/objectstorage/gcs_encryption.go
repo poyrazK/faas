@@ -80,10 +80,7 @@ func (p *GCS) PresignEncryptedPut(ctx context.Context, bucket string, r SignRequ
 	if r.SizeBytes == nil || r.Method != http.MethodPut || !validGCSReceipt(r.Key, receipt, *r.SizeBytes) || !c.Valid() {
 		return SignedRequest{}, ErrInvalid
 	}
-	if !c.Empty() {
-		return SignedRequest{}, ErrUnsupported
-	}
-	return p.presignGCS(ctx, bucket, r, http.Header{"x-goog-meta-" + ReservedUploadReceiptMetadataKey: {receipt}, "x-goog-meta-" + ReservedObjectEncryptionMetadataKey: {e.Proof()}})
+	return p.presignGCSConditionalPut(ctx, bucket, r, c, http.Header{"x-goog-meta-" + ReservedUploadReceiptMetadataKey: {receipt}, "x-goog-meta-" + ReservedObjectEncryptionMetadataKey: {e.Proof()}})
 }
 
 func (p *GCS) CopyEncryptedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, c CopySourceConditions, e ResolvedObjectEncryption) (CopyObjectResult, error) {
