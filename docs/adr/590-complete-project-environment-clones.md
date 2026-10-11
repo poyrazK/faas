@@ -10086,3 +10086,29 @@ Launch and cleanup behavior is unchanged. Native request provenance, producer
 closure and proof-backed release remain pending, as does dedicated native KVM
 qualification. No live provider qualification was performed; public full-stage
 admission remains gated.
+
+
+### Original qualification request to native generation observation
+
+The manager now exposes read-only correlation of a qualification execution with
+its already durable native generation binding. It checks the configured local
+node and complete original execution frame, then reads the incoming and physical
+journals under their existing incoming-before-physical lock order. The physical
+generation, kernel boot and lease must match the original binding. An unbound,
+missing or changed publication returns no partial evidence; a newer generation
+cannot substitute for the original. Private cleanup and artifact capabilities
+are omitted from the returned descriptor.
+
+Request revocation and physical authorization, revocation, exit and resource
+removal remain independent observations. Revoked requests remain observable
+without granting replay, cleanup, producer closure or evidence release authority.
+Daemon reconstruction on the same kernel preserves the original correlation.
+This uses the existing qualification binding; ordinary wake and migration request
+provenance still require their own native protocol.
+
+Pure Go tests cover exact original frames, foreign app/deployment/wake/attempt
+and cleanup capabilities, unbound requests, configured node authentication,
+changed physical leases and generations, revocation and daemon reconstruction.
+Launch and cleanup behavior is unchanged. Dedicated native KVM qualification,
+native producer closure and proof-backed release remain pending. No live provider
+qualification was performed; public full-stage admission remains gated.
