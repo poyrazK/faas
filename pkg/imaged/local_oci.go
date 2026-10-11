@@ -14,6 +14,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -455,7 +456,7 @@ func localOCIBlobName(digest string) (string, error) {
 // platform-runtime prefix to feed through the registry two-drive path, so all
 // layers from this content-verified local artifact are applied here. Content
 // verification alone does not establish an approved publisher's identity.
-func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
+func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
 	digest, err := localOCIManifestDigest(dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: verify source build digest: %w", err)
@@ -474,7 +475,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	defer cleanup()
 
-	manifest, err := manifestFromLocalOCIConfig(config, dep)
+	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
@@ -485,7 +486,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
-	manifest, err = applyOverrides(manifest, dep)
+	manifest, err = applyOverrides(manifest, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
@@ -516,12 +517,28 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.publishSourceRootfs(ctx, app, dep, appsKey, result, source); err != nil {
+	if err := h.publishSourceRootfs(ctx, app, *dep, appsKey, result, source); err != nil {
 		return fmt.Errorf("imaged: stamp local OCI rootfs: %w", err)
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		return err
 	}
 	h.log.Info("imaged: build local OCI app layer", "app", app.Slug, "bytes", result.ContentBytes)
+	// Source deployments with companions need the same build and secret-scan
+	// gate as registry-image deployments before snapshot prime can consume them.
+	scFindings, err := h.buildSidecarLayers(ctx, app, *dep, acct)
+	if err != nil {
+		return err
+	}
+	if len(scFindings) > 0 {
+		upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
+			scFindings, layerSecretScanStatusCompleteWithRedactions,
+			dep.ImageDigest, time.Now().UTC(), h.log)
+		if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "companion image secret detected"); markErr != nil {
+			h.log.Warn("imaged: mark deploy failed on companion layer secret",
+				"deployment", dep.ID, "app", app.Slug, "err", markErr)
+		}
+		return errImageSecretDetected
+	}
 	return nil
 }

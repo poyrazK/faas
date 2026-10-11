@@ -76,7 +76,7 @@ func (h *Handler) convertSourceBuild(ctx context.Context, app state.App, dep sta
 	if app.Type == state.AppTypeFunction || app.Runtime != "" {
 		return h.buildFunctionLayer(ctx, app, dep, acct, source)
 	}
-	return h.buildLocalOCIAppLayer(ctx, app, dep, acct, source)
+	return h.buildLocalOCIAppLayer(ctx, app, &dep, acct, source)
 }
 
 func (h *Handler) recheckSourceApproval(ctx context.Context, app state.App, dep state.Deployment, prior *state.BuildExportPublication) error {

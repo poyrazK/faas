@@ -1,8 +1,13 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/appstandards"
@@ -52,11 +57,11 @@ func TestApplicationStandardPublishedGoSDKContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authoritative, err := scanDTOs([]string{filepath.Join(root, "pkg/api/application_standards.go"), filepath.Join(root, "pkg/api/application_standard_resources.go"), filepath.Join(root, "pkg/api/application_standard_mutations.go"), filepath.Join(root, "pkg/api/application_standard_operation_mutations.go"), filepath.Join(root, "pkg/api/application_standard_assignments.go")})
+	authoritative, err := scanApplicationStandardDTOs([]string{filepath.Join(root, "pkg/api/application_standards.go"), filepath.Join(root, "pkg/api/application_standard_resources.go"), filepath.Join(root, "pkg/api/application_standard_mutations.go"), filepath.Join(root, "pkg/api/application_standard_operation_mutations.go"), filepath.Join(root, "pkg/api/application_standard_assignments.go")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err := scanDTOs([]string{filepath.Join(root, "sdk/go/internal/api/application_standards.go")})
+	published, err := scanApplicationStandardDTOs([]string{filepath.Join(root, "sdk/go/internal/api/application_standards.go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,4 +81,46 @@ func TestApplicationStandardPublishedGoSDKContracts(t *testing.T) {
 			t.Fatalf("published Go SDK %s differs from authoritative wire type", name)
 		}
 	}
+}
+
+func scanApplicationStandardDTOs(paths []string) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	for _, path := range paths {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, declaration := range file.Decls {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok || group.Tok != token.TYPE {
+				continue
+			}
+			for _, item := range group.Specs {
+				typeSpec, ok := item.(*ast.TypeSpec)
+				if !ok || !typeSpec.Name.IsExported() {
+					continue
+				}
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				fields := map[string]bool{}
+				for _, field := range structure.Fields.List {
+					if field.Tag == nil {
+						continue
+					}
+					tag, err := strconv.Unquote(field.Tag.Value)
+					if err != nil {
+						return nil, err
+					}
+					name := strings.Split(reflect.StructTag(tag).Get("json"), ",")[0]
+					if name != "" && name != "-" {
+						fields[name] = true
+					}
+				}
+				out[typeSpec.Name.Name] = fields
+			}
+		}
+	}
+	return out, nil
 }
