@@ -68,16 +68,29 @@ func layerCloneOwnershipGate(durable fcvm.LiveInstanceFunc, mgr instanceOwnershi
 	}
 }
 
-// layerCloneFlatDirs is where host-path drives live, and therefore where their
-// clones are created (beside the source). The legacy kernel path names it.
-func layerCloneFlatDirs(kernelPath string) []string {
-	if kernelPath == "" {
-		return nil
+// layerCloneFlatDirs is where vmmd's instance-addressed temp files land: beside
+// host-path drives (whose clones are created next to the source; the legacy
+// kernel path names that directory) and vmmd's TMPDIR, which holds snapshot
+// memory and materialised artifacts and, in production, layer clones too.
+func layerCloneFlatDirs(kernelPath, tempDir string) []string {
+	var dirs []string
+	add := func(dir string) {
+		if !filepath.IsAbs(dir) || dir == "/" {
+			return
+		}
+		dir = filepath.Clean(dir)
+		for _, d := range dirs {
+			if d == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
 	}
-	if dir := filepath.Dir(kernelPath); dir != "." && dir != "/" {
-		return []string{dir}
+	if kernelPath != "" {
+		add(filepath.Dir(kernelPath))
 	}
-	return nil
+	add(tempDir)
+	return dirs
 }
 
 func reapLayerClones(ctx context.Context, log *slog.Logger, root string, flatDirs []string, isLive fcvm.LiveInstanceFunc) {

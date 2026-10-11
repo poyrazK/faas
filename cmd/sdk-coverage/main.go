@@ -486,6 +486,12 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":                          "UnbindOutboundIntegration",
 	"PUT /v1/outbound/integrations/{integration}/credential":                          "PutOutboundCredential",
 	"DELETE /v1/outbound/integrations/{integration}/credential":                       "DeleteOutboundCredential",
+	"GET /v1/apps/{slug}/routes/advice":                                               "GetRouteAdvice",
+	"GET /v1/apps/{slug}/service-wake-ahead":                                          "GetServiceWakeAhead",
+	"PUT /v1/apps/{slug}/service-wake-ahead":                                          "SetServiceWakeAhead",
+	"GET /v1/apps/{slug}/route-priorities":                                            "GetRoutePriorities",
+	"PUT /v1/apps/{slug}/route-priorities":                                            "SetRoutePriorities",
+	"DELETE /v1/apps/{slug}/route-priorities":                                         "ResetRoutePriorities",
 	"GET /v1/apps/{slug}/route-monitor":                                               "GetRouteMonitor",
 	"PUT /v1/apps/{slug}/route-monitor":                                               "SetRouteMonitor",
 	"POST /v1/apps/{slug}/route-monitor/preview":                                      "PreviewRouteMonitor",
@@ -702,6 +708,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
+	"GET /v1/apps/{slug}/edge-protection":                                             "GetAppEdgeProtection",                 // literal hyphen, like env-diff; follows the spec operationId `getAppEdgeProtection`.
 	"GET /v1/apps/{slug}/env-diff":                                                    "GetAppEnvDiff",                        // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
 	"GET /v1/apps/{slug}/openapi":                                                     "GetAppOpenAPI",                        // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
 	"POST /v1/apps/{slug}/openapi":                                                    "ImportAppOpenAPI",                     // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc

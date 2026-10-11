@@ -868,6 +868,13 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRoutePriority struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Routes    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppRouteRemovalPolicy struct {
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID
@@ -983,6 +990,13 @@ type AppSecretRuntimeReloadObservation struct {
 type AppServiceAddressCursor struct {
 	AccountID pgtype.UUID
 	LastIndex int32
+}
+
+type AppServiceWakeAhead struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
 }
 
 type AppTask struct {

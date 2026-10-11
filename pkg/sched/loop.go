@@ -2848,14 +2848,15 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // drainSupersededReaperRows repairs a superseded deployment's drain when the
 // deployment_changed notification was missed or its park failed (production-us
 // hunt #8: superseded instances stayed resident and billed until the idle
-// timeout). The rows leave the snapshot so the idle and pressure selectors do
-// not act on the same instances in this tick.
+// timeout). Instances of cancelled or failed deployments are evicted the same
+// way (hunt #9). The rows leave the snapshot so the idle and pressure
+// selectors do not act on the same instances in this tick.
 func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []InstanceInfo) []InstanceInfo {
 	kept := snapshot[:0]
 	drained := map[string]struct{}{}
 	for _, row := range snapshot {
 		switch {
-		case !row.DeploymentSuperseded:
+		case !row.DeploymentSuperseded && !row.DeploymentEnded:
 			kept = append(kept, row)
 			continue
 		case row.State != state.StateRunning && row.State != state.StateWaking && row.State != state.StateColdBooting:
@@ -2868,9 +2869,9 @@ func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []Instanc
 			continue
 		}
 		drained[row.DeploymentID] = struct{}{}
-		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID)
+		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID, "ended", row.DeploymentEnded)
 		drainCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
-		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, true)
+		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, !row.DeploymentEnded)
 		cancel()
 	}
 	return kept

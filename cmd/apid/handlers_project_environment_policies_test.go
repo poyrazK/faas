@@ -5,11 +5,29 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestProjectEnvironmentPoliciesRejectTemplatedPath(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	if _, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const body = `{"rules":[{"kind":"headers","match_path":"/users/{id}","priority":100,"enabled":true,"action":{"response_headers":[{"name":"X-Environment","value":"staging","action":"set"}]}}]}`
+	req, rec := projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/policies", "shop", []byte(body))
+	req.SetPathValue("environment", "staging")
+	req.SetPathValue("workload", app.Slug)
+	srv.updateProjectEnvironmentPolicies(rec, req, acct)
+	if rec.Code < 400 || !strings.Contains(rec.Body.String(), `\"/users/?*\"`) {
+		t.Fatalf("templated environment policy path: status=%d body=%s; want a rejection naming the glob", rec.Code, rec.Body.String())
+	}
+}
 
 func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)

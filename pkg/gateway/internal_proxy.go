@@ -542,14 +542,20 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// leak that to the customer.
 	encodeOrigin504 := resp.StatusCode == http.StatusGatewayTimeout &&
 		strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone)
+	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
+	replacedStatic := map[string]bool{}
 	for k, vv := range resp.Header {
 		if isHopByHop(k) {
 			continue
 		}
-		// gatewayd-public's outer httpsec.Static middleware is the only
-		// wire owner for these headers. Copying gatewayd-internal's copy
-		// with Header.Add would emit duplicate policy values.
+		// On Gregale-owned hosts the outer middleware is the only wire
+		// owner for these headers; copying an inner copy would duplicate
+		// policy values. On customer hosts the app's value replaces the
+		// platform default (ADR-830).
 		if httpsec.IsStaticHeader(k) {
+			if customerOwned {
+				httpsec.CopyCustomerStaticHeader(w.Header(), k, vv, replacedStatic)
+			}
 			continue
 		}
 		// Only this proxy may emit the private edge transport marker. An

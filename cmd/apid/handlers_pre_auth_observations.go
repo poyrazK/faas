@@ -116,5 +116,29 @@ func (s *server) appPreAuthObservations(ctx context.Context, app state.App, rng 
 			policy.TargetFallback = count
 		}
 	}
+	if app.Manifest.PreAuthRateLimit.Mode == api.PreAuthRateLimitObserve {
+		// Advice only; a failed volume query omits the suggestion rather than
+		// guessing at readiness.
+		if requests, ok := s.appRequestCount(ctx, app.ID, rng); ok {
+			suggestion := api.SuggestPreAuthEnforcement(rng, requests, resp.Policies)
+			resp.Suggestion = &suggestion
+		}
+	}
 	return resp
+}
+
+// appRequestCount is the app's total gateway request count over rng.
+func (s *server) appRequestCount(ctx context.Context, appID, rng string) (int64, bool) {
+	samples, err := s.promqlClient.QueryVector(ctx, fmt.Sprintf(`sum(increase(gateway_requests_total{app=%q}[%s]))`, appID, rng))
+	if err != nil {
+		return 0, false
+	}
+	if len(samples) == 0 {
+		return 0, true
+	}
+	value := samples[0].Value
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) || value >= float64(1<<63-1) {
+		return 0, false
+	}
+	return int64(math.Round(value)), true
 }

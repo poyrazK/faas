@@ -997,6 +997,16 @@ from .durable_entity_state_export_format import DurableEntityStateExportFormat
 from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
+from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
+from .edge_protection_response_range import EdgeProtectionResponseRange
+from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
+from .edge_protection_response_rejections_item_gate import EdgeProtectionResponseRejectionsItemGate
+from .edge_protection_response_rejections_item_status import EdgeProtectionResponseRejectionsItemStatus
+from .edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
+from .edge_protection_response_waf import EdgeProtectionResponseWaf
+from .edge_protection_response_waf_categories_item import EdgeProtectionResponseWafCategoriesItem
+from .edge_protection_response_waf_top_rules_item import EdgeProtectionResponseWafTopRulesItem
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -1048,6 +1058,12 @@ from .edge_rule_throttle_action_missing_key_policy import EdgeRuleThrottleAction
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
+from .edge_rule_validate_parameters import EdgeRuleValidateParameters
+from .edge_rule_validate_parameters_headers import EdgeRuleValidateParametersHeaders
+from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
+from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
+from .edge_rule_waf_action import EdgeRuleWAFAction
+from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -1451,6 +1467,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
@@ -2458,6 +2475,8 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
+from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
 from .pre_auth_failed_response_limit_coordination import PreAuthFailedResponseLimitCoordination
 from .pre_auth_observations_response import PreAuthObservationsResponse
@@ -2914,6 +2933,11 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_impact import RouteAdviceImpact
+from .route_advice_response import RouteAdviceResponse
+from .route_advice_suggestion import RouteAdviceSuggestion
+from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
 from .route_budget_requirement import RouteBudgetRequirement
@@ -3099,6 +3123,11 @@ from .route_policy_plan_status import RoutePolicyPlanStatus
 from .route_policy_plan_version import RoutePolicyPlanVersion
 from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_priorities_response import RoutePrioritiesResponse
+from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_rule import RoutePriorityRule
+from .route_priority_rule_class import RoutePriorityRuleClass
+from .route_priority_rule_method import RoutePriorityRuleMethod
 from .route_public_exception import RoutePublicException
 from .route_public_exception_method import RoutePublicExceptionMethod
 from .route_removal_approval import RouteRemovalApproval
@@ -3225,6 +3254,7 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_response import ServiceWakeAheadResponse
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -3261,8 +3291,10 @@ from .set_route_health_gate_request_on_regression import SetRouteHealthGateReque
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
+from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
+from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -4585,6 +4617,16 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfo",
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
+    "EdgeProtectionResponse",
+    "EdgeProtectionResponsePreAuth",
+    "EdgeProtectionResponseRange",
+    "EdgeProtectionResponseRejectionsItem",
+    "EdgeProtectionResponseRejectionsItemGate",
+    "EdgeProtectionResponseRejectionsItemStatus",
+    "EdgeProtectionResponseValidationFailuresItem",
+    "EdgeProtectionResponseWaf",
+    "EdgeProtectionResponseWafCategoriesItem",
+    "EdgeProtectionResponseWafTopRulesItem",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -4636,6 +4678,12 @@ __all__ = (
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
+    "EdgeRuleValidateParameters",
+    "EdgeRuleValidateParametersHeaders",
+    "EdgeRuleValidateParametersPath",
+    "EdgeRuleValidateParametersQuery",
+    "EdgeRuleWAFAction",
+    "EdgeRuleWAFActionMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
@@ -5027,6 +5075,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
@@ -5986,6 +6035,8 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthEnforcementSuggestion",
+    "PreAuthEnforcementSuggestionStatus",
     "PreAuthFailedResponseLimit",
     "PreAuthFailedResponseLimitCoordination",
     "PreAuthObservationsResponse",
@@ -6406,6 +6457,11 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAdviceEvidence",
+    "RouteAdviceImpact",
+    "RouteAdviceResponse",
+    "RouteAdviceSuggestion",
+    "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
     "RouteBudgetRequirement",
@@ -6591,6 +6647,11 @@ __all__ = (
     "RoutePolicyPlanVersion",
     "RoutePolicyReceipt",
     "RoutePolicyRuleUsage",
+    "RoutePrioritiesResponse",
+    "RoutePrioritiesResponseSource",
+    "RoutePriorityRule",
+    "RoutePriorityRuleClass",
+    "RoutePriorityRuleMethod",
     "RoutePublicException",
     "RoutePublicExceptionMethod",
     "RouteRemovalApproval",
@@ -6713,6 +6774,7 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadResponse",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -6747,8 +6809,10 @@ __all__ = (
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
     "SetRouteMonitorRequestOnViolation",
+    "SetRoutePrioritiesRequest",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
+    "SetServiceWakeAheadRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",
