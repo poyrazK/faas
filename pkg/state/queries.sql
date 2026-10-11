@@ -16112,3 +16112,15 @@ WHERE r.state IN ('requested','retired') AND (
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text))))
 AND (sqlc.arg(after_dispatch_id)::text='' OR s.dispatch_id>NULLIF(sqlc.arg(after_dispatch_id)::text,'')::uuid)
 ORDER BY s.dispatch_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- A sender reads only the dispatch just retained in its admission transaction.
+-- This is original ownership, not a re-read of current instance metadata.
+-- name: GetCloneCheckpointWakeDispatch :one
+SELECT * FROM project_environment_clone_wake_dispatches WHERE instance_id=sqlc.arg(instance_id)::uuid;
+
+-- Match the permanent retirement fence's table-before-instance lock order.
+-- name: LockCloneCheckpointWakeDispatchTables :exec
+LOCK TABLE deployments, instances IN ROW EXCLUSIVE MODE;
+
+-- name: LockCloneCheckpointWakeDispatchInstance :one
+SELECT id FROM instances WHERE id=sqlc.arg(instance_id)::uuid FOR UPDATE;

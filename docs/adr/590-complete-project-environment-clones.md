@@ -10152,3 +10152,21 @@ must precede granting native launch authority. Delayed-producer revocation,
 closure and proof-backed evidence release also remain pending. Portable tests
 cover round trips and ambiguous, incomplete and foreign-node envelopes. No native
 VM or live provider was exercised; public full-stage admission remains gated.
+
+### Transactional original wake dispatch preparation
+
+The store now provides sender-side dispatch preparation that records admission
+and reads the retained original ownership in one read-committed transaction.
+Table locks follow the retirement fence's deployment-before-instance order, then
+an instance row lock serializes the original-dispatch check with other producers.
+A previously retained clone dispatch fails rather than becoming permission to
+retry, even if current deployment metadata has changed. The returned clone frame
+uses the database's original wake ID, reason and timestamp; it becomes available
+only after commit. Any error, including an uncertain commit, returns no frame.
+Ordinary non-clone wakes return no clone envelope.
+
+This additive store surface is not yet wired to the router or native launch.
+Transport integration, receiver payload matching, durable native incoming
+ownership, physical binding and delayed-producer closure remain pending. No
+schema or launch behavior changes are introduced. Public full-stage admission
+remains gated, and no native VM or live provider qualification is claimed.

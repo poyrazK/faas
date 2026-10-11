@@ -16104,6 +16104,28 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getCloneCheckpointWakeDispatch = `-- name: GetCloneCheckpointWakeDispatch :one
+SELECT instance_id, app_id, deployment_id, node_id, wake_id, request_reason, method, dispatched_at FROM project_environment_clone_wake_dispatches WHERE instance_id=$1::uuid
+`
+
+// A sender reads only the dispatch just retained in its admission transaction.
+// This is original ownership, not a re-read of current instance metadata.
+func (q *Queries) GetCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ProjectEnvironmentCloneWakeDispatch, error) {
+	row := db.QueryRow(ctx, getCloneCheckpointWakeDispatch, instanceID)
+	var i ProjectEnvironmentCloneWakeDispatch
+	err := row.Scan(
+		&i.InstanceID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.RequestReason,
+		&i.Method,
+		&i.DispatchedAt,
+	)
+	return i, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -32957,6 +32979,27 @@ func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context,
 	var generation int64
 	err := row.Scan(&generation)
 	return generation, err
+}
+
+const lockCloneCheckpointWakeDispatchInstance = `-- name: LockCloneCheckpointWakeDispatchInstance :one
+SELECT id FROM instances WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCloneCheckpointWakeDispatchInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointWakeDispatchInstance, instanceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockCloneCheckpointWakeDispatchTables = `-- name: LockCloneCheckpointWakeDispatchTables :exec
+LOCK TABLE deployments, instances IN ROW EXCLUSIVE MODE
+`
+
+// Match the permanent retirement fence's table-before-instance lock order.
+func (q *Queries) LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneCheckpointWakeDispatchTables)
+	return err
 }
 
 const lockCloneDeploymentCleanupBorrowerWriters = `-- name: LockCloneDeploymentCleanupBorrowerWriters :exec

@@ -177,3 +177,65 @@ func TestPgCloneWakeDispatchEmptyMigrationReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestPgCloneWakeDispatchPrepareOriginalTransport(t *testing.T) {
+	for _, method := range []string{"cold_boot", "restore"} {
+		t.Run(method, func(t *testing.T) {
+			s, pool, l := pgWorkloadRetirementFixture(t, "deployed")
+			ctx := t.Context()
+			in, err := s.ReserveProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx, l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := in.Plan.Workloads[0]
+			node := resolveDefaultLocal(t, ctx, s)
+			ins, err := s.CreateInstance(ctx, w.AppID, w.TargetDeploymentID, string(state.StateColdBooting), 128, node, uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out, err := s.PrepareCloneCheckpointWakeDispatch(ctx, ins.ID, ins.AppID, ins.DeploymentID, uuid.NewString(), method); err == nil || out != nil {
+				t.Fatal("foreign node acquired ownership", err)
+			}
+			out, err := s.PrepareCloneCheckpointWakeDispatch(ctx, ins.ID, ins.AppID, ins.DeploymentID, node, method)
+			if err != nil || out == nil {
+				t.Fatal("original dispatch unavailable", err)
+			}
+			if out.InstanceID != ins.ID || out.AppID != ins.AppID || out.DeploymentID != ins.DeploymentID || out.NodeID != node || out.WakeID != ins.WakeID || out.Method != method || out.RequestReason != "environment-clone:"+l.Operation.ID || out.DispatchedAt.IsZero() {
+				t.Fatal("original fields changed")
+			}
+			var at time.Time
+			if err = pool.QueryRow(ctx, "SELECT dispatched_at FROM project_environment_clone_wake_dispatches WHERE instance_id=$1", ins.ID).Scan(&at); err != nil || !at.Equal(out.DispatchedAt) {
+				t.Fatal("timestamp synthesized before commit", err)
+			}
+			if replay, err := s.PrepareCloneCheckpointWakeDispatch(ctx, ins.ID, ins.AppID, ins.DeploymentID, node, method); err == nil || replay != nil {
+				t.Fatal("unknown RPC outcome replayed", err)
+			}
+			if _, err = pool.Exec(ctx, "UPDATE deployments SET reason='metadata-changed' WHERE id=$1", ins.DeploymentID); err != nil {
+				t.Fatal(err)
+			}
+			if replay, err := s.PrepareCloneCheckpointWakeDispatch(ctx, ins.ID, ins.AppID, ins.DeploymentID, node, method); !errors.Is(err, state.ErrConflict) || replay != nil {
+				t.Fatal("changed deployment metadata authorized replay", err)
+			}
+			if _, err = pool.Exec(ctx, "UPDATE deployments SET reason=$2 WHERE id=$1", ins.DeploymentID, "environment-clone:"+l.Operation.ID); err != nil {
+				t.Fatal(err)
+			}
+			source, err := s.CreateInstance(ctx, w.AppID, w.SourceDeploymentID, string(state.StateColdBooting), 128, node, uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ordinary, err := s.PrepareCloneCheckpointWakeDispatch(ctx, source.ID, source.AppID, source.DeploymentID, node, method); err != nil || ordinary != nil {
+				t.Fatal("ordinary source acquired clone envelope", err)
+			}
+			if _, _, err = s.ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx, l); err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := s.CreateInstance(ctx, w.AppID, w.SourceDeploymentID, string(state.StateColdBooting), 128, node, uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if denied, err := s.PrepareCloneCheckpointWakeDispatch(ctx, fresh.ID, fresh.AppID, w.TargetDeploymentID, node, method); err == nil || denied != nil {
+				t.Fatal("changed owner escaped fence", err)
+			}
+		})
+	}
+}

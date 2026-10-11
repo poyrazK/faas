@@ -784,6 +784,9 @@ type Querier interface {
 	// X / Y / Z" badge.
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
+	// A sender reads only the dispatch just retained in its admission transaction.
+	// This is original ownership, not a re-read of current instance metadata.
+	GetCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ProjectEnvironmentCloneWakeDispatch, error)
 	GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, arg GetCustomerAppSecretForDeletionParams) (GetCustomerAppSecretForDeletionRow, error)
 	GetCustomerOperation(ctx context.Context, db DBTX, arg GetCustomerOperationParams) ([]byte, error)
 	GetCustomerOperationDefinition(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionParams) (GetCustomerOperationDefinitionRow, error)
@@ -1656,6 +1659,9 @@ type Querier interface {
 	LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error)
 	LockCloneCheckpointSchedulerAdmission(ctx context.Context, db DBTX) error
 	LockCloneCheckpointUnusedReservationClock(ctx context.Context, db DBTX) (int64, error)
+	LockCloneCheckpointWakeDispatchInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.UUID, error)
+	// Match the permanent retirement fence's table-before-instance lock order.
+	LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error
 	LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error
 	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
