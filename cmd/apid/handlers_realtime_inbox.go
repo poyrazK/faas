@@ -29,7 +29,14 @@ func (s *server) sendManagedRealtimePrincipalInbox(w http.ResponseWriter, r *htt
 	}
 	var message state.ManagedRealtimeChannelMessage
 	var err error
-	if request.FallbackAfterSeconds > 0 {
+	if request.TTLSeconds > 0 {
+		expiring, available := s.store.(state.ManagedRealtimeExpiringInboxStore)
+		if !available {
+			api.WriteProblem(w, api.ErrCapacity("realtime inbox expiry storage unavailable"))
+			return
+		}
+		message, err = expiring.AppendManagedRealtimeInboxExpiring(r.Context(), row.ID, request, data)
+	} else if request.FallbackAfterSeconds > 0 {
 		category := request.NotificationCategory
 		if category == "" {
 			category = "notifications"
@@ -60,7 +67,7 @@ func (s *server) sendManagedRealtimePrincipalInbox(w http.ResponseWriter, r *htt
 	s.audit.Emit(r.Context(), "realtime.inbox_message_retained", &acct.ID, map[string]any{"endpoint_id": row.ID, "message_id": request.MessageID, "sequence": message.Sequence})
 	// Realtime nodes read the committed stream. Storage acceptance is sufficient
 	// even when every device or realtime node is currently offline.
-	response := api.ManagedRealtimePrincipalSendResponse{MessageID: request.MessageID, Sequence: message.Sequence, Durable: true}
+	response := api.ManagedRealtimePrincipalSendResponse{DeliveryExpiresAt: message.ExpiresAt, MessageID: request.MessageID, Sequence: message.Sequence, Durable: true}
 	if message.FallbackAfterSeconds > 0 {
 		response.FallbackDeadline = message.CreatedAt.Add(time.Duration(message.FallbackAfterSeconds) * time.Second).UTC().Format(time.RFC3339Nano)
 	}
@@ -118,9 +125,15 @@ func (s *server) readManagedRealtimeInbox(w http.ResponseWriter, r *http.Request
 	response.OldestSequence, response.LatestSequence = history.OldestSequence, history.LatestSequence
 	response.HistoryUnavailable = history.HistoryUnavailable
 	last := after
+	now := time.Now().UTC()
 	for _, message := range history.Messages {
-		response.Messages = append(response.Messages, api.ManagedRealtimeInboxMessageResponse{MessageID: message.TargetMessageID, TargetMessageID: message.TargetMessageID, Version: message.Version, Event: message.MessageEvent, Deleted: message.Deleted, Sequence: message.Sequence,
-			DataBase64: base64.StdEncoding.EncodeToString(message.Data), Binary: message.Binary, CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339Nano),
+		expired := message.Expired(now)
+		payload := ""
+		if !expired {
+			payload = base64.StdEncoding.EncodeToString(message.Data)
+		}
+		response.Messages = append(response.Messages, api.ManagedRealtimeInboxMessageResponse{TTLSeconds: message.TTLSeconds, DeliveryExpiresAt: message.ExpiresAt, Expired: expired, MessageID: message.TargetMessageID, TargetMessageID: message.TargetMessageID, Version: message.Version, Event: message.MessageEvent, Deleted: message.Deleted, Sequence: message.Sequence,
+			DataBase64: payload, Binary: message.Binary, CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339Nano),
 			ExpiresAt: message.CreatedAt.Add(state.ManagedRealtimeInboxRetention).UTC().Format(time.RFC3339Nano)})
 		last = message.Sequence
 	}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
@@ -25,6 +26,9 @@ class ManagedRealtimeInboxMessageResponse:
     created_at: str
     expires_at: str
     target_message_id: str | Unset = UNSET
+    ttl_seconds: int | Unset = 0
+    delivery_expires_at: datetime.datetime | Unset = UNSET
+    expired: bool | Unset = False
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,11 +70,25 @@ class ManagedRealtimeInboxMessageResponse:
         if target_message_id is not UNSET:
             field_dict["target_message_id"] = target_message_id
 
+        if not isinstance(self.ttl_seconds, Unset):
+            field_dict["ttl_seconds"] = self.ttl_seconds
+        if not isinstance(self.delivery_expires_at, Unset):
+            field_dict["delivery_expires_at"] = self.delivery_expires_at.isoformat()
+        if not isinstance(self.expired, Unset):
+            field_dict["expired"] = self.expired
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        expired = d.pop("expired", UNSET)
+
+        delivery_expires_at = d.pop("delivery_expires_at", UNSET)
+        if not isinstance(delivery_expires_at, Unset):
+            delivery_expires_at = datetime.datetime.fromisoformat(delivery_expires_at)
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
+
         version = d.pop("version")
 
         event = d.pop("event")
@@ -92,6 +110,9 @@ class ManagedRealtimeInboxMessageResponse:
         target_message_id = d.pop("target_message_id", UNSET)
 
         managed_realtime_inbox_message_response = cls(
+            expired=expired,
+            delivery_expires_at=delivery_expires_at,
+            ttl_seconds=ttl_seconds,
             version=version,
             event=event,
             deleted=deleted,

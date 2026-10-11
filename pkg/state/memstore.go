@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	realtimeTickets                      map[string]storedRealtimeTicket
+	realtimeChannelWebhookFilters        map[string]RealtimeChannelWebhookFilter
 	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
 	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
 	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
@@ -487,6 +489,7 @@ type MemStore struct {
 	webhookAutomationRevision       int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
+	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
 	managedRealtimeHistory          map[managedRealtimeHistoryKey]*managedRealtimeHistoryState
 	managedRealtimeDurableCursors   map[managedRealtimeDurableCursorKey]managedRealtimeDurableCursorState

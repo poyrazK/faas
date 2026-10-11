@@ -446,6 +446,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PYROSCOPE_URL", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "private tenant-enabled backend configured in /etc/faas/profiling.env"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 
+	{Name: "FAAS_REALTIME_ACCESS_PREVIEW_ENABLED", Owners: []string{"apid", "realtimed"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use"},
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_OUTBOX", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "bounded parallel callback recovery; values above 32 are capped"},
@@ -468,6 +469,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_RETAINED_PREVIEW_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only retained outbound history preview; off pending plan entitlements and fleet qualification"},
 	{Name: "FAAS_REALTIME_ROLE", Owners: []string{"realtimed", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"apid", "gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_REALTIME_TICKETS_PREVIEW_ENABLED", Owners: []string{"apid", "realtimed"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader"},
+	{Name: "FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "0", Note: "opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation"},
 	{Name: "FAAS_REALTIME_WRITE_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_COOLDOWN_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_MAX_PER_TICK", Owners: []string{"schedd"}, Source: EnvSourceDefault},

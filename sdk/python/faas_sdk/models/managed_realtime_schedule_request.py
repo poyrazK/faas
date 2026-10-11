@@ -47,6 +47,7 @@ class ManagedRealtimeScheduleRequest:
     """Initial retry delay, doubled per failure up to one hour."""
     binary: bool | Unset = False
     metadata: ManagedRealtimeScheduleRequestMetadata | Unset = UNSET
+    ttl_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +116,8 @@ class ManagedRealtimeScheduleRequest:
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
 
+        if self.ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = self.ttl_seconds
         return field_dict
 
     @classmethod
@@ -122,6 +125,7 @@ class ManagedRealtimeScheduleRequest:
         from ..models.managed_realtime_schedule_request_metadata import ManagedRealtimeScheduleRequestMetadata
 
         d = dict(src_dict)
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
         data_base64 = d.pop("data_base64")
 
         deliver_at = datetime.datetime.fromisoformat(d.pop("deliver_at"))
@@ -185,6 +189,7 @@ class ManagedRealtimeScheduleRequest:
             backoff_seconds=backoff_seconds,
             binary=binary,
             metadata=metadata,
+            ttl_seconds=ttl_seconds,
         )
 
         managed_realtime_schedule_request.additional_properties = d

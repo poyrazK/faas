@@ -26,6 +26,8 @@ type realtimeInboxRequest struct {
 }
 
 type realtimeInboxResponse struct {
+	Ticket       *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
+	Access       *state.ManagedRealtimeAccess         `json:"access,omitempty"`
 	Preferences  *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
 	ReadProgress *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
 	History      state.ManagedRealtimeChannelHistory  `json:"history"`
@@ -42,7 +44,7 @@ func (r *realtimeFleetReceiver) InboxOperation(ctx context.Context, envelope *wr
 		return nil, status.Error(codes.InvalidArgument, "invalid realtime inbox request")
 	}
 	var req realtimeInboxRequest
-	if decodeRealtimeFleetJSON(envelope.GetValue(), &req) != nil || (req.Action != "channel_read" && api.ValidateRealtimePrincipal(req.Principal) != nil) || req.Sequence < 0 {
+	if decodeRealtimeFleetJSON(envelope.GetValue(), &req) != nil || (req.Action != "channel_read" && req.Action != "ticket_read" && api.ValidateRealtimePrincipal(req.Principal) != nil) || req.Sequence < 0 {
 		return nil, status.Error(codes.InvalidArgument, "invalid realtime inbox request")
 	}
 	if err := r.requireEnabledEndpoint(ctx, req.EndpointID); err != nil {
@@ -57,6 +59,25 @@ func (r *realtimeFleetReceiver) InboxOperation(ctx context.Context, envelope *wr
 	}
 	var response realtimeInboxResponse
 	switch req.Action {
+	case "ticket_read":
+		tickets, ok := r.store.(state.RealtimeSubscriptionTicketStore)
+		if !ok {
+			return nil, status.Error(codes.Unavailable, "tickets unavailable")
+		}
+		claims, ticketErr := tickets.ReadRealtimeSubscriptionTicket(ctx, req.EndpointID, req.Consumer)
+		if ticketErr != nil {
+			return nil, status.Error(codes.Unauthenticated, "ticket unavailable")
+		}
+		response.Ticket = &claims
+	case "access_read":
+		access, ok := r.store.(state.ManagedRealtimeAccessStore)
+		if !ok {
+			return nil, status.Error(codes.Unavailable, "realtime access unavailable")
+		}
+		snapshot, accessErr := access.ReadManagedRealtimeAccess(ctx, req.EndpointID, req.Principal)
+		response.Access = &snapshot
+		err = accessErr
+
 	case "preferences_get", "preferences_put":
 		preferences, ok := r.store.(state.ManagedRealtimePushPreferencesStore)
 		if !ok {

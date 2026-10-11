@@ -751,6 +751,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeEntityExpirations(ctx)
 		go srv.runManagedRealtimeSchedules(ctx)
+		go srv.runRealtimeConsumerGroupAlerts(ctx)
+		go srv.runRealtimeConsumerGroupDeadRetention(ctx)
+		go srv.runRealtimeReplayJobs(ctx)
+		go srv.runRealtimeConsumerGroupWorkerHealth(ctx)
 		go srv.runManagedRealtimeFallbacks(ctx)
 		go srv.runManagedRealtimePush(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
@@ -1442,6 +1446,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
+		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
+		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)
@@ -1643,10 +1649,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || isRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait;
 				// give that handler the full platform ceiling so the
 				// outer apid budget does not truncate paid plans.
+				// Claim routes also need room for bounded long polls.
 				return api.RequestBudgetMax
 			}
 			return 0

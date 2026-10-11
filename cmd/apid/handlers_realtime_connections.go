@@ -387,10 +387,16 @@ func decodeManagedRealtimeMessage(r *http.Request) (realtime.Message, *api.Probl
 			return realtime.Message{}, api.ErrRealtimeInvalid("expected_sequence must be nonnegative and requires retained channel publishing")
 		}
 	}
+	if request.TTLSeconds != 0 {
+		delivery, valid := managedRealtimeDeliveryFromRequest(r)
+		if request.TTLSeconds < 0 || request.TTLSeconds > api.RealtimeMessageTTLMaxSeconds || r.PathValue("channel") == "" || !valid || delivery != api.ManagedRealtimeDeliveryRetained {
+			return realtime.Message{}, api.ErrRealtimeInvalid("ttl_seconds requires retained channel publishing and must be between 1 and 86400")
+		}
+	}
 	if api.ValidateRealtimeMetadata(request.Metadata) != nil {
 		return realtime.Message{}, api.ErrRealtimeInvalid("invalid message metadata")
 	}
-	return realtime.Message{ExpectedSequence: request.ExpectedSequence, Metadata: request.Metadata, Data: data, Binary: request.Binary}, nil
+	return realtime.Message{TTLSeconds: request.TTLSeconds, ExpectedSequence: request.ExpectedSequence, Metadata: request.Metadata, Data: data, Binary: request.Binary}, nil
 }
 
 func validateManagedRealtimeChannel(channel string) *api.Problem {
@@ -797,6 +803,10 @@ func (s *server) sendManagedRealtimePrincipal(w http.ResponseWriter, r *http.Req
 		return
 	}
 	retained := request.Delivery == api.ManagedRealtimeDeliveryRetained
+	if request.TTLSeconds < 0 || request.TTLSeconds > api.RealtimeMessageTTLMaxSeconds || request.TTLSeconds > 0 && !retained {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("ttl_seconds must be 0–86400 and positive TTL requires retained inbox delivery"))
+		return
+	}
 	if _, err := api.ParseRealtimeNotificationNotBefore(request.NotificationNotBefore, time.Now().UTC()); err != nil || request.NotificationNotBefore != "" && request.FallbackAfterSeconds == 0 {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_not_before requires fallback, an RFC3339 timestamp, and at most 48 hours ahead"))
 		return
@@ -1195,7 +1205,13 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 		}
 		var retained state.ManagedRealtimeChannelMessage
 		var err error
-		if message.ExpectedSequence != nil {
+		if message.TTLSeconds > 0 {
+			if expiring, ok := s.store.(state.ManagedRealtimeExpiringStore); ok {
+				retained, err = expiring.AppendManagedRealtimeChannelExpiring(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0], message.Metadata, message.ExpectedSequence, message.TTLSeconds)
+			} else {
+				err = state.ErrManagedRealtimeHistoryInvalid
+			}
+		} else if message.ExpectedSequence != nil {
 			if conditional, ok := s.store.(state.ManagedRealtimeConditionalStore); ok {
 				retained, err = conditional.AppendManagedRealtimeChannelConditional(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0], message.Metadata, message.ExpectedSequence)
 			} else {
@@ -1215,6 +1231,7 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 			return
 		}
 		retainedSequence = retained.Sequence
+		message.ExpiresAt = retained.ExpiresAt
 	}
 	result := api.ManagedRealtimePublishResponse{NodesQueried: 1}
 	var err error

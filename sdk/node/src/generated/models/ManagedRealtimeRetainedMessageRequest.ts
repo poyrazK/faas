@@ -6,6 +6,8 @@
  * Binary-safe payload to append to retained channel history.
  */
 export type ManagedRealtimeRetainedMessageRequest = {
+  /** Retained delivery lifetime from first commit; zero disables expiry. */
+  ttl_seconds?: number;
   /**
    * Optional channel head sequence required before this retained publish; zero requires an empty channel.
    */

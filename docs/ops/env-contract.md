@@ -366,6 +366,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_REPLAY_WORKERS` | realtimed | `default` |  |  | `` | bounded parallel callback recovery; values above 32 are capped |
@@ -388,6 +389,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |
 | `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
 | `FAAS_REALTIME_SOCKET` | apid, gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
+| `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader |
+| `FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED` | schedd | `default` |  | 0 | `` | opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation |
 | `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |

@@ -19,6 +19,16 @@ import (
 //go:embed schema.sql
 var Schema string
 
+// RealtimeSchema is installed explicitly alongside Schema for transactional realtime.
+//
+//go:embed realtime_schema.sql
+var RealtimeSchema string
+
+// RealtimeChangefeedSchema installs explicit owner-managed table capture functions.
+//
+//go:embed realtime_changefeeds.sql
+var RealtimeChangefeedSchema string
+
 // UpgradeSchema explicitly upgrades the earlier internal invocation-only outbox.
 // Only the database owner executes this DDL; the relay never changes its schema.
 //
@@ -74,3 +84,8 @@ func Insert(ctx context.Context, tx pgx.Tx, e Event) error {
 	_, err = tx.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload,routing) VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb)`, e.ID, e.Type, []byte(e.Data), routing)
 	return err
 }
+
+// RealtimeTTLUpgrade is explicitly applied by owners of existing customer outboxes.
+//
+//go:embed realtime_ttl_upgrade.sql
+var RealtimeTTLUpgrade string

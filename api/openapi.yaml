@@ -328,6 +328,3097 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimePublisherCredentials
+      summary: Read publisher grant and usage metadata
+      description: Account/app-scoped publisher credential administration. Issuance/rotation/revocation
+        require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation
+        remains available when the endpoint or history preview is disabled.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '400':
+          description: Invalid payload or policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Invalid/expired/revoked/rotated credential
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Channel/event outside grant
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Endpoint or credential unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency content conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Publish rate or bounded receipt/credential capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimePublisherCredential'
+    post:
+      tags:
+      - realtime
+      operationId: issueRealtimePublisherCredential
+      summary: Issue a channel-scoped publisher credential
+      description: Account/app-scoped publisher credential administration. Issuance/rotation/revocation
+        require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation
+        remains available when the endpoint or history preview is disabled.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '400':
+          description: Invalid payload or policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Invalid/expired/revoked/rotated credential
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Channel/event outside grant
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Endpoint or credential unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency content conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Publish rate or bounded receipt/credential capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '201':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimePublisherCredentialIssued'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimePublisherCredentialRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/rotate:
+    post:
+      tags:
+      - realtime
+      operationId: rotateRealtimePublisherCredential
+      summary: Rotate publisher secret while preserving scopes, quota and receipts
+      description: Account/app-scoped publisher credential administration. Issuance/rotation/revocation
+        require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation
+        remains available when the endpoint or history preview is disabled.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '400':
+          description: Invalid payload or policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Invalid/expired/revoked/rotated credential
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Channel/event outside grant
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Endpoint or credential unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency content conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Publish rate or bounded receipt/credential capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimePublisherCredentialIssued'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeWorkerCredentialRotationRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/revoke:
+    post:
+      tags:
+      - realtime
+      operationId: revokeRealtimePublisherCredential
+      summary: Revoke a publisher credential
+      description: Account/app-scoped publisher credential administration. Issuance/rotation/revocation
+        require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation
+        remains available when the endpoint or history preview is disabled.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '400':
+          description: Invalid payload or policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Invalid/expired/revoked/rotated credential
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Channel/event outside grant
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Endpoint or credential unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency content conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Publish rate or bounded receipt/credential capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '204':
+          description: Credential revoked
+  /v1/realtime/publishers/endpoints/{endpoint_id}/channels/{channel}/publish:
+    post:
+      tags:
+      - realtime
+      operationId: publishWithRealtimePublisherCredential
+      summary: Publish a retained channel event with a scoped credential
+      description: Accepts only an endpoint-bound grp_ credential. Retained publication only; exact channel/event
+        grants, decoded payload size, fixed-minute accepted-publish quota and idempotency receipt commit
+        atomically. Matching retries within 24 hours return the original sequence without re-emitting or
+        consuming quota; rotated credentials retain their receipt namespace. Requires history preview and
+        live realtime plan access.
+      security:
+      - realtimePublisherCredential: []
+      parameters:
+      - name: endpoint_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '400':
+          description: Invalid payload or policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Invalid/expired/revoked/rotated credential
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Channel/event outside grant
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Endpoint or credential unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency content conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Publish rate or bounded receipt/credential capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimePublisherPublishResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimePublisherMessageRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimeWorkerCredentials
+      summary: List worker credential metadata
+      description: Account/app-scoped credential administration. Issuance, rotation and revocation require
+        admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimeWorkerCredential'
+    post:
+      tags:
+      - realtime
+      operationId: issueRealtimeWorkerCredential
+      summary: Issue a credential bound to one consumer group
+      description: Account/app-scoped credential administration. Issuance, rotation and revocation require
+        admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '201':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeWorkerCredentialIssued'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeWorkerCredentialRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate:
+    post:
+      tags:
+      - realtime
+      operationId: rotateRealtimeWorkerCredential
+      summary: Rotate a worker credential and immediately invalidate the old secret
+      description: Account/app-scoped credential administration. Issuance, rotation and revocation require
+        admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeWorkerCredentialIssued'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeWorkerCredentialRotationRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke:
+    post:
+      tags:
+      - realtime
+      operationId: revokeRealtimeWorkerCredential
+      summary: Revoke a worker credential
+      description: Revocation is available even when the endpoint or history preview is disabled. Once committed,
+        later operations fail; already-authorized transactions can finish before revocation obtains the
+        group lock. Revoked credentials cannot be rotated.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '204':
+          description: Operation completed without a body, or no claim ready
+  /v1/realtime/workers/groups/{group_id}:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeWorkerGroup
+      summary: Read status using the status permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroup'
+    delete:
+      tags:
+      - realtime
+      operationId: deleteRealtimeWorkerGroup
+      summary: Delete group using the separate delete permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '204':
+          description: Operation completed without a body, or no claim ready
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/batch:
+    post:
+      tags:
+      - realtime
+      operationId: claimRealtimeConsumerGroupBatch
+      summary: Claim a bounded batch with independent leases
+      description: Claim 1–16 messages in one transaction, bounded by the group-wide
+        32 active leases and 128 outstanding snapshots. Each message has its own token
+        and settlement. Always returns 200 with a possibly empty claims array. Partial
+        batches may report history_unavailable or capacity_blocked; process returned
+        claims before resolving the blocker. Empty claims can mean caught up, delayed
+        retries or full lease slots. Requires the existing claim permission. Tokens
+        are returned once; no response caching or automatic claim retries.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds
+            Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.
+          headers:
+            Retry-After:
+              description: Rounded-up seconds for group claim-rate throttling.
+              schema: {type: integer, minimum: 1}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '200':
+          description: Committed batch and optional blockers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupBatch'
+        '400':
+          description: Invalid worker or limit
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupBatchRequest'
+  /v1/realtime/workers/groups/{group_id}/claims/batch:
+    post:
+      tags:
+      - realtime
+      operationId: claimRealtimeWorkerGroupBatch
+      summary: Claim a bounded batch with independent leases
+      description: Claim 1–16 messages in one transaction, bounded by the group-wide
+        32 active leases and 128 outstanding snapshots. Each message has its own token
+        and settlement. Always returns 200 with a possibly empty claims array. Partial
+        batches may report history_unavailable or capacity_blocked; process returned
+        claims before resolving the blocker. Empty claims can mean caught up, delayed
+        retries or full lease slots. Requires the existing claim permission. Tokens
+        are returned once; no response caching or automatic claim retries.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds
+            Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.
+          headers:
+            Retry-After:
+              description: Rounded-up seconds for group claim-rate throttling.
+              schema: {type: integer, minimum: 1}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '200':
+          description: Committed batch and optional blockers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupBatch'
+        '400':
+          description: Invalid worker or limit
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeWorkerBatchClaimRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/pause:
+    post:
+      tags:
+      - realtime
+      operationId: pauseRealtimeConsumerGroup
+      summary: Pause new consumer-group claims
+      description: Requires app ownership, admin scope and MFA. Idempotent group control.
+        Existing leases may renew, complete or retry. Resume preserves cursor, attempt
+        counts and retry delays. Pause does not stop lease clocks or channel retention.
+        Returns paused state and nullable pause timestamp.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupPauseState'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume:
+    post:
+      tags:
+      - realtime
+      operationId: resumeRealtimeConsumerGroup
+      summary: Resume new consumer-group claims
+      description: Requires app ownership, admin scope and MFA. Idempotent group control.
+        Existing leases may renew, complete or retry. Resume preserves cursor, attempt
+        counts and retry delays. Pause does not stop lease clocks or channel retention.
+        Returns paused state and nullable pause timestamp.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupPauseState'
+  /v1/realtime/workers/groups/{group_id}/pause:
+    post:
+      tags:
+      - realtime
+      operationId: pauseRealtimeWorkerGroup
+      summary: Pause new consumer-group claims
+      description: Requires the explicit pause worker permission, rechecked in the group
+        transaction. Idempotent group control. Existing leases may renew, complete or
+        retry. Resume preserves cursor, attempt counts and retry delays. Pause does
+        not stop lease clocks or channel retention. Returns paused state and nullable
+        pause timestamp.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupPauseState'
+  /v1/realtime/workers/groups/{group_id}/resume:
+    post:
+      tags:
+      - realtime
+      operationId: resumeRealtimeWorkerGroup
+      summary: Resume new consumer-group claims
+      description: Requires the explicit resume worker permission, rechecked in the
+        group transaction. Idempotent group control. Existing leases may renew, complete
+        or retry. Resume preserves cursor, attempt counts and retry delays. Pause does
+        not stop lease clocks or channel retention. Returns paused state and nullable
+        pause timestamp.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupPauseState'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/drain:
+    post:
+      tags:
+      - realtime
+      operationId: drainRealtimeConsumerGroup
+      summary: Drain active consumer-group leases
+      description: Idempotently stop new claims and enter persistent drain mode. Requires
+        account admin scope and MFA, or the explicit drain worker permission. Existing
+        leases may renew or settle. Drained means no unexpired leases remain; it does
+        not prove handler side effects have stopped. Retry/dead/unassigned work is preserved.
+        Resume explicitly after deployment; pause switches to ordinary paused mode.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupDrainState'
+  /v1/realtime/workers/groups/{group_id}/drain:
+    post:
+      tags:
+      - realtime
+      operationId: drainRealtimeWorkerGroup
+      summary: Drain active consumer-group leases
+      description: Idempotently stop new claims and enter persistent drain mode. Requires
+        account admin scope and MFA, or the explicit drain worker permission. Existing
+        leases may renew or settle. Drained means no unexpired leases remain; it does
+        not prove handler side effects have stopped. Retry/dead/unassigned work is preserved.
+        Resume explicitly after deployment; pause switches to ordinary paused mode.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Current pause state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupDrainState'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle/batch:
+    post:
+      tags: [realtime]
+      operationId: settleRealtimeConsumerGroupBatch
+      summary: Settle a batch of consumer group claims
+      description: Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results preserve request order. Each valid current lease is completed, retried, released or renewed; expired, missing or differently owned leases return lease_lost without blocking other items. Scoped credentials require every action in the request, rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request with the same key to recover a lost response. Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may have committed.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RealtimeConsumerGroupBatchSettlementRequest'}
+      responses:
+        '200':
+          description: Per-item settlement results
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupBatchSettlementResult'}
+        '400': {description: Invalid or duplicate settlement}
+        '401': {description: Invalid credentials}
+        '403': {description: Action permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '409': {description: Idempotency key reused with different contents (realtime_settlement_key_conflict)}
+        '429': {description: Admission or authentication or settlement receipt capacity reached}
+  /v1/realtime/workers/groups/{group_id}/claims/settle/batch:
+    post:
+      tags: [realtime]
+      operationId: settleRealtimeWorkerGroupBatch
+      summary: Settle a batch of consumer group claims
+      description: Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results preserve request order. Each valid current lease is completed, retried, released or renewed; expired, missing or differently owned leases return lease_lost without blocking other items. Scoped credentials require every action in the request, rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request with the same key to recover a lost response. Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may have committed.
+      security:
+      - workerAuth: []
+      parameters:
+      - {name: group_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RealtimeConsumerGroupBatchSettlementRequest'}
+      responses:
+        '200':
+          description: Per-item settlement results
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupBatchSettlementResult'}
+        '400': {description: Invalid or duplicate settlement}
+        '401': {description: Invalid credentials}
+        '403': {description: Action permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '409': {description: Idempotency key reused with different contents (realtime_settlement_key_conflict)}
+        '429': {description: Admission or authentication or settlement receipt capacity reached}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/messages/{sequence}/history:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeConsumerGroupDeliveryHistory
+      summary: Read a message's observed consumer-group delivery timeline
+      description: Account ownership, read scope and MFA required. Bounded 24-hour history, at most 1024 events per group shared across messages. No pre-migration backfill or renewals. Completions remain after snapshot deletion. Empty results do not distinguish unprocessed, completed before migration, filtered or pruned messages. group_pruned_events counts expired/capacity-pruned observations across the whole group, not solely this message. Reads prune expired history under the group lock. Events are ordered by ID; observation timestamps can lag actual lease/deadline expiry. No payload, lease/credential token, token hash or worker identity is returned.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      - {name: sequence, in: path, required: true, schema: {type: string, pattern: '^[0-9]+$'}}
+      - {name: after_id, in: query, schema: {type: string, pattern: '^[0-9]+$', default: '0'}}
+      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 32}}
+      responses:
+        '200':
+          description: Ordered retained history, possibly empty
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupDeliveryHistory'}
+        '400': {description: Invalid group, sequence, cursor or limit}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeConsumerGroupCircuit
+      summary: Read consumer group circuit breaker
+      description: Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe at a time; only its success restores admission. Existing leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is observational; reads do not advance cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current policy and circuit state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupCircuitStatus'}
+        '400': {description: Invalid policy or group}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+    put:
+      tags: [realtime]
+      operationId: configureRealtimeConsumerGroupCircuit
+      summary: Configure consumer group circuit breaker
+      description: Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe at a time; only its success restores admission. Existing leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is observational; reads do not advance cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RealtimeConsumerGroupCircuitPolicy'}
+      responses:
+        '200':
+          description: Current policy and circuit state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupCircuitStatus'}
+        '400': {description: Invalid policy or group}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/priority:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeConsumerGroupPriority
+      summary: Read priority policy and materialized backlog
+      description: Account ownership, read scope and MFA required. Policy is immutable at group creation. Backlog covers retained outstanding snapshots only, including delayed and blocked ready rows and unmaintained expired leases. The next-claim hint is observational and can change before a claim.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current priority policy and backlog
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupPriorityStatus'}
+        '400': {description: Invalid group}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/metrics:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeConsumerGroupMetrics
+      summary: Read consumer group processing trends
+      description: Account-owned read with MFA. Returns 60 UTC minute buckets including the partial current minute. Queue wait averages publication to first claim, excluding pre-migration attempted snapshots. Processing averages successful attempts with an observed lease start, includes renewals, and excludes previous failed attempts. Counts are decimal strings. Zero averages with zero samples mean no observations. Retries count leased-to-ready transitions including expiry; dead letters count entries into dead including deadlines. Replays can add further transitions. Events are bucketed when observed, not when an unobserved lease expired. Empty minutes are zero-filled. No per-message telemetry is retained.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Recent processing metrics
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeConsumerGroupMetrics'}
+        '400': {description: Invalid group}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '429': {description: Admission capacity reached}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeConsumerGroupWorkerHealth
+      summary: Read observed worker liveness
+      description: Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every
+        15 seconds. Account routes require ownership and MFA, writes deploy-write scope.
+        Scoped POST requires heartbeat permission and fixes worker identity to credential
+        name. Readiness is self-reported, separate from liveness. No lease is renewed.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: channel
+        in: path
+        required: true
+        schema: {type: string}
+      - name: group
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Current worker health
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeWorkerHealth'}
+        '400': {description: Invalid worker, readiness or diagnostic code}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '429': {description: Worker heartbeat tracking or credential admission capacity reached}
+    post:
+      tags: [realtime]
+      operationId: heartbeatRealtimeConsumerGroup
+      summary: Report worker readiness and liveness
+      description: Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every
+        15 seconds. Account routes require ownership and MFA, writes deploy-write scope.
+        Scoped POST requires heartbeat permission and fixes worker identity to credential
+        name. Readiness is self-reported, separate from liveness. No lease is renewed.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: channel
+        in: path
+        required: true
+        schema: {type: string}
+      - name: group
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Current worker health
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeWorkerHeartbeat'}
+        '400': {description: Invalid worker, readiness or diagnostic code}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '429': {description: Worker heartbeat tracking or credential admission capacity reached}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RealtimeWorkerHeartbeatRequest'}
+  /v1/realtime/workers/groups/{group_id}/heartbeats:
+    post:
+      tags: [realtime]
+      operationId: heartbeatRealtimeWorkerGroup
+      summary: Report liveness using a scoped worker credential
+      description: Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every
+        15 seconds. Account routes require ownership and MFA, writes deploy-write scope.
+        Scoped POST requires heartbeat permission and fixes worker identity to credential
+        name. Readiness is self-reported, separate from liveness. No lease is renewed.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Current worker health
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeWorkerHeartbeat'}
+        '400': {description: Invalid worker, readiness or diagnostic code}
+        '401': {description: Invalid credentials}
+        '403': {description: Permission denied}
+        '404': {description: Endpoint or group unavailable}
+        '429': {description: Worker heartbeat tracking or credential admission capacity reached}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RealtimeWorkerHeartbeatRequest'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeConsumerGroupClaimRate
+      summary: Read shared consumer-group claim rate
+      description: Requires app ownership and MFA; writes require admin scope.
+        Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second
+        and a burst of 1 to 32. Admission is shared across every worker and replica
+        through persisted group-locked state. Renewals, settlements and replay do not
+        consume rate credit. Identical writes preserve credit and counters; changed
+        policies clamp existing debt to the new burst window. The observed retry hint
+        is not a reservation; concurrent workers can consume the next allowance.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and current throttle observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupClaimRateStatus'
+        '400':
+          description: Invalid rate or burst
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      tags:
+      - realtime
+      operationId: configureRealtimeConsumerGroupClaimRate
+      summary: Configure shared consumer-group claim rate
+      description: Requires app ownership and MFA; writes require admin scope.
+        Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second
+        and a burst of 1 to 32. Admission is shared across every worker and replica
+        through persisted group-locked state. Renewals, settlements and replay do not
+        consume rate credit. Identical writes preserve credit and counters; changed
+        policies clamp existing debt to the new burst window. The observed retry hint
+        is not a reservation; concurrent workers can consume the next allowance.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and current throttle observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupClaimRateStatus'
+        '400':
+          description: Invalid rate or burst
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupClaimRatePolicy'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeConsumerGroupRetryPolicy
+      summary: Read consumer-group retry policy
+      description: Requires app ownership and MFA; writes require admin scope.
+        Policies are disabled by default. Enabled policies apply capped exponential
+        backoff to reported failures with omitted retry_after_seconds. Explicit delays,
+        including zero, override backoff. Exact permanent failure codes dead-letter
+        immediately even with an explicit delay. Jitter samples uniformly from half
+        the capped delay through the capped delay, in integer seconds. Attempt budgets
+        still apply. Changes affect future settlements, not already scheduled retries
+        or expired leases. next_retry_at is the earliest delayed ready snapshot;
+        ordering, pause and capacity can delay its claim further.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and earliest delayed retry observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupRetryStatus'
+        '400':
+          description: Invalid delay range or permanent failure codes
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      tags:
+      - realtime
+      operationId: configureRealtimeConsumerGroupRetryPolicy
+      summary: Configure consumer-group retries
+      description: Requires app ownership and MFA; writes require admin scope.
+        Policies are disabled by default. Enabled policies apply capped exponential
+        backoff to reported failures with omitted retry_after_seconds. Explicit delays,
+        including zero, override backoff. Exact permanent failure codes dead-letter
+        immediately even with an explicit delay. Jitter samples uniformly from half
+        the capped delay through the capped delay, in integer seconds. Attempt budgets
+        still apply. Changes affect future settlements, not already scheduled retries
+        or expired leases. next_retry_at is the earliest delayed ready snapshot;
+        ordering, pause and capacity can delay its claim further.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and earliest delayed retry observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupRetryStatus'
+        '400':
+          description: Invalid delay range or permanent failure codes
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupRetryPolicyRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeConsumerGroupDeadLetterRetention
+      summary: Read dead-letter retention policy
+      description: Requires app ownership and MFA; writes require admin scope.
+        Zero keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds.
+        Ordered groups require skip policy. Cleanup follows a persisted warning decision
+        by at least 300 seconds; webhook delivery does not gate cleanup. Replay protects
+        the snapshot when it commits before cleanup. Changed policies rearm warnings.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Retention policy and cumulative expired count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupRetentionPolicy'
+        '400':
+          description: Invalid retention period or incompatible ordered block policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      tags:
+      - realtime
+      operationId: configureRealtimeConsumerGroupDeadLetterRetention
+      summary: Configure dead-letter retention
+      description: Requires app ownership and MFA; writes require admin scope.
+        Zero keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds.
+        Ordered groups require skip policy. Cleanup follows a persisted warning decision
+        by at least 300 seconds; webhook delivery does not gate cleanup. Replay protects
+        the snapshot when it commits before cleanup. Changed policies rearm warnings.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Retention policy and cumulative expired count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupRetentionPolicy'
+        '400':
+          description: Invalid retention period or incompatible ordered block policy
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupRetentionRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeConsumerGroupLagAlert
+      summary: Read lag alert status
+      description: Requires app ownership and MFA; writes require admin scope. One policy
+        per group. Zero thresholds disable that metric. Enabled policies require at
+        least one nonzero threshold. Observations and signed webhooks are sampled, including
+        paused/draining groups. Cooldown limits ongoing breach reminders; transitions
+        alert promptly. Identical PUTs preserve observations; changed policies rearm
+        without a recovery backfill. Disabled policies do not evaluate.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and latest nullable observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupLagAlert'
+        '400':
+          description: Invalid thresholds or cooldown
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      tags:
+      - realtime
+      operationId: configureRealtimeConsumerGroupLagAlert
+      summary: Configure consumer-group lag thresholds
+      description: Requires app ownership and MFA; writes require admin scope. One policy
+        per group. Zero thresholds disable that metric. Enabled policies require at
+        least one nonzero threshold. Observations and signed webhooks are sampled, including
+        paused/draining groups. Cooldown limits ongoing breach reminders; transitions
+        alert promptly. Identical PUTs preserve observations; changed policies rearm
+        without a recovery backfill. Disabled policies do not evaluate.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Policy and latest nullable observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupLagAlert'
+        '400':
+          description: Invalid thresholds or cooldown
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupLagAlertConfig'
+  /v1/realtime/workers/groups/{group_id}/claims:
+    post:
+      tags:
+      - realtime
+      operationId: claimRealtimeWorkerGroup
+      summary: Claim work using the claim permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds
+            Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.
+          headers:
+            Retry-After:
+              description: Rounded-up seconds for group claim-rate throttling.
+              schema: {type: integer, minimum: 1}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupClaim'
+        '204':
+          description: Operation completed without a body, or no claim ready
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeWorkerClaimRequest'
+  /v1/realtime/workers/groups/{group_id}/claims/settle:
+    post:
+      tags:
+      - realtime
+      operationId: settleRealtimeWorkerGroupClaim
+      summary: "Settle or renew only this credential\u2019s own lease"
+      description: 'Requires the exact action permission: complete, retry, renew or release. The credential can settle
+        only leases issued to its stable credential ID. Rotation preserves that ID and claim ownership.
+        New settlements require unexpired claim tokens. Matching receipts return the original result
+        after current authorization, even when the original lease has ended. Expired/revoked credentials
+        cannot settle or replay work.'
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Claim lease lost, or idempotency key reused with different contents (realtime_settlement_key_conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission, authentication or settlement receipt capacity reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupSettlementResult'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupSettlement'
+  /v1/realtime/workers/groups/{group_id}/dead-letters:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimeWorkerGroupDeadLetters
+      summary: Read failed payloads using the separate dead_letters permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '200':
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimeConsumerGroupDeadLetter'
+  /v1/realtime/workers/groups/{group_id}/dead-letters/{sequence}/replay:
+    post:
+      tags:
+      - realtime
+      operationId: replayRealtimeWorkerGroupDeadLetter
+      summary: Replay failed work using the separate replay permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: sequence
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '204':
+          description: Operation completed without a body, or no claim ready
+  /v1/realtime/workers/groups/{group_id}/resync:
+    post:
+      tags:
+      - realtime
+      operationId: resyncRealtimeWorkerGroup
+      summary: Recover a gap using the separate resync permission
+      description: Accepts only a group-bound grw_ worker credential. Exact permission is checked in the
+        group transaction; group recreation does not restore access.
+      security:
+      - realtimeWorkerCredential: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Credential invalid, expired, rotated or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Credential lacks permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Group or credential not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Lease lost or group conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Admission or authentication limit reached
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '204':
+          description: Operation completed without a body, or no claim ready
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupResyncRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimeConsumerGroups
+      summary: List consumer group lag and worker status
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimeConsumerGroup'
+    post:
+      tags:
+      - realtime
+      operationId: createRealtimeConsumerGroup
+      summary: Create a shared backend-worker subscription
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '201':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroup'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupCreateRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}:
+    get:
+      tags:
+      - realtime
+      operationId: getRealtimeConsumerGroup
+      summary: Read consumer group lag and worker status
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroup'
+    delete:
+      tags:
+      - realtime
+      operationId: deleteRealtimeConsumerGroup
+      summary: Delete a consumer group and its outstanding payload snapshots
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '204':
+          description: No claim available or operation completed without a body
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims:
+    post:
+      tags:
+      - realtime
+      operationId: claimRealtimeConsumerGroup
+      summary: Claim one retained message with an exclusive short lease
+      description: Returns 204 when paused, caught up, retry-delayed, or all active lease slots are occupied. Returns
+        429 when the outstanding snapshot cap prevents assignment, and 409 on a retention gap. Claim tokens
+        are returned once and hashed at rest; this operation is excluded from generic response caching.
+        Lease expiry may permit duplicate processing; use idempotent handlers. Does not accept subscription
+        tickets or WebSocket credentials.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds
+            Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.
+          headers:
+            Retry-After:
+              description: Rounded-up seconds for group claim-rate throttling.
+              schema: {type: integer, minimum: 1}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '200':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupClaim'
+        '204':
+          description: No claim available or operation completed without a body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupClaimRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle:
+    post:
+      tags:
+      - realtime
+      operationId: settleRealtimeConsumerGroupClaim
+      summary: Complete, retry or renew an unexpired claim
+      description: The sequence and opaque token must identify the current unexpired lease. Completion deletes
+        its payload snapshot and increments the group completion count. Retries reaching max_attempts become
+        dead letters. Duplicate settlement or a replaced/expired token returns 409; no exactly-once execution
+        guarantee.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Claim lease lost, or idempotency key reused with different contents (realtime_settlement_key_conflict)
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeConsumerGroupSettlementResult'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupSettlement'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimeConsumerGroupDeadLetters
+      summary: List bounded failed message snapshots
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Consumer group operation result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimeConsumerGroupDeadLetter'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export:
+    get:
+      tags: [realtime]
+      operationId: exportRealtimeConsumerGroupDeadLetters
+      summary: Download a read-only dead-letter JSONL page
+      description: >-
+        Account ownership, read scope, completed MFA and realtime history preview required.
+        Returns one manifest line followed by zero to 128 dead_letter lines, ordered by numeric sequence.
+        Payload is the retained snapshot with base64 data and metadata. No claim or credential tokens.
+        Every page uses a repeatable-read read-only transaction; export never claims, replays, cleans up or extends retention.
+        First page captures group_id, through_sequence and snapshot_at. Resume with those three values and next_after_sequence;
+        keep failure_code filters unchanged. Later dead-letter transitions are excluded by the snapshot cutoff.
+        Replay, deletion and retention cleanup can remove records between pages; this is a live export, not an immutable server archive.
+        A recreated group or rewound assignment boundary returns 409 realtime_dead_letter_export_changed.
+        Verify the manifest count and complete transfer before advancing the cursor. Link headers provide the next page.
+        Empty exports still contain a manifest. At most 2 MiB per page. Persist downloads externally for archival.
+      security:
+      - bearerAuth: []
+      parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: channel, in: path, required: true, schema: {type: string}}
+      - {name: group, in: path, required: true, schema: {type: string}}
+      - name: after_sequence
+        in: query
+        schema: {type: string, pattern: '^[0-9]+$', default: '0'}
+        description: Exclusive numeric cursor. Resume using next_after_sequence from the last complete page.
+      - name: group_id
+        in: query
+        schema: {type: string, format: uuid, minLength: 36, maxLength: 36}
+        description: Immutable group identity. Supply together with through_sequence and snapshot_at when resuming.
+      - name: through_sequence
+        in: query
+        schema: {type: string, pattern: '^[0-9]+$'}
+        description: Inclusive captured assignment boundary. Supply together with group_id and snapshot_at.
+      - name: snapshot_at
+        in: query
+        schema: {type: string, format: date-time}
+        description: Original manifest snapshot cutoff. Supply together with group_id and through_sequence.
+      - name: failure_code
+        in: query
+        style: form
+        explode: true
+        schema:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64}
+        description: Repeat for exact safe failure-code matches; omitted includes all retained failures.
+      - name: limit
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 128, default: 32}
+        description: Maximum records after the manifest.
+      responses:
+        '200':
+          description: JSONL attachment. First line matches RealtimeDeadLetterExportManifest; subsequent lines match RealtimeDeadLetterExportRecord.
+          content:
+            application/x-ndjson:
+              schema: {type: string, format: binary}
+          headers:
+            Content-Disposition: {schema: {type: string}, description: Attachment filename ending in .jsonl}
+            Link: {schema: {type: string}, description: Relative next-page URL when has_more is true}
+            X-Realtime-Export-Group-ID: {schema: {type: string, format: uuid}}
+            X-Realtime-Export-Through-Sequence: {schema: {type: string}}
+            X-Realtime-Export-Next-After-Sequence: {schema: {type: string}}
+            X-Realtime-Export-Has-More: {schema: {type: boolean}}
+            X-Realtime-Export-Snapshot-At: {schema: {type: string, format: date-time}}
+        '400': {description: Invalid cursor or filters}
+        '401': {description: Authentication required}
+        '403': {description: Read access or MFA required}
+        '404': {description: Preview or owned endpoint or group unavailable}
+        '409': {description: Group identity or export boundary changed (realtime_dead_letter_export_changed)}
+        '429': {description: Admission or export page capacity reached}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/preview:
+    post:
+      tags:
+      - realtime
+      operationId: previewRealtimeConsumerGroupDeadLetters
+      summary: Preview filtered dead letters
+      description: Read scope, app ownership and MFA required. Read-only selection of materialized dead snapshots. Filters use exact failure codes, exclusive after_sequence and inclusive through_sequence. Default and maximum limit 32. has_more allows keyset pagination using the last returned sequence. Expired exhausted leases are excluded until materialized as dead. No replay or expiry grace is reserved; candidates can change after preview.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Bounded recovery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeDeadLetterPreview'
+        '400':
+          description: Invalid filters or selection
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeDeadLetterPreviewRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs:
+    get:
+      tags:
+      - realtime
+      operationId: listRealtimeReplayJobs
+      summary: List replay jobs
+      description: 'Account ownership and MFA required. Read scope for listing; deploy-write scope for creation. Creation freezes up to 128 current failure
+        identities matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained
+        in bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per item. Database failures roll back progress and
+        retry on subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response before retrying.'
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Replay job result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RealtimeReplayJob'
+        '400':
+          description: Invalid filters, empty selection or rate
+        '404':
+          description: Group not found
+        '409':
+          description: Active job quota reached
+    post:
+      tags:
+      - realtime
+      operationId: createRealtimeReplayJob
+      summary: Create a background dead-letter replay job
+      description: 'Account ownership and MFA required. Read scope for listing; deploy-write scope for creation. Creation freezes up to 128 current failure
+        identities matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained
+        in bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per item. Database failures roll back progress and
+        retry on subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response before retrying.'
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Replay job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeReplayJob'
+        '400':
+          description: Invalid filters, empty selection or rate
+        '404':
+          description: Group not found
+        '409':
+          description: Active job quota reached
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeReplayJobRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/dry-run:
+    post:
+      tags:
+      - realtime
+      operationId: createRealtimeReplayDryRun
+      summary: Create a background replay eligibility report
+      description: Account ownership, MFA and deploy-write scope required. Captures current failure identities and checks each at the configured rate without
+        expiring leases, replaying messages or changing the queue. Uses checking/check_paused states. Dry runs share the four-active-job quota and bounded
+        history with real jobs. Results are observations at individual check times, not reservations. No replay lifecycle webhooks are emitted for dry runs.
+        Start a real job from a completed report using the start control action; only reviewed eligible identities are copied and rechecked during actual
+        replay. Empty selections are invalid. Creation is not idempotent; inspect recent jobs after an uncertain response before retrying.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Replay job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeReplayJob'
+        '400':
+          description: Invalid filters, empty selection or rate
+        '404':
+          description: Group not found
+        '409':
+          description: Active job quota reached
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeReplayJobRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/{job}/{action}:
+    post:
+      tags:
+      - realtime
+      operationId: controlRealtimeReplayJob
+      summary: Pause, resume, cancel or start a reviewed replay
+      description: Account deploy-write scope, ownership and MFA required. Pause/resume/cancel apply to active real or dry-run jobs. Start requires a completed
+        dry run with eligible failures, and creates a real replay at the report rate from only those exact reviewed identities. Rechecks identity, deadlines
+        and ordering before each real replay. Repeated start returns the same job while retained; if that job was pruned it returns 409 and never starts another.
+        If the report itself was pruned it returns 404. Promotion and the report link commit together. Both modes share the four-active-job quota. Terminal
+        jobs reject pause/resume/cancel. Cancellation preserves committed replays.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: job
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: action
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - pause
+          - resume
+          - cancel
+          - start
+      responses:
+        '200':
+          description: Replay job result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeReplayJob'
+        '400':
+          description: Invalid job or action
+        '404':
+          description: Job not found
+        '409':
+          description: Job is terminal, report not completed or not a dry run, no eligible failures, active quota reached, or previously started job pruned
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/replay:
+    post:
+      tags:
+      - realtime
+      operationId: bulkReplayRealtimeConsumerGroupDeadLetters
+      summary: Replay selected dead letters
+      description: Deploy-write scope, app ownership and MFA required. Select 1 to 32 unique sequences with exact dead_since timestamps from preview and the immutable group UUID. Preserves ordering checks and resets attempts for successful replays. Outcomes are replayed, ordering_blocked, stale, not_dead, missing, deadline_expired or invalid_deadline. Missing may mean retention cleanup; no cause is inferred. Recognized per-item conflicts do not prevent other selected replays. Unexpected failures roll back the whole transaction. Group UUID mismatch returns 409. A replayed item gets a fresh fencing token on its next claim. Do not automatically retry an uncertain response.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '200':
+          description: Bounded recovery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeDeadLetterBulkReplayResult'
+        '400':
+          description: Invalid filters or selection
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeDeadLetterBulkReplayRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/{sequence}/replay:
+    post:
+      tags:
+      - realtime
+      operationId: replayRealtimeConsumerGroupDeadLetter
+      summary: Replay one dead letter with a fresh retry budget
+      description: Backend-only. Requires history preview, account API credentials, app permissions and
+        MFA. Write operations require write scope. Delivery is at least once.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: sequence
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '204':
+          description: No claim available or operation completed without a body
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resync:
+    post:
+      tags:
+      - realtime
+      operationId: resyncRealtimeConsumerGroup
+      summary: Explicitly recover an unassigned retention gap
+      description: Requires expected_sequence to equal the assignment cursor, no ready/leased messages,
+        and after_sequence to equal oldest_sequence minus one and advance the cursor. Recover missing work
+        from application state first. Preserves dead letters and completed count; does not claim skipped
+        work was processed.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '404':
+          description: Endpoint or group not found
+        '409':
+          description: Group conflict, lost claim lease, or retention gap
+        '429':
+          description: Endpoint or group admission capacity reached
+        '204':
+          description: No claim available or operation completed without a body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeConsumerGroupResyncRequest'
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement:
+    get:
+      tags: [realtime]
+      operationId: getRealtimeChannelAcknowledgement
+      summary: Read the latest actual ACK for a named durable consumer
+      description: |
+        Read-only and does not create or refresh a checkpoint. Requires history preview.
+        ACKs are consumer assertions; baselines and resets are not processing receipts.
+        Only the most recent advancing ACK is retained, not an individual-message ledger.
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: channel, in: path, required: true, schema: {type: string}}
+        - {name: principal, in: query, required: true, schema: {type: string}}
+        - {name: subscription, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current checkpoint and latest actual advancing ACK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeAcknowledgement'
+        '404':
+          description: Consumer checkpoint missing or expired
   /v1/outbound/integrations/{integration}/probe-policy:
     parameters:
       - name: integration
@@ -25436,6 +28527,78 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/webhooks/{id}/realtime-channel:
+    get:
+      operationId: getRealtimeChannelWebhookFilter
+      tags: [Webhooks]
+      summary: Get an exact realtime channel webhook binding
+      description: Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Current channel binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+    put:
+      operationId: setRealtimeChannelWebhookFilter
+      tags: [Webhooks]
+      summary: Put an exact realtime channel webhook binding
+      description: Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+      responses:
+        '200':
+          description: Current channel binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+    delete:
+      operationId: deleteRealtimeChannelWebhookFilter
+      tags: [Webhooks]
+      summary: Delete an exact realtime channel webhook binding
+      description: Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Future capture stopped; queued deliveries remain.
   /v1/apps/{slug}/webhooks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -26451,6 +29614,85 @@ paths:
         '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/tickets:
+    post:
+      operationId: issueRealtimeSubscriptionTicket
+      tags: [Realtime]
+      summary: Issue a short-lived channel subscription ticket
+      description: Operator preview. Backend-only app-scoped write with MFA. The backend authorizes the principal and explicit channels before issuing. Tickets allow retained subscriptions only and are returned once with no-store.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeTicketRequest'
+      responses:
+        '201':
+          description: Issued bearer ticket; do not log or cache.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeTicketResponse'
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: principal
+        in: path
+        required: true
+        description: Verified OIDC principal whose durable access controls are managed.
+        schema: { type: string, minLength: 1, maxLength: 256 }
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeAccess
+      summary: Read durable channel denies and session cutoff for one principal.
+      description: Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses contain no token or connection identifiers.
+      responses:
+        '200':
+          description: Durable controls; not proof that every live node has applied them.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeAccessResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [realtime]
+      operationId: changeManagedRealtimeAccess
+      summary: Revoke channel access or older sessions, or remove a channel deny.
+      description: Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node. Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state every second and fail closed on refresh failure. Restoration does not grant app membership or automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeAccessRequest' }
+      responses:
+        '200':
+          description: Committed access controls.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeAccessResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize:
     parameters:
@@ -35977,6 +39219,16 @@ paths:
 components:
 
   securitySchemes:
+    realtimePublisherCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: grp_
+      description: Endpoint-bound credential permitting exact channels and event types.
+    realtimeWorkerCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: grw_
+      description: Opaque credential restricted to one consumer group and explicit operations.
     jobOperationCapability:
       type: apiKey
       in: header
@@ -36458,6 +39710,1714 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    RealtimePublisherCredentialRequest:
+      type: object
+      required:
+      - name
+      - channels
+      - event_types
+      properties:
+        max_message_ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Message TTL cap; zero is uncapped. Positive caps require a positive message TTL at or below the cap." }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+        event_types:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        publishes_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 600
+          default: 60
+        max_payload_bytes:
+          type: integer
+          minimum: 1
+          maximum: 4096
+          default: 4096
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 2592000
+          default: 86400
+    RealtimePublisherCredential:
+      type: object
+      required:
+      - name
+      - channels
+      - event_types
+      - publishes_per_minute
+      - max_payload_bytes
+      - id
+      - endpoint_id
+      - generation
+      - issued_at
+      - expires_at
+      - revoked_at
+      - accepted_count
+      - replay_count
+      - last_used_at
+      - last_channel
+      - last_sequence
+      properties:
+        max_message_ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Immutable message TTL cap; zero is uncapped. Rotation preserves this policy." }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+        event_types:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        publishes_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 600
+          default: 60
+        max_payload_bytes:
+          type: integer
+          minimum: 1
+          maximum: 4096
+          default: 4096
+        id:
+          type: string
+        endpoint_id:
+          type: string
+        generation:
+          type: string
+          pattern: ^[0-9]+$
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        accepted_count:
+          type: string
+          pattern: ^[0-9]+$
+        replay_count:
+          type: string
+          pattern: ^[0-9]+$
+        last_used_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_channel:
+          type:
+          - string
+          - 'null'
+        last_sequence:
+          type:
+          - string
+          - 'null'
+    RealtimePublisherCredentialIssued:
+      type: object
+      required:
+      - credential
+      - info
+      properties:
+        credential:
+          type: string
+          description: One-time plaintext grp_ credential; never log or cache.
+        info:
+          $ref: '#/components/schemas/RealtimePublisherCredential'
+    RealtimePublisherMessageRequest:
+      type: object
+      required:
+      - event_type
+      - data_base64
+      properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Message lifetime from retained publication; zero disables expiry. Positive credential caps forbid zero or omitted TTL." }
+        event_type:
+          type: string
+        data_base64:
+          type: string
+        binary:
+          type: boolean
+          default: false
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: event_type is reserved; supplied value must match the top-level event_type.
+    RealtimePublisherPublishResponse:
+      type: object
+      required:
+      - sequence
+      - durable
+      - replayed
+      - partial
+      properties:
+        sequence:
+          type: string
+          pattern: ^[0-9]+$
+        durable:
+          type: boolean
+          enum:
+          - true
+        replayed:
+          type: boolean
+        partial:
+          type: boolean
+          description: Immediate live fanout may be incomplete; retained delivery is committed.
+    RealtimeWorkerCredential:
+      type: object
+      required:
+      - id
+      - group_id
+      - name
+      - permissions
+      - generation
+      - issued_at
+      - expires_at
+      - revoked_at
+      - last_used_at
+      - last_operation
+      - use_count
+      properties:
+        id:
+          type: string
+        group_id:
+          type: string
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum:
+            - status
+            - claim
+            - renew
+            - complete
+            - retry
+            - dead_letters
+            - replay
+            - resync
+            - delete
+            - pause
+            - resume
+            - drain
+            - heartbeat
+            - release
+        generation:
+          type: string
+          pattern: ^[0-9]+$
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_used_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_operation:
+          type:
+          - string
+          - 'null'
+        use_count:
+          type: string
+          pattern: ^[0-9]+$
+    RealtimeWorkerCredentialRequest:
+      type: object
+      required:
+      - name
+      - permissions
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        permissions:
+          type: array
+          minItems: 1
+          maxItems: 14
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+            - status
+            - claim
+            - renew
+            - complete
+            - retry
+            - dead_letters
+            - replay
+            - resync
+            - delete
+            - pause
+            - resume
+            - drain
+            - heartbeat
+            - release
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 2592000
+          default: 86400
+    RealtimeWorkerCredentialIssued:
+      type: object
+      required:
+      - credential
+      - info
+      properties:
+        credential:
+          type: string
+          description: Plaintext grw_ credential, returned once; never log or cache.
+        info:
+          $ref: '#/components/schemas/RealtimeWorkerCredential'
+    RealtimeWorkerCredentialRotationRequest:
+      type: object
+      properties:
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 2592000
+          default: 86400
+    RealtimeWorkerClaimRequest:
+      type: object
+      properties:
+        worker:
+          type: string
+          description: Optional; if provided, must match the name fixed by the credential.
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Wait for available work, checking every 500 ms without holding
+            a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting
+            requests per apid. Cancellation stops waiting; uncertain claims must not be
+            retried automatically.
+    RealtimeConsumerGroupCreateRequest:
+      type: object
+      required:
+      - name
+      - after_sequence
+      properties:
+        deduplication_metadata_key:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z0-9_.-]*$'
+          default: ''
+          description: Immutable opt-in exact metadata field such as event_id. Empty disables assignment-time deduplication. Missing or empty values process normally. Within the window, the first filter-matching assigned event ID wins even if its snapshot later fails or expires. Retries and explicit dead-letter replay reuse the original snapshot. Store hashes only, at most 4096 live IDs per group; live IDs are never evicted. New IDs wait for capacity while existing snapshots remain claimable.
+        deduplication_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          default: 0
+          description: Immutable retention from first assignment. With a metadata key, omit or use zero for the 3600-second default; otherwise choose 60 to 86400. Without a key, must be zero. Duplicate hits do not extend expiry. After expiry, another copy can be assigned again.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        after_sequence:
+          type: string
+          pattern: ^[0-9]+$
+        lease_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          default: 30
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+        ordering_metadata_key:
+          type: string
+          pattern: ^[a-z0-9_.-]*$
+          maxLength: 64
+          default: ''
+          description: Immutable exact valid metadata field. Empty disables
+            ordering. Missing/empty values share one ordered bucket.
+        dead_letter_policy:
+          type: string
+          enum:
+          - block
+          - skip
+          default: block
+          description: Immutable ordered-group policy. Block holds later events until
+            replay/repair; skip lets later events proceed. Explicit replay can occur after
+            later work completed.
+        dead_letter_retention_seconds:
+          type: integer
+          minimum: 0
+          maximum: 2592000
+          default: 0
+          description: Zero keeps indefinitely; otherwise 3600 to 2592000 seconds.
+            Ordered groups require skip policy. Cleanup includes a 300-second warning grace.
+        priority_metadata_key:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z0-9_.-]*$'
+          default: ''
+          description: Immutable opt-in metadata field. Exact single digits 0 through 9 freeze on assignment; missing or invalid values use zero. Higher values claim first within the bounded 128-snapshot window. Every eighth successful claim uses oldest eligible sequence; entity ordering remains authoritative. Empty disables priority.
+        deadline_metadata_key:
+          type: string
+          maxLength: 64
+          pattern: ^[a-z0-9_.-]*$
+          default: ''
+          description: Immutable opt-in metadata field containing an RFC3339 delivery
+            deadline. Ordered groups require skip policy. Missing or empty values have no deadline. Malformed values become
+            terminal invalid_delivery_deadline failures. Frozen on assignment; existing
+            snapshots are unchanged. Deadlines prevent expired claims and cap leases.
+        filter:
+          $ref: '#/components/schemas/RealtimeConsumerGroupFilter'
+    RealtimeConsumerGroupPauseState:
+      type: object
+      required:
+      - paused
+      - paused_at
+      properties:
+        paused:
+          type: boolean
+        paused_at:
+          type: string
+          format: date-time
+          nullable: true
+    RealtimeConsumerGroupDrainState:
+      type: object
+      required:
+      - draining
+      - drained
+      - active_leases
+      - paused_at
+      properties:
+        draining:
+          type: boolean
+        drained:
+          type: boolean
+        active_leases:
+          type: integer
+          minimum: 0
+          maximum: 32
+        paused_at:
+          type: string
+          format: date-time
+          nullable: true
+    RealtimeDeadLetterPreviewRequest:
+      type: object
+      properties:
+        failure_codes:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          description: Empty selects all codes; otherwise exact case-sensitive matches.
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[ -~]+$'}
+        after_sequence:
+          type: string
+          pattern: ^[0-9]+$
+          default: '0'
+          description: Exclusive lower bound within signed 64-bit sequence range.
+        through_sequence:
+          type: string
+          pattern: ^[0-9]+$
+          description: Optional inclusive upper bound greater than after_sequence.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 32
+          default: 32
+    RealtimeDeadLetterReplaySelection:
+      type: object
+      required: [sequence, dead_since]
+      properties:
+        sequence:
+          type: string
+          pattern: ^[1-9][0-9]*$
+        dead_since:
+          type: string
+          format: date-time
+          description: Exact preview timestamp; preserve precision, do not round it.
+    RealtimeDeadLetterPreviewItem:
+      type: object
+      required: [sequence, dead_since, attempts, failure_code, ordering_blocked, expires_at]
+      properties:
+        sequence: {type: string, pattern: '^[1-9][0-9]*$'}
+        dead_since: {type: string, format: date-time}
+        attempts: {type: integer, minimum: 0}
+        failure_code: {type: string}
+        ordering_blocked:
+          type: boolean
+          description: A current unexpired same-key lease blocks replay; observed only.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Nominal retention expiry; warning grace may postpone actual cleanup.
+    RealtimeDeadLetterPreview:
+      type: object
+      required: [group_id, items, has_more]
+      properties:
+        group_id: {type: string, format: uuid}
+        items:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/RealtimeDeadLetterPreviewItem'}
+        has_more: {type: boolean}
+    RealtimeReplayJobWebhookPayload:
+      type: object
+      description: Payload of realtime.replay_job.completed, realtime.replay_job.cancelled and realtime.replay_job.processing_failed app webhooks. Use event_id
+        to deduplicate delivery retries. Counts describe the committed transition; cancellation does not undo earlier replays.
+      required:
+      - event_id
+      - app_id
+      - endpoint_id
+      - group_id
+      - job_id
+      - channel
+      - group
+      - state
+      - rate
+      - selected
+      - processed
+      - replayed
+      - skipped
+      - remaining
+      - error_count
+      - error_code
+      - error_threshold
+      - inspector_path
+      - occurred_at
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        endpoint_id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+        group:
+          type: string
+        state:
+          type: string
+          enum:
+          - running
+          - completed
+          - cancelled
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 32
+        selected:
+          type: integer
+          minimum: 0
+          maximum: 128
+        processed:
+          type: integer
+          minimum: 0
+          maximum: 128
+        replayed:
+          type: integer
+          minimum: 0
+          maximum: 128
+        skipped:
+          type: integer
+          minimum: 0
+          maximum: 128
+        remaining:
+          type: integer
+          minimum: 0
+          maximum: 128
+        error_count:
+          type: integer
+          format: int64
+          minimum: 0
+        error_code:
+          type: string
+          description: processing_failed on the warning event; empty for terminal events. Contains no raw database error.
+        error_threshold:
+          type: integer
+          minimum: 3
+          maximum: 3
+          description: One warning per job when cumulative processing errors first reach this threshold.
+        inspector_path:
+          type: string
+          description: Relative inspector link on the Gregale console origin. Recent job history may later be pruned.
+        occurred_at:
+          type: string
+          format: date-time
+    RealtimeReplayJobRequest:
+      type: object
+      required:
+      - rate
+      properties:
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 32
+        failure_codes:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+        after_sequence:
+          type: string
+          pattern: ^[0-9]+$
+          default: '0'
+        through_sequence:
+          type: string
+          pattern: ^[0-9]+$
+    RealtimeReplayJob:
+      type: object
+      required:
+      - id
+      - group_id
+      - state
+      - rate
+      - selected
+      - processed
+      - replayed
+      - skipped
+      - outcomes
+      - created_at
+      - updated_at
+      - error_count
+      - last_error
+      - dry_run
+      - eligible
+      - reviewed_job_id
+      - started_job_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - running
+          - paused
+          - checking
+          - check_paused
+          - completed
+          - cancelled
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 32
+        selected:
+          type: integer
+          minimum: 0
+          maximum: 128
+        processed:
+          type: integer
+          minimum: 0
+          maximum: 128
+        replayed:
+          type: integer
+          minimum: 0
+          maximum: 128
+        skipped:
+          type: integer
+          minimum: 0
+          maximum: 128
+        outcomes:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/RealtimeReplayJobOutcome'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        error_count:
+          type: integer
+          format: int64
+          minimum: 0
+        last_error:
+          type: string
+          description: Empty until a processing failure; processing_failed is a safe diagnostic without database details.
+        dry_run:
+          type: boolean
+        eligible:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Eligible checks in a dry-run report; zero for a real replay.
+        reviewed_job_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Source dry-run report for a reviewed replay. History reference may outlive the report.
+        started_job_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Single real replay started from this report. History reference may outlive the replay.
+    RealtimeReplayJobOutcome:
+      type: object
+      required:
+      - sequence
+      - status
+      properties:
+        sequence:
+          type: string
+          pattern: ^[1-9][0-9]*$
+        status:
+          type: string
+          enum:
+          - eligible
+          - replayed
+          - ordering_blocked
+          - stale
+          - not_dead
+          - missing
+          - deadline_expired
+          - invalid_deadline
+        checked_at:
+          type: string
+          format: date-time
+          description: Per-item observation time; absent in older retained job outcomes.
+    RealtimeDeadLetterBulkReplayRequest:
+      type: object
+      required: [group_id, items]
+      properties:
+        group_id: {type: string, format: uuid}
+        items:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: Unique sequences selected explicitly from a preview.
+          items: {$ref: '#/components/schemas/RealtimeDeadLetterReplaySelection'}
+    RealtimeDeadLetterReplayOutcome:
+      type: object
+      required: [sequence, status]
+      properties:
+        sequence: {type: string, pattern: '^[1-9][0-9]*$'}
+        status:
+          type: string
+          enum: [replayed, ordering_blocked, stale, not_dead, missing, deadline_expired, invalid_deadline]
+    RealtimeDeadLetterBulkReplayResult:
+      type: object
+      required: [group_id, replayed, outcomes]
+      properties:
+        group_id: {type: string, format: uuid}
+        replayed: {type: integer, minimum: 0, maximum: 32}
+        outcomes:
+          type: array
+          maxItems: 32
+          description: One outcome per selection, in request order.
+          items: {$ref: '#/components/schemas/RealtimeDeadLetterReplayOutcome'}
+    RealtimeWorkerHeartbeatRequest:
+      type: object
+      required: [ready]
+      properties:
+        worker:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Required on account route; optional for scoped workers and must
+            match credential name if supplied. Sharing a credential aggregates processes.
+        ready: {type: boolean}
+        status_code:
+          type: string
+          maxLength: 64
+          pattern: '^[ -~]*$'
+          description: Short diagnostic code only; never include secrets.
+    RealtimeWorkerHeartbeat:
+      type: object
+      required: [id, worker, ready, status_code, last_seen_at, lost, live]
+      properties:
+        id: {type: string, format: uuid}
+        worker: {type: string}
+        ready: {type: boolean}
+        status_code: {type: string}
+        last_seen_at: {type: string, format: date-time}
+        lost:
+          type: boolean
+          description: Persisted loss decision; sampled and may lag computed liveness.
+        live:
+          type: boolean
+          description: Fresh heartbeat and currently eligible credential. Not proof of
+            connectivity or ability to process work.
+    RealtimeConsumerGroupBatchSettlementRequest:
+      type: object
+      required: [settlements]
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+          minLength: 36
+          maxLength: 36
+          description: Optional UUID. Retains the original successful result for 24 hours for this group and principal. Reuse requires identical normalized contents, including claim tokens and ordered batch items. At most 1024 receipts per group; full capacity returns 429 before settlement. Omit item-level keys in batches. Replays require current authorization and do not settle again. Renew receipts report the original lease expiry rather than extending it again.
+        settlements:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: {$ref: '#/components/schemas/RealtimeConsumerGroupSettlement'}
+    RealtimeConsumerGroupBatchSettlementResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: {$ref: '#/components/schemas/RealtimeConsumerGroupBatchSettlementItem'}
+    RealtimeConsumerGroupBatchSettlementItem:
+      type: object
+      required: [sequence, action, status]
+      properties:
+        sequence: {type: string, pattern: '^[0-9]+$'}
+        action: {type: string, enum: [complete, retry, renew, release]}
+        status: {type: string, enum: [completed, ready, dead, leased, lease_lost]}
+        available_at: {type: string, format: date-time}
+        lease_until: {type: string, format: date-time}
+    RealtimeDeadLetterExportManifest:
+      type: object
+      required: [type, format_version, group_id, group, channel, exported_at, snapshot_at, after_sequence, through_sequence, failure_codes, count, has_more, next_after_sequence]
+      properties:
+        type: {type: string, enum: [manifest]}
+        format_version: {type: integer, enum: [1]}
+        group_id: {type: string, format: uuid}
+        group: {type: string}
+        channel: {type: string}
+        exported_at: {type: string, format: date-time}
+        snapshot_at: {type: string, format: date-time}
+        after_sequence: {type: string, pattern: '^[0-9]+$'}
+        through_sequence: {type: string, pattern: '^[0-9]+$'}
+        failure_codes:
+          type: array
+          maxItems: 32
+          items: {type: string, minLength: 1, maxLength: 64}
+        count: {type: integer, minimum: 0, maximum: 128}
+        has_more: {type: boolean}
+        next_after_sequence: {type: string, pattern: '^[0-9]+$'}
+    RealtimeDeadLetterExportRecord:
+      type: object
+      required: [type, group_id, sequence, dead_since, attempts, failure_code, fencing_token, delivery_deadline, deadline_invalid, ordering_key, priority, expires_at, message]
+      properties:
+        type: {type: string, enum: [dead_letter]}
+        group_id: {type: string, format: uuid}
+        sequence: {type: string, pattern: '^[0-9]+$'}
+        dead_since: {type: string, format: date-time}
+        attempts: {type: integer, minimum: 0, maximum: 10}
+        failure_code: {type: string, maxLength: 64}
+        fencing_token: {type: string, nullable: true, pattern: '^[1-9][0-9]*$'}
+        delivery_deadline: {type: string, format: date-time, nullable: true}
+        deadline_invalid: {type: boolean}
+        ordering_key: {type: string}
+        priority: {type: integer, minimum: 0, maximum: 9}
+        expires_at: {type: string, format: date-time, nullable: true, description: Nominal dead-letter expiry; retained rows can survive until cleanup runs}
+        message: {$ref: '#/components/schemas/RealtimeConsumerGroupMessage'}
+    RealtimeConsumerGroupDeliveryHistory:
+      type: object
+      required: [events, has_more, next_after_id, group_pruned_events, retention_seconds]
+      properties:
+        events:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/RealtimeConsumerGroupDeliveryHistoryEvent'}
+        has_more: {type: boolean}
+        next_after_id: {type: string, pattern: '^[0-9]+$'}
+        group_pruned_events: {type: string, pattern: '^[0-9]+$'}
+        retention_seconds: {type: integer, enum: [86400]}
+    RealtimeConsumerGroupDeliveryHistoryEvent:
+      type: object
+      required: [id, sequence, event, attempt, fencing_token, failure_code, recorded_at]
+      properties:
+        id: {type: string, pattern: '^[0-9]+$'}
+        sequence: {type: string, pattern: '^[0-9]+$'}
+        event: {type: string, enum: [claimed, released, retried, lease_expired, dead_lettered, deadline_expired, invalid_deadline, completed, replayed]}
+        attempt: {type: integer, minimum: 0, maximum: 10}
+        fencing_token: {type: string, nullable: true, pattern: '^[0-9]+$'}
+        failure_code: {type: string, maxLength: 64}
+        recorded_at: {type: string, format: date-time}
+    RealtimeConsumerGroupCircuitPolicy:
+      type: object
+      required: [enabled, failure_threshold, cooldown_seconds]
+      properties:
+        enabled: {type: boolean}
+        failure_threshold: {type: integer, minimum: 1, maximum: 100}
+        cooldown_seconds: {type: integer, minimum: 1, maximum: 3600}
+    RealtimeConsumerGroupCircuitStatus:
+      type: object
+      required: [enabled, failure_threshold, cooldown_seconds, state, reason, consecutive_failures, next_probe_at, probe_sequence, blocked, retry_after_milliseconds]
+      properties:
+        enabled: {type: boolean}
+        failure_threshold: {type: integer, minimum: 1, maximum: 100}
+        cooldown_seconds: {type: integer, minimum: 1, maximum: 3600}
+        state: {type: string, enum: [closed, open, half_open]}
+        reason: {type: string}
+        consecutive_failures: {type: integer, minimum: 0, maximum: 100}
+        next_probe_at: {type: string, format: date-time, nullable: true}
+        probe_sequence: {type: string, nullable: true, pattern: '^[0-9]+$'}
+        blocked: {type: boolean, description: Breaker admission gate only; manual pause and other eligibility checks are separate.}
+        retry_after_milliseconds: {type: integer, format: int64, minimum: 0}
+    RealtimeConsumerGroupPriorityStatus:
+      type: object
+      required: [metadata_key, fair_turns, next_claim_oldest, backlog]
+      properties:
+        metadata_key: {type: string, maxLength: 64}
+        fair_turns: {type: integer, enum: [8]}
+        next_claim_oldest: {type: boolean}
+        backlog:
+          type: array
+          maxItems: 10
+          items: {$ref: '#/components/schemas/RealtimeConsumerGroupPriorityBacklog'}
+    RealtimeConsumerGroupPriorityBacklog:
+      type: object
+      required: [priority, ready, leased, dead]
+      properties:
+        priority: {type: integer, minimum: 0, maximum: 9}
+        ready: {type: integer, minimum: 0, maximum: 128}
+        leased: {type: integer, minimum: 0, maximum: 128}
+        dead: {type: integer, minimum: 0, maximum: 128}
+    RealtimeConsumerGroupMetrics:
+      type: object
+      required: [bucket_seconds, buckets]
+      properties:
+        bucket_seconds: {type: integer, enum: [60]}
+        buckets:
+          type: array
+          minItems: 60
+          maxItems: 60
+          items: {$ref: '#/components/schemas/RealtimeConsumerGroupMetricBucket'}
+    RealtimeConsumerGroupMetricBucket:
+      type: object
+      required: [bucket_at, first_claims, completed, retries, dead_letters, queue_wait_milliseconds, processing_milliseconds]
+      properties:
+        bucket_at: {type: string, format: date-time}
+        first_claims: {type: string, pattern: '^[0-9]+$'}
+        completed:
+          type: string
+          pattern: '^[0-9]+$'
+          description: Successful attempts with an observed processing start; legacy in-flight attempts are excluded.
+        retries: {type: string, pattern: '^[0-9]+$'}
+        dead_letters: {type: string, pattern: '^[0-9]+$'}
+        queue_wait_milliseconds: {type: number, format: double, minimum: 0}
+        processing_milliseconds: {type: number, format: double, minimum: 0}
+    RealtimeWorkerHealth:
+      type: object
+      required: [workers, live_workers, ready_workers, timeout_seconds]
+      properties:
+        workers:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/RealtimeWorkerHeartbeat'}
+        live_workers: {type: integer, minimum: 0, maximum: 32}
+        ready_workers: {type: integer, minimum: 0, maximum: 32}
+        timeout_seconds: {type: integer, enum: [60]}
+    RealtimeConsumerGroupFilter:
+      type: object
+      description: Immutable selection of retained events. Event types match metadata.event_type,
+        not the created/updated/deleted lifecycle event. Nonempty event_types uses OR;
+        every metadata predicate and the event-type condition must match. Empty selections
+        match everything. Missing metadata never equals an expected empty value.
+        Configuration is bounded to 8192 encoded JSON bytes.
+      properties:
+        event_types:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          default: []
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+            description: Exact event_type value, at most 128 bytes; nonempty and trimmed,
+              with no NUL, CR or LF.
+        metadata:
+          type: object
+          maxProperties: 8
+          default: {}
+          description: Exact case-sensitive string equality; valid metadata keys use
+            lowercase letters, digits, underscore, hyphen or dot and are 1 to 64 bytes.
+            Values are at most 128 bytes and cannot contain NUL, CR or LF. Encoded
+            metadata is bounded to 4096 bytes.
+          additionalProperties:
+            type: string
+            maxLength: 128
+    RealtimeConsumerGroupClaimRatePolicy:
+      type: object
+      required: [rate_per_second, burst]
+      properties:
+        rate_per_second:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Zero disables claim throttling.
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 32
+    RealtimeConsumerGroupClaimRateStatus:
+      type: object
+      required: [rate_per_second, burst, throttled_claim_requests, retry_after_milliseconds]
+      properties:
+        rate_per_second: {type: integer, minimum: 0, maximum: 1000}
+        burst: {type: integer, minimum: 1, maximum: 32}
+        throttled_claim_requests:
+          type: string
+          pattern: ^[0-9]+$
+          description: Cumulative committed batch admission decisions stopped by rate,
+            including partial batches. Counts polling attempts, not withheld messages.
+        retry_after_milliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current earliest rate allowance delay; zero when available or disabled.
+    RealtimeConsumerGroupRetryPolicyRequest:
+      type: object
+      required: [enabled, base_delay_seconds, max_delay_seconds, jitter]
+      properties:
+        enabled:
+          type: boolean
+        base_delay_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        max_delay_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Must be at least base_delay_seconds.
+        jitter:
+          type: boolean
+        permanent_failure_codes:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[ -~]+$'
+          description: Exact case-sensitive codes; unspecified codes remain retryable.
+    RealtimeConsumerGroupRetryStatus:
+      type: object
+      required: [enabled, base_delay_seconds, max_delay_seconds, jitter, permanent_failure_codes, next_retry_at]
+      properties:
+        enabled:
+          type: boolean
+        base_delay_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        max_delay_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        jitter:
+          type: boolean
+        permanent_failure_codes:
+          type: array
+          items:
+            type: string
+        next_retry_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Earliest future available_at among ready snapshots; null when none.
+    RealtimeConsumerGroupRetentionRequest:
+      type: object
+      required: [retention_seconds]
+      properties:
+        retention_seconds:
+          type: integer
+          minimum: 0
+          maximum: 2592000
+          description: Zero disables cleanup; otherwise 3600 to 2592000. Ordered groups require skip.
+    RealtimeConsumerGroupRetentionPolicy:
+      type: object
+      required: [retention_seconds, warning_seconds, expired_dead_letters]
+      properties:
+        retention_seconds:
+          type: integer
+          minimum: 0
+          maximum: 2592000
+        warning_seconds:
+          type: integer
+          enum: [300]
+        expired_dead_letters:
+          type: string
+          pattern: ^[0-9]+$
+    RealtimeConsumerGroupLagAlertConfig:
+      type: object
+      required:
+      - enabled
+      properties:
+        enabled:
+          type: boolean
+        unassigned_threshold:
+          type: string
+          pattern: ^[0-9]+$
+          default: '0'
+          description: 0 disables backlog threshold; maximum 1000000000.
+        oldest_pending_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
+        dead_letter_threshold:
+          type: integer
+          minimum: 0
+          maximum: 128
+          default: 0
+        cooldown_seconds:
+          type: integer
+          minimum: 30
+          maximum: 86400
+          default: 300
+    RealtimeConsumerGroupLagAlert:
+      type: object
+      required:
+      - enabled
+      - unassigned_threshold
+      - oldest_pending_seconds
+      - dead_letter_threshold
+      - cooldown_seconds
+      - breached
+      - unassigned
+      - oldest_pending_age_seconds
+      - dead_letters
+      - observed_at
+      - last_event_at
+      properties:
+        enabled:
+          type: boolean
+        unassigned_threshold:
+          type: string
+          pattern: ^[0-9]+$
+          default: '0'
+          description: 0 disables backlog threshold; maximum 1000000000.
+        oldest_pending_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
+        dead_letter_threshold:
+          type: integer
+          minimum: 0
+          maximum: 128
+          default: 0
+        cooldown_seconds:
+          type: integer
+          minimum: 30
+          maximum: 86400
+          default: 300
+        breached:
+          type: boolean
+        unassigned:
+          type: string
+          nullable: true
+        oldest_pending_age_seconds:
+          type: integer
+          nullable: true
+        dead_letters:
+          type: integer
+          nullable: true
+        observed_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_event_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last event decision, including when no recipient opted in.
+    RealtimeConsumerGroup:
+      type: object
+      required:
+      - deduplication_metadata_key
+      - deduplication_window_seconds
+      - duplicate_messages
+      - deduplication_keys
+      - group_id
+      - name
+      - channel
+      - assigned_sequence
+      - latest_sequence
+      - oldest_sequence
+      - unassigned
+      - completed
+      - ready
+      - leased
+      - expired_leases
+      - dead
+      - active_workers
+      - history_unavailable
+      - capacity_blocked
+      - lease_seconds
+      - max_attempts
+      - created_at
+      - paused
+      - paused_at
+      - draining
+      - drained
+      - ordering_metadata_key
+      - dead_letter_policy
+      - ordering_blocked
+      - last_fencing_token
+      - dead_letter_retention_seconds
+      - expired_dead_letters
+      - deadline_metadata_key
+      - expired_deliveries
+      - filter
+      - filtered_messages
+      properties:
+        deduplication_metadata_key:
+          type: string
+          maxLength: 64
+          description: Immutable event ID metadata field; empty disables deduplication.
+        deduplication_window_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Retention from first assignment; zero when disabled.
+        duplicate_messages:
+          type: string
+          pattern: '^[0-9]+$'
+          description: Cumulative source events skipped as duplicate IDs. Separate from filtering and completions; no snapshots, lease attempts, claim-rate credit or fencing tokens are allocated.
+        deduplication_keys:
+          type: integer
+          minimum: 0
+          maximum: 4096
+          description: Currently unexpired remembered event ID hashes. Idle expired rows are pruned on the next keyed assignment.
+        group_id:
+          type: string
+        name:
+          type: string
+        channel:
+          type: string
+        assigned_sequence:
+          type: string
+          pattern: ^[0-9]+$
+        latest_sequence:
+          type: string
+          pattern: ^[0-9]+$
+        oldest_sequence:
+          type: string
+          pattern: ^[0-9]+$
+        unassigned:
+          type: string
+          pattern: ^[0-9]+$
+        completed:
+          type: string
+          pattern: ^[0-9]+$
+        ready:
+          type: integer
+          minimum: 0
+        leased:
+          type: integer
+          minimum: 0
+        expired_leases:
+          type: integer
+          minimum: 0
+        dead:
+          type: integer
+          minimum: 0
+        active_workers:
+          type: integer
+          minimum: 0
+        history_unavailable:
+          type: boolean
+        capacity_blocked:
+          type: boolean
+        lease_seconds:
+          type: integer
+        max_attempts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        paused:
+          type: boolean
+          description: New claims are paused; existing leases remain valid.
+        paused_at:
+          type: string
+          format: date-time
+          nullable: true
+        draining:
+          type: boolean
+        drained:
+          type: boolean
+          description: Drain mode is active and no unexpired leases remain; not a handler
+            completion receipt.
+        ordering_metadata_key:
+          type: string
+          pattern: ^[a-z0-9_.-]*$
+          maxLength: 64
+          default: ''
+          description: Immutable exact valid metadata field. Empty disables ordering.
+            Missing/empty values share one ordered bucket.
+        dead_letter_policy:
+          type: string
+          enum:
+          - block
+          - skip
+          default: block
+          description: Immutable ordered-group policy. Block holds later events until
+            replay/repair; skip lets later events proceed. Explicit replay can occur after
+            later work completed.
+        ordering_blocked:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Ready snapshots held by ordering predecessors or leases; ready
+            counts still include them.
+        last_fencing_token:
+          type: string
+          pattern: ^[0-9]+$
+          description: Latest committed fencing number for this group UUID; starts at
+            zero.
+        dead_letter_retention_seconds:
+          type: integer
+          minimum: 0
+          maximum: 2592000
+          default: 0
+          description: Zero keeps indefinitely; otherwise 3600 to 2592000 seconds.
+            Ordered groups require skip policy. Cleanup includes a 300-second warning grace.
+        expired_dead_letters:
+          type: string
+          pattern: ^[0-9]+$
+          description: Cumulative snapshots removed by retention; not successful completions.
+        deadline_metadata_key:
+          type: string
+          maxLength: 64
+          pattern: ^[a-z0-9_.-]*$
+          default: ''
+          description: Immutable opt-in metadata field containing an RFC3339 delivery
+            deadline. Ordered groups require skip policy. Missing or empty values have no deadline. Malformed values become
+            terminal invalid_delivery_deadline failures. Frozen on assignment; existing
+            snapshots are unchanged. Deadlines prevent expired claims and cap leases.
+        expired_deliveries:
+          type: string
+          pattern: ^[0-9]+$
+          description: Cumulative deadline-expired or malformed-deadline deliveries made
+            terminal by claim/replay maintenance. Not successful completions.
+        filter:
+          $ref: '#/components/schemas/RealtimeConsumerGroupFilter'
+        filtered_messages:
+          type: string
+          pattern: ^[0-9]+$
+          description: Cumulative nonmatching retained events skipped during assignment;
+            does not count completions or explicit retention-gap resynchronization.
+    RealtimeConsumerGroupMessage:
+      type: object
+      required:
+      - sequence
+      - data_base64
+      - binary
+      - version
+      - event
+      - deleted
+      - created_at
+      properties:
+        sequence:
+          type: string
+          pattern: ^[0-9]+$
+        data_base64:
+          type: string
+        binary:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        target_message_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        event:
+          type: string
+        deleted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    RealtimeConsumerGroupBatchRequest:
+      type: object
+      required:
+      - worker
+      - limit
+      properties:
+        worker:
+          type: string
+          minLength: 1
+          maxLength: 128
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 16
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Wait for available work, checking every 500 ms without holding
+            a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting
+            requests per apid. Cancellation stops waiting; uncertain claims must not be
+            retried automatically.
+    RealtimeWorkerBatchClaimRequest:
+      type: object
+      required:
+      - limit
+      properties:
+        worker:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Optional; must match the credential identity if supplied.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 16
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Wait for available work, checking every 500 ms without holding
+            a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting
+            requests per apid. Cancellation stops waiting; uncertain claims must not be
+            retried automatically.
+    RealtimeConsumerGroupBatch:
+      type: object
+      required:
+      - deduplication_blocked
+      - circuit_open
+      - claims
+      - history_unavailable
+      - capacity_blocked
+      - paused
+      - ordering_blocked
+      - rate_throttled
+      - retry_after_milliseconds
+      - filter_scan_limited
+      properties:
+        deduplication_blocked:
+          type: boolean
+          description: A new event ID encountered the 4096-key bound; its source cursor is unchanged. Partial claims may be present. Existing snapshots bypass deduplication and remain claimable. Wait using retry_after_milliseconds before assigning new IDs.
+        circuit_open:
+          type: boolean
+          description: Circuit cooldown or an active probe stopped new claims; partial claims may be present.
+        claims:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/RealtimeConsumerGroupClaim'
+        history_unavailable:
+          type: boolean
+        capacity_blocked:
+          type: boolean
+        paused:
+          type: boolean
+          description: New claims are paused; existing leases remain valid.
+        ordering_blocked:
+          type: boolean
+          description: Ready snapshots are blocked by same-key predecessors or leases.
+            This is normal backpressure, not a fatal error.
+        rate_throttled:
+          type: boolean
+          description: Shared group rate stopped admission, possibly after partial claims.
+        retry_after_milliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Minimum observed rate or circuit delay or time until an event ID expires. Positive when rate_throttled, circuit_open or deduplication_blocked.
+        filter_scan_limited:
+          type: boolean
+          description: Assignment reached the 128-event scan budget. Progress is committed;
+            partial claims may be present. Poll again to continue; more work is not guaranteed.
+    RealtimeConsumerGroupClaimRequest:
+      type: object
+      required:
+      - worker
+      properties:
+        worker:
+          type: string
+          minLength: 1
+          maxLength: 128
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Wait for available work, checking every 500 ms without holding
+            a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting
+            requests per apid. Cancellation stops waiting; uncertain claims must not be
+            retried automatically.
+    RealtimeConsumerGroupClaim:
+      type: object
+      required:
+      - message
+      - worker
+      - attempt
+      - claim_token
+      - lease_until
+      - group_id
+      - fencing_token
+      - delivery_deadline
+      properties:
+        message:
+          $ref: '#/components/schemas/RealtimeConsumerGroupMessage'
+        worker:
+          type: string
+        attempt:
+          type: integer
+          minimum: 1
+        claim_token:
+          type: string
+          description: Opaque lease credential. Never log or persist in generic response
+            caches.
+        lease_until:
+          type: string
+          format: date-time
+        group_id:
+          type: string
+          format: uuid
+          description: Immutable counter namespace. A recreated group has a different
+            UUID.
+        fencing_token:
+          type: string
+          pattern: ^[1-9][0-9]*$
+          description: Monotonically increasing per-group signed-64-bit counter. Stable
+            on renewal, new on every new lease including retry/replay. Compare with BigInt,
+            within a group UUID and resource scope; downstream storage must enforce stale-write
+            rejection.
+        delivery_deadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: Frozen deadline, or null. lease_until never extends beyond it.
+            Handlers must stop cooperatively and guard external writes.
+    RealtimeConsumerGroupSettlement:
+      type: object
+      required:
+      - sequence
+      - claim_token
+      - action
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+          minLength: 36
+          maxLength: 36
+          description: Optional UUID. Retains the original successful result for 24 hours for this group and principal. Reuse requires identical normalized contents, including claim tokens and ordered batch items. At most 1024 receipts per group; full capacity returns 429 before settlement. Omit item-level keys in batches. Replays require current authorization and do not settle again. Renew receipts report the original lease expiry rather than extending it again.
+        sequence:
+          type: string
+          pattern: ^[0-9]+$
+        claim_token:
+          type: string
+        action:
+          type: string
+          enum:
+          - complete
+          - retry
+          - renew
+          - release
+        retry_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: Omitted uses enabled group backoff; explicit zero retries immediately.
+        failure_code:
+          type: string
+          maxLength: 64
+          description: Optional printable ASCII diagnostic code; do not include secrets.
+    RealtimeConsumerGroupSettlementResult:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - completed
+          - ready
+          - dead
+          - leased
+        lease_until:
+          type: string
+          format: date-time
+        available_at:
+          type: string
+          format: date-time
+          description: Earliest eligibility timestamp returned only for ready retry results.
+    RealtimeConsumerGroupDeadLetter:
+      type: object
+      required:
+      - message
+      - attempts
+      - failure_code
+      - retention_started_at
+      - expires_at
+      - warning_at
+      - cleanup_after
+      properties:
+        message:
+          $ref: '#/components/schemas/RealtimeConsumerGroupMessage'
+        attempts:
+          type: integer
+          minimum: 0
+        failure_code:
+          type: string
+        retention_started_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        warning_at:
+          type: string
+          format: date-time
+          nullable: true
+        cleanup_after:
+          type: string
+          format: date-time
+          nullable: true
+    RealtimeConsumerGroupResyncRequest:
+      type: object
+      required:
+      - expected_sequence
+      - after_sequence
+      properties:
+        expected_sequence:
+          type: string
+          pattern: ^[0-9]+$
+        after_sequence:
+          type: string
+          pattern: ^[0-9]+$
+    RealtimeAcknowledgement:
+      type: object
+      required: [checkpoint_sequence, acknowledged_sequence, acknowledged_at, updated_at]
+      properties:
+        checkpoint_sequence: {type: string, pattern: '^[0-9]+$'}
+        acknowledged_sequence: {type: [string, 'null'], description: Latest advancing ACK; null after initialization or reset}
+        acknowledged_at: {type: [string, 'null'], format: date-time}
+        updated_at: {type: string, format: date-time}
+    RealtimeTicketRequest:
+      type: object
+      additionalProperties: false
+      required: [principal, channels, ttl_seconds]
+      properties:
+        principal:
+          type: string
+          minLength: 1
+          maxLength: 256
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+    RealtimeTicketResponse:
+      type: object
+      required: [ticket, expires_at]
+      properties:
+        ticket:
+          type: string
+          description: Opaque bearer credential returned once; store only in client memory.
+        expires_at:
+          type: string
+          format: date-time
+    RealtimeChannelWebhookFilter:
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, channel]
+      properties:
+        endpoint_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+        channel:
+          type: string
+          minLength: 1
+          maxLength: 256
+        metadata:
+          type: object
+          maxProperties: 8
+          additionalProperties:
+            type: string
+            maxLength: 128
+    ManagedRealtimeAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [revoke_channel, restore_channel, revoke_sessions] }
+        channel:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Required for channel actions; omitted for revoke_sessions.
+    ManagedRealtimeAccessResponse:
+      type: object
+      additionalProperties: false
+      required: [denied_channels, revision, updated_at]
+      properties:
+        denied_channels:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 256 }
+        sessions_revoked_before: { type: string, format: date-time }
+        revision: { type: integer, format: int64, minimum: 0 }
+        updated_at: { type: string, format: date-time }
     ManagedRealtimePrincipalMessageRequest:
       type: object
       additionalProperties: false
@@ -36465,6 +41425,7 @@ components:
       - principal
       - data_base64
       properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Delivery lifetime in seconds; positive values require retained inbox delivery. Zero disables expiry." }
         principal:
           type: string
           minLength: 1
@@ -36536,6 +41497,7 @@ components:
     ManagedRealtimePrincipalSendResponse:
       type: object
       properties:
+        delivery_expires_at: { type: string, format: date-time, description: "Delivery deadline; independent of notification fallback and retention." }
         message_id:
           type: string
         sequence:
@@ -36579,6 +41541,7 @@ components:
       - batch_id
       - messages
       properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: Default delivery lifetime for all batch messages; zero disables expiry. }
         expected_sequence:
           type:
           - integer
@@ -36599,6 +41562,7 @@ components:
             required:
             - data_base64
             properties:
+              ttl_seconds: { type: [integer, 'null'], minimum: 0, maximum: 86400, description: Override the batch TTL; omitted or null inherits the default and zero disables expiry for this message. }
               data_base64:
                 type: string
                 maxLength: 5464
@@ -36796,6 +41760,9 @@ components:
       - created_at
       - expires_at
       properties:
+        expired: { type: boolean, default: false, description: "Delivery deadline passed; payload is suppressed but sequence remains ACKable." }
+        delivery_expires_at: { type: string, format: date-time, description: "Delivery deadline; expires_at remains the retention deadline." }
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Delivery lifetime; zero disables expiry." }
         target_message_id:
           type: string
         version:
@@ -67224,7 +72191,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.channel.published", "realtime.channel.acknowledged", "realtime.consumer_group.dead_lettered", "realtime.consumer_group.dead_letter_expiring", "realtime.consumer_group.delivery_expired", "realtime.consumer_group.worker_lost", "realtime.consumer_group.worker_recovered", "realtime.consumer_group.circuit_opened", "realtime.consumer_group.circuit_half_open", "realtime.consumer_group.circuit_closed", "realtime.replay_job.completed", "realtime.replay_job.cancelled", "realtime.replay_job.processing_failed", "realtime.consumer_group.lag_exceeded", "realtime.consumer_group.lag_recovered", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -67459,10 +72426,11 @@ components:
         skipped_occurrences: { type: integer, format: int64, minimum: 0 }
 
     ManagedRealtimeScheduleRequest:
-      description: 'Scheduled channel publish payload with recurrence and retry settings.'
+      description: 'Scheduled channel publish payload with recurrence, retry settings, and optional message TTL.'
       type: object
       required: [data_base64, deliver_at]
       properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: "Message lifetime in seconds from publication of each occurrence; zero disables expiry." }
         group: { type: string, minLength: 1, maxLength: 128, description: Optional immutable channel-scoped group label; at most 128 UTF-8 bytes. }
         conditions:
           type: array
@@ -67892,6 +72860,7 @@ components:
       description: Binary-safe message payload encoded as standard base64.
       required: [data_base64]
       properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: 'Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.' }
         expected_sequence: { type: [integer, 'null'], format: int64, minimum: 0, description: 'Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes only.' }
         metadata:
           type: object
@@ -67928,6 +72897,7 @@ components:
       description: Binary-safe payload to append to retained channel history.
       required: [data_base64]
       properties:
+        ttl_seconds: { type: integer, minimum: 0, maximum: 86400, default: 0, description: 'Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.' }
         expected_sequence: { type: [integer, 'null'], format: int64, minimum: 0, description: 'Optional channel head sequence required before this retained publish; zero requires an empty channel.' }
         metadata:
           type: object
@@ -67948,6 +72918,8 @@ components:
       - binary
       - created_at
       properties:
+        expires_at: { type: string, format: date-time, description: Original server-assigned delivery deadline when TTL is set. }
+        expired: { type: boolean, default: false, description: Expired checkpoint entry; payload and metadata are suppressed. }
         metadata:
           type: object
           maxProperties: 8
@@ -68124,7 +73096,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.channel.published", "realtime.channel.acknowledged", "realtime.consumer_group.dead_lettered", "realtime.consumer_group.dead_letter_expiring", "realtime.consumer_group.delivery_expired", "realtime.consumer_group.worker_lost", "realtime.consumer_group.worker_recovered", "realtime.consumer_group.circuit_opened", "realtime.consumer_group.circuit_half_open", "realtime.consumer_group.circuit_closed", "realtime.replay_job.completed", "realtime.replay_job.cancelled", "realtime.replay_job.processing_failed", "realtime.consumer_group.lag_exceeded", "realtime.consumer_group.lag_recovered", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -68206,7 +73178,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.channel.published", "realtime.channel.acknowledged", "realtime.consumer_group.dead_lettered", "realtime.consumer_group.dead_letter_expiring", "realtime.consumer_group.delivery_expired", "realtime.consumer_group.worker_lost", "realtime.consumer_group.worker_recovered", "realtime.consumer_group.circuit_opened", "realtime.consumer_group.circuit_half_open", "realtime.consumer_group.circuit_closed", "realtime.replay_job.completed", "realtime.replay_job.cancelled", "realtime.replay_job.processing_failed", "realtime.consumer_group.lag_exceeded", "realtime.consumer_group.lag_recovered", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

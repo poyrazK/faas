@@ -25,6 +25,7 @@ class ManagedRealtimeChannelBatchRequest:
     messages: list[ManagedRealtimeChannelBatchRequestMessagesItem]
     expected_sequence: int | None | Unset = UNSET
     """Precondition for the channel head before the whole batch."""
+    ttl_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +42,8 @@ class ManagedRealtimeChannelBatchRequest:
         else:
             expected_sequence = self.expected_sequence
 
+        ttl_seconds = self.ttl_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -52,6 +55,9 @@ class ManagedRealtimeChannelBatchRequest:
         if expected_sequence is not UNSET:
             field_dict["expected_sequence"] = expected_sequence
 
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
+
         return field_dict
 
     @classmethod
@@ -61,6 +67,7 @@ class ManagedRealtimeChannelBatchRequest:
         )
 
         d = dict(src_dict)
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
         batch_id = d.pop("batch_id")
 
         messages = []
@@ -80,6 +87,7 @@ class ManagedRealtimeChannelBatchRequest:
         expected_sequence = _parse_expected_sequence(d.pop("expected_sequence", UNSET))
 
         managed_realtime_channel_batch_request = cls(
+            ttl_seconds=ttl_seconds,
             batch_id=batch_id,
             messages=messages,
             expected_sequence=expected_sequence,

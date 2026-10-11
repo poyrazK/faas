@@ -27,6 +27,8 @@ class ManagedRealtimeMessageRequest:
     metadata: ManagedRealtimeMessageRequestMetadata | Unset = UNSET
     """Exact-match routing metadata; at most 4096 encoded JSON bytes. Retained channel publishing only."""
     binary: bool | Unset = False
+    ttl_seconds: int | Unset = 0
+    """Optional retained delivery lifetime from first commit; zero disables expiry."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +46,8 @@ class ManagedRealtimeMessageRequest:
 
         binary = self.binary
 
+        ttl_seconds = self.ttl_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +62,9 @@ class ManagedRealtimeMessageRequest:
         if binary is not UNSET:
             field_dict["binary"] = binary
 
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
+
         return field_dict
 
     @classmethod
@@ -65,6 +72,7 @@ class ManagedRealtimeMessageRequest:
         from ..models.managed_realtime_message_request_metadata import ManagedRealtimeMessageRequestMetadata
 
         d = dict(src_dict)
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
         data_base64 = d.pop("data_base64")
 
         def _parse_expected_sequence(data: object) -> int | None | Unset:
@@ -86,6 +94,7 @@ class ManagedRealtimeMessageRequest:
         binary = d.pop("binary", UNSET)
 
         managed_realtime_message_request = cls(
+            ttl_seconds=ttl_seconds,
             data_base64=data_base64,
             expected_sequence=expected_sequence,
             metadata=metadata,

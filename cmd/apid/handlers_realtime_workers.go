@@ -1,0 +1,226 @@
+package main
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func (s *server) authenticateRealtimeWorker(r *http.Request) (state.RealtimeWorkerGrant, error) {
+	var grant state.RealtimeWorkerGrant
+	if !s.realtimeHistoryPreviewEnabled {
+		return grant, state.ErrRealtimeWorkerCredentialDenied
+	}
+	if _, err := uuid.Parse(r.PathValue("group_id")); err != nil {
+		return grant, state.ErrRealtimeWorkerCredentialDenied
+	}
+	fields := strings.Fields(r.Header.Get("Authorization"))
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || !strings.HasPrefix(fields[1], "grw_") {
+		return grant, state.ErrRealtimeWorkerCredentialDenied
+	}
+	store, ok := s.store.(state.RealtimeWorkerCredentialStore)
+	if !ok {
+		return grant, state.ErrRealtimeWorkerCredentialDenied
+	}
+	return store.AuthenticateRealtimeWorkerCredential(r.Context(), r.PathValue("group_id"), fields[1])
+}
+func (s *server) realtimeWorkerLimited(next http.HandlerFunc) http.HandlerFunc {
+	cfg := middleware.AuthLimitConfig{CountStatuses: []int{http.StatusUnauthorized}, Log: s.log}
+	cfg.OnLimited = func(w http.ResponseWriter, r *http.Request) {
+		_, err := s.authenticateRealtimeWorker(r)
+		if err == nil {
+			next(w, r)
+			return
+		}
+		if errors.Is(err, state.ErrRealtimeWorkerCredentialDenied) {
+			api.WriteProblem(w, api.ErrAuthRateLimited(60))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("worker authentication unavailable"))
+	}
+	return middleware.AuthLimitWithLimiter(cfg, s.apiAuthLimiter)(next).ServeHTTP
+}
+func (s *server) loadRealtimeWorker(w http.ResponseWriter, r *http.Request, operation string) (*http.Request, state.RealtimeWorkerGrant, state.RealtimeConsumerGroupStore, bool) {
+	grant, err := s.authenticateRealtimeWorker(r)
+	if err != nil {
+		if errors.Is(err, state.ErrRealtimeWorkerCredentialDenied) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Invalid worker credential", "supply a current credential bound to this group"))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("worker authentication unavailable"))
+		}
+		return r, grant, nil, false
+	}
+	allowed := false
+	for _, permission := range grant.Info.Permissions {
+		if permission == operation {
+			allowed = true
+		}
+	}
+	if !allowed {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Worker permission denied", "this credential does not grant the requested operation"))
+		return r, grant, nil, false
+	}
+	acct, err := s.store.AccountByID(r.Context(), grant.AccountID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("worker account unavailable"))
+		return r, grant, nil, false
+	}
+	if _, ok := s.realtimePlanLimits(acct); !ok {
+		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return r, grant, nil, false
+	}
+	store, ok := s.store.(state.RealtimeConsumerGroupStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("worker groups unavailable"))
+		return r, grant, nil, false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	return r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), grant, operation)), grant, store, true
+}
+func (s *server) realtimeWorkerStatus(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "status")
+	if !ok {
+		return
+	}
+	groups, err := store.ListRealtimeConsumerGroups(r.Context(), g.EndpointID, g.Channel)
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	for _, group := range groups {
+		if group.GroupID == g.Info.GroupID {
+			writeJSON(w, http.StatusOK, group)
+			return
+		}
+	}
+	s.notFound(w, "group not found")
+}
+func (s *server) realtimeWorkerClaim(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "claim")
+	if !ok {
+		return
+	}
+	var req struct {
+		Worker      string `json:"worker,omitempty"`
+		WaitSeconds int    `json:"wait_seconds,omitempty"`
+	}
+	if decodeJSONSized(r, &req, api.RealtimeConsumerGroupBodyMaxBytes) != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid worker claim request"))
+		return
+	}
+	if req.Worker != "" && req.Worker != g.Info.Name {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Worker identity denied", "worker identity is fixed by the credential"))
+		return
+	}
+	claim, err := s.claimRealtimeGroupWithWait(r, store, g.EndpointID, g.Channel, g.Group, g.Info.Name, req.WaitSeconds)
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	if claim == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, claim)
+}
+func (s *server) realtimeWorkerSettle(w http.ResponseWriter, r *http.Request) {
+	var req state.RealtimeConsumerGroupSettlement
+	// Authenticate before parsing so unauthenticated requests always count toward
+	// the auth budget. The action's exact permission is then checked separately.
+	if _, err := s.authenticateRealtimeWorker(r); err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	if decodeJSONSized(r, &req, api.RealtimeConsumerGroupBodyMaxBytes) != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid claim settlement"))
+		return
+	}
+	if req.Action != "complete" && req.Action != "release" && req.Action != "renew" && req.Action != "retry" {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid settlement action"))
+		return
+	}
+	r, g, store, ok := s.loadRealtimeWorker(w, r, req.Action)
+	if !ok {
+		return
+	}
+	result, err := store.SettleRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group, req)
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+func (s *server) realtimeWorkerDeadLetters(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "dead_letters")
+	if !ok {
+		return
+	}
+	letters, err := store.ListRealtimeConsumerGroupDeadLetters(r.Context(), g.EndpointID, g.Channel, g.Group)
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, letters)
+}
+func (s *server) realtimeWorkerReplay(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "replay")
+	if !ok {
+		return
+	}
+	err := store.ReplayRealtimeConsumerGroupDeadLetter(r.Context(), g.EndpointID, g.Channel, g.Group, r.PathValue("sequence"))
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	s.auditRealtimeWorkerAdminOperation(r, g, "replay")
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *server) realtimeWorkerResync(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "resync")
+	if !ok {
+		return
+	}
+	var req struct {
+		ExpectedSequence string `json:"expected_sequence"`
+		AfterSequence    string `json:"after_sequence"`
+	}
+	if decodeJSONSized(r, &req, api.RealtimeConsumerGroupBodyMaxBytes) != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid group recovery"))
+		return
+	}
+	err := store.ResetRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group, req.ExpectedSequence, req.AfterSequence)
+	if err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	s.auditRealtimeWorkerAdminOperation(r, g, "resync")
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *server) realtimeWorkerDelete(w http.ResponseWriter, r *http.Request) {
+	r, g, store, ok := s.loadRealtimeWorker(w, r, "delete")
+	if !ok {
+		return
+	}
+	if err := store.DeleteRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group); err != nil {
+		s.writeRealtimeWorkerOperationError(w, r, err)
+		return
+	}
+	s.auditRealtimeWorkerAdminOperation(r, g, "delete")
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *server) writeRealtimeWorkerOperationError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, state.ErrRealtimeWorkerCredentialDenied) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Worker credential unavailable", "credential expired, was revoked or rotated, or no longer grants this operation"))
+		return
+	}
+	s.writeRealtimeConsumerGroupError(w, r, err)
+}
+func (s *server) auditRealtimeWorkerAdminOperation(r *http.Request, g state.RealtimeWorkerGrant, action string) {
+	s.audit.Emit(r.Context(), "realtime.worker_"+action, &g.AccountID, map[string]any{"group_id": g.Info.GroupID, "credential_id": g.Info.ID})
+}

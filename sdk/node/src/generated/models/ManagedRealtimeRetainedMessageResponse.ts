@@ -6,6 +6,9 @@
  * A committed message and its channel-scoped sequence.
  */
 export type ManagedRealtimeRetainedMessageResponse = {
+  expires_at?: string;
+  /** Expired checkpoint: payload and metadata are suppressed. */
+  expired?: boolean;
   /**
    * Exact-match routing metadata persisted with this channel message.
    */

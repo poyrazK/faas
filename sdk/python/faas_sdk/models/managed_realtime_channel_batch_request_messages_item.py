@@ -22,6 +22,7 @@ class ManagedRealtimeChannelBatchRequestMessagesItem:
     data_base64: str
     metadata: ManagedRealtimeChannelBatchRequestMessagesItemMetadata | Unset = UNSET
     binary: bool | Unset = False
+    ttl_seconds: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -32,6 +33,8 @@ class ManagedRealtimeChannelBatchRequestMessagesItem:
             metadata = self.metadata.to_dict()
 
         binary = self.binary
+
+        ttl_seconds = self.ttl_seconds
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -45,6 +48,9 @@ class ManagedRealtimeChannelBatchRequestMessagesItem:
         if binary is not UNSET:
             field_dict["binary"] = binary
 
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
+
         return field_dict
 
     @classmethod
@@ -54,6 +60,7 @@ class ManagedRealtimeChannelBatchRequestMessagesItem:
         )
 
         d = dict(src_dict)
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
         data_base64 = d.pop("data_base64")
 
         _metadata = d.pop("metadata", UNSET)
@@ -66,6 +73,7 @@ class ManagedRealtimeChannelBatchRequestMessagesItem:
         binary = d.pop("binary", UNSET)
 
         managed_realtime_channel_batch_request_messages_item = cls(
+            ttl_seconds=ttl_seconds,
             data_base64=data_base64,
             metadata=metadata,
             binary=binary,

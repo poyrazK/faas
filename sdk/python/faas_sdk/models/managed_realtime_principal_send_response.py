@@ -33,6 +33,7 @@ class ManagedRealtimePrincipalSendResponse:
     acknowledged: int | Unset = UNSET
     pending: int | Unset = UNSET
     timed_out: int | Unset = UNSET
+    delivery_expires_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,11 +111,17 @@ class ManagedRealtimePrincipalSendResponse:
         if timed_out is not UNSET:
             field_dict["timed_out"] = timed_out
 
+        if not isinstance(self.delivery_expires_at, Unset):
+            field_dict["delivery_expires_at"] = self.delivery_expires_at.isoformat()
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        delivery_expires_at = d.pop("delivery_expires_at", UNSET)
+        if not isinstance(delivery_expires_at, Unset):
+            delivery_expires_at = datetime.datetime.fromisoformat(delivery_expires_at)
+
         message_id = d.pop("message_id", UNSET)
 
         sequence = d.pop("sequence", UNSET)
@@ -155,6 +162,7 @@ class ManagedRealtimePrincipalSendResponse:
         timed_out = d.pop("timed_out", UNSET)
 
         managed_realtime_principal_send_response = cls(
+            delivery_expires_at=delivery_expires_at,
             message_id=message_id,
             sequence=sequence,
             durable=durable,

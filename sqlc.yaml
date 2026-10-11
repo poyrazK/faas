@@ -7,6 +7,28 @@
 # Verify:    make sqlc-check
 version: "2"
 sql:
+  - engine: "postgresql"
+    queries: "pkg/state/realtimettl/queries.sql"
+    schema: "pkg/state/realtimettl/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/realtimettl/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # Bounded realtime dead-letter recovery; projection mirrors its migration-owned table.
+  - engine: "postgresql"
+    queries: "pkg/state/realtimebulk/queries.sql"
+    schema: "pkg/state/realtimebulk/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/realtimebulk/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Disposable SQL workload acceptance through delivered app credentials.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/credentialdelivery/probe_queries.sql"

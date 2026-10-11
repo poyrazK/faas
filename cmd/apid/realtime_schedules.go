@@ -71,7 +71,7 @@ func (s *server) runManagedRealtimeSchedules(ctx context.Context) {
 			if s.realtimeOwner == nil {
 				continue
 			}
-			payload := realtime.Message{Data: msg.Data, Binary: msg.Binary, Metadata: msg.Metadata}
+			payload := realtime.Message{Data: msg.Data, Binary: msg.Binary, Metadata: msg.Metadata, ExpiresAt: msg.ExpiresAt}
 			if publisher, ok := s.realtimeOwner.(realtimeRetainedPublishStatus); ok {
 				result, publishErr := publisher.PublishRetainedWithStatus(passCtx, msg.EndpointID, msg.Channel, payload, msg.Sequence)
 				if publishErr != nil || result.Partial || result.NodesUnavailable > 0 || result.QueueFull > 0 || result.Failed > 0 {

@@ -22,6 +22,8 @@ import (
 
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
+const RealtimeMessageTTLMaxSeconds = 86400
+
 const (
 	MCPTaskDefaultMaxOutstanding         = 1000
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
@@ -609,6 +611,8 @@ const (
 	RealtimeResumeClientFrameMaxBytes        = 4096
 	RealtimeResumeServerFrameMaxBytes        = 8 << 10
 	RealtimeResumeBearerTokenMaxBytes        = 3072
+	RealtimeAccessMaxPrincipalsPerEndpoint   = 1024
+	RealtimeAccessMaxDeniedChannels          = 64
 )
 
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
@@ -9565,3 +9569,172 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// Operator-preview ticket admission bounds.
+const (
+	RealtimeTicketMaxTTLSeconds  = 300
+	RealtimeTicketMaxChannels    = 32
+	RealtimeTicketMaxPerEndpoint = 1024
+)
+
+// Maximum payload-free outbox rows mirrored per source for the inspector.
+const RealtimeInspectorSampleMax = 32
+
+// Bounded backend-worker realtime consumer groups (ADR-1030).
+const (
+	RealtimeConsumerGroupsMaxPerEndpoint       = 8
+	RealtimeConsumerGroupOutstandingMax        = 128
+	RealtimeConsumerGroupLeasesMax             = 32
+	RealtimeConsumerGroupBatchMax              = 16
+	RealtimeConsumerGroupWaitMaxSeconds        = 20
+	RealtimeConsumerGroupWaitDefaultSeconds    = 10
+	RealtimeConsumerGroupWaitPollMillis        = 500
+	RealtimeConsumerGroupWaitersMax            = 64
+	RealtimeConsumerGroupNameMaxBytes          = 128
+	RealtimeConsumerGroupOrderingFieldMaxBytes = 64
+	RealtimeConsumerGroupWorkerMaxBytes        = 128
+	RealtimeConsumerGroupLeaseDefaultSeconds   = 30
+	RealtimeConsumerGroupLeaseMaxSeconds       = 300
+	RealtimeConsumerGroupAttemptsDefault       = 5
+	RealtimeConsumerGroupAttemptsMax           = 10
+	RealtimeConsumerGroupRetryMaxSeconds       = 300
+	RealtimeConsumerGroupFailureMaxBytes       = 64
+	RealtimeConsumerGroupBodyMaxBytes          = 4096
+)
+
+// Scoped backend realtime worker credentials (ADR-1031).
+const (
+	RealtimeWorkerCredentialsMaxPerEndpoint   = 64
+	RealtimeWorkerCredentialNameMaxBytes      = 128
+	RealtimeWorkerCredentialTTLDefaultSeconds = 86400
+	RealtimeWorkerCredentialTTLMaxSeconds     = 30 * 86400
+	RealtimeWorkerCredentialHistorySeconds    = 7 * 86400
+	RealtimeWorkerCredentialPermissionsMax    = 14
+)
+
+// Scoped retained realtime publishers (ADR-1032).
+const (
+	RealtimePublisherCredentialsMaxPerEndpoint   = 64
+	RealtimePublisherCredentialTTLDefaultSeconds = 86400
+	RealtimePublisherCredentialTTLMaxSeconds     = 30 * 86400
+	RealtimePublisherCredentialHistorySeconds    = 7 * 86400
+	RealtimePublisherChannelsMax                 = 32
+	RealtimePublisherEventTypesMax               = 16
+	RealtimePublisherEventTypeMaxBytes           = 128
+	RealtimePublisherPublishesDefaultPerMinute   = 60
+	RealtimePublisherPublishesMaxPerMinute       = 600
+	RealtimePublisherPayloadMaxBytes             = 4096
+	RealtimePublisherReceiptsMaxPerCredential    = 1024
+	RealtimePublisherReceiptRetentionSeconds     = 86400
+	RealtimePublisherIdempotencyMaxBytes         = 128
+	RealtimePublisherBodyMaxBytes                = 16 << 10
+)
+
+const (
+	RealtimeConsumerGroupAlertBacklogMax             = 1000000000
+	RealtimeConsumerGroupAlertAgeMaxSeconds          = 7 * 86400
+	RealtimeConsumerGroupAlertCooldownDefaultSeconds = 300
+	RealtimeConsumerGroupAlertCooldownMinSeconds     = 30
+	RealtimeConsumerGroupAlertCooldownMaxSeconds     = 86400
+	RealtimeConsumerGroupAlertScanSeconds            = 15
+	RealtimeConsumerGroupAlertPassSeconds            = 20
+	RealtimeConsumerGroupAlertPassMax                = 64
+)
+
+// Signed PostgreSQL bigint ceiling for persistent group fencing counters.
+const RealtimeConsumerGroupFencingMax int64 = 1<<63 - 1
+
+const (
+	RealtimeConsumerGroupDeadRetentionMinSeconds  = 3600
+	RealtimeConsumerGroupDeadRetentionMaxSeconds  = 30 * 86400
+	RealtimeConsumerGroupDeadWarningSeconds       = 300
+	RealtimeConsumerGroupDeadRetentionScanSeconds = 15
+	RealtimeConsumerGroupDeadRetentionPassSeconds = 20
+	RealtimeConsumerGroupDeadRetentionPassMax     = 64
+)
+
+// RealtimeConsumerGroupPermanentFailureCodesMax bounds exact retry-policy codes.
+const RealtimeConsumerGroupPermanentFailureCodesMax = 32
+
+// Consumer-group recovery requests are bounded independently of snapshot capacity.
+const (
+	RealtimeConsumerGroupBulkReplayMax          = 32
+	RealtimeConsumerGroupBulkReplayBodyMaxBytes = 8192
+)
+
+// Opt-in consumer-group claim-rate policy bounds.
+const (
+	RealtimeConsumerGroupClaimRateMax  = 1000
+	RealtimeConsumerGroupClaimBurstMax = 32
+)
+
+// Consumer-group filters bound configuration and per-claim assignment work.
+const (
+	RealtimeConsumerGroupFilterEventTypesMax = 32
+	RealtimeConsumerGroupFilterMaxBytes      = 8192
+	RealtimeConsumerGroupCreateBodyMaxBytes  = 16384
+	RealtimeConsumerGroupFilterScanMax       = 128
+)
+
+// Opt-in worker liveness bounds and fixed sampling policy.
+const (
+	RealtimeConsumerGroupDeliveryHistoryMax              = 1024
+	RealtimeConsumerGroupDeliveryHistoryRetentionSeconds = 86400
+	RealtimeConsumerGroupDeliveryHistoryPageMax          = 100
+	RealtimeConsumerGroupCircuitProbePollMilliseconds    = 1000
+	RealtimeConsumerGroupCircuitThresholdMax             = 100
+	RealtimeConsumerGroupCircuitCooldownMaxSeconds       = 3600
+	RealtimeConsumerGroupSettlementBatchMax              = 32
+	RealtimeConsumerGroupSettlementBodyMaxBytes          = 16384
+	RealtimeConsumerGroupPriorityMax                     = 9
+	RealtimeConsumerGroupPriorityFairTurns               = 8
+	RealtimeConsumerGroupMetricBuckets                   = 60
+	RealtimeWorkerHeartbeatsMaxPerGroup                  = 32
+	RealtimeWorkerHeartbeatTimeoutSeconds                = 60
+	RealtimeWorkerHeartbeatIntervalSeconds               = 15
+	RealtimeWorkerHeartbeatHistorySeconds                = 86400
+	RealtimeWorkerHeartbeatScanSeconds                   = 15
+	RealtimeWorkerHeartbeatPassSeconds                   = 20
+	RealtimeWorkerHeartbeatScanMax                       = 64
+)
+
+// Consumer-group settlement receipts (ADR-1055), shared across principals per group.
+const (
+	RealtimeConsumerGroupSettlementReceiptsMax             = 1024
+	RealtimeConsumerGroupSettlementReceiptRetentionSeconds = 86400
+	RealtimeConsumerGroupSettlementIdempotencyKeyBytes     = 36
+)
+
+// Assignment-time event deduplication (ADR-1056); live hashes are never evicted.
+const (
+	RealtimeConsumerGroupDeduplicationKeysMax              = 4096
+	RealtimeConsumerGroupDeduplicationWindowDefaultSeconds = 3600
+	RealtimeConsumerGroupDeduplicationWindowMinSeconds     = 60
+	RealtimeConsumerGroupDeduplicationWindowMaxSeconds     = 86400
+)
+
+// Read-only dead-letter JSONL exports (ADR-1057).
+const (
+	RealtimeConsumerGroupDeadLetterExportDefaultLimit  = 32
+	RealtimeConsumerGroupDeadLetterExportMaxRows       = 128
+	RealtimeConsumerGroupDeadLetterExportMaxBytes      = 2 * 1024 * 1024
+	RealtimeConsumerGroupDeadLetterExportFormatVersion = 1
+)
+
+const (
+	RealtimeReplayJobMaxActive        = 4
+	RealtimeReplayJobMaxSelection     = 128
+	RealtimeReplayJobMaxRate          = 32
+	RealtimeReplayJobScanMilliseconds = 25
+	RealtimeReplayJobPassSeconds      = 10
+)
+
+const (
+	RealtimeReplayJobRetainedTerminal    = 12
+	RealtimeReplayJobListMax             = 16
+	RealtimeReplayJobPassMax             = 64
+	RealtimeReplayJobErrorBackoffSeconds = 5
+)
+
+// Mirrored in migration 20261011200000001 replay-job notification trigger.
+const RealtimeReplayJobNotificationErrorThreshold = 3

@@ -28,6 +28,10 @@ func (s *server) publishManagedRealtimeChannelBatch(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, api.ErrRealtimeInvalid("batch requires 1..32 messages"))
 		return
 	}
+	if req.TTLSeconds < 0 || req.TTLSeconds > api.RealtimeMessageTTLMaxSeconds {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("batch ttl_seconds must be between zero and 86400"))
+		return
+	}
 	items := make([]state.ManagedRealtimeBatchItem, len(req.Messages))
 	for i, msg := range req.Messages {
 		if msg.ExpectedSequence != nil {
@@ -39,7 +43,15 @@ func (s *server) publishManagedRealtimeChannelBatch(w http.ResponseWriter, r *ht
 			api.WriteProblem(w, api.ErrRealtimeInvalid("invalid batch payload or endpoint size limit"))
 			return
 		}
-		items[i] = state.ManagedRealtimeBatchItem{Metadata: msg.Metadata, Data: data, Binary: msg.Binary}
+		ttl := req.TTLSeconds
+		if msg.TTLSeconds != nil {
+			ttl = *msg.TTLSeconds
+		}
+		if ttl < 0 || ttl > api.RealtimeMessageTTLMaxSeconds {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("message ttl_seconds must be between zero and 86400"))
+			return
+		}
+		items[i] = state.ManagedRealtimeBatchItem{TTLSeconds: ttl, Metadata: msg.Metadata, Data: data, Binary: msg.Binary}
 	}
 	store, ok := s.store.(state.ManagedRealtimeBatchStore)
 	if !ok {
@@ -68,7 +80,7 @@ func (s *server) publishManagedRealtimeChannelBatch(w http.ResponseWriter, r *ht
 	result := api.ManagedRealtimeChannelBatchResponse{BatchID: req.BatchID, Durable: true, Messages: make([]api.ManagedRealtimePublishResponse, 0, len(messages))}
 	for _, msg := range messages {
 		outcome := api.ManagedRealtimePublishResponse{Sequence: msg.Sequence, Durable: true}
-		payload := realtime.Message{Data: msg.Data, Binary: msg.Binary}
+		payload := realtime.Message{ExpiresAt: msg.ExpiresAt, Data: msg.Data, Binary: msg.Binary}
 		if publisher, ok := owner.(realtimeRetainedPublishStatus); ok {
 			outcome, err = publisher.PublishRetainedWithStatus(r.Context(), ep.ID, ch, payload, msg.Sequence)
 		} else {

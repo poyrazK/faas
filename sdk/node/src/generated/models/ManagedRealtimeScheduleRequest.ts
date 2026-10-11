@@ -6,6 +6,8 @@
  * Scheduled channel publish payload with recurrence and retry settings.
  */
 export type ManagedRealtimeScheduleRequest = {
+  /** Message lifetime from publication; 0 disables expiry, maximum 86400. */
+  ttl_seconds?: number;
   /**
    * Optional immutable channel-scoped group label; at most 128 UTF-8 bytes.
    */

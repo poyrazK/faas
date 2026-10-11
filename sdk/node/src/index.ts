@@ -211,6 +211,12 @@ export { CustomerOperationAuth, type CustomerOperationAuthOptions, type Customer
 export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+export { setRealtimeCommitTTL, insertRealtimeCommitEvent, listRealtimeCommitDeliveries, getRealtimeCommitDelivery, retryRealtimeCommitEvent,
+  type RealtimeCommitEvent, type RealtimeCommitDelivery, type RealtimeOutboxReader } from './realtime-transactions.js';
+export { revokeRealtimeChannelAccess, restoreRealtimeChannelAccess, revokeRealtimeSessions,
+  type RealtimePrincipalTarget } from './realtime-access.js';
+export type { ManagedRealtimeAccessRequest } from './generated/models/ManagedRealtimeAccessRequest.js';
+export type { ManagedRealtimeAccessResponse } from './generated/models/ManagedRealtimeAccessResponse.js';
 
 export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
 export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
@@ -290,3 +296,34 @@ export type { OperationWorkflowPlannedEffect } from './generated/models/Operatio
 export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
+
+export { installRealtimeChangefeed, removeRealtimeChangefeed } from './realtime-changefeeds.js';
+export type { RealtimeChangefeedConfig } from './realtime-changefeeds.js';
+
+export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
+
+export type { RealtimeChannelWebhookFilter } from './generated/models/RealtimeChannelWebhookFilter.js';
+
+export { createBrowserRealtimeTicketSocketFactory } from './browser-realtime.js';
+export type { RealtimeTicketRequest } from './generated/models/RealtimeTicketRequest.js';
+export type { RealtimeTicketResponse } from './generated/models/RealtimeTicketResponse.js';
+
+export { consumeRealtimeChannelWithFallback } from './realtime-transport.js';
+export type { RealtimeTransport, RealtimeTransportMessage, RealtimeTransportOptions } from './realtime-transport.js';
+
+export { consumeRealtimeConsumerGroup } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupTarget, RealtimeConsumerGroupWorkerOptions } from './realtime-consumer-groups.js';
+
+export { createRealtimeConsumerGroupWorkerClient } from './realtime-worker-credentials.js';
+export type { RealtimeConsumerGroupWorkerClient, RealtimeConsumerGroupWorkerClientOptions } from './realtime-worker-credentials.js';
+export { consumeRealtimeConsumerGroupWithCredential } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupProcessingOptions } from './realtime-consumer-groups.js';
+
+export { createRealtimePublisherClient } from './realtime-publisher-credentials.js';
+export type { RealtimePublisherClient, RealtimePublisherClientOptions } from './realtime-publisher-credentials.js';
+
+export { drainRealtimeConsumerGroup, drainRealtimeConsumerGroupWithCredential } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupDrainWaitOptions } from './realtime-consumer-groups.js';
+
+export { RealtimeExpiryDiagnostics, type RealtimeMessageExpiry, type RealtimeMessageExpiryObserver, type RealtimeInboxMessageExpiry, type RealtimeInboxMessageExpiryObserver } from './realtime-expiry.js';

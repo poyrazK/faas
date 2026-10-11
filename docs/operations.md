@@ -2099,3 +2099,233 @@ external reversal inside the SQL transaction. A pending or required report does
 not imply that reversal occurred. Receipt replay republishes queued observations
 without rerunning the callback or repeating external actions. Report only public
 customer-visible recovery metadata. No migration or new endpoint is required.
+
+Managed realtime consumer groups can opt into dead-letter retention (one hour to
+30 days; zero defaults to indefinite). Ordered groups require `skip`. Configure
+through the admin/MFA `dead-letter-retention` route. Signed
+`realtime.consumer_group.dead_letter_expiring` warnings precede cleanup by at least
+five minutes from the persisted decision; delivery failure does not block cleanup.
+The inspector and dead-letter API expose upcoming expiry and cumulative removals.
+Pause/drain do not suspend retention. Replay must commit before cleanup to protect
+the snapshot. Migration/runtime validation is pending; see
+[ADR 1041](adr/1041-realtime-consumer-group-dead-letter-retention.md).
+
+Consumer-group retry policies support opt-in exponential backoff with jitter and
+exact permanent failure codes. Configure the admin/MFA `retry-policy` route with
+an enabled flag, 1–300 second base/cap delays, jitter flag, and optional code list.
+Reported failures without an explicit delay use policy backoff; explicit delays
+(including zero) override it. Permanent codes and attempt exhaustion dead-letter
+immediately. Policies do not change already scheduled retries or lease-expiry
+reclamation. Node helpers use `useGroupRetryPolicy: true` to omit their default
+delay. The inspector shows the earliest delayed ready snapshot. See
+[ADR 1042](adr/1042-realtime-consumer-group-retry-policies.md); migration/runtime
+validation remains pending.
+
+Bulk realtime dead-letter recovery provides bounded preview and replay APIs.
+POST a code/range filter to a group's `dead-letters/preview` route (read scope/MFA),
+review up to 32 materialized failures, then POST explicit sequence/dead_since pairs
+and the returned group UUID to `dead-letters/replay` (deploy-write scope/MFA).
+Preserve timestamps exactly; old selections report stale instead of replaying a
+later failure. Per-item ordering conflicts allow eligible messages to proceed.
+Missing messages may have expired, but the API does not infer their removal cause.
+Pause/drain, external idempotency and fencing remain relevant after replay. No new
+migration is needed; runtime validation is deferred. See
+[ADR 1043](adr/1043-realtime-consumer-group-bulk-dead-letter-recovery.md).
+
+Realtime consumer-group delivery deadlines are opt-in at creation through immutable
+`deadline_metadata_key`. Values are RFC3339 timestamps frozen from message metadata;
+missing values have no deadline, malformed values become terminal failures. Ordered
+groups require skip policy. Expired work becomes dead during claim/replay maintenance,
+leases are capped at the deadline, and replay cannot extend it. The Node helper
+cooperatively aborts handlers at expiry; external writes still need their existing
+idempotency/fencing controls. Signed `realtime.consumer_group.delivery_expired`
+events and inspector `expired_deliveries` counters record both expired and invalid
+rejections. There is no background expiry timer; configure compatible dead-letter
+retention to reclaim snapshot capacity. Migration/runtime validation is pending.
+See [ADR 1044](adr/1044-realtime-consumer-group-delivery-deadlines.md).
+
+Consumer-group claim rate limits can protect downstream services during replay or
+backlog recovery. Configure the admin/MFA `claim-rate` route with a rate of 1–1000
+new leases per second and burst 1–32; zero rate disables it. Admission state is
+persisted and shared across all workers and replicas. Renewals and settlements
+continue normally. Batch claims can return admitted work plus a millisecond retry
+hint; single claims use a specific 429 with Retry-After. Node helpers wait for these
+hints. Inspector counters track throttle decisions rather than withheld messages.
+Migration/runtime validation is pending; see
+[ADR 1045](adr/1045-realtime-consumer-group-claim-rate-limits.md).
+
+Consumer groups support immutable creation filters over `metadata.event_type` and
+exact metadata values. Event types use OR; metadata predicates and the type condition
+use AND. Nonmatches advance assignment without creating snapshots and increment
+`filtered_messages`, visible with the filter in group status and the inspector.
+Up to 128 assignment events are scanned per batch transaction; `filter_scan_limited`
+indicates committed progress and clients can poll again. Retention gaps still require
+explicit recovery, and raw lag may include nonmatching unscanned events. Existing
+pause/drain, capacity, rate and ordering controls remain in force. Migration/runtime
+validation is pending; see
+[ADR 1046](adr/1046-realtime-consumer-group-message-filters.md).
+
+Consumer-group worker heartbeats distinguish idle live workers from stale reporters.
+Account POST/GET `heartbeats` routes require ownership and MFA; scoped POST requires
+an explicit heartbeat grant. Report readiness and a short diagnostic every 15 seconds;
+timeout is 60 seconds. Node helpers opt in with `heartbeat: true`. Sharing credentials
+aggregates identity, so use separate credentials for independent processes.
+
+Inspector health counts include only reporting workers and flag raw pending work
+with no ready reporters. Signed worker_lost/worker_recovered events record sampled
+liveness transitions, independently of readiness. Reporting does not renew leases
+or consume claim credit. Tracking is capped at 32 identities; lost history is bounded
+and may be replaced. Migration/runtime validation remains pending; see
+[ADR 1047](adr/1047-realtime-consumer-group-worker-heartbeats.md).
+
+Python receive-only realtime can opt into `RealtimeFallbackClient` for HTTPS SSE
+when WebSocket connections fail. Deploy the SSE subscription history bounds
+(ADR 1098) before enabling Python fallback. Configure proxy streaming without
+response buffering and allow SSE heartbeats through. Fallback rejects features
+requiring socket control messages; filtered SSE still transfers all channel
+messages and filters locally. Transport snapshots can be included in redacted
+realtime diagnostics. Runtime fallback validation remains deferred.
+
+Python realtime channel handles support `pause()` and `resume()` (ADR 1099).
+Paused channels retain their completed cursor and capacity reservation while
+unsubscribing from delivery. Resume replays retained history, using snapshot
+recovery if required. Pausing the last active channel releases the shared socket;
+an unsubscribe failure may trigger shared connection recovery. Pause can wait for
+an active handler indefinitely; use explicit unsubscribe to cancel stuck work.
+Standalone recovery coordinators support the same pause boundary for WebSocket
+and SSE. Runtime concurrency validation remains deferred.
+
+Python realtime exposes local queue backpressure (ADR 1100). Each WebSocket
+subscription reports queue depth/capacity, oldest queued age and overflow count.
+Default busy/overloaded thresholds are 50%/90% occupancy or 5/30 seconds waiting.
+Callbacks can drive UI warnings or application pause decisions; the monitor does
+not change delivery or ACK policy. Channel diagnostics include these payload-free
+measurements. Disconnect and pause clear queued observations and stop age timers.
+SSE users can report coordinator handler timing separately; this is not a measure
+of server lag or intermediary buffering. Runtime monitoring checks remain deferred.
+
+Python retained-channel workers can use graceful drain (ADR 1101) during shutdown.
+`subscription.drain(deadline_seconds=30)` freezes local admission, processes its
+buffer and flushes the final ACK before closing and releasing the channel slot.
+Dedicated native WebSocket coordinators expose the same operation. Inspect the
+returned completion, cursor, durable confirmation, expiry and unfinished local
+entry count; transport failure does not reconnect while draining. Events arriving
+after cutoff remain for later replay. SSE, inboxes and ephemeral helpers are not
+covered by this retained-channel drain. Budget time for cleanup after a deadline
+and require cooperative handler cancellation. Runtime shutdown checks are deferred.
+
+Retained channel message TTL (ADR 1102) adds `ttl_seconds` to account-authenticated
+single retained appends/publishes. Zero disables expiry; 1–86400 seconds produces a
+first-commit deadline preserved across retries and edits. Expired stream events
+become checkpoints, preserving cursor continuity; REST history suppresses their
+payload/metadata. TTL does not delete log rows or roll back previously delivered
+state/reducer effects. Normal retention pruning cascades expiration rows.
+
+Roll out migration 20261011220000001 before updated apid/realtimed readers and SDKs,
+then enable TTL publishers. Mixed old readers or unfiltered clients may fail to
+honor expiry/checkpoints. Legacy fan-out drops expired queued messages; stream
+expiry is checked when selecting output, so already selected/in-flight data is not
+retracted. Inbox/job processing is outside this delivery-expiry scope. Batch, scheduled,
+transactional and scoped-publisher message TTL are described below. Rollback removes deadlines and can expose old
+payloads again. Migration application and runtime validation remain deferred.
+
+Retained batch publishing supports TTL defaults and item overrides (ADR 1103).
+Batch `ttl_seconds` defaults to zero; omitted/null item overrides inherit, while
+zero explicitly disables expiry. Every effective TTL must be 0–86400. Deadlines
+share the original batch creation timestamp, are committed atomically with all
+messages, and are preserved by idempotent retries. Equivalent resolved TTLs retain
+the same batch identity; changed effective lifetimes conflict. Existing no-TTL
+batch hashes remain compatible. No additional migration is introduced beyond
+ADR 1102's companion table, which remains unapplied in this session. Expired batch
+positions use existing WebSocket/SSE/REST checkpoints. Runtime checks are deferred.
+
+Scheduled realtime messages also accept `ttl_seconds` (0–86400, default 0).
+Each recurring occurrence expires relative to actual publication, so delayed
+execution and failed attempts do not consume its lifetime. The TTL is immutable
+for a schedule ID; rescheduling and retrying preserve it. Apply migration
+`20261011230000001_realtime_schedule_message_ttl.sql` after the retained-message
+TTL migration and before deploying updated scheduler workers.
+
+
+Transactional realtime TTL (ADR 1105) uses an optional customer outbox
+`ttl_seconds` column. New installations include it; existing owners explicitly
+apply `pkg/commit/realtime_ttl_upgrade.sql` in their own database. The relay reads
+older outboxes with TTL zero, so the column upgrade is required only before opting
+into TTL. No platform migration or automatic customer DDL is needed beyond the
+retained-message expiration migration. Upgrade relay/readers and checkpoint-capable
+clients before enabling expiring publishers.
+
+Inside an active business transaction, Node `setRealtimeCommitTTL(tx, seconds)`
+sets a connection-local default for subsequent realtime inserts and changefeed
+captures. `insertRealtimeCommitEvent` accepts `ttlSeconds` overrides; omitted
+inherits, explicit zero disables expiry. Defaults clear on commit/rollback. The
+helper does not begin or commit transactions. TTL starts when the relay publishes
+the retained message, not when the customer writes the outbox or commits its
+business transaction. There is no exact customer commit timestamp in this outbox.
+Publication receipt retries preserve the original deadline even after retained
+history pruning; changing effective TTL for an accepted event conflicts.
+
+Scoped realtime publisher messages accept `ttl_seconds` (0–86400, default zero)
+for delivery expiry. This differs from credential issue/rotation `ttl_seconds`,
+which controls token lifetime. Issuance can set `max_message_ttl_seconds`; zero
+means uncapped. A positive cap requires every message to supply a positive TTL
+at or below the cap: omission and zero are denied with the existing 403 grant
+error. Credential rotation preserves the cap. Use a newly issued credential to
+change policy. Retried idempotency keys must keep the same TTL and preserve the
+original deadline while the existing receipt is retained. Keys may be accepted
+anew after normal receipt expiry. Token revocation does not retract accepted events.
+
+Apply `20261011233000001_realtime_publisher_message_ttl.sql` after the retained
+expiry migration and before deploying updated apid. Existing credentials remain
+uncapped and existing messages default to no expiry. Checkpoint-capable readers
+and SDKs must precede opt-in TTL publishers. Runtime checks and migration
+application remain deferred.
+
+Expiry diagnostics (ADR 1107) show TTL, UTC deadline and current status in the
+realtime event inspector. Expired payloads and metadata are suppressed; the
+status is evaluated when the page loads. Retained rows and cursors remain intact.
+
+`realtimed_expired_checkpoints_total{transport="websocket"|"sse"}` counts successful
+WebSocket queue admissions or SSE writes of `message_expired` checkpoints.
+`realtimed_expired_outbound_drops_total` counts live payloads discarded after
+expiry when dequeued. These process-local counters count delivery attempts per
+subscriber, including repeat observations; they do not count unique events or
+confirm client receipt. Sum across realtime nodes; restart resets them. Existing
+queue-capacity drop metrics retain their meaning. No endpoint/channel labels or
+payloads are added to metrics.
+
+Node `onMessageExpired` and Python `on_message_expired` are optional synchronous
+observers on native retained WebSocket and SSE clients. Node fallback forwards the
+same observer to both transports. Hooks receive only code, channel, sequence and
+transport after validation, before cursor persistence/ACK and checkpoint
+coalescing. Keep hooks brief; exceptions are isolated, and hooks must not perform
+business effects. Reconnects or failed cursor persistence can repeat observations.
+SDK `RealtimeExpiryDiagnostics` collectors retain only bounded counters, with no
+payloads or identifiers. Python `export_realtime_diagnostics(..., expiry=status)`
+includes those counts as decimal strings. No new migration is required.
+
+Retained direct inbox sends now accept `ttl_seconds` (0–86400, default zero).
+Positive TTL requires `delivery=retained`. `delivery_expires_at` is the delivery
+deadline; history `expires_at` still means retention expiry. Retries and message
+edits preserve the original delivery deadline. Expired REST rows have
+`expired: true` and empty `data_base64`; skip their payload while advancing the
+sequence. TTL expiry does not prune positions or advance the retention floor.
+
+Inbox WebSocket clients receive payload-free `inbox_checkpoint` frames with
+`message_expired` and acknowledge through normal per-device cursors. Updated
+Node/Python clients skip processors and expose expiry observations, with separate
+inbox diagnostic counts. `realtimed_expired_checkpoints_total` adds the fixed
+`inbox_websocket` label. Counts describe observations, including replay repeats,
+not confirmed client delivery. Frames selected before expiry cannot be retracted.
+SSE inbox delivery is not supported.
+
+The owner realtime inspector accepts an explicit inbox principal and separate
+inbox cursor after endpoint ownership checks. It displays lifetime/deadline/status
+and suppresses expired payloads. It does not enumerate principal identities.
+
+Notification fallback TTL (`notification_ttl_seconds`) remains independent:
+inbox delivery TTL does not cancel fallback/push work. Configure both lifetimes
+when both online delivery and fallback alerts must expire. Apply migration
+`20261012000000001_realtime_inbox_message_ttl.sql` before updated apid; upgrade
+realtime nodes and SDKs before enabling inbox TTL. Schema application and runtime
+validation remain deferred. Removing TTL data can expose old payloads again.

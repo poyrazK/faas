@@ -478,6 +478,7 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
@@ -1599,6 +1600,9 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_access_request import ManagedRealtimeAccessRequest
+from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
+from .managed_realtime_access_response import ManagedRealtimeAccessResponse
 from .managed_realtime_channel_batch_request import ManagedRealtimeChannelBatchRequest
 from .managed_realtime_channel_batch_request_messages_item import ManagedRealtimeChannelBatchRequestMessagesItem
 from .managed_realtime_channel_batch_request_messages_item_metadata import (
@@ -2598,6 +2602,73 @@ from .queue_workload_profile_request_workload_class import QueueWorkloadProfileR
 from .queue_workload_profile_response import QueueWorkloadProfileResponse
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .realtime_acknowledgement import RealtimeAcknowledgement
+from .realtime_channel_webhook_filter import RealtimeChannelWebhookFilter
+from .realtime_channel_webhook_filter_metadata import RealtimeChannelWebhookFilterMetadata
+from .realtime_consumer_group import RealtimeConsumerGroup
+from .realtime_consumer_group_batch import RealtimeConsumerGroupBatch
+from .realtime_consumer_group_batch_request import RealtimeConsumerGroupBatchRequest
+from .realtime_consumer_group_batch_settlement_item import RealtimeConsumerGroupBatchSettlementItem
+from .realtime_consumer_group_batch_settlement_item_action import RealtimeConsumerGroupBatchSettlementItemAction
+from .realtime_consumer_group_batch_settlement_item_status import RealtimeConsumerGroupBatchSettlementItemStatus
+from .realtime_consumer_group_batch_settlement_request import RealtimeConsumerGroupBatchSettlementRequest
+from .realtime_consumer_group_batch_settlement_result import RealtimeConsumerGroupBatchSettlementResult
+from .realtime_consumer_group_circuit_policy import RealtimeConsumerGroupCircuitPolicy
+from .realtime_consumer_group_circuit_status import RealtimeConsumerGroupCircuitStatus
+from .realtime_consumer_group_circuit_status_state import RealtimeConsumerGroupCircuitStatusState
+from .realtime_consumer_group_claim import RealtimeConsumerGroupClaim
+from .realtime_consumer_group_claim_rate_policy import RealtimeConsumerGroupClaimRatePolicy
+from .realtime_consumer_group_claim_rate_status import RealtimeConsumerGroupClaimRateStatus
+from .realtime_consumer_group_claim_request import RealtimeConsumerGroupClaimRequest
+from .realtime_consumer_group_create_request import RealtimeConsumerGroupCreateRequest
+from .realtime_consumer_group_create_request_dead_letter_policy import (
+    RealtimeConsumerGroupCreateRequestDeadLetterPolicy,
+)
+from .realtime_consumer_group_dead_letter import RealtimeConsumerGroupDeadLetter
+from .realtime_consumer_group_dead_letter_policy import RealtimeConsumerGroupDeadLetterPolicy
+from .realtime_consumer_group_delivery_history import RealtimeConsumerGroupDeliveryHistory
+from .realtime_consumer_group_delivery_history_event import RealtimeConsumerGroupDeliveryHistoryEvent
+from .realtime_consumer_group_delivery_history_event_event import RealtimeConsumerGroupDeliveryHistoryEventEvent
+from .realtime_consumer_group_delivery_history_retention_seconds import (
+    RealtimeConsumerGroupDeliveryHistoryRetentionSeconds,
+)
+from .realtime_consumer_group_drain_state import RealtimeConsumerGroupDrainState
+from .realtime_consumer_group_filter import RealtimeConsumerGroupFilter
+from .realtime_consumer_group_filter_metadata import RealtimeConsumerGroupFilterMetadata
+from .realtime_consumer_group_lag_alert import RealtimeConsumerGroupLagAlert
+from .realtime_consumer_group_lag_alert_config import RealtimeConsumerGroupLagAlertConfig
+from .realtime_consumer_group_message import RealtimeConsumerGroupMessage
+from .realtime_consumer_group_message_metadata import RealtimeConsumerGroupMessageMetadata
+from .realtime_consumer_group_metric_bucket import RealtimeConsumerGroupMetricBucket
+from .realtime_consumer_group_metrics import RealtimeConsumerGroupMetrics
+from .realtime_consumer_group_metrics_bucket_seconds import RealtimeConsumerGroupMetricsBucketSeconds
+from .realtime_consumer_group_pause_state import RealtimeConsumerGroupPauseState
+from .realtime_consumer_group_priority_backlog import RealtimeConsumerGroupPriorityBacklog
+from .realtime_consumer_group_priority_status import RealtimeConsumerGroupPriorityStatus
+from .realtime_consumer_group_priority_status_fair_turns import RealtimeConsumerGroupPriorityStatusFairTurns
+from .realtime_consumer_group_resync_request import RealtimeConsumerGroupResyncRequest
+from .realtime_consumer_group_retention_policy import RealtimeConsumerGroupRetentionPolicy
+from .realtime_consumer_group_retention_policy_warning_seconds import RealtimeConsumerGroupRetentionPolicyWarningSeconds
+from .realtime_consumer_group_retention_request import RealtimeConsumerGroupRetentionRequest
+from .realtime_consumer_group_retry_policy_request import RealtimeConsumerGroupRetryPolicyRequest
+from .realtime_consumer_group_retry_status import RealtimeConsumerGroupRetryStatus
+from .realtime_consumer_group_settlement import RealtimeConsumerGroupSettlement
+from .realtime_consumer_group_settlement_action import RealtimeConsumerGroupSettlementAction
+from .realtime_consumer_group_settlement_result import RealtimeConsumerGroupSettlementResult
+from .realtime_consumer_group_settlement_result_status import RealtimeConsumerGroupSettlementResultStatus
+from .realtime_dead_letter_bulk_replay_request import RealtimeDeadLetterBulkReplayRequest
+from .realtime_dead_letter_bulk_replay_result import RealtimeDeadLetterBulkReplayResult
+from .realtime_dead_letter_export_manifest import RealtimeDeadLetterExportManifest
+from .realtime_dead_letter_export_manifest_format_version import RealtimeDeadLetterExportManifestFormatVersion
+from .realtime_dead_letter_export_manifest_type import RealtimeDeadLetterExportManifestType
+from .realtime_dead_letter_export_record import RealtimeDeadLetterExportRecord
+from .realtime_dead_letter_export_record_type import RealtimeDeadLetterExportRecordType
+from .realtime_dead_letter_preview import RealtimeDeadLetterPreview
+from .realtime_dead_letter_preview_item import RealtimeDeadLetterPreviewItem
+from .realtime_dead_letter_preview_request import RealtimeDeadLetterPreviewRequest
+from .realtime_dead_letter_replay_outcome import RealtimeDeadLetterReplayOutcome
+from .realtime_dead_letter_replay_outcome_status import RealtimeDeadLetterReplayOutcomeStatus
+from .realtime_dead_letter_replay_selection import RealtimeDeadLetterReplaySelection
 from .realtime_notification_preferences import RealtimeNotificationPreferences
 from .realtime_notification_preferences_categories_type_0 import RealtimeNotificationPreferencesCategoriesType0
 from .realtime_notification_preferences_digest_interval_seconds import (
@@ -2605,9 +2676,36 @@ from .realtime_notification_preferences_digest_interval_seconds import (
 )
 from .realtime_notification_rate_limit import RealtimeNotificationRateLimit
 from .realtime_notification_rate_limit_window_seconds import RealtimeNotificationRateLimitWindowSeconds
+from .realtime_publisher_credential import RealtimePublisherCredential
+from .realtime_publisher_credential_issued import RealtimePublisherCredentialIssued
+from .realtime_publisher_credential_request import RealtimePublisherCredentialRequest
+from .realtime_publisher_message_request import RealtimePublisherMessageRequest
+from .realtime_publisher_message_request_metadata import RealtimePublisherMessageRequestMetadata
+from .realtime_publisher_publish_response import RealtimePublisherPublishResponse
 from .realtime_quiet_hours import RealtimeQuietHours
+from .realtime_replay_job import RealtimeReplayJob
+from .realtime_replay_job_outcome import RealtimeReplayJobOutcome
+from .realtime_replay_job_outcome_status import RealtimeReplayJobOutcomeStatus
+from .realtime_replay_job_request import RealtimeReplayJobRequest
+from .realtime_replay_job_state import RealtimeReplayJobState
+from .realtime_replay_job_webhook_payload import RealtimeReplayJobWebhookPayload
+from .realtime_replay_job_webhook_payload_state import RealtimeReplayJobWebhookPayloadState
 from .realtime_schedule_completion_webhook_payload import RealtimeScheduleCompletionWebhookPayload
 from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
+from .realtime_ticket_request import RealtimeTicketRequest
+from .realtime_ticket_response import RealtimeTicketResponse
+from .realtime_worker_batch_claim_request import RealtimeWorkerBatchClaimRequest
+from .realtime_worker_claim_request import RealtimeWorkerClaimRequest
+from .realtime_worker_credential import RealtimeWorkerCredential
+from .realtime_worker_credential_issued import RealtimeWorkerCredentialIssued
+from .realtime_worker_credential_permissions_item import RealtimeWorkerCredentialPermissionsItem
+from .realtime_worker_credential_request import RealtimeWorkerCredentialRequest
+from .realtime_worker_credential_request_permissions_item import RealtimeWorkerCredentialRequestPermissionsItem
+from .realtime_worker_credential_rotation_request import RealtimeWorkerCredentialRotationRequest
+from .realtime_worker_health import RealtimeWorkerHealth
+from .realtime_worker_health_timeout_seconds import RealtimeWorkerHealthTimeoutSeconds
+from .realtime_worker_heartbeat import RealtimeWorkerHeartbeat
+from .realtime_worker_heartbeat_request import RealtimeWorkerHeartbeatRequest
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
 from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
@@ -3851,6 +3949,7 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlRealtimeReplayJobAction",
     "CorsPresetListResponse",
     "CorsPresetResponse",
     "CreateAccountReleaseWebhookRequest",
@@ -4940,6 +5039,9 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeAccessRequest",
+    "ManagedRealtimeAccessRequestAction",
+    "ManagedRealtimeAccessResponse",
     "ManagedRealtimeChannelBatchRequest",
     "ManagedRealtimeChannelBatchRequestMessagesItem",
     "ManagedRealtimeChannelBatchRequestMessagesItemMetadata",
@@ -5873,14 +5975,104 @@ __all__ = (
     "QueueWorkloadProfileResponse",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RealtimeAcknowledgement",
+    "RealtimeChannelWebhookFilter",
+    "RealtimeChannelWebhookFilterMetadata",
+    "RealtimeConsumerGroup",
+    "RealtimeConsumerGroupBatch",
+    "RealtimeConsumerGroupBatchRequest",
+    "RealtimeConsumerGroupBatchSettlementItem",
+    "RealtimeConsumerGroupBatchSettlementItemAction",
+    "RealtimeConsumerGroupBatchSettlementItemStatus",
+    "RealtimeConsumerGroupBatchSettlementRequest",
+    "RealtimeConsumerGroupBatchSettlementResult",
+    "RealtimeConsumerGroupCircuitPolicy",
+    "RealtimeConsumerGroupCircuitStatus",
+    "RealtimeConsumerGroupCircuitStatusState",
+    "RealtimeConsumerGroupClaim",
+    "RealtimeConsumerGroupClaimRatePolicy",
+    "RealtimeConsumerGroupClaimRateStatus",
+    "RealtimeConsumerGroupClaimRequest",
+    "RealtimeConsumerGroupCreateRequest",
+    "RealtimeConsumerGroupCreateRequestDeadLetterPolicy",
+    "RealtimeConsumerGroupDeadLetter",
+    "RealtimeConsumerGroupDeadLetterPolicy",
+    "RealtimeConsumerGroupDeliveryHistory",
+    "RealtimeConsumerGroupDeliveryHistoryEvent",
+    "RealtimeConsumerGroupDeliveryHistoryEventEvent",
+    "RealtimeConsumerGroupDeliveryHistoryRetentionSeconds",
+    "RealtimeConsumerGroupDrainState",
+    "RealtimeConsumerGroupFilter",
+    "RealtimeConsumerGroupFilterMetadata",
+    "RealtimeConsumerGroupLagAlert",
+    "RealtimeConsumerGroupLagAlertConfig",
+    "RealtimeConsumerGroupMessage",
+    "RealtimeConsumerGroupMessageMetadata",
+    "RealtimeConsumerGroupMetricBucket",
+    "RealtimeConsumerGroupMetrics",
+    "RealtimeConsumerGroupMetricsBucketSeconds",
+    "RealtimeConsumerGroupPauseState",
+    "RealtimeConsumerGroupPriorityBacklog",
+    "RealtimeConsumerGroupPriorityStatus",
+    "RealtimeConsumerGroupPriorityStatusFairTurns",
+    "RealtimeConsumerGroupResyncRequest",
+    "RealtimeConsumerGroupRetentionPolicy",
+    "RealtimeConsumerGroupRetentionPolicyWarningSeconds",
+    "RealtimeConsumerGroupRetentionRequest",
+    "RealtimeConsumerGroupRetryPolicyRequest",
+    "RealtimeConsumerGroupRetryStatus",
+    "RealtimeConsumerGroupSettlement",
+    "RealtimeConsumerGroupSettlementAction",
+    "RealtimeConsumerGroupSettlementResult",
+    "RealtimeConsumerGroupSettlementResultStatus",
+    "RealtimeDeadLetterBulkReplayRequest",
+    "RealtimeDeadLetterBulkReplayResult",
+    "RealtimeDeadLetterExportManifest",
+    "RealtimeDeadLetterExportManifestFormatVersion",
+    "RealtimeDeadLetterExportManifestType",
+    "RealtimeDeadLetterExportRecord",
+    "RealtimeDeadLetterExportRecordType",
+    "RealtimeDeadLetterPreview",
+    "RealtimeDeadLetterPreviewItem",
+    "RealtimeDeadLetterPreviewRequest",
+    "RealtimeDeadLetterReplayOutcome",
+    "RealtimeDeadLetterReplayOutcomeStatus",
+    "RealtimeDeadLetterReplaySelection",
     "RealtimeNotificationPreferences",
     "RealtimeNotificationPreferencesCategoriesType0",
     "RealtimeNotificationPreferencesDigestIntervalSeconds",
     "RealtimeNotificationRateLimit",
     "RealtimeNotificationRateLimitWindowSeconds",
+    "RealtimePublisherCredential",
+    "RealtimePublisherCredentialIssued",
+    "RealtimePublisherCredentialRequest",
+    "RealtimePublisherMessageRequest",
+    "RealtimePublisherMessageRequestMetadata",
+    "RealtimePublisherPublishResponse",
     "RealtimeQuietHours",
+    "RealtimeReplayJob",
+    "RealtimeReplayJobOutcome",
+    "RealtimeReplayJobOutcomeStatus",
+    "RealtimeReplayJobRequest",
+    "RealtimeReplayJobState",
+    "RealtimeReplayJobWebhookPayload",
+    "RealtimeReplayJobWebhookPayloadState",
     "RealtimeScheduleCompletionWebhookPayload",
     "RealtimeScheduleCompletionWebhookPayloadOutcome",
+    "RealtimeTicketRequest",
+    "RealtimeTicketResponse",
+    "RealtimeWorkerBatchClaimRequest",
+    "RealtimeWorkerClaimRequest",
+    "RealtimeWorkerCredential",
+    "RealtimeWorkerCredentialIssued",
+    "RealtimeWorkerCredentialPermissionsItem",
+    "RealtimeWorkerCredentialRequest",
+    "RealtimeWorkerCredentialRequestPermissionsItem",
+    "RealtimeWorkerCredentialRotationRequest",
+    "RealtimeWorkerHealth",
+    "RealtimeWorkerHealthTimeoutSeconds",
+    "RealtimeWorkerHeartbeat",
+    "RealtimeWorkerHeartbeatRequest",
     "RebindEnvironmentGitSourceRequest",
     "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",

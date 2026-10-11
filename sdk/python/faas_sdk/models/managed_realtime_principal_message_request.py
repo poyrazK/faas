@@ -118,11 +118,15 @@ class ManagedRealtimePrincipalMessageRequest:
         if notification_category is not UNSET:
             field_dict["notification_category"] = notification_category
 
+        if not isinstance(self.ttl_seconds, Unset):
+            field_dict["ttl_seconds"] = self.ttl_seconds
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
+
         principal = d.pop("principal")
 
         data_base64 = d.pop("data_base64")
@@ -169,6 +173,7 @@ class ManagedRealtimePrincipalMessageRequest:
         notification_category = d.pop("notification_category", UNSET)
 
         managed_realtime_principal_message_request = cls(
+            ttl_seconds=ttl_seconds,
             principal=principal,
             data_base64=data_base64,
             binary=binary,

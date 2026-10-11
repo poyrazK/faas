@@ -233,32 +233,283 @@ __all__ = (
     "OperationHTTPError",
 )
 
-from .models.operation_workflow_blocker import OperationWorkflowBlocker
-
-from .models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
-
-from .models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
-
 from .models.operation_workflow_attention_group import OperationWorkflowAttentionGroup
-
+from .models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
 from .models.operation_workflow_attention_summary import OperationWorkflowAttentionSummary
+from .models.operation_workflow_blocker import OperationWorkflowBlocker
+from .models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
 
 __all__ += ("OperationWorkflowAttentionStats", "OperationWorkflowAttentionGroup", "OperationWorkflowAttentionSummary")
 
 from .models.operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
+
 __all__ += ("OperationWorkflowOutcomeEntry",)
 
 from .models.operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+
 __all__ += ("OperationWorkflowOutcomesResponse",)
 
 from .models.operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+
 __all__ += ("OperationWorkflowOutcomeGroup",)
 
 from .models.operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
+
 __all__ += ("OperationWorkflowOutcomeSummary",)
 
 from .models.operation_workflow_dependency import OperationWorkflowDependency
+
 __all__ += ("OperationWorkflowDependency",)
 
 from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+
 __all__ += ("OperationWorkflowRelatedInstance",)
+
+
+from .realtime_direct_messages import RealtimeDirectMessage, RealtimeWebSocketDirectMessages
+from .realtime_drain import RealtimeDrainResult
+from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
+from .realtime_expiry import RealtimeExpiryDiagnostics, RealtimeExpiryStatus, RealtimeMessageExpiry
+from .realtime_sse import RealtimeSSEClient, RealtimeSSEMessage
+from .realtime_transport import RealtimeFallbackClient, RealtimeTransportStatus
+
+__all__ += (
+    "RealtimeDrainResult",
+    "RealtimeBackpressureMonitor",
+    "RealtimeBackpressureStatus",
+    "RealtimeProcessingStatus",
+    "RealtimeExpiryDiagnostics",
+    "RealtimeExpiryStatus",
+    "RealtimeMessageExpiry",
+    "RealtimeSSEClient",
+    "RealtimeSSEMessage",
+    "RealtimeFallbackClient",
+    "RealtimeTransportStatus",
+    "RealtimeDirectMessage",
+    "RealtimeWebSocketDirectMessages",
+)
+
+
+from .realtime_websocket_reads import RealtimeWebSocketReadProgress
+
+__all__ += ("RealtimeWebSocketReadProgress",)
+
+
+from .realtime_filters import RealtimeEventFilter
+
+__all__ += ("RealtimeEventFilter",)
+
+
+from .realtime_websocket_presence import RealtimeWebSocketPresence, RealtimeWebSocketSignal
+
+__all__ += ("RealtimeWebSocketPresence", "RealtimeWebSocketSignal")
+
+
+from .realtime_channels import RealtimeChannelSubscription, RealtimeMultiChannelClient
+
+__all__ += ("RealtimeChannelSubscription", "RealtimeMultiChannelClient")
+
+
+from .realtime_websocket import RealtimeWebSocketClient, RealtimeWebSocketMessage, RealtimeWebSocketSession
+
+__all__ += ("RealtimeWebSocketClient", "RealtimeWebSocketMessage", "RealtimeWebSocketSession")
+
+
+from .realtime_recovery import (
+    RealtimeRecoveryCoordinator,
+    RealtimeRecoveryError,
+    RealtimeRecoveryEvent,
+    RealtimeRecoveryRetry,
+    RealtimeRecoverySession,
+    RealtimeRecoveryTarget,
+)
+
+__all__ += (
+    "RealtimeRecoveryCoordinator",
+    "RealtimeRecoveryError",
+    "RealtimeRecoveryEvent",
+    "RealtimeRecoveryRetry",
+    "RealtimeRecoverySession",
+    "RealtimeRecoveryTarget",
+)
+
+
+from .realtime_timeline import RealtimeIncidentEvent, RealtimeIncidentTimeline
+
+__all__ += ("RealtimeIncidentEvent", "RealtimeIncidentTimeline")
+
+
+from .realtime_diagnostics import export_realtime_diagnostics
+
+__all__ += ("export_realtime_diagnostics",)
+
+
+from .realtime_readiness import (
+    RealtimeCatchUpRequirement,
+    RealtimeReadinessError,
+    RealtimeReadinessResult,
+    wait_realtime_ready,
+)
+
+__all__ += (
+    "RealtimeCatchUpRequirement",
+    "RealtimeReadinessError",
+    "RealtimeReadinessResult",
+    "wait_realtime_ready",
+)
+
+
+from .realtime_subscriptions import (
+    RealtimeSubscriptionStatus,
+    RealtimeSubscriptionSummary,
+    RealtimeSubscriptionTracker,
+    RealtimeSubscriptionWaitError,
+)
+
+__all__ += (
+    "RealtimeSubscriptionStatus",
+    "RealtimeSubscriptionSummary",
+    "RealtimeSubscriptionTracker",
+    "RealtimeSubscriptionWaitError",
+)
+
+
+from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
+
+__all__ += ("RealtimeCatchUpStatus", "RealtimeCatchUpTracker", "RealtimeCatchUpWaitError")
+
+
+from .realtime_health import RealtimeHealthSummary, summarize_realtime_health
+
+__all__ += ("RealtimeHealthSummary", "summarize_realtime_health")
+
+
+from .realtime_connection_status import (
+    RealtimeConnectionStatus,
+    RealtimeConnectionStatusTracker,
+    RealtimeConnectionQuality,
+    RealtimeConnectionQualityTracker,
+)
+
+__all__ += (
+    "RealtimeConnectionStatus",
+    "RealtimeConnectionStatusTracker",
+    "RealtimeConnectionQuality",
+    "RealtimeConnectionQualityTracker",
+)
+
+
+from .realtime_read_refresh import RealtimeReadRefreshCoordinator, RealtimeReadRefreshError
+
+__all__ += ("RealtimeReadRefreshCoordinator", "RealtimeReadRefreshError")
+
+
+from .realtime_read_publisher import (
+    RealtimeReadProgressPublisher,
+    RealtimeReadPublishError,
+    create_managed_realtime_read_publisher,
+)
+
+__all__ += (
+    "RealtimeReadProgressPublisher",
+    "RealtimeReadPublishError",
+    "create_managed_realtime_read_publisher",
+)
+
+
+from .realtime_read_progress import (
+    RealtimeReadProgress,
+    RealtimeReadProgressTracker,
+    RealtimeReadProgressFreshness,
+    RealtimeUnreadSummary,
+    RealtimeUnreadBadge,
+    format_realtime_unread_badge,
+    summarize_realtime_unread,
+)
+
+__all__ += (
+    "RealtimeReadProgress",
+    "RealtimeReadProgressTracker",
+    "RealtimeReadProgressFreshness",
+    "RealtimeUnreadSummary",
+    "RealtimeUnreadBadge",
+    "format_realtime_unread_badge",
+    "summarize_realtime_unread",
+)
+
+
+from .realtime_scopes import (
+    REALTIME_ACTIVITY_SCOPE_PREFIX,
+    parse_realtime_activity_scope,
+    realtime_activity_scope_channel,
+)
+
+__all__ += (
+    "REALTIME_ACTIVITY_SCOPE_PREFIX",
+    "parse_realtime_activity_scope",
+    "realtime_activity_scope_channel",
+)
+
+
+from .realtime_publisher import (
+    RealtimeActivityPublishError,
+    RealtimeActivityPublisher,
+    create_managed_realtime_activity_publisher,
+)
+
+__all__ += (
+    "RealtimeActivityPublishError",
+    "RealtimeActivityPublisher",
+    "create_managed_realtime_activity_publisher",
+)
+
+
+from .realtime_presence import (
+    RealtimeActivitySummary,
+    RealtimeLabeledActivityParticipant,
+    summarize_realtime_activity,
+    format_realtime_typing_summary,
+    RealtimeActivityParticipant,
+    RealtimePresenceDirectory,
+    RealtimePresenceEvent,
+    RealtimePresenceMember,
+    RealtimePresenceSummary,
+)
+
+__all__ += (
+    "RealtimeActivitySummary",
+    "RealtimeLabeledActivityParticipant",
+    "summarize_realtime_activity",
+    "format_realtime_typing_summary",
+    "RealtimeActivityParticipant",
+    "RealtimePresenceDirectory",
+    "RealtimePresenceEvent",
+    "RealtimePresenceMember",
+    "RealtimePresenceSummary",
+)
+
+
+from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
+
+__all__ += ("RealtimeActivity", "RealtimeActivityTracker")
+
+
+from .realtime_workers import (
+    RealtimeLeaseLostError,
+    RealtimeWorkerContext,
+    RealtimeWorkerError,
+    RealtimeWorkerEvent,
+    RealtimeWorkerOptions,
+    consume_realtime_consumer_group,
+    consume_realtime_consumer_group_with_credential,
+)
+
+__all__ += (
+    "RealtimeLeaseLostError",
+    "RealtimeWorkerContext",
+    "RealtimeWorkerError",
+    "RealtimeWorkerEvent",
+    "RealtimeWorkerOptions",
+    "consume_realtime_consumer_group",
+    "consume_realtime_consumer_group_with_credential",
+)

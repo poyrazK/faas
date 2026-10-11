@@ -1041,6 +1041,10 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
+	  for realtime_package in realtimettl realtimebulk; do \
+	    mkdir -p "$$tmp/pkg/state/$$realtime_package"; \
+	    cp "pkg/state/$$realtime_package/queries.sql" "pkg/state/$$realtime_package/schema.sql" "$$tmp/pkg/state/$$realtime_package/"; \
+	  done; \
 	  cp pkg/state/queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event*_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
@@ -1051,7 +1055,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
