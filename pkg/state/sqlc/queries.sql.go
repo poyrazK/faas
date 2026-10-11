@@ -26839,6 +26839,74 @@ func (q *Queries) ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listCloneCheckpointMigrationHoldingsForRetirement = `-- name: ListCloneCheckpointMigrationHoldingsForRetirement :many
+SELECT m.instance_id, m.lease_token, m.source_node_id, m.created_at, m.lease_expires_at, m.mem_storage_key, m.vmstate_storage_key, m.pending,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
+FROM migration_leases m JOIN instances i ON i.id=m.instance_id
+LEFT JOIN deployments d ON d.id=i.deployment_id
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text))))
+AND ($2::text='' OR m.instance_id>NULLIF($2::text,'')::uuid)
+ORDER BY m.instance_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationHoldingsForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterInstanceID string
+	PageLimit       int32
+}
+
+type ListCloneCheckpointMigrationHoldingsForRetirementRow struct {
+	InstanceID        pgtype.UUID
+	LeaseToken        string
+	SourceNodeID      string
+	CreatedAt         pgtype.Timestamptz
+	LeaseExpiresAt    pgtype.Timestamptz
+	MemStorageKey     string
+	VmstateStorageKey string
+	Pending           bool
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	WakeID            pgtype.UUID
+	SchedulingNodeID  pgtype.UUID
+}
+
+// The permanent fence retains original source leases and their instance owners.
+// Do not filter expiry or terminal state, or infer destination launch ownership.
+func (q *Queries) ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationHoldingsForRetirementParams) ([]ListCloneCheckpointMigrationHoldingsForRetirementRow, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationHoldingsForRetirement, arg.OperationID, arg.AfterInstanceID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCloneCheckpointMigrationHoldingsForRetirementRow{}
+	for rows.Next() {
+		var i ListCloneCheckpointMigrationHoldingsForRetirementRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.CreatedAt,
+			&i.LeaseExpiresAt,
+			&i.MemStorageKey,
+			&i.VmstateStorageKey,
+			&i.Pending,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.SchedulingNodeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCloneCheckpointWakeDispatchesForRetirement = `-- name: ListCloneCheckpointWakeDispatchesForRetirement :many
 SELECT w.instance_id, w.app_id, w.deployment_id, w.node_id, w.wake_id, w.request_reason, w.method, w.dispatched_at FROM project_environment_clone_wake_dispatches w
 JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid

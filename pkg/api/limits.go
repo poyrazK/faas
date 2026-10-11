@@ -8846,6 +8846,9 @@ const CheckpointWorkloadRetirementMaxBytes = 2 << 20
 // Private recovery pages bound original clone wake dispatch ownership reads.
 const CheckpointWorkloadWakeRecoveryBatchMax = 100
 
+// Private recovery pages bound retained clone migration handoff evidence reads.
+const CheckpointWorkloadMigrationRecoveryBatchMax = 100
+
 // CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
 const CloneConfigurationOwnershipMaxBytes = 32 << 10
 

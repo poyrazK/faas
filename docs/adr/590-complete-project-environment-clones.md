@@ -9906,3 +9906,37 @@ qualified protocol. Public full-stage admission remains gated. PostgreSQL tests
 exercise metadata absence, operation isolation, stale/foreign leases, paging,
 adapter mutation, empty inventories and recovery across worker handoff without
 native VMs or live provider qualification.
+
+### Authenticated retained migration recovery inventory
+
+A private recovery reader now pages original fenced migration holdings under the
+current compensation lease. It re-authenticates original source compensation,
+materialization and the frozen workload retirement plan, requires the permanent
+requested/retired fence and checks worker authority again before commit. Invalid
+cursors or bounds fail before reading; the page cap lives centrally in
+`CheckpointWorkloadMigrationRecoveryBatchMax`. Failed authentication returns no
+partial holding or cleanup capability.
+
+Selection uses original target deployment IDs or the operation request namespace
+and includes live, expired, pending and completed leases, including stopped
+instances. Source-stage and foreign-operation leases are excluded. Instance and
+deployment rows remain protected by the previously installed migration retention
+guards. UUID ordering supports stable identity continuation across worker
+handoff. An original delayed snapshot completion may still populate handles;
+subsequent recovery reads observe those handles without replacing source lease
+identity or granting renewal authority. Returned holdings are independent copies.
+
+The original source node, token, creation/expiry times and snapshot handles stay
+in the private lease field, which is excluded from JSON output. The separately
+named scheduling node is current catalog ownership; it does not identify an
+original destination launch, prove that adoption completed or authorize a resume.
+Reading a holding supplies neither native closure nor permission to delete it.
+Expiry, completion and terminal instance state remain insufficient evidence.
+
+PostgreSQL tests cover paging, current worker authentication, expired/completed
+holdings, delayed original completion, source-versus-scheduler identity, private
+capability serialization, adapter mutation and recovery after worker takeover.
+No native VM or live provider is exercised. Destination adoption dispatch
+ownership, source/destination host-generation correlation and proof-backed
+collection still need a qualified native protocol; public full-stage admission
+remains gated.

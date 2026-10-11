@@ -16065,3 +16065,16 @@ WHERE r.state IN ('requested','retired') AND (
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text))))
 AND (sqlc.arg(after_instance_id)::text='' OR w.instance_id>NULLIF(sqlc.arg(after_instance_id)::text,'')::uuid)
 ORDER BY w.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- The permanent fence retains original source leases and their instance owners.
+-- Do not filter expiry or terminal state, or infer destination launch ownership.
+-- name: ListCloneCheckpointMigrationHoldingsForRetirement :many
+SELECT m.*,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
+FROM migration_leases m JOIN instances i ON i.id=m.instance_id
+LEFT JOIN deployments d ON d.id=i.deployment_id
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=sqlc.arg(operation_id)::uuid
+WHERE r.state IN ('requested','retired') AND (
+ d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text))))
+AND (sqlc.arg(after_instance_id)::text='' OR m.instance_id>NULLIF(sqlc.arg(after_instance_id)::text,'')::uuid)
+ORDER BY m.instance_id LIMIT sqlc.arg(page_limit)::integer;
