@@ -9,6 +9,8 @@ on:
       - 'cmd/gregale/templates/embed.go'
       - 'pkg/durableentity/**'
       - 'cmd/apid/durable_entities*'
+      - 'pkg/apid/durable/**'
+      - 'pkg/apid/apidserver/**'
       - 'cmd/apid/server.go'
       - 'scripts/gen-durable-entity-contract.py'
       - '.github/workflows/durable-entity-developer-workflow.yml'
@@ -19,6 +21,8 @@ on:
       - 'cmd/gregale/templates/durable-entity-node/**'
       - 'pkg/durableentity/**'
       - 'cmd/apid/durable_entities*'
+      - 'pkg/apid/durable/**'
+      - 'pkg/apid/apidserver/**'
       - 'cmd/apid/server.go'
       - '.github/workflows/durable-entity-developer-workflow.yml'
   workflow_dispatch:
@@ -81,7 +85,7 @@ jobs:
           # Match the repository race-build bounds for the large API package.
           # Cold API race compilation can be quiet for several minutes. Keep
           # its progress visible without masking the test process exit status.
-          GOMEMLIMIT=2GiB GOGC=10 go test -race "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" ./cmd/apid -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1 -v -timeout=2m &
+          GOMEMLIMIT=2GiB GOGC=10 go test -race "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" ./pkg/apid/apidserver -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1 -v -timeout=2m &
           api_check_pid=$!
           while kill -0 "$api_check_pid" 2>/dev/null; do
             sleep 30

@@ -256,12 +256,15 @@ func isRuntimeMountpointPath(name string) bool {
 func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
-		if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm); err != nil {
+		if err := mkdirImageDirectories(target, 0o755); err != nil {
+			return err
+		}
+		if err := chmodImageDirectory(target, os.FileMode(hdr.Mode)&os.ModePerm); err != nil {
 			return err
 		}
 		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeReg:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := mkdirImageDirectories(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		// Replace the lower inode instead of truncating it: the new layer owns
@@ -315,7 +318,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		// resolveEntryPath clamps ancestor symlinks inside dst on every
 		// subsequent entry, so a hostile "bin -> /etc" link cannot be
 		// used to write through to the host's /etc. See resolveWithin.
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := mkdirImageDirectories(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		_ = os.Remove(target)

@@ -287,3 +287,25 @@ func TestRenderWakeTimelinePage_ColdBootCPUAllowance(t *testing.T) {
 		t.Errorf("cold-boot summary missing CPU transition:\n%s", got)
 	}
 }
+
+// Production-us hunt #9: schedd's work between the vmmd RPC and RUNNING
+// averaged 130-154 ms per wake. --verbose shows its steps; the default view
+// stays unchanged.
+func TestRenderWakeTimelinePage_PostRPCBreakdown(t *testing.T) {
+	resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+		Kind: "wake.boot_completed", Actor: "schedd", Data: map[string]any{
+			"post_rpc_pre_commit_ms": float64(3), "post_rpc_stamp_join_ms": float64(0),
+			"post_rpc_lock_wait_ms": float64(61), "post_rpc_publish_ms": float64(24), "post_rpc_finalize_ms": float64(40),
+		},
+	}}}
+	var buf bytes.Buffer
+	renderWakeTimelinePageWithOptions(&buf, resp, true)
+	if want := "post-rpc pre_commit=3ms stamp_join=0ms lock_wait=61ms publish=24ms finalize=40ms"; !strings.Contains(buf.String(), want) {
+		t.Fatalf("verbose output missing %q:\n%s", want, buf.String())
+	}
+	buf.Reset()
+	renderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "post-rpc") {
+		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
+	}
+}

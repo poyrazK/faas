@@ -4,6 +4,14 @@ This is local, unqualified release tooling. No registry has been installed by th
 work. Use [ADR-946](../adr/946-durable-entity-validator-release-tooling.md) for scope
 and [qualification](FaasDurableEntityQualification.md) for acceptance requirements.
 
+## Symptom
+
+A gated release reports `durable_entity_validator_release_required`, a deployment's
+validator observation is unavailable, or artifact publication refuses a changed
+digest. Keep the affected release blocked while checking its immutable binding.
+
+## Check
+
 Create the deployment identity through the existing release process. Supply a
 reviewed, secret-free one-shot validator entrypoint for that exact application
 schema. Keep app credentials and production configuration outside this directory.
@@ -29,6 +37,8 @@ Repeat `--file` for every reviewed dependency; the hook does not install package
 infer imports. Use a new output path each time. Existing deployment bindings cannot
 change their bytes or app identity. Preserve validators for rollback deployments.
 Serialize jobs so parallel generation cannot lose each other's additions.
+
+## Recover
 
 Stage the complete output using the existing operator deployment process, configure
 `FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE` to its path and restart all API

@@ -870,6 +870,11 @@ message SnapshotRef {
   // catalog. Ordinary app snapshots leave it false and cannot cross the
   // dedicated execution restore RPC.
   bool networkless = 7;
+  // mem_bytes is the guest memory length the snapshot was taken with. vmmd
+  // refuses to restore a companion (sidecar) snapshot whose length differs
+  // from the requested guest memory; without it every companion wake fell
+  // back to cold boot. 0 means unknown (older schedd).
+  int64 mem_bytes = 8;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and

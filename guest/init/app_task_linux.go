@@ -31,6 +31,7 @@ const (
 	appTaskManifestKind                = "app_task"
 	appTaskManifestVersion             = 1
 	appTaskTerminationGrace            = 2 * time.Second
+	appTaskResultDeliveryGrace         = 5 * time.Second
 )
 
 type appTaskManifest struct {
@@ -59,26 +60,7 @@ func validateAppTaskManifest(data []byte) error {
 }
 
 func listenAppTaskHook() (net.Listener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock socket: %w", err)
-	}
-	addr := &unix.SockaddrVM{CID: VsockAppTaskBindCID, Port: VsockAppTaskPort}
-	if err := unix.Bind(fd, addr); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock bind port %d: %w", VsockAppTaskPort, err)
-	}
-	if err := unix.Listen(fd, 1); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock listen: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), "app-task-vsock")
-	ln, err := net.FileListener(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock listener: %w", err)
-	}
-	return ln, nil
+	return listenGuestVsock(VsockAppTaskPort)
 }
 
 func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler) error {
@@ -90,7 +72,36 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 		return fmt.Errorf("app task vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	return apptaskproto.Serve(ctx, conn, handler)
+	if err := apptaskproto.Serve(ctx, conn, handler); err != nil {
+		return err
+	}
+	return awaitAppTaskHostClose(ctx, conn)
+}
+
+// A successful vsock write only queues the terminal frame. Powering off here
+// can discard it before the host reads it. The one-shot host closes its session
+// after consuming the result; wait for that close before halting the guest.
+// A missing or stalled host must still leave this disposable VM bounded.
+func awaitAppTaskHostClose(ctx context.Context, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deliveryCtx, cancel := context.WithTimeout(ctx, appTaskResultDeliveryGrace)
+	defer cancel()
+	stop := context.AfterFunc(deliveryCtx, func() { _ = conn.Close() })
+	defer stop()
+	var extra [1]byte
+	n, err := io.ReadFull(conn, extra[:])
+	if n != 0 {
+		return errors.New("app task host sent data after the terminal result")
+	}
+	if contextErr := deliveryCtx.Err(); contextErr != nil {
+		return contextErr
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 var poweroffAppTask = func() error {
@@ -112,6 +123,7 @@ func runAppTaskGuest(log *slog.Logger) error {
 	}
 	ln, err := listenAppTaskHook()
 	if err != nil {
+		log.Warn("app task listener unavailable", "err", err)
 		_ = poweroffAppTask()
 		return err
 	}

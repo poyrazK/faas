@@ -2,6 +2,53 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createDataClient } from '../dist/index.js'
 
+test('pinned clients route reads, writes and RPCs through the exact contract without retry or fallback', async () => {
+  const fingerprint = 'a'.repeat(64)
+  for (const url of ['https://data.example', 'https://data.example/rest/v1', 'https://data.example/mount/rest/v1']) {
+    const requests = []
+    const client = createDataClient({ url, accessToken: 'token', expectedSchemaFingerprint: fingerprint,
+      fetch: async (input, init) => {
+        requests.push({ url: String(input), ...init })
+        return new Response('{"code":"schema_contract_mismatch","title":"schema_contract_mismatch"}', { status: 409 })
+      } }).schema('api')
+    const results = [
+      await client.from('notes').select('id').retry(true),
+      await client.from('notes').insert({ body: 'next' }).select(),
+      await client.from('notes').update({ body: 'edit' }).eq('id', 1),
+      await client.from('notes').delete().eq('id', 1),
+      await client.rpc('approved', { value: 'hello' }),
+    ]
+    assert.equal(requests.length, 5)
+    assert.deepEqual(requests.map(request => request.method), ['GET', 'POST', 'PATCH', 'DELETE', 'POST'])
+    const mount = url.includes('/mount/') ? '/mount' : ''
+    for (const request of requests) {
+      assert.ok(new URL(request.url).pathname.startsWith(`${mount}/__gregale/contract/${fingerprint}/rest/v1/`))
+      assert.equal(request.headers.get('Authorization'), 'Bearer token')
+      assert.equal(request.credentials, 'omit'); assert.equal(request.redirect, 'error')
+    }
+    for (const result of results) {
+      assert.equal(result.status, 409); assert.equal(result.data, null)
+      assert.equal(result.error.code, 'schema_contract_mismatch')
+    }
+    await assert.rejects(Promise.resolve(client.from('notes').select().throwOnError()), error => error.code === 'schema_contract_mismatch')
+    assert.equal(requests.length, 6)
+  }
+})
+
+test('invalid fingerprints fail at client creation and unavailable guard routes never fall back', async () => {
+  for (const expectedSchemaFingerprint of ['', null, 42, 'A'.repeat(64), 'g'.repeat(64), 'a'.repeat(63), 'a'.repeat(65), { toString: () => 'a'.repeat(64) }]) {
+    assert.throws(() => createDataClient({ url: 'https://data.example', accessToken: 'token', expectedSchemaFingerprint }), /schema fingerprint/)
+  }
+  let calls = 0
+  const client = createDataClient({ url: 'https://data.example', accessToken: 'token', expectedSchemaFingerprint: 'a'.repeat(64), fetch: async input => {
+    calls++
+    assert.ok(new URL(input).pathname.startsWith('/__gregale/contract/'))
+    return new Response('{"code":"not_found"}', { status: 404 })
+  } })
+  const result = await client.schema('api').from('notes').insert({ body: 'never replay' })
+  assert.equal(result.status, 404); assert.equal(calls, 1)
+})
+
 test('client evaluates rotating tokens per request and preserves PostgREST behavior', async () => {
   let token = 'first'
   const requests = []

@@ -8933,7 +8933,7 @@ RETURNING *;
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
 -- trigger admission, so quota checks and the projection share the same commit.
 -- name: QueueConsumerLockApp :one
-select id, account_id, type, workload_class from apps
+select id, account_id, type, workload_class, coalesce(manifest->>'execution_mode','')::text as execution_mode from apps
 where id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and status<>'deleted' for update;
 
 -- name: QueueConsumerLockAccount :one
@@ -10210,7 +10210,7 @@ SELECT session_user::text AS login, current_user::text AS effective_user,
  has_schema_privilege(current_user,'public','CREATE') AS schema_create,
  (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
  OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- (has_database_privilege(current_user,current_database(),'CREATE')
+ ((sqlc.arg(access)::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
  OR has_database_privilege(current_user,current_database(),'TEMPORARY')
  OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
  AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
@@ -11770,7 +11770,7 @@ WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_
  AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';
 
 -- name: EnvironmentWorkloadIntent :one
-SELECT w.account_id,w.app_id,w.environment_id,w.job_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables
+SELECT w.account_id,w.app_id,w.environment_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables,w.job_id
 FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
@@ -11780,7 +11780,7 @@ WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uui
 INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,job_id,source,runtime,source_revision,service_bindings,schedule,variables)
 VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(job_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''),sqlc.arg(service_bindings)::jsonb,sqlc.narg(schedule)::jsonb,sqlc.arg(variables)::jsonb)
 ON CONFLICT(app_id,environment_id) DO UPDATE SET job_id=excluded.job_id,source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,schedule=excluded.schedule,variables=excluded.variables,updated_at=now()
-RETURNING account_id,app_id,environment_id,job_id,source,runtime,created_at,updated_at,source_revision,service_bindings,schedule,variables;
+RETURNING account_id,app_id,environment_id,source,runtime,created_at,updated_at,source_revision,service_bindings,schedule,variables,job_id;
 
 -- name: EnvironmentWorkloadIntentLockSource :many
 SELECT id FROM active_environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;

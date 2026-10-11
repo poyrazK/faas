@@ -46,9 +46,12 @@ type Input struct {
 	App         string
 	Host        string
 	Path        string
-	Method      string
-	ClientIP    string
-	Country     string
+	// Query is the raw query string (without "?"). It is used only to
+	// evaluate validate-rule query schemas and is never echoed in results.
+	Query    string
+	Method   string
+	ClientIP string
+	Country  string
 	// ASN is the simulated client autonomous system for asn conditions
 	// (ADR-966); 0 means unknown.
 	ASN     uint32
@@ -1293,17 +1296,26 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		default:
 			status = http.StatusFound
 		}
-		preview := &ActionPreview{Type: "redirect", StatusCode: status, Location: action.To, RedirectHeaders: action.Headers}
-		return "redirect", fmt.Sprintf("would return HTTP %d redirect to %q", status, action.To), preview
+		location, headers, err := traceRedirectTemplate(*action, input, requestPath)
+		if err != nil {
+			return "unavailable", "redirect template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
+		}
+		preview := &ActionPreview{Type: "redirect", StatusCode: status, Location: location, RedirectHeaders: headers}
+		return "redirect", fmt.Sprintf("would return HTTP %d redirect to %q", status, location), preview
 	case "headers":
 		action, ok := decodeAction[api.EdgeRuleHeadersAction](rule.Action, "headers")
 		if !ok {
 			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		preview := &ActionPreview{
-			Type: "headers", RequestHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.RequestHeaders...),
-			ResponseHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.ResponseHeaders...),
+		requestOps, err := traceHeaderTemplates(action.RequestHeaders, input, requestPath)
+		if err != nil {
+			return "unavailable", "header template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
 		}
+		responseOps, err := traceHeaderTemplates(action.ResponseHeaders, input, requestPath)
+		if err != nil {
+			return "unavailable", "header template does not compile; gateway compilation would drop the rule: " + err.Error(), nil
+		}
+		preview := &ActionPreview{Type: "headers", RequestHeaderOps: requestOps, ResponseHeaderOps: responseOps}
 		return "headers", fmt.Sprintf("would apply %d request-header and %d response-header operation(s)", len(action.RequestHeaders), len(action.ResponseHeaders)), preview
 	case "cors":
 		return previewCORSRule(rule, input)
@@ -1606,6 +1618,15 @@ func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, 
 	return "budget_candidate", budgetPolicyReason(policy), &ActionPreview{Type: "budget", BudgetPolicy: &policy}
 }
 
+// gatewayThrottleRPS mirrors cmd/gatewayd-internal compileThrottleRules:
+// a non-positive rate is replaced with 1, a fractional one is kept.
+func gatewayThrottleRPS(rps float64) float64 {
+	if !(rps > 0) {
+		return 1
+	}
+	return rps
+}
+
 func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
 	action, ok := decodeAction[api.EdgeRuleThrottleAction](rule.Action, "throttle")
 	if !ok {
@@ -1614,7 +1635,7 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 	policy := &ThrottlePolicyPreview{
 		RequestsPerSecond: action.RequestsPerSecond,
 		Burst:             action.Burst,
-		GatewayRateRPS:    max(action.RequestsPerSecond, 1),
+		GatewayRateRPS:    gatewayThrottleRPS(action.RequestsPerSecond),
 		GatewayBurst:      max(action.Burst, 1),
 		KeyBy:             action.KeyBy,
 		JWTClaimName:      action.JWTClaimName,
@@ -2062,10 +2083,18 @@ func resolveCORSPreset(rule api.EdgeRuleResponse, action *api.EdgeRuleCORSAction
 
 func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
 	action, ok := decodeAction[api.EdgeRuleValidateAction](rule.Action, "validate")
-	if !ok || len(action.Schema) == 0 {
+	if !ok || (len(action.Schema) == 0 && action.Parameters.Empty()) {
 		return "unavailable", "rule schema is missing or invalid; gateway compilation would reject it", nil
 	}
 	preview := &ActionPreview{Type: "validate"}
+	if !action.Parameters.Empty() {
+		if outcome, reason, done := previewValidateParameters(rule, *action, input, preview); done {
+			return outcome, reason, preview
+		}
+		if len(action.Schema) == 0 {
+			return "validated", "request parameters satisfy the rule's schemas", preview
+		}
+	}
 	// Real HTTP parsers remove optional whitespace around field values. The
 	// CLI/dashboard parser retains bytes for exact edge-rule header matches,
 	// so trim OWS here to mirror the gateway's parsed Content-Type value.
@@ -2165,6 +2194,98 @@ func previewLimitRule(rule api.EdgeRuleResponse, input Input) (string, string, *
 		return "body_too_large", fmt.Sprintf("request body is %d bytes; it exceeds both the buffered limit (%d bytes) and streaming limit (%d bytes)", bodyBytes, bufferedCap, streamingCap), preview
 	}
 	return "needs_streaming_context", fmt.Sprintf("request body is %d bytes; the buffered limit is %d bytes and streaming limit is %d bytes, so the outcome depends on unavailable gateway streaming context", bodyBytes, bufferedCap, streamingCap), preview
+}
+
+// previewValidateParameters simulates the path, query, and header schemas of
+// a validate rule in gateway order. done is false when every parameter check
+// passed (or failed in observe/warn mode) and the body check should run next.
+func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleValidateAction, input Input, preview *ActionPreview) (string, string, bool) {
+	p := action.Parameters
+	if prob := p.Validate(rule.MatchPath); prob != nil {
+		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
+	}
+	query, err := url.ParseQuery(input.Query)
+	if err != nil {
+		return "unavailable", "the request query string could not be parsed", true
+	}
+	for _, loc := range []struct {
+		name   string
+		schema json.RawMessage
+	}{{"path", p.Path}, {"query", p.Query}, {"headers", p.Headers}} {
+		if len(loc.schema) == 0 {
+			continue
+		}
+		kinds, err := api.EdgeRuleParamKinds(loc.schema)
+		if err != nil {
+			return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
+		}
+		values := map[string][]string{}
+		switch loc.name {
+		case "path":
+			pathValues, ok := api.PathTemplateValues(p.PathTemplate, input.Path)
+			if !ok {
+				// Like the gateway, an observe/warn mismatch lets the
+				// remaining checks run.
+				if outcome, reason, done := validateModeOutcome(rule, action, preview, "request path does not fit the rule's path_template"); done {
+					return outcome, reason, true
+				}
+				continue
+			}
+			for name, v := range pathValues {
+				values[name] = []string{v}
+			}
+		case "query":
+			values = query
+		default:
+			for name := range kinds {
+				if raw := input.Headers.Values(name); len(raw) > 0 {
+					values[name] = raw
+				}
+			}
+		}
+		instance, err := api.EdgeRuleParamInstance(kinds, values)
+		if err != nil {
+			return "unavailable", "validation parameters could not be evaluated", true
+		}
+		compiled, err := edgevalidate.Compile(loc.schema, false)
+		if err != nil {
+			return "unavailable", "validation parameter schema could not be compiled; check the stored edge rule", true
+		}
+		fieldErr, err := compiled.Validate(instance)
+		if err != nil {
+			return "unavailable", "validation parameter schema evaluation failed", true
+		}
+		if fieldErr == nil {
+			continue
+		}
+		preview.ValidationField = loc.name + fieldErr.Field
+		preview.ValidationKeyword = fieldErr.Expected
+		outcome, reason, done := validateModeOutcome(rule, action, preview,
+			fmt.Sprintf("%s parameters do not match the JSON Schema at %s (keyword %s)", loc.name, preview.ValidationField, fieldErr.Expected))
+		if done {
+			return outcome, reason, true
+		}
+	}
+	return "", "", false
+}
+
+// validateModeOutcome maps a parameter mismatch to the rule's validate_mode.
+// Block stops the trace; observe and warn record the mismatch and continue.
+func validateModeOutcome(rule api.EdgeRuleResponse, action api.EdgeRuleValidateAction, preview *ActionPreview, reason string) (string, string, bool) {
+	mode := rule.ValidateMode
+	if mode == "" {
+		mode = action.ValidateMode
+	}
+	switch mode {
+	case api.ValidateModeObserve:
+		return "validation_failed_observe", reason, false
+	case api.ValidateModeWarn:
+		preview.ResponseHeaderOps = []api.EdgeRuleHeaderOp{{Action: "set", Name: "X-Validation-Warning", Value: rule.ID}}
+		return "validation_failed_warn", reason, false
+	default:
+		preview.StatusCode = http.StatusUnprocessableEntity
+		return "validation_failed", reason, true
+	}
 }
 
 func validationFailureReason(fieldErr *edgevalidate.FieldError) string {
@@ -2534,6 +2655,56 @@ func traceEdgeRuleLists(expr *api.EdgeRuleMatchExpr, supplied []api.EdgeRuleList
 		}
 	}
 	return out
+}
+
+// traceTemplateInput is the simulated request for ADR-968 templates. The
+// trace takes no query string, so query values expand empty.
+func traceTemplateInput(input Input, requestPath string) api.EdgeRuleTemplateInput {
+	return api.EdgeRuleTemplateInput{
+		Method: input.Method, Host: input.Host, Path: requestPath,
+		EscapedPath: (&url.URL{Path: requestPath}).EscapedPath(), Headers: input.Headers,
+		ClientIP: net.ParseIP(input.ClientIP),
+		Country:  func() string { return input.Country },
+		ASN:      func() uint32 { return input.ASN },
+	}
+}
+
+// traceHeaderTemplates renders templated header ops as the gateway would.
+func traceHeaderTemplates(ops []api.EdgeRuleHeaderOp, input Input, requestPath string) ([]api.EdgeRuleHeaderOp, error) {
+	out := append([]api.EdgeRuleHeaderOp(nil), ops...)
+	for i, op := range out {
+		if !op.Template {
+			continue
+		}
+		t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Value = t.Expand(traceTemplateInput(input, requestPath))
+		out[i].Template = false
+	}
+	return out, nil
+}
+
+// traceRedirectTemplate renders a templated redirect as the gateway would.
+func traceRedirectTemplate(a api.EdgeRuleRedirectAction, input Input, requestPath string) (string, map[string]string, error) {
+	if !a.Template {
+		return a.To, a.Headers, nil
+	}
+	in := traceTemplateInput(input, requestPath)
+	to, err := api.CompileEdgeRuleTemplate(a.To, api.EdgeRuleTemplateRedirect)
+	if err != nil {
+		return "", nil, err
+	}
+	headers := make(map[string]string, len(a.Headers))
+	for name, value := range a.Headers {
+		t, err := api.CompileEdgeRuleTemplate(value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return "", nil, err
+		}
+		headers[name] = t.Expand(in)
+	}
+	return to.Expand(in), headers, nil
 }
 
 // HostMatches is the gateway's match_host comparison (case-insensitive,

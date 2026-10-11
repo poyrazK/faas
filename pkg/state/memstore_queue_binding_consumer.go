@@ -70,7 +70,7 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 				return QueueBindingConsumerResult{}, err
 			}
 		}
-		if err := validateQueueBindingConsumer(binding, app.Type, app.WorkloadClass); err != nil {
+		if err := validateQueueBindingConsumer(binding, app.Type, QueueBindingAppClass(app.WorkloadClass, app.Manifest.ExecutionMode)); err != nil {
 			return QueueBindingConsumerResult{}, err
 		}
 		for otherID, other := range m.queueBindings {

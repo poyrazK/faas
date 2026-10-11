@@ -132,7 +132,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     env:
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 10GiB
       GOGC: 100
       GOMAXPROCS: 4
@@ -157,7 +157,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: install linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
           install-only: true
@@ -243,13 +243,14 @@ jobs:
       # that are absent or already passing on the base.
       - name: advisory regression pin report
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
+
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
       # changes). Keeps the existing local Makefile contract honest.
@@ -257,14 +258,14 @@ jobs:
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: go vet ./...
       - name: build
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
         run: make build
 
       # S2 PR-2b: a pure nil-return MemStore method can make a handler test
@@ -579,7 +580,7 @@ jobs:
   # Bumped to 20 min (PR #414 follow-up) so the long pole has two
   # budgets of headroom — wall is still ~5 min in steady state, this
   # is contingency for slow windows on a shared GH runner pool.
-  # Shard 1 (Postgres-heavy A): cmd/apid, migrations, pkg/meter, pkg/db, pkg/alerts,
+  # Shard 1 (Postgres-heavy A): pkg/apid/apidserver, migrations, pkg/meter, pkg/db, pkg/alerts,
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
@@ -663,18 +664,40 @@ jobs:
           npm run build
       - name: install customer Operations example dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
+      - name: build CLI for local object storage wire journeys
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      # The SQL probe connects with TLS-required managed credentials.
+      - name: Enable TLS for SQL probe credential acceptance
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
-        # Omit test debug metadata and serialize its backend; keep optimization.
+        # Omit debug metadata for API and newly instrumented state; keep optimization.
+        # Serialized backends retain the existing memory and test budgets.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GREGALE_OBJECT_STORAGE_E2E_CLI: ${{ runner.temp }}/gregale
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
-          go test -race -count=1 -p 4 -timeout=30m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/apid/apidserver|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
+          # Public API/worker contracts also exercise the exact state package.
+          # Preserve every selected package and instrument the shared adapters;
+          # the aggregate still requires every complete state shard below.
+          STATEPKG=$(go list ./pkg/state)
+          COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
+          go test -json -race -count=1 -p 4 -timeout=30m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+
+      - name: upload public API state-adapter coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-api
+          path: coverage/cover-shard1.out
+          if-no-files-found: error
 
       - name: sdk-check
         run: make sdk-check
@@ -710,6 +733,7 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -787,7 +811,7 @@ jobs:
             # Packages with pgtest-backed tests must run in a Postgres shard:
             # in the pure shards pgtest skips them, and cmd/githubd shipped a
             # query that failed on every call while its test was never run.
-            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
+            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/e2etest/postgresprobe|pkg/e2etest/postgresfixture|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
@@ -867,6 +891,21 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      - name: PostgreSQL native verdict contracts
+        if: matrix.id == 'b'
+        run: python3 scripts/ci/managed-postgres-native-verdict_test.py
+      - uses: actions/setup-node@v7
+        if: matrix.id == 'b'
+        with:
+          node-version: '22'
+      - name: generated PostgreSQL starter TLS recovery
+        if: matrix.id == 'b'
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+          GREGALE_POSTGRES_STARTER_TEST: '1'
+        run: |
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
+          NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10
@@ -952,11 +991,12 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
 
-  # Require all five compatible profiles. A partial suite or parity-only profile
+  # Require all six compatible profiles, including complete public API contracts.
+  # A partial suite or external-adapter-only profile
   # cannot replace the full exact-package 70% gate.
   state-coverage:
     name: pkg/state coverage gate (all shards)
-    needs: [unit-tests-state, unit-tests-pg-2]
+    needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -970,7 +1010,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out coverage/cover-shard1.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1047,9 +1087,20 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/pkg/apid/apidserver$' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
+      - name: repeat wake admission, first-byte and Redis deadline regressions
+        # These assertions previously depended on 10ms/100ms scheduling
+        # assumptions. Exercise the synchronised admission barrier and the
+        # real proxy timestamp repeatedly, including on cached PR runs.
+        # Exercise Redis contents, invalidation and socket deadline bounds
+        # without assuming the race-test host always responds within 100ms.
+        run: >-
+          go test -race -cover -covermode=atomic -count=30 -shuffle=on
+          -timeout=5m
+          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12|TestMetricsSpec12_FirstByteNotFullBody|TestRedisResponseCache.*)$'
+          ./pkg/sched ./pkg/gateway
 
       - name: coverage floor (ship-blocking packages)
         # Validates pkg/fcvm, pkg/sched, pkg/gateway ≥ floors defined in
@@ -1109,7 +1160,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|pkg/apid/apidserver|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -1146,7 +1197,7 @@ jobs:
     # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
     # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
     env:
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1183,7 +1234,7 @@ jobs:
         # strict verifier also compiles cmd/apid with -race, and cold DWARF
         # generation can exceed hosted-runner memory before tests begin.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -1197,7 +1248,7 @@ jobs:
       - name: require portable UDP control-plane contracts
         run: |
           set -o pipefail
-          python3 scripts/ci/udp-contract-check.py --packages cmd/apid pkg/api pkg/state 2>&1 | tee udp-contract-control-plane.log
+          python3 scripts/ci/udp-contract-check.py --packages pkg/apid/apidserver pkg/api pkg/state 2>&1 | tee udp-contract-control-plane.log
       - name: require portable UDP customer and protocol contracts
         run: |
           set -o pipefail
@@ -1225,15 +1276,16 @@ jobs:
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
     runs-on: ubuntu-latest
-    # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
-    # retain time for the remaining SQLC, vulnerability and Ansible gates.
-    timeout-minutes: 30
+    # The complete cold-run gate sequence can exhaust 30 minutes at the
+    # final watchdog rule check. Retain time for every contract and safety
+    # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
       GOVULNCHECK_VERSION: "1.7.0"
       # Several contract gates compile the APID test package.
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1256,6 +1308,13 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
+      # ADR-977: pkg/apid/apidserver is one package compiled as a unit (~16 GB peak for its
+      # tests). New code goes in pkg/apid/<domain>; growth needs a visible
+      # baseline bump.
+      - name: apid size
+        run: make apid-size-check
+      - name: apid size gate checker tests
+        run: make apid-size-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that
@@ -1303,10 +1362,13 @@ jobs:
       - name: generate Gregale workflow lint fixtures
         run: bash scripts/ci/generate-github-workflow-lint-fixtures.sh
       - name: actionlint
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
-        with:
-          version: v1.7.12
-          args: -shellcheck ''
+        # The Docker action builds from Docker Hub's golang:latest before
+        # checkout and can exhaust anonymous pulls. Run the same pinned CLI
+        # with its Python checker directly; keep the existing lint arguments.
+        run: |
+          python3 -m pip install --quiet 'pyflakes==4.0.3'
+          GOBIN="$RUNNER_TEMP/actionlint-bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$RUNNER_TEMP/actionlint-bin/actionlint" -shellcheck=''
       - name: remove Gregale workflow lint fixtures
         if: always()
         run: rm -f .github/workflows/gregale-generated-check-"$GITHUB_RUN_ID"-*.yml
@@ -1878,7 +1940,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -1930,7 +1992,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -2009,10 +2071,10 @@ jobs:
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
     runs-on: ubuntu-latest
-    # Warm PR runs took 2.9-4.8 min; the release gate starts from a cold
-    # go-load cache (load no longer runs on main since #4391) and rc.250's
-    # gate was cancelled at the 5 min limit with every test passing.
-    timeout-minutes: 15
+    # Cold module-download retries and race compilation exhausted the former
+    # five-minute job budget. Leave room before the unchanged 10m Go test
+    # timeout; the 1k rps latency assertions and runner remain unchanged.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

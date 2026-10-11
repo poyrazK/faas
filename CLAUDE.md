@@ -42,6 +42,8 @@ acceptance environments.
 ```
 cmd/{apid,gatewayd-public,gatewayd-internal,schedd,vmmd,builderd,imaged,meterd,gregale}   daemons + CLI (Go)
 pkg/{api,state,fcvm,netns,oci,rootfs,meter,billing,wire,apid}   shared libs
+pkg/apid/apidserver   the apid server (ADR-977); cmd/apid/main.go only calls apidserver.Main
+pkg/apid/<domain>     apid code lifted out of the server (ADR-977): httpkit, durable, object, receivers
 pkg/api/limits.go     EVERY plan quota/limit lives in this one table — never inline a limit
 guest/init            static Go PID1 inside every microVM
 guest/runners/{node22,python312}                              function runner shims
@@ -114,6 +116,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - Money: integer cents/millicents. Floats near money fail review.
 - SQL via sqlc only; no string-built queries. Every state column has a CHECK.
 - Handlers ≤ 50 lines — extract. Table-driven tests. No global state except wiring.
+- New apid code goes in a `pkg/apid/<domain>` package (ADR-977); `pkg/apid/apidserver`
+  keeps wiring, the route table and middleware. `make apid-size-check` fails if its
+  non-test code grows; PRs that move code out lower `scripts/ci/apid_size_baseline.txt`.
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
@@ -156,3 +161,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   disappears on reboot and eats RAM until then.
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
+- `go test ./pkg/apid/apidserver` compiles the apid server and its tests as one unit and
+  peaks around 16 GB RAM. Run these builds one at a time, type-check with
+  `go vet ./pkg/apid/apidserver`
+  (~1.3 GB) while iterating, and keep the default shared GOCACHE: per-job private
+  caches grow to ~11 GB each and have filled developer disks.

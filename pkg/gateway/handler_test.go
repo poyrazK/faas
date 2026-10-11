@@ -740,6 +740,43 @@ func TestEdgeRuleThrottleReturns429(t *testing.T) {
 	assertRateLimitedProblem(t, rec2, 1)
 }
 
+// A fractional rate is a real policy (the CLI's login example uses 0.1 rps).
+// Hunt #9 (rc.252) found compileThrottleRules raised every rate below 1 rps
+// to 1, so a 0.1 rps login throttle admitted ten times its configured rate,
+// and every 429 said Retry-After: 1. The 429 must carry the configured rate
+// and the time until the next token.
+func TestEdgeRuleThrottle_FractionalRateRetryAfter(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	b.app.Plan = api.PlanPro
+	b.app.AccountID = "acct-1"
+	h.WithLimiter(NewLimiter().WithNoop())
+	h.WithAccountLimiter(NewLimiter().WithNoop())
+	h.edgeRules = stubEdgeRuleMatcher{
+		throttle: &EdgeRuleThrottleResolved{
+			ID: "rule-login", AccountID: "acct-1", AppID: b.app.ID,
+			RequestsPerSecond: 0.1, Burst: 1,
+		},
+	}
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/login", nil)
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, req)
+	if first.Code == http.StatusTooManyRequests {
+		t.Fatal("first request consumed the burst token and must pass")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After = %q, want 10 (one token per 10 s)", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "allows 0.1 requests per second") {
+		t.Errorf("429 body does not state the configured rate: %s", body)
+	}
+}
+
 type stubCountryReader struct {
 	country string
 	found   bool
@@ -748,35 +785,6 @@ type stubCountryReader struct {
 
 func (s stubCountryReader) Lookup(net.IP) (string, bool, error) {
 	return s.country, s.found, s.err
-}
-
-// adr: 104 — key_by=ip buckets per trusted client address. IPv6 clients share
-// their /64 so rotating the interface identifier cannot mint fresh buckets,
-// and a forged or multi-hop X-Forwarded-For is refused, never trusted.
-func TestResolveThrottleDimension_IP(t *testing.T) {
-	h := &Handler{}
-	rule := &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByIP}
-	for _, tc := range []struct {
-		xff, want string
-	}{
-		{"203.0.113.10", "203.0.113.10"},
-		{"::ffff:203.0.113.10", "203.0.113.10"},
-		{"2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"},
-		{"2001:db8:1:2:bbbb::7", "2001:db8:1:2::/64"},
-	} {
-		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
-		req.Header.Set("X-Forwarded-For", tc.xff)
-		value, ok, unavailable := h.resolveThrottleDimension(req, rule)
-		if value != tc.want || !ok || unavailable != "" {
-			t.Errorf("ip dimension for %s = (%q, %v, %q), want (%q, true, empty)", tc.xff, value, ok, unavailable, tc.want)
-		}
-	}
-	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
-	req.Header.Add("X-Forwarded-For", "203.0.113.10")
-	req.Header.Add("X-Forwarded-For", "198.51.100.4")
-	if _, _, unavailable := h.resolveThrottleDimension(req, rule); unavailable != "caller_ip_untrusted" {
-		t.Fatalf("multi-hop XFF unavailable reason = %q, want caller_ip_untrusted", unavailable)
-	}
 }
 
 func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
@@ -796,6 +804,102 @@ func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
 	})
 	if value != "tenant-42" || !ok || unavailable != "" {
 		t.Fatalf("JWT claim dimension = (%q, %v, %q), want (tenant-42, true, empty)", value, ok, unavailable)
+	}
+}
+
+func TestResolveThrottleDimension_IP(t *testing.T) {
+	h := &Handler{}
+	rule := &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByIP}
+	cases := []struct {
+		name, xff, want string
+		ok              bool
+		unavailable     string
+	}{
+		{name: "ipv4", xff: "203.0.113.10", want: "203.0.113.10", ok: true},
+		{name: "ipv4-mapped ipv6 keys as ipv4", xff: "::ffff:203.0.113.10", want: "203.0.113.10", ok: true},
+		{name: "ipv6 buckets by /64", xff: "2001:db8:1:2:aaaa:bbbb:cccc:dddd", want: "2001:db8:1:2::/64", ok: true},
+		{name: "missing xff fails closed", xff: "", unavailable: "caller_ip_untrusted"},
+		{name: "garbage xff fails closed", xff: "not-an-ip", unavailable: "caller_ip_untrusted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+			if tc.xff != "" {
+				req.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			value, ok, unavailable := h.resolveThrottleDimension(req, rule)
+			if value != tc.want || ok != tc.ok || unavailable != tc.unavailable {
+				t.Fatalf("ip dimension = (%q, %v, %q), want (%q, %v, %q)", value, ok, unavailable, tc.want, tc.ok, tc.unavailable)
+			}
+		})
+	}
+
+	// Two forwarded hops are a forged chain, never the first or last entry.
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "198.51.100.7")
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	if _, _, unavailable := h.resolveThrottleDimension(req, rule); unavailable != "caller_ip_untrusted" {
+		t.Fatalf("multi-hop xff unavailable = %q, want caller_ip_untrusted", unavailable)
+	}
+}
+
+func TestEdgeRuleThrottle_IPKeyIsolatesSourcesAndSharesIPv6Prefix(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-ip", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 0.01, Burst: 1,
+		KeyBy: api.ThrottleKeyByIP, MaxKeysPerRule: 100,
+	}}
+	app := App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}
+	do := func(ip string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "http://api.example.com/login", nil)
+		req.Header.Set("X-Forwarded-For", ip)
+		rec := httptest.NewRecorder()
+		h.applyEdgeRuleThrottle(rec, req, app)
+		return rec.Code
+	}
+
+	if code := do("203.0.113.10"); code == http.StatusTooManyRequests {
+		t.Fatal("first request from source A unexpectedly throttled")
+	}
+	if code := do("203.0.113.10"); code != http.StatusTooManyRequests {
+		t.Fatalf("second request from source A = %d, want 429", code)
+	}
+	if code := do("203.0.113.11"); code == http.StatusTooManyRequests {
+		t.Fatal("source B was throttled by source A's exhausted bucket")
+	}
+	if code := do("2001:db8:1:2::1"); code == http.StatusTooManyRequests {
+		t.Fatal("first IPv6 request unexpectedly throttled")
+	}
+	// A rotated interface ID inside the same /64 must not mint a fresh bucket.
+	if code := do("2001:db8:1:2::ffff"); code != http.StatusTooManyRequests {
+		t.Fatalf("rotated IPv6 interface ID = %d, want 429 (same /64 bucket)", code)
+	}
+}
+
+func TestEdgeRuleThrottle_IPKeyForgedXFFFailsClosedWithoutConsuming(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-ip", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 10, Burst: 20,
+		KeyBy: api.ThrottleKeyByIP, MaxKeysPerRule: 100,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "198.51.100.7")
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	rec := httptest.NewRecorder()
+	if handled := h.applyEdgeRuleThrottle(rec, req, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}); !handled {
+		t.Fatal("forged forwarding chain did not short-circuit")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ip-keyed throttle") {
+		t.Errorf("problem detail should name the ip-keyed throttle; body=%s", rec.Body.String())
+	}
+	if got := h.routeLimiter.BucketCount(); got != 0 {
+		t.Errorf("route bucket count = %d, want 0 (rejected requests must not consume tokens)", got)
 	}
 }
 
@@ -1267,6 +1371,22 @@ func TestHostname(t *testing.T) {
 func TestMetricsSpec12(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	h.SetWakeGateHook()
+	var firstByteLatency time.Duration
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			firstByteAt, ok := FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	// Cold path: +requests_total{200} +cold_wake_total +wake_latency_count.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
@@ -1281,8 +1401,13 @@ func TestMetricsSpec12(t *testing.T) {
 	if got := histogramObservationCount(t, h.metrics.wakeLatency); got != 1 {
 		t.Errorf("wake_latency _count = %v, want 1 (one observation)", got)
 	}
-	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
-		t.Errorf("wake_latency observation = %v, want (0, 100ms] for localhost stub", got)
+	if firstByteLatency <= 0 {
+		t.Fatalf("first upstream byte latency = %v, want > 0", firstByteLatency)
+	}
+	// The metric includes real scheduler/transport delay, even on localhost.
+	// One nanosecond allows conversion through the histogram's float seconds.
+	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got-firstByteLatency < -time.Nanosecond || got-firstByteLatency > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 
 	// Unknown host: +requests_total{404}.
@@ -1346,8 +1471,9 @@ func histogramMeanObservation(t *testing.T, h prometheus.Histogram) time.Duratio
 // histogram must reflect the time to first upstream response byte, not the
 // time to drain the full upstream body. We construct an upstream that
 // flushes headers immediately, then sleeps 100ms before writing the body,
-// and assert the observed wake latency is well under what a full-body
-// measurement would have produced.
+// and compare the histogram with the actual first-byte timestamp captured
+// by the production proxy. Runner scheduling can delay even localhost
+// headers beyond 100ms; that delay still belongs in the wake measurement.
 func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 	const bodyGap = 100 * time.Millisecond
 
@@ -1368,6 +1494,24 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		upstream: upstream.Listener.Addr().String(),
 	}
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	var firstByteLatency time.Duration
+	var firstByteAt, bodyFinishedAt time.Time
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			bodyFinishedAt = time.Now()
+			firstByteAt, ok = FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	req := httptest.NewRequest("GET", "http://firstbyte.apps.dom/", nil)
 	rec := httptest.NewRecorder()
@@ -1376,16 +1520,21 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	// First-byte observation must be much shorter than the body gap would
-	// suggest for a full-body measurement. We allow generous slack for
-	// localhost jitter and Go scheduler stalls, but a full-body measurement
-	// would land >= bodyGap.
+	if rec.Body.String() != "body-after-delay" {
+		t.Fatalf("body = %q, want the complete delayed upstream body", rec.Body.String())
+	}
+	if !firstByteAt.Before(bodyFinishedAt) {
+		t.Fatal("first-byte timestamp did not precede completion of the delayed body")
+	}
+	// Match the real proxy timestamp rather than an absolute localhost SLO.
+	// One nanosecond permits the histogram's float-seconds conversion; a
+	// full-body or fallback observation includes the delayed body and fails.
 	got := histogramMeanObservation(t, h.metrics.wakeLatency)
 	if got == 0 {
 		t.Fatal("wake_latency observation missing")
 	}
-	if got >= bodyGap {
-		t.Errorf("wake_latency observation = %v, want < %v (first-byte, not full body)", got, bodyGap)
+	if delta := got - firstByteLatency; delta < -time.Nanosecond || delta > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 	// Sanity: the observation should not be so small as to suggest the
 	// trace fired before wakeStart (negative durations would be < 0; the
@@ -2632,6 +2781,25 @@ func TestApplyEdgeRuleIP_DenyCIDRMatch_EmitsApplyError(t *testing.T) {
 	if !strings.Contains(body, `gateway_edge_rule_apply_total{kind="ip",result="error"} 1`) {
 		t.Errorf("apply_total{ip,error} != 1; body:\n%s", body)
 	}
+	// The per-app rejection counter feeds per-app alerts and dashboards.
+	if !strings.Contains(body, `gateway_edge_rejections_total{app="app-1",kind="ip",status="403"} 1`) {
+		t.Errorf("edge_rejections_total{app-1,ip,403} != 1; body:\n%s", body)
+	}
+}
+
+func TestObserveEdgeRejectionBoundsStatusLabel(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveEdgeRejection("app-1", "throttle", http.StatusTooManyRequests)
+	m.ObserveEdgeRejection("app-1", "throttle", http.StatusTeapot)
+	m.ObserveEdgeRejection("app-1", "throttle", 0)
+	if got := testutil.ToFloat64(m.edgeRejections.WithLabelValues("app-1", "throttle", "429")); got != 1 {
+		t.Fatalf("429 count = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.edgeRejections.WithLabelValues("app-1", "throttle", "other")); got != 2 {
+		t.Fatalf("other count = %v, want 2 (unexpected statuses collapse)", got)
+	}
+	var nilMetrics *Metrics
+	nilMetrics.ObserveEdgeRejection("app-1", "ip", http.StatusForbidden) // must not panic
 }
 
 func TestApplyEdgeRuleIP_AllowMatch_EmitsApplySuccess(t *testing.T) {

@@ -13,10 +13,12 @@ import (
 )
 
 func TestAutomationFailureAlertMigrationReplayAndRollback(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
 	defer pool.Close()
 	ctx := t.Context()
-	migrateUpOnce(ctx, t, pool)
+	// Replay and rollback at this migration's boundary. Later presets use
+	// metrics outside its historical constraint and must be unwound first.
+	migrateUpTo(t, ctx, pool, 20261010071621984)
 	raw, err := migrations.FS.ReadFile("20261010071621984_automation_failure_alert.sql")
 	if err != nil {
 		t.Fatal(err)

@@ -318,6 +318,18 @@ lifecycle:
 ```
 
 The equivalent one-off override is `gregale deploy --execution-mode worker`.
+
+Queue-driven pools scale out on the tick that observes the backlog. Scale-in
+waits for demand to stay low for 60 seconds: a pool shrinks only to the highest
+replica count its queue called for during that window, so a queue that drains
+and refills does not stop and re-boot workers.
+
+Workers do not listen for HTTP, so they consume queues through pull bindings;
+push delivery is for function apps. The platform cannot see which worker holds
+a pulled message, so a worker should stop taking new messages on the stop
+signal and finish in-flight ones within `stop_grace_period_s`; set it above
+your longest message.
+
 Lifecycle settings are applied idempotently after the app is created; plan and
 mode compatibility checks remain server-authoritative. Project deploys reject
 single-app lifecycle flags.

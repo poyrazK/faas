@@ -1,6 +1,6 @@
 package storage
 
-// Snapshot memory page sharing — ADR-911.
+// Snapshot memory page sharing — ADR-956.
 //
 // A Firecracker memory file holds the guest's page cache: 4 KiB pages whose
 // bytes equal 4 KiB blocks of the app layer and runtime base the node already
@@ -101,7 +101,7 @@ func (x *MemoryShareIndex) ShareSnapshotMemory(ctx context.Context, backend Stor
 }
 
 // ErrBlockSharingUnsupported reports a filesystem that cannot share blocks
-// (ext4, tmpfs); ADR-911 sharing is then a no-op.
+// (ext4, tmpfs); ADR-956 sharing is then a no-op.
 var ErrBlockSharingUnsupported = errDedupeUnsupported
 
 // ShareMemoryWithImages shares memPath's pages with blocks of the given image

@@ -21,19 +21,6 @@
 #   FAAS_VMM_TLS_KEY_PATH=/etc/faas/tls/imaged/vmmd-client.key
 #   FAAS_VMM_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
 
-# Per-app cosign signature-enforcement (issue #472 / ADR-058).
-# imaged reads this directory once at startup and on every
-# pg_notify('trusted_signer_changed') event. Each .pem file is
-# the base64-DER mirror of one (app_id, signer_name) row written
-# by apid. imaged decodes the DER, parses the SPKI, and verifies
-# the deploy-time signature against every loaded publisher until
-# one matches. Mode 0444 per file (same posture as
-# /etc/faas/secrets/sign-pub.pem). Default location if unset:
-#
-#   /etc/faas/secrets/trusted-publishers
-#
-# Set FAAS_TRUSTED_PUBLISHERS_DIR in /etc/faas/imaged.env (the
-# systemd EnvironmentFile) to override. Missing directory is
-# non-fatal — imaged returns an empty trust list and the apid
-# pre-flight gate (handlers.go::createDeployment) rejects any
-# deploy to an app with require_signed=true.
+# Per-app cosign signature enforcement (issue #472 / ADR-058) needs no
+# configuration here: imaged reads each app's trusted publishers from
+# app_trusted_signers in Postgres on every verify.

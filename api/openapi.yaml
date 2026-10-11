@@ -10577,6 +10577,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose usage alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerUsageAlerts
+      summary: List the plan usage alerts a consumer crossed.
+      description: |
+        Returns up to 100 recorded crossings of the consumer's plan alert
+        thresholds, newest first. Each crossing also emitted one
+        consumer.usage_threshold webhook; this list reconciles missed
+        deliveries.
+      responses:
+        '200':
+          description: The consumer's usage alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageAlertListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/rate-cards/{rate_card_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -11355,6 +11381,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreAuthObservationsResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/edge-protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppEdgeProtection
+      summary: Summarize what the edge rejected for an app.
+      description: |
+        Read-only security telemetry from the per-app gateway counters that
+        the edge security alert presets evaluate: pre-auth source-limit
+        decisions, kind=validate mismatches by mode, and requests answered by
+        the other edge gates (JWT, IP, geo, ingress, body limits, throttles)
+        by gate and status. On Prometheus failure, source starts with
+        `degraded:` and counts are zero.
+      parameters:
+        - name: range
+          in: query
+          description: Time window. Defaults to one hour.
+          schema:
+            type: string
+            enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]
+            default: 1h
+      responses:
+        '200':
+          description: Edge rejection counts for the range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeProtectionResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -14822,6 +14880,196 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/routes/advice:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteAdvice
+      summary: Suggest edge rules for observed routes with what-if estimates.
+      description: |
+        Read-only route advisor (ADR-976). Reads retained request telemetry for
+        the app's busiest observed routes across deployments and suggests three
+        kinds of edge rules: cache for anonymous, successful GET routes with
+        repeat traffic; async for POST routes that time out or exceed a 10 s
+        p95; and a per-consumer throttle when one consumer dominates a route and
+        a limit exists that no other observed consumer reaches. A route needs at
+        least 200 requests in the window, and routes that already have a rule of
+        the suggested kind (enabled or not) are skipped.
+
+        Each suggestion carries its evidence, an estimate replayed from the same
+        window, cautions, and ready-to-create rule bodies: one per hostname (the
+        platform hostname and every verified custom domain), always disabled.
+        Nothing is applied; create the rules with POST /v1/apps/{slug}/edge-rules
+        and enable them after review. Suggestion IDs are stable for the same
+        kind, method and route. Estimates are observed_only and upper bounds:
+        the cache estimate cannot see credential headers or query strings.
+        Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
+        plan gate.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 168h }
+          description: "Positive lookback duration (for example 7d) or RFC3339 start timestamp; clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end of the advice window, default now; must be within retained telemetry and not in the future."
+        - name: cache_max_age
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 3600, default: 60 }
+          description: "What-if cache lifetime in seconds for cache estimates and proposed cache rules."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Route advisor suggestions for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteAdviceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/service-wake-ahead:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getServiceWakeAhead
+      summary: Read an app's service wake-ahead opt-in.
+      description: |
+        Service wake-ahead (ADR-977) is off by default. When it is on and this
+        app starts a cold wake, the gateway also starts restoring the services
+        it has measured this app calling soon after it wakes, so their restores
+        overlap instead of running one after another. Measurement is per
+        gateway and needs at least 20 observed wakes of this app before any
+        service is woken ahead. Woken services are billed like any other
+        running instance. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's wake-ahead opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setServiceWakeAhead
+      summary: Turn an app's service wake-ahead on or off.
+      description: |
+        Sets the ADR-977 opt-in. Gateways apply the change within 30 seconds.
+        Wake-ahead never starts while fleet residency is at or above 60% of the
+        admission ceiling, never parks other instances to make room, and goes
+        through the same admission and plan concurrency limits as a request.
+        Requires deploy write access and completed MFA. Body limit is 1 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceWakeAheadRequest' }
+      responses:
+        '200':
+          description: The updated opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/route-priorities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRoutePriorities
+      summary: Read the routes served first and last when an app is saturated.
+      description: |
+        Route priorities (ADR-978) order the queue requests wait in while every
+        routable instance of the app is busy. Critical requests are served
+        before normal ones and normal before bulk; within a class the queue
+        stays first in, first out, and the request already at the head is never
+        moved. When the queue is full, a request takes the place of the newest
+        waiting request of a lower class, which receives the usual 503 with
+        Retry-After. Saved rules apply when present (source configured);
+        otherwise the app's route-health selectors are critical (route_health);
+        otherwise there are none. Crawlers and link-preview bots that match no
+        rule are bulk. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's effective route priorities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRoutePriorities
+      summary: Replace an app's saved route priorities.
+      description: |
+        Saves at most 20 rules, matched in order; the first match wins. A path
+        is a route template (/users/{id}) or an edge-rule glob (/exports/*); an
+        omitted method matches every method. An empty list saves "no
+        priorities" and turns off the route-health default. Gateways apply the
+        change within 30 seconds. Requires deploy write access and completed
+        MFA. Body limit is 16 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRoutePrioritiesRequest' }
+      responses:
+        '200':
+          description: The effective route priorities after saving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: resetRoutePriorities
+      summary: Delete an app's saved route priorities.
+      description: "Deletes saved rules so the route-health default applies again. Requires deploy write access and completed MFA."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The effective route priorities after the reset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/route-monitor/report:
     parameters:
@@ -42257,7 +42505,7 @@ components:
       additionalProperties: false
       required: [key_by]
       properties:
-        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject] }
+        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject, country, ip] }
         max_rps: { type: number, exclusiveMinimum: 0 }
         missing_key_policy: { type: string, enum: [shared, reject] }
     RouteBudgetRequirement:
@@ -42719,6 +42967,110 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RouteAdviceResponse:
+      type: object
+      description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
+      required: [slug, from, until, cache_max_age_seconds, routes_analyzed, suggestions]
+      properties:
+        slug: {"type": "string"}
+        from: {"type": "string", "format": "date-time"}
+        until: {"type": "string", "format": "date-time"}
+        window_clamped: {"type": "boolean", "description": "The requested window was shortened to plan retention."}
+        cache_max_age_seconds: {"type": "integer", "minimum": 1, "maximum": 3600}
+        routes_analyzed: {"type": "integer", "minimum": 0}
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
+    RouteAdviceSuggestion:
+      type: object
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      required: [id, kind, method, route, title, rationale, evidence, impact, rules]
+      properties:
+        id: {"type": "string", "description": "Stable for the same kind, method and route."}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
+        title: {"type": "string"}
+        rationale: {"type": "string"}
+        evidence: { $ref: '#/components/schemas/RouteAdviceEvidence' }
+        impact: { $ref: '#/components/schemas/RouteAdviceImpact' }
+        cautions:
+          type: array
+          items: {"type": "string"}
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+    RouteAdviceEvidence:
+      type: object
+      description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
+      required: [requests, anonymous_requests, server_errors, timeouts, cold_boots, p95_latency_ms]
+      properties:
+        requests: {"type": "integer", "format": "int64"}
+        anonymous_requests: {"type": "integer", "format": "int64"}
+        server_errors: {"type": "integer", "format": "int64"}
+        timeouts: {"type": "integer", "format": "int64"}
+        cold_boots: {"type": "integer", "format": "int64"}
+        p95_latency_ms: {"type": "integer"}
+        consumers: {"type": "integer", "format": "int64"}
+        top_consumer_id: {"type": "string", "format": "uuid"}
+        top_consumer_requests: {"type": "integer", "format": "int64"}
+        top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+        next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+    RouteAdviceImpact:
+      type: object
+      description: "What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."
+      required: [summary, estimated_cache_hits, estimated_wakes_avoided, estimated_throttled_requests, timeouts_affected]
+      properties:
+        summary: {"type": "string", "description": "One-sentence what-if estimate for the suggested rule."}
+        estimated_cache_hits: {"type": "integer", "format": "int64"}
+        estimated_wakes_avoided: {"type": "integer", "format": "int64"}
+        estimated_throttled_requests: {"type": "integer", "format": "int64"}
+        timeouts_affected: {"type": "integer", "format": "int64"}
+    ServiceWakeAheadResponse:
+      type: object
+      description: "An app's service wake-ahead opt-in (ADR-977)."
+      required: [slug, enabled]
+      properties:
+        slug: {"type": "string"}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+    SetServiceWakeAheadRequest:
+      type: object
+      description: "Turns service wake-ahead on or off for one app."
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: {"type": "boolean", "description": "true to wake measured services ahead, false to wake them only when called."}
+    RoutePriorityRule:
+      type: object
+      description: "Assigns a priority class to requests matching a method and path (ADR-978)."
+      required: [path, class]
+      additionalProperties: false
+      properties:
+        method: {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "description": "Omitted matches every method."}
+        path: {"type": "string", "maxLength": 240, "description": "Route template such as /users/{id}, or an edge-rule glob such as /exports/*."}
+        class: {"type": "string", "enum": ["critical", "bulk"]}
+    RoutePrioritiesResponse:
+      type: object
+      description: "An app's effective route priorities and where they come from."
+      required: [slug, source, routes]
+      properties:
+        slug: {"type": "string"}
+        source: {"type": "string", "enum": ["configured", "route_health", "none"]}
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
+        updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+    SetRoutePrioritiesRequest:
+      type: object
+      description: "Replaces the saved route priorities; an empty list saves none."
+      required: [routes]
+      additionalProperties: false
+      properties:
+        routes:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -46038,6 +46390,8 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
         version_id: { type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object. }
+        if_match: { type: string, minLength: 1, maxLength: 256, description: 'PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.' }
+        if_none_match: { type: string, enum: ['*'], description: PUT only. Create only if no live object exists. Mutually exclusive with if_match. }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }
@@ -49077,18 +49431,29 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1500 }
-        effective_from: { type: [string, "null"], format: date-time, description: UTC minute at which the version starts; omitted means the next UTC minute. }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order (ADR-975). Statements for periods it prices must cover one calendar month." }
+        tiers:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
       type: object
-      required: [id, tenant_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, tenant_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-975)." }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -49307,7 +49672,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
-      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present. Each line is billable_units × price_millicents_per_unit; free allowance units and each ladder step have their own line. In an adjustment that re-prices a month for a tenant allowance or tiers (ADR-975), a line is the difference from finalized revisions and can be negative, while the revision total never is.
       type: object
       required: [app_id, window_start, window_end, billable_units, amount_millicents]
       properties:
@@ -49317,12 +49682,12 @@ components:
         jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time, description: Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage. }
-        billable_units: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, description: "Units on this line; negative only in a re-priced month adjustment (ADR-975)." }
         rate_card_id: { type: string, format: uuid }
         platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, description: "billable_units × price_millicents_per_unit; negative only in a re-priced month adjustment (ADR-975)." }
 
     PlatformTenantStatementResponse:
       description: One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines and private minute-level adjustment coverage.
@@ -49588,25 +49953,39 @@ components:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
         max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month."
 
     UpdateAPIConsumerPlanLimitsRequest:
-      description: "Replacement limits for a consumer plan."
+      description: "Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them."
       type: object
       required: [max_requests_per_minute, max_units_per_month]
       properties:
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
       type: object
-      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "The plan's usage alert thresholds, ascending; empty means no alerts."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -49721,7 +50100,7 @@ components:
         as_of: { type: string, format: date-time }
 
     APIConsumerUsageCompletenessResponse:
-      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-954)."
       type: object
       required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
       properties:
@@ -49951,6 +50330,89 @@ components:
           maxItems: 49
           items:
             $ref: '#/components/schemas/PreAuthPolicyObservation'
+        suggestion:
+          $ref: '#/components/schemas/PreAuthEnforcementSuggestion'
+
+    EdgeProtectionResponse:
+      description: Edge rejection counts for one app over a range.
+      type: object
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf]
+      properties:
+        app_id: { type: string }
+        range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
+        source: { type: string, description: "Where the edge counts come from: prometheus, or degraded: <reason> when they are unavailable (counts are then zero, not measured)." }
+        as_of: { type: string, format: date-time }
+        pre_auth:
+          type: object
+          required: [blocked, would_block]
+          properties:
+            blocked: { type: integer, format: int64, minimum: 0, description: "Requests the pre-auth source limit rejected in enforce mode." }
+            would_block: { type: integer, format: int64, minimum: 0, description: "Requests observe mode would have rejected." }
+        validation_failures:
+          type: array
+          description: kind=validate mismatches by validate_mode (block, observe, warn); zero counts are omitted.
+          items:
+            type: object
+            required: [name, count]
+            properties:
+              name: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
+        rejections:
+          type: array
+          description: Requests answered by an edge gate, largest count first; zero counts are omitted.
+          items:
+            type: object
+            required: [gate, status, count]
+            properties:
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf] }
+              status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
+              count: { type: integer, format: int64, minimum: 0 }
+        waf:
+          type: object
+          description: kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in rejections under gate waf.
+          required: [inspected, detected, not_inspected, warned, blocked, inline_skipped, categories, top_rules]
+          properties:
+            inspected: { type: integer, format: int64, minimum: 0, description: "Requests scored by the OWASP CRS." }
+            detected: { type: integer, format: int64, minimum: 0, description: "Inspected requests at or above the rule's anomaly threshold." }
+            not_inspected: { type: integer, format: int64, minimum: 0, description: "Matched requests skipped to protect the node (budget, full queue, or error)." }
+            warned: { type: integer, format: int64, minimum: 0, description: "Requests a warn rule detected in-path and tagged with X-WAF-Warning." }
+            blocked: { type: integer, format: int64, minimum: 0, description: "Requests a block rule detected in-path and answered with 403." }
+            inline_skipped: { type: integer, format: int64, minimum: 0, description: "Requests that passed a warn or block rule unchecked because the in-path budget was exhausted." }
+            categories:
+              type: array
+              description: Detections by CRS attack category, largest first; one detection may count several.
+              items:
+                type: object
+                required: [name, count]
+                properties:
+                  name: { type: string }
+                  count: { type: integer, format: int64, minimum: 0 }
+            top_rules:
+              type: array
+              maxItems: 10
+              description: CRS rule IDs that scored most, largest first, for tuning exclude_rule_ids.
+              items:
+                type: object
+                required: [name, count]
+                properties:
+                  name: { type: string, description: CRS rule ID. }
+                  count: { type: integer, format: int64, minimum: 0 }
+
+    PreAuthEnforcementSuggestion:
+      description: |
+        Advice on switching an observe-mode guard to enforce, judged on the
+        response range (ADR-829 amendment 1). Present only for observe mode
+        with a healthy metrics source; nothing is applied automatically.
+        `ready` needs a range of 24h or longer, at least 1000 requests, and no
+        successful (2xx/3xx) request among those the guard would have blocked.
+      type: object
+      required: [status, reason, requests, would_block, would_block_succeeded]
+      properties:
+        status: { type: string, enum: [ready, review, insufficient_data] }
+        reason: { type: string }
+        requests: { type: integer, format: int64, minimum: 0, description: "Every gateway request to the app in the range." }
+        would_block: { type: integer, format: int64, minimum: 0, description: "Sum over the app and route policies." }
+        would_block_succeeded: { type: integer, format: int64, minimum: 0, description: "Would-block requests whose final response was 2xx or 3xx." }
 
     PreAuthPolicyObservation:
       description: Counts for one bounded app, route, failed-response, or target-observation policy slot.
@@ -61285,6 +61747,10 @@ components:
             - slo_burn_rate
             - pre_auth_target_threshold
             - pre_auth_target_signal_gap_pct
+            - pre_auth_pressure
+            - edge_validation_failures
+            - edge_rejections
+            - edge_waf_detections
             - event_pending_recipients
             - event_oldest_pending_seconds
             - event_retry_rate_per_second
@@ -61372,7 +61838,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -61412,7 +61878,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -61536,8 +62002,10 @@ components:
           default: webhook
           description: |
             Action to run when the instantiated alert fires. Omit to
-            use the default webhook-only behavior. The login_target_pressure
-            and login_target_signal_health presets support webhook only.
+            use the default webhook-only behavior. The login_target_pressure,
+            login_target_signal_health, pre_auth_pressure,
+            edge_validation_failures, and edge_rejection_pressure presets
+            support webhook only.
         cooldown_minutes:
           type: integer
           minimum: 5
@@ -61651,7 +62119,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -61680,6 +62148,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         name: { type: string, description: Operator-facing rule name. }
@@ -61723,7 +62192,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -61751,6 +62220,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
         name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
         description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
@@ -61799,6 +62269,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
         name: { type: string, maxLength: 100, description: Replacement rule name. }
         description: { type: string, maxLength: 1000, description: Replacement rule notes. }
         expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
@@ -61997,6 +62468,13 @@ components:
           type: object
           additionalProperties: { type: string }
           description: 'Headers stamped on the redirect response.'
+        template:
+          type: boolean
+          description: |
+            ADR-968. Expand ${name} request values in `to` and in the
+            header values (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>; $$ is a
+            literal $). The target must start with a literal "/" or
+            "http(s)://", and only ${host} may appear before the path.
 
     EdgeRuleHeaderOp:
       description: 'One header mutation. `action` ∈ {add,set,remove}.'
@@ -62008,6 +62486,12 @@ components:
         action:
           type: string
           enum: [add, set, remove]
+        template:
+          type: boolean
+          description: |
+            ADR-968. Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
+            $$ is a literal $). Control characters are dropped and each
+            value is capped at 1 KiB. Not allowed with action=remove.
 
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
@@ -62356,6 +62840,44 @@ components:
           type: array
           items: { type: string, format: cidr }
 
+    EdgeRuleValidateParameters:
+      description: |
+        Path, query, and header validation for a kind=validate rule
+        (ADR-091 amendment: request parameters). Each schema is a JSON
+        Schema object whose properties are parameter names; property types
+        must be string, integer, number, boolean, or an array of those.
+        Request values are converted to the declared type before
+        validation, and a value that does not convert stays a string so
+        the schema reports it. All three are checked before the body is
+        read, in the rule's validate_mode; errors name the location
+        (`path/id`, `query/limit`, `headers/x-tenant`).
+      type: object
+      properties:
+        path_template:
+          type: string
+          description: |
+            OpenAPI path template, such as `/users/{id}`. Required with
+            `path`. The rule's `match_path` must equal the template with
+            each placeholder replaced by `?*` (`/users/?*`), and each
+            segment may hold at most one placeholder.
+        path:
+          type: object
+          additionalProperties: true
+          description: Object schema whose properties are exactly the template's placeholders.
+        query:
+          type: object
+          additionalProperties: true
+          description: |
+            Object schema over every query parameter; a repeated name
+            becomes an array, and `additionalProperties: false` rejects
+            unknown parameters.
+        headers:
+          type: object
+          additionalProperties: true
+          description: |
+            Object schema over the headers it declares, named in lowercase.
+            Comma-separated values become an array for array properties.
+
     EdgeRuleValidateAction:
       description: |
         Customer-supplied JSON Schema (Draft 2020-12) evaluated against
@@ -62374,10 +62896,13 @@ components:
         ship an external `$ref`.
 
         Field-by-field:
-          * `schema` — required JSON Schema document (Draft 2020-12).
-            Capped at 64 KiB. External `$ref` / `$id` URLs are
-            rejected at create-time; internal pointers (`#/definitions/Foo`)
-            pass through.
+          * `schema` — JSON Schema document (Draft 2020-12) for the
+            request body. Capped at 64 KiB. External `$ref` / `$id` URLs
+            are rejected at create-time; internal pointers
+            (`#/definitions/Foo`) pass through. Optional when
+            `parameters` is set, so a body-less request can be validated.
+          * `parameters` — optional path, query, and header schemas,
+            checked before the body is read (ADR-091 amendment).
           * `content_types` — optional media-type allowlist.
             Closed set `application/*`. Empty = match any.
           * `apply_while_streaming` — per-rule opt-in for the
@@ -62389,8 +62914,8 @@ components:
           * `max_body_bytes` — per-rule inbound body cap. 0 =
             inherit `MaxRequestBodyBytes` (per-plan 25 MB buffered /
             100 MB streaming). Must be > 0 and <= `MaxRequestBodyBytes`.
+        At least one of `schema` and `parameters` is required.
       type: object
-      required: [schema]
       properties:
         schema:
           type: object
@@ -62399,6 +62924,8 @@ components:
             is preserved byte-exact across apid↔gatewayd round-trips
             so the SHA-256 cache key in `pkg/edgevalidate` is stable.
           additionalProperties: true
+        parameters:
+          $ref: '#/components/schemas/EdgeRuleValidateParameters'
         content_types:
           type: array
           description: |
@@ -62812,6 +63339,48 @@ components:
           # An unconstrained schema intentionally accepts any JSON value:
           # object, array, scalar, or null.
 
+    EdgeRuleWAFAction:
+      description: |
+        Inspects matched requests with the OWASP Core Rule Set (ADR-831).
+        Every mode samples requests (bodies included) off the request path
+        and reports detections without blocking them. warn and block also
+        check headers and URL in-path with a smaller rule set at paranoia
+        level 1: warn tags a detected request's response with X-WAF-Warning,
+        block answers it with 403. Request bodies are never blocked. When the
+        app's in-path budget is exhausted a request passes unchecked (counted
+        as inline_skipped). Detections appear in the edge-protection summary
+        and the edge_waf_detections alert preset. Pro and above. Omitted
+        values are stored as their defaults.
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [observe, warn, block]
+          default: observe
+          description: warn and block require paranoia_level 1.
+        paranoia_level:
+          type: integer
+          minimum: 1
+          maximum: 2
+          default: 1
+          description: CRS paranoia level. Level 2 detects more and produces more false positives.
+        anomaly_threshold:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 5
+          description: Inbound anomaly score at which a request counts as a detection (one critical match scores 5).
+        exclude_rule_ids:
+          type: array
+          maxItems: 50
+          description: CRS rule IDs left out of scoring on this route, for known false positives.
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+        inspect_body_bytes:
+          type: integer
+          minimum: 1
+          maximum: 65536
+          default: 8192
+          description: Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values use more of the app's inspection budget.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -69978,6 +70547,45 @@ components:
         period: { type: string }
       additionalProperties: true
 
+    APIConsumerUsageAlertResponse:
+      description: "One plan alert threshold a consumer crossed in one UTC month (ADR-849)."
+      type: object
+      required: [id, consumer_id, plan_id, month_start, threshold_percent, limit_units, used_units, crossed_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        month_start: { type: string, format: date-time }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0, description: "Weighted units used this month when the threshold was crossed." }
+        crossed_at: { type: string, format: date-time }
+
+    APIConsumerUsageAlertListResponse:
+      description: "A consumer's usage alerts, newest first."
+      type: object
+      required: [alerts]
+      properties:
+        alerts:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageAlertResponse' }
+
+    APIConsumerUsageThresholdWebhookPayload:
+      type: object
+      description: Data delivered with consumer.usage_threshold when a consumer crosses a plan alert threshold. alert_id is stable across retries.
+      required: [alert_id, app_id, consumer_id, external_ref, plan_id, threshold_percent, limit_units, used_units, month_start, crossed_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        plan_id: { type: string, format: uuid }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0 }
+        month_start: { type: string, format: date-time }
+        crossed_at: { type: string, format: date-time }
+
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object
       description: Complete payable usage statement delivered with usage_statement.finalized.
@@ -70218,7 +70826,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -71118,7 +71726,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -71200,7 +71808,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -71722,7 +72330,7 @@ components:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
     TracingConfig:
-      description: "Opt-in zero-config request tracing baked into each deployment (ADR-934). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
+      description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
       required: [enabled]
       properties:
@@ -72126,7 +72734,7 @@ components:
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
-        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-934): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
+        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
 
     DebugCriticalPathSpan:
       type: object
@@ -72266,7 +72874,7 @@ components:
 
     DebugDependencyDeploymentComparison:
       type: object
-      description: "Dependency latency split by deployment (ADR-934): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
+      description: "Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
       required: [current_deployment_id, previous_deployment_id, dependencies, truncated]
       properties:
         current_deployment_id: { type: string }
@@ -72537,7 +73145,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-934). Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }

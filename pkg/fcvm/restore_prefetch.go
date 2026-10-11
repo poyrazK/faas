@@ -1,6 +1,7 @@
 package fcvm
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"sort"
@@ -25,6 +26,10 @@ import (
 // failed fadvise changes only latency, never what is restored.
 
 const (
+	// adviseChunk keeps each hint within the default 128 KiB readahead
+	// window. WILLNEED is advisory: the kernel can reduce the read or evict
+	// cached pages under memory pressure even when every hint succeeds.
+	adviseChunk = 128 << 10
 	// restorePrefetchMaxFamilies bounds the in-memory store. A set is a few
 	// hundred ranges, so the worst case is a few MiB of vmmd heap.
 	restorePrefetchMaxFamilies = 2048
@@ -44,6 +49,20 @@ const (
 type fileRange struct {
 	Off int64
 	Len int64
+}
+
+// adviseFileRanges requests every recorded byte in bounded pieces. The
+// callback submits each hint; success does not promise page-cache residency.
+func adviseFileRanges(ranges []fileRange, advise func(off, n int64) error) error {
+	for _, r := range ranges {
+		for off := r.Off; off < r.Off+r.Len; off += adviseChunk {
+			n := min(int64(adviseChunk), r.Off+r.Len-off)
+			if err := advise(off, n); err != nil {
+				return fmt.Errorf("fadvise %d+%d: %w", off, n, err)
+			}
+		}
+	}
+	return nil
 }
 
 type restorePrefetchSet struct {
