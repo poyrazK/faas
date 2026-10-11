@@ -31,7 +31,24 @@ func (s *server) inspectEntityRegistryCleanup(w http.ResponseWriter, r *http.Req
 		writeEntityRegistryProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"cleanup": status})
+	worker, err := s.durableEntityTenantQuotas.RegistryCleanupWorkerStatus(ctx, id)
+	var workerError any
+	if err != nil {
+		worker = nil
+		workerError = "unavailable" // Advisory storage must not hide the authoritative checkpoint.
+	}
+	if worker != nil && (status == nil || worker.OperationID != status.OperationID) {
+		worker = nil // Independent observations never describe another operation.
+	}
+	var seconds *int64
+	if worker != nil && !worker.LastSuccessAt.IsZero() {
+		age := int64(time.Since(worker.LastSuccessAt).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		seconds = &age
+	}
+	writeJSON(w, 200, map[string]any{"cleanup": status, "worker_enabled": s.durableEntityRegistryCleanupWorkerEnabled, "worker": worker, "worker_status_error": workerError, "seconds_since_last_success": seconds})
 }
 func (s *server) startEntityRegistryCleanup(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := s.entityRegistryCleanupScope(w, r, acct, false)

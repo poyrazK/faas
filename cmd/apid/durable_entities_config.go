@@ -23,11 +23,16 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityRetirementEnabled = false
 	s.durableEntityRegistryEnabled = false
 	s.durableEntityRegistryCleanupEnabled = false
+	s.durableEntityRegistryCleanupWorkerEnabled = false
 	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
 	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
 	policy := getenv("FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED") == "1"
 	registry := getenv("FAAS_DURABLE_ENTITY_REGISTRY_ENABLED") == "1"
 	registryCleanup := getenv("FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED") == "1"
+	registryWorker := getenv("FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED") == "1"
+	if registryWorker && !registryCleanup {
+		return errors.New("registry cleanup worker requires registry cleanup management")
+	}
 	if registryCleanup && !registry {
 		return errors.New("registry cleanup requires registry management")
 	}
@@ -145,6 +150,11 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 			return errors.New("registry cleanup requires verified private listing and delete permission")
 		}
 	}
+	if registryWorker {
+		if err := tenantQuotas.CheckRegistryCleanupWorker(ctx); err != nil {
+			return errors.New("registry cleanup worker requires verified quota discovery and private sidecar CAS permissions")
+		}
+	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.
 	probeCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
@@ -212,6 +222,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityRetirementEnabled = retirement
 	s.durableEntityRegistryEnabled = registry
 	s.durableEntityRegistryCleanupEnabled = registryCleanup
+	s.durableEntityRegistryCleanupWorkerEnabled = registryWorker
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

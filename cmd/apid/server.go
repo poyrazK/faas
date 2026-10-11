@@ -57,35 +57,36 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	profileBackend                           profiling.Backend
-	profileQuerySlots                        chan struct{}
-	guestTracingEnabled                      bool // ADR-934 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durableEntities                          *durableentity.Manager
-	durableEntityOwner                       string
-	durableEntitySockets                     *entitysocket.Hub
-	durableEntitySessionGrants               *entitysocket.Grants
-	durableEntityTenantQuotas                *entitysocket.Quotas
-	durableEntityQuotaMigrationEnabled       bool
-	durableEntityQuotaPolicyEnabled          bool
-	durableEntityRetirementEnabled           bool
-	durableEntityRegistryEnabled             bool
-	durableEntityRegistryCleanupEnabled      bool
-	durableEntityApps                        map[string]bool
-	durableEntityAlarmsEnabled               bool
-	durableEntityHealthEnabled               bool
-	durableEntityBackupsEnabled              bool
-	durableEntityRestoreValidationEnabled    bool
-	durableEntityRestoreIsolationEnabled     bool
-	durableEntityValidatorReleaseGateEnabled bool
-	durableEntityValidatorBundles            map[string]durableEntityValidatorBundle
-	durableEntityValidatorArtifacts          *validatorbundle.Artifacts
-	durableEntityOutboxEnabled               bool
-	durableEntityOutboxHandlersEnabled       bool
-	durableEntityMaintenanceEnabled          bool
-	durableEntityMetrics                     *durableEntityMetrics
-	devBridgeEnabled                         bool
-	devBridgeURL                             string
-	devBridgeObserver                        *devbridge.Observer
+	profileBackend                            profiling.Backend
+	profileQuerySlots                         chan struct{}
+	guestTracingEnabled                       bool // ADR-934 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durableEntities                           *durableentity.Manager
+	durableEntityOwner                        string
+	durableEntitySockets                      *entitysocket.Hub
+	durableEntitySessionGrants                *entitysocket.Grants
+	durableEntityTenantQuotas                 *entitysocket.Quotas
+	durableEntityQuotaMigrationEnabled        bool
+	durableEntityQuotaPolicyEnabled           bool
+	durableEntityRetirementEnabled            bool
+	durableEntityRegistryEnabled              bool
+	durableEntityRegistryCleanupEnabled       bool
+	durableEntityRegistryCleanupWorkerEnabled bool
+	durableEntityApps                         map[string]bool
+	durableEntityAlarmsEnabled                bool
+	durableEntityHealthEnabled                bool
+	durableEntityBackupsEnabled               bool
+	durableEntityRestoreValidationEnabled     bool
+	durableEntityRestoreIsolationEnabled      bool
+	durableEntityValidatorReleaseGateEnabled  bool
+	durableEntityValidatorBundles             map[string]durableEntityValidatorBundle
+	durableEntityValidatorArtifacts           *validatorbundle.Artifacts
+	durableEntityOutboxEnabled                bool
+	durableEntityOutboxHandlersEnabled        bool
+	durableEntityMaintenanceEnabled           bool
+	durableEntityMetrics                      *durableEntityMetrics
+	devBridgeEnabled                          bool
+	devBridgeURL                              string
+	devBridgeObserver                         *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.
 	operationsAdmissionEnabled bool
 	operationsPreview          *operations.PreviewAdmission

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -77,7 +78,10 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	}
 	r := e.do(t, "POST", path+"/start"+selectors, request, nil)
 	var result struct {
-		Cleanup entitysocket.RegistryCleanup `json:"cleanup"`
+		Cleanup       entitysocket.RegistryCleanup              `json:"cleanup"`
+		Worker        *entitysocket.RegistryCleanupWorkerStatus `json:"worker"`
+		WorkerEnabled bool                                      `json:"worker_enabled"`
+		Seconds       *int64                                    `json:"seconds_since_last_success"`
 	}
 	if r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &result) != nil || result.Cleanup.Epoch != 1 {
 		t.Fatal(r.Code, r.Body.String())
@@ -94,6 +98,7 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	}
 	now = result.Cleanup.NotBefore
 	dispatchedDuringCollection := false
+	e.s.durableEntityRegistryCleanupWorkerEnabled = true
 	for i := 0; result.Cleanup.Phase != "complete"; i++ {
 		if i > 100 {
 			t.Fatal("cleanup stuck")
@@ -104,11 +109,18 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 			}
 			dispatchedDuringCollection = true
 		}
-		step["expected_revision"] = result.Cleanup.Revision
-		r = e.do(t, "POST", path+"/step"+selectors, step, nil)
+		page, err := q.SweepRegistryCleanups(t.Context(), "", func(durableentity.ID) bool { return true })
+		if err != nil || page.Attempted != 1 || page.Failed != 0 {
+			t.Fatal(page, err)
+		}
+		r = e.do(t, "GET", path+selectors, nil, headers)
 		if r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &result) != nil {
 			t.Fatal(r.Code, r.Body.String())
 		}
+		if !result.WorkerEnabled || result.Worker == nil || result.Worker.ObservedRevision != result.Cleanup.Revision || result.Worker.LastSuccessAt.IsZero() || result.Seconds == nil {
+			t.Fatal("worker observation missing", r.Body.String())
+		}
+		now = now.Add(entitysocket.RegistryCleanupWorkerPoll)
 	}
 	if result.Cleanup.DeletedObjects < 16 {
 		t.Fatal(result)
@@ -133,5 +145,30 @@ func TestDurableEntitySocketRegistryCleanupRequiresRegistryManagement(t *testing
 		return ""
 	}); err == nil {
 		t.Fatal("cleanup enabled without registry management")
+	}
+}
+
+func TestDurableEntitySocketRegistryCleanupWorkerRequiresManagementAndCancels(t *testing.T) {
+	e, _, _, _ := entityQuotaFixture(t)
+	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+		if name == "FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED" {
+			return "1"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("worker enabled without cleanup management")
+	}
+	e, _, _, _ = entityQuotaFixture(t)
+	e.s.runDurableEntityRegistryCleanup(t.Context()) // Disabled worker returns.
+	e.s.durableEntityRegistryCleanupEnabled = true
+	e.s.durableEntityRegistryCleanupWorkerEnabled = true
+	ctx, cancel := context.WithCancel(t.Context())
+	finished := make(chan struct{})
+	go func() { e.s.runDurableEntityRegistryCleanup(ctx); close(finished) }()
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup worker ignored runtime cancellation")
 	}
 }

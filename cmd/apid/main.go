@@ -756,6 +756,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimePush(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
+		go srv.runDurableEntityRegistryCleanup(ctx)
 		go srv.runDurableEntityAlarms(ctx)
 		go srv.runDurableEntityOutbox(ctx)
 		go srv.runDurableEntityMaintenance(ctx)
