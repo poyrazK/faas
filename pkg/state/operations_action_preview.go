@@ -32,6 +32,9 @@ func previewOperationWorkflowActions(ctx context.Context, store OperationMilesto
 		return api.OperationWorkflowActionPreviewResponse{}, err
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
+	if page.WorkflowInstance != nil && page.WorkflowInstance.ConditionReporting != nil {
+		at = page.WorkflowInstance.ConditionReporting.EvaluatedAt
+	}
 	if page.WorkflowInstance != nil && !page.WorkflowInstance.RetainedMilestoneEvaluatedAt.IsZero() {
 		at = page.WorkflowInstance.RetainedMilestoneEvaluatedAt
 	}

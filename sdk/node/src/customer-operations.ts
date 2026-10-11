@@ -401,12 +401,14 @@ export interface OperationWorkflowReadinessRequest { selected_paths?: import('./
  milestones?: string[]; state_revision?: number; contract_version?: number;
 }
 export interface OperationWorkflowTransitionReadiness {
+ reporting?: OperationWorkflowTransitionReporting; pending_verifications?: OperationWorkflowResolutionVerification[];
+ pending_verification_count: number; pending_verifications_truncated: boolean;
  retained_milestone_groups?: OperationWorkflowRetainedMilestoneGroupResult[];
  retained_milestones?: OperationWorkflowRetainedMilestone[];
  unmet_effects?: OperationWorkflowUnmetEffect[]; unmet_invariants?: OperationWorkflowUnmetInvariant[]; invariant_blockers?: OperationWorkflowBlocker[]; missing_dependency_workflows?: string[]; missing_policies?: OperationWorkflowPolicyRequirement[];
  transition: OperationWorkflowInstanceTransition; declared: boolean; ready: boolean;
  reasons: Array<'state_unknown'|'terminal'|'transition_undeclared'|'from_state_mismatch'|'revision_mismatch'|'contract_version_mismatch'|'application_blocked'|'dependency_unmet'|'milestone_required'|'policy_evidence_required'|'dependency_required'|'invariant_evidence_required'|'effect_evidence_required'|'retained_milestone_required'|'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid'>;
- advisories: Array<'state_stale'|'deadline_overdue'>;
+ advisories: Array<'state_stale'|'deadline_overdue'|'condition_reports_missing'|'condition_reports_overdue'|'condition_reporting_unknown'|'verification_pending'>;
  state_revision?: number; contract_version: number; blockers: OperationWorkflowBlocker[];
  unmet_dependencies: OperationWorkflowRelatedInstance[]; missing_milestones: string[];
 }
@@ -574,3 +576,10 @@ export interface OperationWorkflowGapQueuePriority {
  blocked_seconds: number; explanation: string;
 }
 export interface OperationWorkflowGapQueueGuidance { status: OperationWorkflowNewMissingConditionProgressCount['status']; expectation: OperationWorkflowConditionCoverageEntry }
+
+export interface OperationWorkflowTransitionReporting {
+ evaluated_at: string; state: string; reporting_operation_id: string;
+ status: 'compared'|'unconfigured'|'terminal'|'definition_unavailable'|'incomplete'|'limit'|'ambiguous';
+ expected_condition_count: number; reported_condition_count: number; missing_condition_count: number; overdue_condition_count: number;
+ conditions: OperationWorkflowConditionCoverageEntry[]; conditions_truncated: boolean;
+}

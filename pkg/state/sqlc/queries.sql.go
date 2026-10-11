@@ -16012,7 +16012,17 @@ const getCustomerOperationWorkflowBottleneckHistory = `-- name: GetCustomerOpera
 SELECT jsonb_build_object('history',jsonb_build_object(
  'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
  'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
- 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'blockers',r.blockers,'selected_paths',r.selected_paths,'change_reason',r.change_reason,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'condition_steps',COALESCE((SELECT jsonb_object_agg(m.id::text,step->>'step')
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ JOIN customer_operation_milestones m ON m.operation_id=r.operation_id AND m.name=step->>'milestone'
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ AND (m.id::text=r.change_reason->>'milestone_id' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.selected_paths) paths(path) WHERE path->>'decision_milestone_id'=m.id::text))), '{}'::jsonb),
+ 'condition_definitions',COALESCE((SELECT jsonb_object_agg(m.id::text,COALESCE(step->'decision_conditions','[]'::jsonb))
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ JOIN customer_operation_milestones m ON m.operation_id=r.operation_id AND m.name=step->>'milestone'
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ AND (m.id::text=r.change_reason->>'milestone_id' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.selected_paths) paths(path) WHERE path->>'decision_milestone_id'=m.id::text))), '{}'::jsonb),
  'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
  'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
  'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)

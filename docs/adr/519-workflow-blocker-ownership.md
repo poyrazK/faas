@@ -1215,3 +1215,41 @@ reporting Operations and workflow history. Group links retain both tokens;
 undisplayed groups lack links but their guidance and counts remain available.
 SDKs and OpenAPI expose the queue dimension and priority payload. No new SQL,
 persistence, migration, limits, notifications or execution are introduced.
+
+### Reporting context in transition readiness
+
+Existing transition readiness, action previews and the workflow overview now
+include workflow-wide current-state condition reporting context and retained
+pending resolution proof advisories. Existing declared policy, milestone,
+effect, invariant, dependency and blocker guards alone determine Ready. Reporting
+expected_states are not transition guards, and missing, overdue, failed or
+unknown condition reports do not invent new guards. Planned decision evidence
+may satisfy existing requirements but does not replace retained reporting context.
+
+The optional reporting payload uses the latest reporting Operation's immutable
+pinned workflow condition declarations and the existing full condition coverage
+evaluator. It returns compared/unconfigured/terminal or explicit unavailable,
+incomplete, ambiguous and limit statuses. Counts precede the existing first-16
+preview and full 256-condition identity checks. Conditions refer to current
+state, not proposed destination state. Explicit decision replacement, metadata
+preservation, contract boundaries, step identity and source-pinned freshness
+match performance coverage. Incomplete histories cannot imply missing or
+satisfied reporting; unconfigured means no declared current-state expectations.
+
+Pending_verification_count counts retained awaiting resolution proofs targeting
+the transition Operation across retained workflow reports before canonical
+first-16 previews. Other targets and verified proofs are excluded. Declared
+verification owners, milestone references and resolution reporting Operations
+are exposed with explicit truncation. These historical retained obligations are
+advisory unless an existing declared prerequisite independently prevents readiness.
+
+MemStore and PgStore compute reporting context once per selected workflow at the
+shared projection clock, including readiness-only requests; all transition edges
+reuse it. The existing scoped SQLC bottleneck history projection now includes
+explicit decision/path contexts and pinned condition metadata matching memory.
+Current definition lookup reuses the scoped batch definition reader. There is
+no dependence on fact/history page cursors and no per-edge queries. Internal
+full verification/context slices are omitted from snapshot JSON; public evidence
+contains no tenant override. Dashboard guidance and evidence Operation links
+explain the findings without granting execution or authorization. No persistence,
+migrations, new limits, business evaluation or VM lifecycle changes are introduced.

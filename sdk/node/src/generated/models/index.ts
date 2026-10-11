@@ -1189,6 +1189,7 @@ export type { OperationWorkflowStateValidationResponse } from './OperationWorkfl
 export type { OperationWorkflowStep } from './OperationWorkflowStep.js';
 export type { OperationWorkflowTransition } from './OperationWorkflowTransition.js';
 export type { OperationWorkflowTransitionReadiness } from './OperationWorkflowTransitionReadiness.js';
+export type { OperationWorkflowTransitionReporting } from './OperationWorkflowTransitionReporting.js';
 export type { OperationWorkflowUnmetEffect } from './OperationWorkflowUnmetEffect.js';
 export type { OperationWorkflowUnmetInvariant } from './OperationWorkflowUnmetInvariant.js';
 export type { OperationWorkflowVerificationDuration } from './OperationWorkflowVerificationDuration.js';

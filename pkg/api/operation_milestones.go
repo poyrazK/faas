@@ -48,6 +48,8 @@ type OperationMilestonesResponse struct {
 // instance. Page-scoped facts and transition history follow their cursors;
 // retention summaries do not.
 type OperationWorkflowInstanceSnapshot struct {
+	ConditionReporting     *OperationWorkflowTransitionReporting     `json:"-"`
+	ReadinessVerifications []OperationWorkflowResolutionVerification `json:"-"`
 	// RetainedMilestoneEvaluatedAt is the shared clock for the scoped evidence lookup.
 	RetainedMilestoneEvaluatedAt time.Time `json:"-"`
 	// Occurrence-ordered facts are used by invalidation and freshness policies.

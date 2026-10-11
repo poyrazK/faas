@@ -134,6 +134,23 @@ func (r OperationWorkflowTransitionReadiness) Guidance() []string {
 		p := e.Requirement
 		out = append(out, fmt.Sprintf("Include confirmed effect %s version %s in milestone %s; evidence status: %s.", p.Code, p.Version, p.Milestone, e.Reason))
 	}
+
+	if reporting := r.Reporting; reporting != nil {
+		switch reporting.Status {
+		case "compared":
+			if reporting.MissingConditionCount > 0 || reporting.OverdueConditionCount > 0 {
+				out = append(out, fmt.Sprintf("Review current-state reporting: %d missing and %d overdue condition reports. Follow pinned refresh owners and guidance; these reporting advisories do not create transition guards or prove business failure.", reporting.MissingConditionCount, reporting.OverdueConditionCount))
+			}
+		case "unconfigured":
+			out = append(out, "No current-state condition reporting expectations are configured in the latest reporting Operation's pinned definition.")
+		case "terminal":
+		default:
+			out = append(out, "Current-state condition reporting cannot be classified from retained evidence ("+reporting.Status+"). Refresh the scoped workflow view; unknown coverage is not satisfied reporting.")
+		}
+	}
+	if r.PendingVerificationCount > 0 {
+		out = append(out, fmt.Sprintf("Review %d pending retained resolution proofs targeting operation %s. Follow the declared verification owner and publish the expected milestone after application verification. These obligations are advisory unless an existing declared requirement prevents readiness.", r.PendingVerificationCount, r.Transition.Operation))
+	}
 	if r.Ready {
 		out = append(out, "Declared requirements are met. The application must check its business row and authorization before committing the transition.")
 	}

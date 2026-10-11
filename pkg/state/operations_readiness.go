@@ -67,6 +67,7 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 		return out
 	}
 	out.ContractVersion = instance.ContractVersion
+	attachTransitionReporting(&out, instance, req.Operation)
 	for _, edge := range instance.AllowedTransitions {
 		if edge.Operation == req.Operation && edge.From == req.FromState && edge.To == req.ToState {
 			out.Declared = true
@@ -296,6 +297,9 @@ func checkOperationWorkflowReadiness(ctx context.Context, store OperationMilesto
 		return api.OperationWorkflowReadinessResponse{}, err
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
+	if page.WorkflowInstance != nil && page.WorkflowInstance.ConditionReporting != nil {
+		at = page.WorkflowInstance.ConditionReporting.EvaluatedAt
+	}
 	if page.WorkflowInstance != nil && !page.WorkflowInstance.RetainedMilestoneEvaluatedAt.IsZero() {
 		at = page.WorkflowInstance.RetainedMilestoneEvaluatedAt
 	}

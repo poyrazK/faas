@@ -20,10 +20,12 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
     from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
     from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+    from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
     from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
     from ..models.operation_workflow_retained_milestone_group_result import (
         OperationWorkflowRetainedMilestoneGroupResult,
     )
+    from ..models.operation_workflow_transition_reporting import OperationWorkflowTransitionReporting
     from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
     from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
@@ -35,10 +37,16 @@ T = TypeVar("T", bound="OperationWorkflowTransitionReadiness")
 class OperationWorkflowTransitionReadiness:
     """Ready means declared requirements match retained reports and the proposed milestone plan. It does not authorize or
     commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only blockers
-    targeting this Operation apply. Staleness and overdue deadlines are advisories rather than undeclared guards.
+    targeting this Operation apply. Staleness, overdue deadlines, current-state reporting context and pending resolution
+    proofs are advisories rather than undeclared guards. Reporting context uses current pinned expected_states, not
+    invented required transition conditions. Planned reports do not replace this retained context.
 
     """
 
+    pending_verification_count: int
+    """Exact retained pending resolution proof count targeting the transition Operation before previews, across
+    retained workflow reports. Advisory rather than a new transition guard."""
+    pending_verifications_truncated: bool
     transition: OperationWorkflowInstanceTransition
     """One allowed state edge from the selected contract version, bound to the Operation that can report it.
     Required milestones must be committed with the transition in the same application transaction. This declaration
@@ -53,6 +61,14 @@ class OperationWorkflowTransitionReadiness:
     unmet_dependencies: list[OperationWorkflowRelatedInstance]
     """Unmet reference/status pairs; inspect full related states through the workflow detail."""
     missing_milestones: list[str]
+    reporting: OperationWorkflowTransitionReporting | Unset = UNSET
+    """Workflow-wide current-state expected condition coverage evaluated from the latest reporting Operation pinned
+    definition and retained explicit decision contexts. It does not add transition guards. Counts precede previews.
+    Unknown coverage is never inferred as satisfied; source evidence uses its own pinned freshness budget.
+    Conditions apply to current state rather than proposed destination state."""
+    pending_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+    """Canonical first matching pending proofs with declared owners and milestone references. Verified proofs and
+    other target Operations are excluded."""
     retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroupResult] | Unset = UNSET
     retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
     """Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
@@ -68,6 +84,10 @@ class OperationWorkflowTransitionReadiness:
     state_revision: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        pending_verification_count = self.pending_verification_count
+
+        pending_verifications_truncated = self.pending_verifications_truncated
+
         transition = self.transition.to_dict()
 
         declared = self.declared
@@ -97,6 +117,17 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = self.missing_milestones
+
+        reporting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reporting, Unset):
+            reporting = self.reporting.to_dict()
+
+        pending_verifications: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.pending_verifications, Unset):
+            pending_verifications = []
+            for pending_verifications_item_data in self.pending_verifications:
+                pending_verifications_item = pending_verifications_item_data.to_dict()
+                pending_verifications.append(pending_verifications_item)
 
         retained_milestone_groups: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.retained_milestone_groups, Unset):
@@ -150,6 +181,8 @@ class OperationWorkflowTransitionReadiness:
 
         field_dict.update(
             {
+                "pending_verification_count": pending_verification_count,
+                "pending_verifications_truncated": pending_verifications_truncated,
                 "transition": transition,
                 "declared": declared,
                 "ready": ready,
@@ -161,6 +194,10 @@ class OperationWorkflowTransitionReadiness:
                 "missing_milestones": missing_milestones,
             }
         )
+        if reporting is not UNSET:
+            field_dict["reporting"] = reporting
+        if pending_verifications is not UNSET:
+            field_dict["pending_verifications"] = pending_verifications
         if retained_milestone_groups is not UNSET:
             field_dict["retained_milestone_groups"] = retained_milestone_groups
         if retained_milestones is not UNSET:
@@ -186,14 +223,20 @@ class OperationWorkflowTransitionReadiness:
         from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
         from ..models.operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
         from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+        from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
         from ..models.operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
         from ..models.operation_workflow_retained_milestone_group_result import (
             OperationWorkflowRetainedMilestoneGroupResult,
         )
+        from ..models.operation_workflow_transition_reporting import OperationWorkflowTransitionReporting
         from ..models.operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
         from ..models.operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 
         d = dict(src_dict)
+        pending_verification_count = d.pop("pending_verification_count")
+
+        pending_verifications_truncated = d.pop("pending_verifications_truncated")
+
         transition = OperationWorkflowInstanceTransition.from_dict(d.pop("transition"))
 
         declared = d.pop("declared")
@@ -231,6 +274,24 @@ class OperationWorkflowTransitionReadiness:
             unmet_dependencies.append(unmet_dependencies_item)
 
         missing_milestones = cast(list[str], d.pop("missing_milestones"))
+
+        _reporting = d.pop("reporting", UNSET)
+        reporting: OperationWorkflowTransitionReporting | Unset
+        if isinstance(_reporting, Unset):
+            reporting = UNSET
+        else:
+            reporting = OperationWorkflowTransitionReporting.from_dict(_reporting)
+
+        _pending_verifications = d.pop("pending_verifications", UNSET)
+        pending_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+        if _pending_verifications is not UNSET:
+            pending_verifications = []
+            for pending_verifications_item_data in _pending_verifications:
+                pending_verifications_item = OperationWorkflowResolutionVerification.from_dict(
+                    pending_verifications_item_data
+                )
+
+                pending_verifications.append(pending_verifications_item)
 
         _retained_milestone_groups = d.pop("retained_milestone_groups", UNSET)
         retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroupResult] | Unset = UNSET
@@ -293,6 +354,8 @@ class OperationWorkflowTransitionReadiness:
         state_revision = d.pop("state_revision", UNSET)
 
         operation_workflow_transition_readiness = cls(
+            pending_verification_count=pending_verification_count,
+            pending_verifications_truncated=pending_verifications_truncated,
             transition=transition,
             declared=declared,
             ready=ready,
@@ -302,6 +365,8 @@ class OperationWorkflowTransitionReadiness:
             blockers=blockers,
             unmet_dependencies=unmet_dependencies,
             missing_milestones=missing_milestones,
+            reporting=reporting,
+            pending_verifications=pending_verifications,
             retained_milestone_groups=retained_milestone_groups,
             retained_milestones=retained_milestones,
             unmet_effects=unmet_effects,

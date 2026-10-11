@@ -2253,6 +2253,8 @@ from .operation_workflow_transition import OperationWorkflowTransition
 from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
 from .operation_workflow_transition_readiness_advisories_item import OperationWorkflowTransitionReadinessAdvisoriesItem
 from .operation_workflow_transition_readiness_reasons_item import OperationWorkflowTransitionReadinessReasonsItem
+from .operation_workflow_transition_reporting import OperationWorkflowTransitionReporting
+from .operation_workflow_transition_reporting_status import OperationWorkflowTransitionReportingStatus
 from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
 from .operation_workflow_unmet_effect_reason import OperationWorkflowUnmetEffectReason
 from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
@@ -5762,6 +5764,8 @@ __all__ = (
     "OperationWorkflowTransitionReadiness",
     "OperationWorkflowTransitionReadinessAdvisoriesItem",
     "OperationWorkflowTransitionReadinessReasonsItem",
+    "OperationWorkflowTransitionReporting",
+    "OperationWorkflowTransitionReportingStatus",
     "OperationWorkflowUnmetEffect",
     "OperationWorkflowUnmetEffectReason",
     "OperationWorkflowUnmetInvariant",

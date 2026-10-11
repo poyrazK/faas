@@ -232,6 +232,8 @@ type OperationWorkflowMissingConditionProgressCount = api.OperationWorkflowMissi
 type OperationWorkflowMissingConditionProgressInstance = api.OperationWorkflowMissingConditionProgressInstance
 type OperationWorkflowMissingConditionProgressChange = api.OperationWorkflowMissingConditionProgressChange
 
+type OperationWorkflowTransitionReporting = api.OperationWorkflowTransitionReporting
+
 type OperationWorkflowGapQueuePriority = api.OperationWorkflowGapQueuePriority
 type OperationWorkflowGapQueueGuidance = api.OperationWorkflowGapQueueGuidance
 
