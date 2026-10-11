@@ -128,29 +128,6 @@ type Handler struct {
 	// short clock. Production uses the package's conservative default lease.
 	jobMaterializationLeaseOverride time.Duration
 
-	// trustedPublishersDir is the directory holding the per-app
-	// cosign trusted-publisher PEM files (issue #472 / ADR-054).
-	// Read once at daemon startup (via cosign.TrustedPublishersFromDir)
-	// and refreshed on pg_notify('trusted_signer_changed') via
-	// HandleNotification. Empty means "verify disabled" — the
-	// apps.require_signed=false default. Wired from cmd/imaged via
-	// WithTrustedPublishersDir; env var FAAS_TRUSTED_PUBLISHERS_DIR
-	// sets it at deploy time.
-	trustedPublishersDir string
-	// trustedPublishersMu guards the cache below. Read-mostly on the
-	// hot path (every signed deploy reads once); refreshes are
-	// rare (operator onboards a publisher). A sync.RWMutex keeps
-	// the verify path lock-free for the read side.
-	//
-	// The cache is keyed by app.ID so the verify path can filter
-	// by app at call time without re-reading the dir. Empty value
-	// for an app means "no publishers for this app" (the
-	// fail-closed case). Missing key means "we haven't loaded this
-	// app yet" — first deploy pays the dir-load cost.
-	trustedPublishersMu      sync.RWMutex
-	trustedPublishersCache   map[string][]cosign.TrustedPublisher
-	trustedPublishersCacheOK bool
-
 	// guestInitPath is the absolute path to the static guest-init binary
 	// injected as /sbin/init in every per-app ext4 (spec §4.8). Wired from
 	// cmd/imaged so tests can point at a temp file.
@@ -320,89 +297,36 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 // WithFunctionRunnerNode22 returns the handler with the node22 runner binary
 // path set. Wired from cmd/imaged when the function runner has been compiled
 // (Makefile target `guest-runners`).
-// WithTrustedPublishersDir configures the directory holding the
-// per-app cosign trusted-publisher PEM files (issue #472 / ADR-054).
-// Wired from cmd/imaged when FAAS_TRUSTED_PUBLISHERS_DIR is set.
-// Empty dir (the default) disables signature verification — the
-// apps.require_signed=false default keeps the open-deploy posture.
-// On set, the handler immediately loads the dir into the in-memory
-// cache so the first signed deploy doesn't pay a cold-load cost.
-func (h *Handler) WithTrustedPublishersDir(dir string) *Handler {
-	h.trustedPublishersDir = dir
-	if dir != "" {
-		if err := h.refreshTrustedPublishers(); err != nil {
-			// Fail loud at startup — a misconfigured trust dir
-			// is the canonical "operator typo" footgun. The
-			// error is returned to the cmd/imaged wiring code,
-			// which logs it and continues with an empty cache
-			// (signed deploys will fail at verify time, not
-			// silently). Logged rather than fatal because the
-			// open-deploy posture (require_signed=false on
-			// every app) means the daemon stays useful.
-			h.log.Warn("trusted-publishers dir load failed at startup",
-				"dir", dir, "err", err)
-		}
-	}
-	return h
-}
+// errTrustedPublishersUnavailable wraps a failure to read an app's trusted
+// publishers. It is not a verdict on the image: the deploy fails as a
+// transient verify error and the live-image sweep skips the app instead of
+// quarantining it.
+var errTrustedPublishersUnavailable = errors.New("imaged: trusted publishers unavailable")
 
-// refreshTrustedPublishers re-reads the trust dir into the
-// in-memory cache. Triggered at startup (WithTrustedPublishersDir)
-// and on pg_notify('trusted_signer_changed'). Holds the write lock
-// for the duration of the disk read — the read is O(files) of
-// small PEM blobs (~250 bytes each), so the critical section is
-// microseconds.
-//
-// The cache is keyed by app.ID; the dir filename is
-// `<app_id>--<name>.pem`. The apid-side LISTEN goroutine is the
-// sole producer (it walks app_trusted_signers on every
-// trusted_signer_changed notify); see
-// cmd/apid/trusted_publisher_writer.go. The on-disk mirror is the
-// imaged-side read surface, the DB row is the apid-side write
-// surface. Without this refresh after a notify the verify path
-// would either fail open (stale cache) or fail closed (no entry
-// for the just-onboarded publisher).
-func (h *Handler) refreshTrustedPublishers() error {
-	if h.trustedPublishersDir == "" {
-		h.trustedPublishersMu.Lock()
-		h.trustedPublishersCache = nil
-		h.trustedPublishersCacheOK = false
-		h.trustedPublishersMu.Unlock()
-		return nil
+// trustedPublishers reads the app's trusted publishers from
+// app_trusted_signers on every verify (ADR-058 amendment, hunt #9 H9-51).
+// apid writes that table on the control plane while imaged runs on compute
+// nodes, so the on-disk mirror this replaced never reached imaged and every
+// require_signed deploy failed. A key that does not parse fails the check
+// closed rather than being skipped, so a corrupt row cannot silently shrink
+// the trust set.
+func (h *Handler) trustedPublishers(ctx context.Context, appID string) ([]cosign.TrustedPublisher, error) {
+	if h == nil || h.store == nil {
+		return nil, fmt.Errorf("%w: no store", errTrustedPublishersUnavailable)
 	}
-	byApp, err := cosign.TrustListFromDir(h.trustedPublishersDir)
+	rows, err := h.store.ListAppTrustedSignersForApp(ctx, appID)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("%w: %w", errTrustedPublishersUnavailable, err)
 	}
-	h.trustedPublishersMu.Lock()
-	h.trustedPublishersCache = byApp
-	h.trustedPublishersCacheOK = true
-	h.trustedPublishersMu.Unlock()
-	total := 0
-	for _, v := range byApp {
-		total += len(v)
+	pubs := make([]cosign.TrustedPublisher, 0, len(rows))
+	for _, row := range rows {
+		key, err := cosign.ParsePublicKeyDER(row.CosignPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("%w: signer %q: %w", errTrustedPublishersUnavailable, row.SignerName, err)
+		}
+		pubs = append(pubs, cosign.TrustedPublisher{Name: row.SignerName, PublicKey: key})
 	}
-	h.log.Info("trusted-publishers cache refreshed", "dir", h.trustedPublishersDir, "apps", len(byApp), "keys", total)
-	return nil
-}
-
-// snapshotTrustedPublishers returns the per-app trust list under
-// the read lock. Returns nil when the cache is empty or the daemon
-// is configured without a trust dir. Cheap to call on every signed
-// deploy (single read-lock + map lookup).
-func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublisher {
-	h.trustedPublishersMu.RLock()
-	defer h.trustedPublishersMu.RUnlock()
-	if !h.trustedPublishersCacheOK || h.trustedPublishersCache == nil {
-		return nil
-	}
-	pubs, ok := h.trustedPublishersCache[appID]
-	if !ok {
-		return nil
-	}
-	out := make([]cosign.TrustedPublisher, len(pubs))
-	copy(out, pubs)
-	return out
+	return pubs, nil
 }
 
 // checkImageSignature performs a non-mutating provenance check against the
@@ -410,7 +334,10 @@ func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublis
 // signer-revocation reconciler; callers decide whether a failure should fail
 // a deployment or quarantine an already-live app.
 func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref string) (string, error) {
-	pubs := h.snapshotTrustedPublishers(app.ID)
+	pubs, err := h.trustedPublishers(ctx, app.ID)
+	if err != nil {
+		return "", err
+	}
 	if len(pubs) == 0 {
 		// Defence-in-depth: apid's pre-flight already gated this
 		// case, but if imaged is called outside the apid pipeline
@@ -452,6 +379,8 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 	case errors.Is(err, cosign.ErrSignatureInvalid):
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_invalid: no trusted publisher matched")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+	case errors.Is(err, errTrustedPublishersUnavailable):
+		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: trusted publisher list unavailable")
 	default:
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
@@ -1542,16 +1471,10 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		}
 		return h.MaterializeJob(ctx, p.JobID)
 	case "trusted_signer_changed":
-		// Issue #472 / ADR-054: apid emits this on every CRUD op on
-		// app_trusted_signers. We refresh the in-memory cache so a
-		// freshly-onboarded publisher takes effect on the next
-		// deploy without an imaged restart. The refresh is cheap
-		// (file IO of ~250 bytes per PEM, max 16 files per Scale
-		// plan) so we do it inline rather than punting to a
-		// goroutine.
-		if err := h.refreshTrustedPublishers(); err != nil {
-			return fmt.Errorf("refresh trusted publishers: %w", err)
-		}
+		// Issue #472 / ADR-058: apid emits this on every CRUD op on
+		// app_trusted_signers. Every verify reads the table, so there is
+		// no cache to refresh; Loop.HandleNotification revalidates live
+		// signed images after this returns.
 		return nil
 	case "audit_event":
 		// audit_event is an imaged → apid handoff. New producers

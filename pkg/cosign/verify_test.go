@@ -1,4 +1,4 @@
-// verify_test.go — pkg/cosign.VerifyImageSignature + TrustedPublishersFromDir
+// verify_test.go — pkg/cosign.VerifyImageSignature
 // round-trip (issue #472 / ADR-054). Pins the wire shape so a future
 // change to the deploy-time verify hook doesn't silently invalidate
 // the operator-trust surface.
@@ -24,9 +24,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -215,86 +212,6 @@ func TestVerifyImageSignature_PicksCorrectPublisher(t *testing.T) {
 	}
 	if matched != "ci-bot-2" {
 		t.Errorf("matched = %q, want ci-bot-2 (only matching publisher)", matched)
-	}
-}
-
-// TestTrustedPublishersFromDir: multi-PEM directory. Each .pem
-// becomes a TrustedPublisher{Name=filename-without-extension}.
-// Non-.pem files are ignored. Missing dir returns (nil, nil)
-// — the apid pre-flight is the canonical fail-closed gate.
-func TestTrustedPublishersFromDir(t *testing.T) {
-	dir := t.TempDir()
-	// Three valid PEM files.
-	for _, name := range []string{"ci-bot", "manual", "legacy"} {
-		_, pubPEM := generateP256PEM(t)
-		full := filepath.Join(dir, name+".pem")
-		if err := os.WriteFile(full, pubPEM, 0o444); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	// One junk file the loader should ignore.
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# trust list"), 0o444); err != nil {
-		t.Fatalf("write readme: %v", err)
-	}
-	// One sub-directory the loader should ignore.
-	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	got, err := TrustedPublishersFromDir(dir)
-	if err != nil {
-		t.Fatalf("TrustedPublishersFromDir: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	// Name set matches (order isn't promised — sort before compare).
-	gotNames := map[string]bool{}
-	for _, p := range got {
-		gotNames[p.Name] = true
-		if p.PublicKey == nil {
-			t.Errorf("publisher %q has nil PublicKey", p.Name)
-		}
-	}
-	for _, want := range []string{"ci-bot", "manual", "legacy"} {
-		if !gotNames[want] {
-			t.Errorf("missing publisher %q in %v", want, gotNames)
-		}
-	}
-}
-
-// TestTrustedPublishersFromDir_Missing: a fresh install has the
-// dir absent. TrustedPublishersFromDir must NOT crash — it returns
-// (nil, nil) so imaged can keep running with an empty trust list.
-// The apid pre-flight gate is what fail-closes an actual deploy.
-func TestTrustedPublishersFromDir_Missing(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "no-such-dir")
-	got, err := TrustedPublishersFromDir(missing)
-	if err != nil {
-		t.Errorf("err = %v, want nil (missing dir is non-fatal)", err)
-	}
-	if got != nil {
-		t.Errorf("got = %v, want nil", got)
-	}
-}
-
-// TestTrustedPublishersFromDir_BadPerms: a .pem with mode 0644
-// must surface the existing LoadPublicKeyFile perm error — the
-// "pub key tampered" signal from keys.go must not be silently
-// swallowed by the directory loader.
-func TestTrustedPublishersFromDir_BadPerms(t *testing.T) {
-	dir := t.TempDir()
-	_, pubPEM := generateP256PEM(t)
-	full := filepath.Join(dir, "ci-bot.pem")
-	if err := os.WriteFile(full, pubPEM, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err := TrustedPublishersFromDir(dir)
-	if !errors.Is(err, ErrInsecurePubKeyPerms) {
-		t.Errorf("err = %v, want ErrInsecurePubKeyPerms", err)
-	}
-	if err != nil && !strings.Contains(err.Error(), "ci-bot.pem") {
-		t.Errorf("err = %v, want ci-bot.pem in detail", err)
 	}
 }
 

@@ -451,7 +451,6 @@ func TestHandlerSetters_Mega4(t *testing.T) {
 	ident, _ := age.GenerateX25519Identity()
 
 	chain := h.
-		WithTrustedPublishersDir("").
 		WithFunctionRunnerNode22("/r/node22").
 		WithFunctionRunnerPython312("/r/py312").
 		WithFunctionRunnerGo124("/r/go124").
