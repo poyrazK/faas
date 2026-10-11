@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -71,11 +72,12 @@ func TestPGEnvironmentGitDriftReportingWholeGraphOutageAndRestart(t *testing.T) 
 	if err := store.AdoptEnvironmentGitOps(t.Context(), env.acct.ID, source.ID, preview.Hash); err != nil {
 		t.Fatal(err)
 	}
-	poll, err := store.ClaimEnvironmentGitSourcePoll(t.Context(), "report-source-poller", time.Now().Add(time.Second), time.Minute)
+	pollNow := time.Now().Add(time.Second)
+	poll, err := store.ClaimEnvironmentGitSourcePoll(t.Context(), uuid.NewString(), pollNow, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.FinishEnvironmentGitSourcePoll(t.Context(), poll, state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_source_unavailable"}, time.Now(), time.Now().Add(time.Minute)); err != nil {
+	if err := store.FinishEnvironmentGitSourcePoll(t.Context(), poll, state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_source_unavailable"}, pollNow, pollNow.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	stop := env.s.startEnvironmentGitDriftReporting(t.Context(), func(string) string { return "true" })
