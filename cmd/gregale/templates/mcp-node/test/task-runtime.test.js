@@ -143,6 +143,7 @@ test('an external observer needs no payload key and never initializes schema or 
   delete env.MCP_TASK_OWNER_KEY;
   const service = await startMcpTaskRuntime(config, {
     env, role: 'observer',
+    checkSchema: async () => {},
     createPool: () => ({ async end() {} }),
     createStore() { assert.fail('observer must not access encrypted task store'); },
     createRuntime() { assert.fail('observer must not initialize a worker'); },

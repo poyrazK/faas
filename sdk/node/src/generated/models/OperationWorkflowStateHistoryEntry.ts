@@ -6,10 +6,15 @@ import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+  /**
+   * Current retained-evidence status for verification obligations in this history report.
+   */
+  resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
   /**
    * At this retained historical revision, full replacement snapshot of direct prerequisite references.
    */

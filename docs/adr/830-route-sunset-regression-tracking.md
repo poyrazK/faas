@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-ADR-829 produces sunset queues. Recurring reviews need to identify observed
+ADR-903 produces sunset queues. Recurring reviews need to identify observed
 regressions without confusing overlapping telemetry, changed policy or lost
 evidence with migration progress.
 

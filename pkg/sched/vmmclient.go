@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/qualificationwire"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -232,6 +233,7 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 			DeploymentId: req.Snapshot.DeploymentID, VmstatePath: req.Snapshot.VMStatePath,
 			FcVersion: req.Snapshot.FCVersion, StorageKey: req.Snapshot.StorageKey,
 			VmstateStorageKey: req.Snapshot.VMStateStorageKey, Networkless: true,
+			MemBytes: req.Snapshot.MemBytes,
 		}
 	}
 	resp, err := c.cli.RestoreExecution(ctx, wireReq)
@@ -568,6 +570,9 @@ type SnapshotRef struct {
 	// default-local; populated on remote compute nodes.
 	VMStateStorageKey string
 	Networkless       bool
+	// MemBytes is the snapshot's recorded guest memory length; vmmd needs it
+	// to restore companion snapshots.
+	MemBytes int64
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -713,29 +718,79 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 // JobColdBoot starts one claimed job task through vmmd. The job path is kept
 // separate from AppSpec because it has no readiness probe or snapshot shape.
 func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
-	fields, _ := wire.FromContext(ctx)
-	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.JobColdBoot(ctx, &vmmdpb.JobColdBootRequest{
-		Instance:       spec.InstanceID,
-		AccountId:      spec.AccountID,
-		NodeId:         spec.NodeID,
-		Plan:           string(spec.Plan),
-		RunId:          spec.RunID,
-		TaskIndex:      int32(spec.TaskIndex),
-		ImageRef:       spec.ImageRef,
-		KernelKey:      spec.KernelKey,
-		BaseKey:        spec.BaseKey,
-		Command:        append([]string(nil), spec.Command...),
-		Env:            spec.Env,
-		VcpuCount:      int32(spec.VcpuCount),
-		MemSizeMib:     int32(spec.RAMMB),
-		TaskTimeoutSec: int32(spec.TaskTimeoutSec),
-		LeaseToken:     spec.LeaseToken,
-	})
+	var execution *vmmdpb.EnvironmentQualificationExecution
+	if spec.QualificationExecution != nil {
+		encoded, err := qualificationwire.ExecutionToProto(*spec.QualificationExecution)
+		if err != nil {
+			return JobVmmResult{}, err
+		}
+		execution = encoded
+		ctx, err = qualificationOutgoing(ctx, *spec.QualificationExecution)
+		if err != nil {
+			return JobVmmResult{}, err
+		}
+	} else {
+		fields, _ := wire.FromContext(ctx)
+		ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	}
+	request := &vmmdpb.JobColdBootRequest{
+		Instance:               spec.InstanceID,
+		AccountId:              spec.AccountID,
+		NodeId:                 spec.NodeID,
+		Plan:                   string(spec.Plan),
+		RunId:                  spec.RunID,
+		TaskIndex:              int32(spec.TaskIndex),
+		ImageRef:               spec.ImageRef,
+		KernelKey:              spec.KernelKey,
+		BaseKey:                spec.BaseKey,
+		Command:                append([]string(nil), spec.Command...),
+		Env:                    spec.Env,
+		VcpuCount:              int32(spec.VcpuCount),
+		MemSizeMib:             int32(spec.RAMMB),
+		TaskTimeoutSec:         int32(spec.TaskTimeoutSec),
+		LeaseToken:             spec.LeaseToken,
+		QualificationExecution: execution,
+		SealedEnv:              sealedSecretsToProto(spec.SealedEnvEntries),
+	}
+	var resp *vmmdpb.JobColdBootResponse
+	var err error
+	if spec.StartHeld {
+		resp, err = c.cli.JobColdBootHeld(ctx, request)
+	} else {
+		resp, err = c.cli.JobColdBoot(ctx, request)
+	}
 	if err != nil {
 		return JobVmmResult{}, liftErr(err)
 	}
-	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId()}, nil
+	if resp.GetStartHeld() != spec.StartHeld {
+		return JobVmmResult{}, fmt.Errorf("sched: vmmd job held-start contract mismatch: requested=%t returned=%t", spec.StartHeld, resp.GetStartHeld())
+	}
+	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId(), Netns: resp.GetNetns(),
+		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld()}, nil
+}
+
+func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]*vmmdpb.SealedSecret, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey})
+	}
+	return out
+}
+
+func (c *VMMClient) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	resp, err := c.cli.ReleaseJobStart(ctx, &vmmdpb.ReleaseJobStartRequest{Instance: spec.InstanceID})
+	if err != nil {
+		return liftErr(err)
+	}
+	if resp.GetInstance() != spec.InstanceID || !resp.GetReleased() {
+		return fmt.Errorf("sched: vmmd job start release contract mismatch")
+	}
+	return nil
 }
 
 // ExecuteExecution sends one request to an already restored disposable VM.
@@ -1024,6 +1079,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			StorageKey:        snap.StorageKey,
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
+			MemBytes:          snap.MemBytes,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,

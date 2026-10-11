@@ -65,6 +65,13 @@ func VerifyCredentialSQL(ctx context.Context, dsn string, access CredentialAcces
 }
 
 func credentialProbeConfig(dsn string) (*pgx.ConnConfig, error) {
+	return CredentialSQLConfig(dsn)
+}
+
+// CredentialSQLConfig returns a TLS-only driver configuration suitable for
+// private connections or application pools. It excludes host PGOPTIONS and
+// unsafe URI parameters. Callers must not log the configuration or its DSN.
+func CredentialSQLConfig(dsn string) (*pgx.ConnConfig, error) {
 	u, err := url.Parse(dsn)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.User == nil || u.User.Username() == "" || u.Hostname() == "" || u.Fragment != "" || !strings.HasPrefix(u.Path, "/") || len(u.Path) < 2 {
 		return nil, ErrInvalid

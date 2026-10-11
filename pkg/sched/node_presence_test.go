@@ -81,6 +81,7 @@ type inventoryFixture struct {
 	engine   *Engine
 	vmm      *fakeVMM
 	notifier *fakeNotifier
+	work     *workPool
 	now      time.Time
 	clock    atomic.Int64
 	instance state.Instance
@@ -104,13 +105,14 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 		// Use the production submission path and finish bootstrap notifications
 		// before advancing fake time; no recovery callback may escape the fixture.
 		loop := NewLoop(nil, engine, testLog()).WithClock(engine.now)
-		t.Cleanup(loop.workPool().drain)
+		f.work = loop.workPool()
+		t.Cleanup(f.work.drain)
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
 		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
 		}
 		engine.convergeServiceReplicas(ctx, dep.ID)
-		loop.workPool().drain()
+		f.work.drain()
 		rows, err := store.ListInstancesForApp(ctx, app.ID)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("seed replicas=%v err=%v", rows, err)
@@ -243,6 +245,10 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	if f.engine.Ledger().ResidentFor(dead.ID) {
 		t.Fatal("dead replica capacity leaked")
 	}
+	// RUNNING becomes visible before the recovery worker emits its route
+	// notification. Join that worker before advancing inventory time or
+	// asserting both invalidations. A row alone does not prove completion.
+	f.work.drain()
 	deadline := time.Now().Add(3 * time.Second)
 	var replacement state.Instance
 	for time.Now().Before(deadline) {

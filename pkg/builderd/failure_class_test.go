@@ -1,35 +1,58 @@
 package builderd
 
-// Tests for build-failure classification (issue #2577).
-//
-// Untagged on purpose, matching failure_class.go: the logic has no metal
-// dependency, and leaving it behind the metal tag is why a build that never
-// ran could be blamed on the customer for as long as it was.
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
 
-import "testing"
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
-// A build that never produced an exit status is an infrastructure failure, not
-// the customer's fault. Classifying it as user_error sent operators reading
-// build logs for a platform bug — which is what #2577 did, stamping
-// failure_class=user_error on "vm exit -1" after the spawn failed on a host
-// path builderd had resolved incorrectly.
-func TestClassifyBuildFailure_NoExitStatusIsInfraNotUserError(t *testing.T) {
+func TestClassifyBuildFailureRequiresGuestCompletion(t *testing.T) {
 	tests := []struct {
 		name     string
-		exitCode int
+		hostExit int
+		marker   string
 		want     string
 	}{
-		{name: "vm never ran", exitCode: -1, want: "FailureInfra"},
-		{name: "oom", exitCode: 137, want: "FailureOOM"},
-		{name: "timeout", exitCode: 124, want: "FailureTimeout"},
-		{name: "genuine build failure", exitCode: 1, want: "FailureUserError"},
+		{"no host exit", -1, "", "FailureInfra"},
+		{"firecracker configuration failure", 1, "", "FailureInfra"},
+		{"clean host exit without guest", 0, "", "FailureInfra"},
+		{"malformed guest result", 1, "{", "FailureInfra"},
+		{"empty guest result", 1, "{}", "FailureInfra"},
+		{"oom", 137, "", "FailureOOM"},
+		{"timeout", 124, "", "FailureTimeout"},
+		{"completed customer build failure", -9, `{"schema_version":1,"build_id":"build-1","exit_code":1}`, "FailureUserError"},
+		{"guest timeout overrides host", 1, `{"schema_version":1,"build_id":"build-1","exit_code":124}`, "FailureTimeout"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, _ := classifyBuildFailure(tc.exitCode, t.TempDir())
-			if got != tc.want {
-				t.Errorf("classifyBuildFailure(%d) = %q, want %q", tc.exitCode, got, tc.want)
+			dir := t.TempDir()
+			if tc.marker != "" {
+				if err := os.WriteFile(filepath.Join(dir, "build-done.json"), []byte(tc.marker), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, code, pkg := classifyBuildFailure(tc.hostExit, dir)
+			if got != tc.want || code != "" || pkg != "" {
+				t.Fatalf("class=%q code=%q pkg=%q, want %q", got, code, pkg, tc.want)
 			}
 		})
+	}
+}
+
+func TestClassifyBuildFailurePreservesGuestExplanation(t *testing.T) {
+	dir := t.TempDir()
+	marker, err := json.Marshal(api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 1, FailureClass: "FailureUserError", FailureCode: "dep_install_failed", FailurePkg: "npm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "build-done.json"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	class, code, pkg := classifyBuildFailure(-9, dir)
+	if class != "FailureUserError" || code != "dep_install_failed" || pkg != "npm" {
+		t.Fatalf("lost guest explanation: %q/%q/%q", class, code, pkg)
 	}
 }

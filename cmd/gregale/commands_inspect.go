@@ -26,7 +26,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -75,6 +74,13 @@ func cmdInspect(args []string) int {
 		PrintUsage(os.Stderr, inspectUsage, "inspect")
 		return 1
 	}
+	// Validate leaf combinations before resolving an app or opening a picker.
+	if !*upstreams && *scope != "" {
+		return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
+	}
+	if *upstreams && *errorsFlag {
+		return printErr("Invalid flags", fmt.Errorf("--upstreams and --errors are mutually exclusive"))
+	}
 	slug := ""
 	if merged, mergeErr := mergeAppFlag(positional, *app, 1); mergeErr != nil {
 		PrintUsage(os.Stderr, "usage: gregale inspect [<slug>|--app SLUG]\nerror: "+mergeErr.Error(), "inspect")
@@ -83,37 +89,21 @@ func cmdInspect(args []string) int {
 		slug = merged[0]
 	} else {
 		var resolveErr error
-		slug, resolveErr = resolveRequiredAppSlug("")
+		slug, resolveErr = resolveReadAppTarget("")
 		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, inspectUsage+" (or run `gregale link <project-slug>`)", "inspect")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
+			return readAppTargetError(resolveErr)
 		}
 	}
 	if !validCLISlug(slug) {
 		fmt.Fprintf(os.Stderr, "invalid slug %q (3..40 chars, lowercase alnum + dash, no leading/trailing dash)\n", slug)
 		return 1
 	}
-	// The bare form is the application-intelligence summary. A scope
-	// only has meaning for the explicit upstream table, so reject it
-	// before auth/network rather than silently ignoring the filter.
+	// The bare form is the application-intelligence summary.
 	if !*upstreams && !*errorsFlag {
-		if *scope != "" {
-			return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
-		}
 		if *watch {
 			return cmdInspectWatch(slug, watchOptions)
 		}
 		return cmdInspectSummary(slug)
-	}
-	// Mutually exclusive: --upstreams hits /v1/apps/{slug}/upstreams;
-	// --errors hits the latest deployment via the deployments list.
-	// Mixing them would force two server calls and the customer's
-	// intent is ambiguous.
-	if *upstreams && *errorsFlag {
-		return printErr("Invalid flags", fmt.Errorf("--upstreams and --errors are mutually exclusive"))
 	}
 	if *errorsFlag {
 		return cmdInspectErrors(slug)

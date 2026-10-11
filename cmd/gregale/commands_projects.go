@@ -562,8 +562,9 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config")
+	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config", "interactive")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose environments and review a promotion before confirming")
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
 	yes := fs.Bool("yes", false, "confirm the promotion")
@@ -572,8 +573,33 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
-	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 1 || !api.ValidProjectSlug(positional[0]) {
+		PrintUsage(osStderr, "usage: gregale projects environments promote <project-slug> [--interactive | --from ENV --to ENV]", "projects environments")
+		return 1
+	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "timeout" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive promotion flags", errors.New("--interactive accepts only --timeout; choose environments and settings in the flow"))
+		}
+		if *timeoutSeconds <= 0 || *timeoutSeconds > 86400 {
+			return printErr("Invalid wait timeout", errors.New("--timeout must be between 1 and 86400 seconds"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("use explicit --from and --to flags for scripts or JSON"))
+		}
+		return cmdProjectPromotionInteractive(positional[0], *timeoutSeconds)
+	}
+	if !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(osStderr, "usage: gregale projects environments promote <project-slug> --from ENV --to ENV", "projects environments")
 		return 1
 	}
 	if *progress && !*wait {
@@ -623,29 +649,33 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 			return printErr("Confirmation required", errors.New("project environment promotion requires --yes when stdin or stdout is not a TTY"))
 		}
 	}
+	return executeProjectPromotion(context.Background(), client, positional[0], preview, *idempotencyKey, *wait, *progress, *timeoutSeconds)
+}
+
+func executeProjectPromotion(ctx context.Context, client *Client, project string, preview api.ProjectEnvironmentPromotionPreviewResponse, idempotencyKey string, wait, progress bool, timeoutSeconds int) int {
 	approvalToken := ""
-	key := strings.TrimSpace(*idempotencyKey)
+	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
 		digest := sha256.Sum256([]byte("project-environment-promotion\x00" + preview.PromotionToken))
 		key = "project-promotion-" + hex.EncodeToString(digest[:])
 	}
 	if preview.ApprovalRequired {
-		approvalCtx := api.ContextWithIdempotencyKey(context.Background(), key+"-approval")
-		approval, approvalErr := client.ApproveProjectEnvironment(approvalCtx, positional[0], *to,
+		approvalCtx := api.ContextWithIdempotencyKey(ctx, key+"-approval")
+		approval, approvalErr := client.ApproveProjectEnvironment(approvalCtx, project, preview.ToEnvironment,
 			api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken})
 		if approvalErr != nil {
 			return printErr("Protected environment approval failed", approvalErr)
 		}
 		approvalToken = approval.ApprovalToken
 	}
-	executeCtx := api.ContextWithIdempotencyKey(context.Background(), key)
-	promoted, err := client.PromoteProjectEnvironment(executeCtx, positional[0], *to, api.PromoteProjectEnvironmentRequest{
-		FromEnvironment: *from, PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
+	executeCtx := api.ContextWithIdempotencyKey(ctx, key)
+	promoted, err := client.PromoteProjectEnvironment(executeCtx, project, preview.ToEnvironment, api.PromoteProjectEnvironmentRequest{
+		FromEnvironment: preview.FromEnvironment, PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
 	})
 	if err != nil {
 		return printErr("Promotion failed", err)
 	}
-	if *wait {
+	if wait {
 		initial := api.ProjectEnvironmentPromotionStatusResponse{
 			PromotionID: promoted.PromotionID, ProjectSlug: promoted.ProjectSlug,
 			FromEnvironment: promoted.FromEnvironment, ToEnvironment: promoted.ToEnvironment,
@@ -656,7 +686,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		}
 		var lastProgress string
 		var onProgress func(api.ProjectEnvironmentPromotionStatusResponse)
-		if *progress && !jsonOutput {
+		if progress && !jsonOutput {
 			onProgress = func(status api.ProjectEnvironmentPromotionStatusResponse) {
 				key := projectEnvironmentPromotionProgressKey(status)
 				if key == lastProgress {
@@ -667,13 +697,13 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 			}
 		}
 		status, timedOut, waitErr := waitForProjectEnvironmentPromotion(
-			context.Background(), client, promoted.ProjectSlug, promoted.ToEnvironment, promoted.PromotionID,
-			time.Duration(*timeoutSeconds)*time.Second, initial, onProgress,
+			ctx, client, promoted.ProjectSlug, promoted.ToEnvironment, promoted.PromotionID,
+			time.Duration(timeoutSeconds)*time.Second, initial, onProgress,
 		)
 		if waitErr != nil {
 			return printErr("Promotion status failed", waitErr)
 		}
-		return renderProjectEnvironmentPromotionWait(status, timedOut, time.Duration(*timeoutSeconds)*time.Second)
+		return renderProjectEnvironmentPromotionWait(status, timedOut, time.Duration(timeoutSeconds)*time.Second)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(promoted))
@@ -786,6 +816,11 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))
 	}
+	renderProjectPromotionPreview(preview)
+	return 0
+}
+
+func renderProjectPromotionPreview(preview api.ProjectEnvironmentPromotionPreviewResponse) {
 	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  sync config: %t\n  promotion hash: %s\n",
 		preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, preview.CanPromote,
 		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.SyncConfig, preview.PromotionHash)
@@ -800,7 +835,6 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	if preview.SyncConfig {
 		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
 	}
-	return 0
 }
 
 func renderPromotionConfigChanges(changes []api.ProjectEnvironmentConfigChange) {

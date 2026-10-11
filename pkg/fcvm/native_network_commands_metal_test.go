@@ -74,7 +74,9 @@ func TestMetalNativeNetworkHelperProtocol(t *testing.T) {
 	legacy := &fakeRunner{failOn: "ip"}
 	m := NewManager(legacy, v, Paths{}, "1.7.0", nil, nil)
 	l := leaseForSlot("native-network-protocol", 0)
-	l.Plan = api.PlanHobby
+	// This fixture exercises a declared extra-port update. Pro permits extra
+	// ports; Hobby correctly keeps only 80/443 and would skip this operation.
+	l.Plan = api.PlanPro
 	if err := v.prepareNativeLease(ctx, l); err != nil {
 		t.Fatal(err)
 	}

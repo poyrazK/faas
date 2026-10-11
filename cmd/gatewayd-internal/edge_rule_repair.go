@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -15,8 +16,13 @@ const (
 	edgeRuleRepairPruneInterval = 24 * time.Hour
 )
 
+// edgeRuleRepairReplayLimit bounds one targeted replay. A backlog at least
+// this large (a long disconnect) is repaired with a wholesale flush instead.
+const edgeRuleRepairReplayLimit = 500
+
 type edgeRuleRepairStore interface {
 	LatestEdgeRuleChangeID(context.Context) (int64, error)
+	ListEdgeRuleChangesAfter(context.Context, int64, int) ([]state.EdgeRuleChange, error)
 	PruneEdgeRuleChangeLog(context.Context, time.Time) (int64, error)
 	UpsertGatewayEdgeRuleWatermark(context.Context, string, string, int64) error
 }
@@ -26,10 +32,13 @@ type edgeRuleRepairInvalidator interface {
 	InvalidateResponseCacheAll()
 }
 
-// repairDurableEdgeRuleChanges turns a durable high-water mark into a
-// conservative cache repair. The event payload is informational; flushing
-// both policy and response caches is safe even when several mutations were
-// coalesced while a gateway was disconnected.
+// repairDurableEdgeRuleChanges replays durable edge-rule mutations into the
+// caches. Every ledger row carries the match_host patterns the trigger read
+// from the rule itself, so each change invalidates only the hosts and apps it
+// can affect (the notification path usually already did; repeating a scoped
+// invalidation is cheap, unlike the wholesale flush this loop used to run on
+// every mutation). A backlog at the replay limit, or an unreadable ledger,
+// falls back to the conservative wholesale flush.
 func repairDurableEdgeRuleChanges(ctx context.Context, store edgeRuleRepairStore, inv edgeRuleRepairInvalidator, lastID *int64, log *slog.Logger) (bool, error) {
 	latest, err := store.LatestEdgeRuleChangeID(ctx)
 	if err != nil {
@@ -38,12 +47,20 @@ func repairDurableEdgeRuleChanges(ctx context.Context, store edgeRuleRepairStore
 	if latest <= *lastID {
 		return false, nil
 	}
-	inv.ResetEdgeRules()
-	inv.InvalidateResponseCacheAll()
 	previous := *lastID
-	*lastID = latest
+	changes, listErr := store.ListEdgeRuleChangesAfter(ctx, *lastID, edgeRuleRepairReplayLimit)
+	if listErr != nil || len(changes) == 0 || len(changes) >= edgeRuleRepairReplayLimit {
+		inv.ResetEdgeRules()
+		inv.InvalidateResponseCacheAll()
+		*lastID = latest
+	} else {
+		for _, change := range changes {
+			invalidateEdgeRuleScope(ctx, inv, change.AppID, change.MatchHosts)
+		}
+		*lastID = changes[len(changes)-1].ID
+	}
 	if log != nil {
-		log.Info("gatewayd: repaired missed edge-rule invalidation", "from_id", previous, "to_id", latest)
+		log.Info("gatewayd: repaired missed edge-rule invalidation", "from_id", previous, "to_id", *lastID, "scoped", listErr == nil && len(changes) > 0 && len(changes) < edgeRuleRepairReplayLimit)
 	}
 	return true, nil
 }

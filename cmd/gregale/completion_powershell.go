@@ -21,13 +21,16 @@ import (
 )
 
 func cmdCompletionPowershell() int {
-	w := osStdout
+	renderPowershellCompletion(osStdout)
+	return 0
+}
+
+func renderPowershellCompletion(w io.Writer) {
 	renderPowershellHeader(w)
 	for _, c := range customerCliCommands() {
 		renderPowershellCommand(w, c)
 	}
 	renderPowershellFooter(w)
-	return 0
 }
 
 func renderPowershellHeader(w io.Writer) {

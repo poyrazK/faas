@@ -43,12 +43,14 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	cursor := flags.String("cleanup-cursor", "", "opaque cursor from the previous cleanup page")
 	inventory := flags.Bool("inventory", false, "measure one bounded page of committed and current-key storage; rerun until complete")
 	alarmStatus := flags.Bool("alarm-status", false, "inspect this entity's alarm retry reservations and exhaustion; no counter transition")
+	outboxStatus := flags.Bool("outbox-status", false, "inspect this entity's FIFO head, pending count and relay exhaustion; no payloads")
+	outboxRetry := flags.String("outbox-retry", "", "operator-only replay of an exhausted outbox head; requires its exact message UUID")
 	storageLimit := flags.String("set-storage-limit", "", "operator-only committed byte cap; 0 explicitly removes the cap")
 	delta := flags.Int64("delta", 1, "counter increment")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *alarmStatus, *storageLimit, *cursor, flags.Args())
+	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *alarmStatus, *outboxStatus, *outboxRetry, *storageLimit, *cursor, flags.Args())
 	if err != nil {
 		return err
 	}
@@ -70,6 +72,13 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 		}
 		return json.NewEncoder(output).Encode(status)
 	}
+	if mode == "outbox-status" {
+		status, err := engine.InspectOutbox(ctx, id)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(status)
+	}
 	claim, err := engine.Acquire(ctx, id, uuid.NewString())
 	if err != nil {
 		return err
@@ -85,6 +94,10 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	if mode == "limit" {
 		setErr := engine.SetStorageLimit(ctx, claim, limit)
 		return errors.Join(setErr, releaseEntity(ctx, engine, claim))
+	}
+	if mode == "outbox-retry" {
+		retryErr := engine.RetryOutbox(ctx, claim, *outboxRetry)
+		return errors.Join(retryErr, releaseEntity(ctx, engine, claim))
 	}
 	if *cleanup {
 		result, collectErr := engine.Collect(ctx, claim, *cursor)
@@ -111,18 +124,24 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	return releaseErr
 }
 
-func harnessMode(requestID string, cleanup, inventory, alarmStatus bool, rawLimit, cursor string, args []string) (string, int64, error) {
+func harnessMode(requestID string, cleanup, inventory, alarmStatus, outboxStatus bool, outboxRetry, rawLimit, cursor string, args []string) (string, int64, error) {
 	mode, selected := "", 0
 	for _, candidate := range []struct {
 		name string
 		on   bool
-	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"alarm-status", alarmStatus}, {"limit", rawLimit != ""}} {
+	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"alarm-status", alarmStatus}, {"outbox-status", outboxStatus}, {"outbox-retry", outboxRetry != ""}, {"limit", rawLimit != ""}} {
 		if candidate.on {
 			mode, selected = candidate.name, selected+1
 		}
 	}
 	if len(args) != 0 || selected != 1 || cursor != "" && !cleanup {
-		return "", 0, errors.New("select one of -request, -cleanup, -inventory, -alarm-status or -set-storage-limit; cursors require -cleanup")
+		return "", 0, errors.New("select one of -request, -cleanup, -inventory, -alarm-status, -outbox-status, -outbox-retry or -set-storage-limit; cursors require -cleanup")
+	}
+	if outboxRetry != "" {
+		parsed, err := uuid.Parse(outboxRetry)
+		if err != nil || parsed == uuid.Nil || parsed.String() != outboxRetry {
+			return "", 0, errors.New("-outbox-retry requires the exact canonical message UUID")
+		}
 	}
 	if mode != "limit" {
 		return mode, 0, nil

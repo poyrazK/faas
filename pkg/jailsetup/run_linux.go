@@ -22,6 +22,12 @@ func Run(args []string) bool {
 		return false
 	}
 	switch args[1] {
+	case "--launch-snapshot-output-setup":
+		if err := awaitSnapshotOutputSetup(args); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: native snapshot handoff: %v\n", err)
+			os.Exit(1)
+		}
+		return true
 	case "--launch-jail-device-setup":
 		if err := awaitDeviceSetup(args); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: native jail device setup: %v\n", err)
@@ -54,8 +60,7 @@ func Run(args []string) bool {
 			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
 			os.Exit(1)
 		}
-		devNet := filepath.Join(devTarget, "net")
-		if err := os.MkdirAll(devNet, 0o755); err != nil {
+		if err := prepareDeviceNet(devTarget); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create device net directory: %v\n", err)
 			os.Exit(1)
 		}
@@ -96,12 +101,11 @@ func Run(args []string) bool {
 			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
 			os.Exit(1)
 		}
-		devNet := filepath.Join(args[2], "net")
-		if err := os.MkdirAll(devNet, 0o755); err != nil {
+		if err := prepareDeviceNet(args[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create device net directory: %v\n", err)
 			os.Exit(1)
 		}
-		if err := unix.Mknod(filepath.Join(devNet, "tun"), unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
+		if err := unix.Mknod(filepath.Join(args[2], "net", "tun"), unix.S_IFCHR|0660, int(unix.Mkdev(10, 200))); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: create TUN target: %v\n", err)
 			os.Exit(1)
 		}

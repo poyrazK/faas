@@ -16,12 +16,12 @@ import (
 
 func setupConnectionProfiles(t *testing.T) {
 	t.Helper()
-	// macOS resolves os.UserConfigDir from HOME, not XDG_CONFIG_HOME; without
-	// both, this fixture's api_base reached the developer's real config.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-	t.Setenv("FAAS_TOKEN", "")
+	// Isolate HOME, config, tokens and cache paths for native profile checks.
+	dir := setupHermeticTokensEnv(t)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(dir, "cache"))
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", "")
@@ -32,6 +32,26 @@ func setupConnectionProfiles(t *testing.T) {
 	if err := saveCLIConfig(cliConfig{APIBase: "https://default.example", Profiles: map[string]connectionProfile{"staging": {APIBase: "https://staging.example"}}}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Spec §17: profile fixtures must not inherit a sibling's native token file.
+// The outer temporary HOME protects the host while reproducing the macOS
+// fallback path, which ignores XDG_CONFIG_HOME.
+func TestConnectionProfileFixtureIsolatesNativeFallback(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	t.Run("fallback", func(t *testing.T) {
+		setupConnectionProfiles(t)
+		setFakeKeyring(t, withSetErr(errors.New("fixture keychain unavailable")))
+		if err := saveToken(testAPIKey('a')); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("fresh", func(t *testing.T) {
+		setupConnectionProfiles(t)
+		if loadToken() != "" {
+			t.Fatal("fresh profile fixture inherited a sibling's native fallback credential")
+		}
+	})
 }
 
 func TestConnectionProfileSwitchingAndLegacyCredentials(t *testing.T) {

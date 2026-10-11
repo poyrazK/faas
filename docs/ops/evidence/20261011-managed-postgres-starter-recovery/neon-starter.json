@@ -1,0 +1,119 @@
+{
+  "scope": "Exact generated Node starter in local HTTP processes against real Neon direct/pooled endpoints; provider-level credential replacement; no native guest, scheduler receipt, public CLI, approval or rollout.",
+  "passed": [
+    "actual_migration_credential_release",
+    "direct_concurrent_http_writes",
+    "direct_session_loss_restore",
+    "direct_readiness_hook_never_mutates",
+    "direct_precommit_http_cancel",
+    "pooled_concurrent_http_writes",
+    "pooled_session_loss_restore",
+    "pooled_readiness_hook_never_mutates",
+    "pooled_precommit_http_cancel",
+    "provider_compute_observed_suspended",
+    "provider_wake_cold_boot_pool_fallback",
+    "pooled_after_provider_wake",
+    "direct_retired_credentials_rejected",
+    "pooled_retired_credentials_rejected",
+    "direct_replacement_preserves_data",
+    "pooled_replacement_preserves_data"
+  ],
+  "metrics": [
+    {
+      "phase": "migration",
+      "attempt": 1,
+      "status": "passed"
+    },
+    {
+      "phase": "direct_startup",
+      "endpoint": "direct",
+      "status": 200,
+      "latency_ms": 1599
+    },
+    {
+      "phase": "direct_idle",
+      "endpoint": "direct",
+      "status": 200,
+      "latency_ms": 1123
+    },
+    {
+      "phase": "direct_disconnect",
+      "endpoint": "direct",
+      "status": 204,
+      "latency_ms": 1095
+    },
+    {
+      "phase": "direct_disconnect",
+      "endpoint": "direct",
+      "status": 204,
+      "latency_ms": 1026
+    },
+    {
+      "phase": "pooled_startup",
+      "endpoint": "pooled",
+      "status": 200,
+      "latency_ms": 1276
+    },
+    {
+      "phase": "pooled_idle",
+      "endpoint": "pooled",
+      "status": 200,
+      "latency_ms": 1043
+    },
+    {
+      "phase": "pooled_disconnect",
+      "endpoint": "pooled",
+      "status": 204,
+      "latency_ms": 1222
+    },
+    {
+      "phase": "pooled_disconnect",
+      "endpoint": "pooled",
+      "status": 204,
+      "latency_ms": 913
+    },
+    {
+      "phase": "provider_wake",
+      "endpoint": "direct",
+      "status": 503,
+      "latency_ms": 1517
+    },
+    {
+      "phase": "provider_wake",
+      "endpoint": "cold_boot",
+      "status": 200,
+      "latency_ms": 1539
+    },
+    {
+      "phase": "provider_wake",
+      "endpoint": "pooled",
+      "status": 204,
+      "latency_ms": 1088
+    },
+    {
+      "phase": "rotation_revoke",
+      "endpoint": "direct",
+      "status": 503,
+      "latency_ms": 754
+    },
+    {
+      "phase": "rotation_revoke",
+      "endpoint": "pooled",
+      "status": 503,
+      "latency_ms": 659
+    },
+    {
+      "phase": "direct_replacement",
+      "endpoint": "replacement_direct",
+      "status": 200,
+      "latency_ms": 1095
+    },
+    {
+      "phase": "pooled_replacement",
+      "endpoint": "replacement_pooled",
+      "status": 200,
+      "latency_ms": 1047
+    }
+  ],
+  "failed": null
+}

@@ -3,6 +3,7 @@
 import asyncio
 import json
 from dataclasses import asdict
+from datetime import UTC
 
 import httpx
 import pytest
@@ -211,7 +212,7 @@ def test_problem_does_not_turn_delivery_into_business_failure():
 
 
 def test_runtime_milestone_uses_current_proof_and_saved_identity():
-    from datetime import datetime, timezone
+    from datetime import datetime
     from uuid import UUID
 
     from faas_sdk.models.operation_milestone_request import OperationMilestoneRequest
@@ -238,7 +239,7 @@ def test_runtime_milestone_uses_current_proof_and_saved_identity():
                         id=UUID(OP),
                         name="paid",
                         payload={"total": 1},
-                        occurred_at=datetime(2026, 10, 7, 12, tzinfo=timezone.utc),
+                        occurred_at=datetime(2026, 10, 7, 12, tzinfo=UTC),
                     )
                 )
             assert fact.id == UUID(OP)

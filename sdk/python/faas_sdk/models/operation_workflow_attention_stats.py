@@ -15,6 +15,19 @@ T = TypeVar("T", bound="OperationWorkflowAttentionStats")
 class OperationWorkflowAttentionStats:
     """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
 
+    sla_at_risk_workflow_count: int
+    sla_breached_workflow_count: int
+    sla_unknown_workflow_count: int
+    escalated_workflow_count: int
+    awaiting_verification_workflow_count: int
+    awaiting_verification_resolution_count: int
+    low_blocker_count: int
+    normal_blocker_count: int
+    high_blocker_count: int
+    urgent_blocker_count: int
+    unacknowledged_blocker_count: int
+    follow_up_overdue_blocker_count: int
+    escalated_blocker_count: int
     dependency_workflow_count: int
     dependency_count: int
     overdue_workflow_count: int
@@ -29,6 +42,32 @@ class OperationWorkflowAttentionStats:
     oldest_blocker_age_seconds: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        sla_at_risk_workflow_count = self.sla_at_risk_workflow_count
+
+        sla_breached_workflow_count = self.sla_breached_workflow_count
+
+        sla_unknown_workflow_count = self.sla_unknown_workflow_count
+
+        escalated_workflow_count = self.escalated_workflow_count
+
+        awaiting_verification_workflow_count = self.awaiting_verification_workflow_count
+
+        awaiting_verification_resolution_count = self.awaiting_verification_resolution_count
+
+        low_blocker_count = self.low_blocker_count
+
+        normal_blocker_count = self.normal_blocker_count
+
+        high_blocker_count = self.high_blocker_count
+
+        urgent_blocker_count = self.urgent_blocker_count
+
+        unacknowledged_blocker_count = self.unacknowledged_blocker_count
+
+        follow_up_overdue_blocker_count = self.follow_up_overdue_blocker_count
+
+        escalated_blocker_count = self.escalated_blocker_count
+
         dependency_workflow_count = self.dependency_workflow_count
 
         dependency_count = self.dependency_count
@@ -61,6 +100,19 @@ class OperationWorkflowAttentionStats:
 
         field_dict.update(
             {
+                "sla_at_risk_workflow_count": sla_at_risk_workflow_count,
+                "sla_breached_workflow_count": sla_breached_workflow_count,
+                "sla_unknown_workflow_count": sla_unknown_workflow_count,
+                "escalated_workflow_count": escalated_workflow_count,
+                "awaiting_verification_workflow_count": awaiting_verification_workflow_count,
+                "awaiting_verification_resolution_count": awaiting_verification_resolution_count,
+                "low_blocker_count": low_blocker_count,
+                "normal_blocker_count": normal_blocker_count,
+                "high_blocker_count": high_blocker_count,
+                "urgent_blocker_count": urgent_blocker_count,
+                "unacknowledged_blocker_count": unacknowledged_blocker_count,
+                "follow_up_overdue_blocker_count": follow_up_overdue_blocker_count,
+                "escalated_blocker_count": escalated_blocker_count,
                 "dependency_workflow_count": dependency_workflow_count,
                 "dependency_count": dependency_count,
                 "overdue_workflow_count": overdue_workflow_count,
@@ -85,6 +137,32 @@ class OperationWorkflowAttentionStats:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        sla_at_risk_workflow_count = d.pop("sla_at_risk_workflow_count")
+
+        sla_breached_workflow_count = d.pop("sla_breached_workflow_count")
+
+        sla_unknown_workflow_count = d.pop("sla_unknown_workflow_count")
+
+        escalated_workflow_count = d.pop("escalated_workflow_count")
+
+        awaiting_verification_workflow_count = d.pop("awaiting_verification_workflow_count")
+
+        awaiting_verification_resolution_count = d.pop("awaiting_verification_resolution_count")
+
+        low_blocker_count = d.pop("low_blocker_count")
+
+        normal_blocker_count = d.pop("normal_blocker_count")
+
+        high_blocker_count = d.pop("high_blocker_count")
+
+        urgent_blocker_count = d.pop("urgent_blocker_count")
+
+        unacknowledged_blocker_count = d.pop("unacknowledged_blocker_count")
+
+        follow_up_overdue_blocker_count = d.pop("follow_up_overdue_blocker_count")
+
+        escalated_blocker_count = d.pop("escalated_blocker_count")
+
         dependency_workflow_count = d.pop("dependency_workflow_count")
 
         dependency_count = d.pop("dependency_count")
@@ -120,6 +198,19 @@ class OperationWorkflowAttentionStats:
         oldest_blocker_age_seconds = d.pop("oldest_blocker_age_seconds", UNSET)
 
         operation_workflow_attention_stats = cls(
+            sla_at_risk_workflow_count=sla_at_risk_workflow_count,
+            sla_breached_workflow_count=sla_breached_workflow_count,
+            sla_unknown_workflow_count=sla_unknown_workflow_count,
+            escalated_workflow_count=escalated_workflow_count,
+            awaiting_verification_workflow_count=awaiting_verification_workflow_count,
+            awaiting_verification_resolution_count=awaiting_verification_resolution_count,
+            low_blocker_count=low_blocker_count,
+            normal_blocker_count=normal_blocker_count,
+            high_blocker_count=high_blocker_count,
+            urgent_blocker_count=urgent_blocker_count,
+            unacknowledged_blocker_count=unacknowledged_blocker_count,
+            follow_up_overdue_blocker_count=follow_up_overdue_blocker_count,
+            escalated_blocker_count=escalated_blocker_count,
             dependency_workflow_count=dependency_workflow_count,
             dependency_count=dependency_count,
             overdue_workflow_count=overdue_workflow_count,

@@ -31,6 +31,7 @@ type EnvironmentWorkload struct {
 
 type EnvironmentWorkloadSource struct {
 	Kind       string `json:"kind"`
+	Runtime    string `json:"runtime,omitempty"`
 	Directory  string `json:"directory,omitempty"`
 	Dockerfile string `json:"dockerfile,omitempty"`
 	Image      string `json:"image,omitempty"`

@@ -103,16 +103,26 @@ func loadPublicKey(path string) (*ecdsa.PublicKey, error) {
 	if block.Type != "PUBLIC KEY" {
 		return nil, fmt.Errorf("cosign: %q: want PEM type PUBLIC KEY, got %q", path, block.Type)
 	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	ep, err := ParsePublicKeyDER(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("cosign: parse SPKI %q: %w", path, err)
+		return nil, fmt.Errorf("cosign: %q: %w", path, err)
+	}
+	return ep, nil
+}
+
+// ParsePublicKeyDER parses a DER SubjectPublicKeyInfo and requires an ECDSA
+// P-256 key. app_trusted_signers stores trusted-publisher keys in this form.
+func ParsePublicKeyDER(der []byte) (*ecdsa.PublicKey, error) {
+	pub, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse SPKI: %w", err)
 	}
 	ep, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("cosign: %q is not ECDSA (got %T)", path, pub)
+		return nil, fmt.Errorf("public key is not ECDSA (got %T)", pub)
 	}
 	if ep.Curve != ecdsaP256() {
-		return nil, fmt.Errorf("cosign: %q: want P-256 curve, got %s", path, ep.Curve.Params().Name)
+		return nil, fmt.Errorf("want P-256 curve, got %s", ep.Curve.Params().Name)
 	}
 	return ep, nil
 }

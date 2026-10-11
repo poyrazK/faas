@@ -1,6 +1,6 @@
 export interface OperationWorkflowPolicyRequirement { milestone: string; rule_id: string; rule_version: string; code: string }
 export interface OperationWorkflowPlannedDecision { milestone: string; decision: import('./customer-operation-decisions.js').OperationBusinessDecision }
-import { OPERATION_SUBJECT_ID_BYTES } from './operation-contract.js';
+import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_SUBJECT_ID_BYTES } from './operation-contract.js';
 import { parseFrame } from './sse.js';
 import type { OperationWorkflowStep } from './generated/models/OperationWorkflowStep.js';
 
@@ -12,31 +12,33 @@ export interface OperationArtifactReport { report_id: string; name: string; uri:
 export interface OperationSubject { type: string; id: string }
 export interface OperationMilestoneReport { id: string; name: string; payload: unknown; occurred_at: string }
 export interface OperationMilestone extends OperationMilestoneReport { operation_id: string; subject?: OperationSubject; platform_tenant_id?: string; workflow_steps?: OperationWorkflowStep[]; created_at: string; sequence: number }
-export interface OperationWorkflowBlockerResolution { code: string; operation: string; description: string; blocker_operation_id: string; blocker_report_id: string; blocker_revision: number }
-export interface OperationWorkflowBlocker { first_observed_at?: string; code: string; description: string; operation: string }
+export interface OperationWorkflowBlockerResolution { verification_milestone_id?: string; verification_milestone_name?: string; verification_operation_id?: string; verification_owner?: string; resolved_by?: string; code: string; operation: string; description: string; blocker_operation_id: string; blocker_report_id: string; blocker_revision: number }
+export interface OperationWorkflowBlocker { priority?: 'low' | 'normal' | 'high' | 'urgent'; business_impact?: string; acknowledged_at?: string; acknowledged_by?: string; follow_up_at?: string; owner?: string; next_action?: string; first_observed_at?: string; code: string; description: string; operation: string }
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
 export interface OperationWorkflowRelatedInstance { dependency: OperationWorkflowDependency; status: 'unknown' | 'waiting' | 'terminal' | 'satisfied' | 'outcome_mismatch'; state?: OperationWorkflowState }
-export interface OperationWorkflowState { depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; overdue: boolean; overdue_seconds?: number; report_id?: string; operation_id?: string; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; updated_at: string; platform_tenant_id?: string }
-export interface OperationWorkflowStateHistoryEntry { depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; occurred_at: string; published_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowState { sla?: OperationWorkflowStateSLA; depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; overdue: boolean; overdue_seconds?: number; report_id?: string; operation_id?: string; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; updated_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowStateHistoryEntry { resolution_verifications?: OperationWorkflowResolutionVerification[]; depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; occurred_at: string; published_at: string; platform_tenant_id?: string }
 export interface OperationWorkflowInstanceMilestoneRef { id: string; operation_id: string; occurred_at: string; published_at: string }
 export interface OperationWorkflowInstanceStep { step: string; label: string; operation?: string; operation_id?: string; milestone: string; position: number; observed: boolean; milestones_in_page: number; latest_milestone?: OperationWorkflowInstanceMilestoneRef; observed_in_retention: boolean; milestones_in_retention: number; latest_retained_milestone?: OperationWorkflowInstanceMilestoneRef }
 export interface OperationWorkflowInstanceTransition { from: string; to: string; operation: string; required_dependency_workflows?: string[]; required_effects?: OperationWorkflowEffectRequirement[]; required_invariants?: OperationWorkflowInvariantRequirement[]; required_policies?: OperationWorkflowPolicyRequirement[]; required_milestones?: string[] }
 export interface OperationWorkflowDecision { blockers?: OperationWorkflowBlocker[]; reason: 'state_unknown' | 'terminal' | 'no_declared_transition' | 'transitions_available' | 'state_stale' | 'application_blocked' | 'deadline_overdue' | 'dependency_waiting'; explanation: string; needs_attention: boolean; state_revision?: number; next_actions: OperationWorkflowInstanceTransition[] }
-export interface OperationWorkflowInstanceSnapshot { readiness?: OperationWorkflowReadinessOverview; dependency_trace?: OperationWorkflowDependencyTrace; dependency_impact?: OperationWorkflowDependencyImpact; related_workflows?: OperationWorkflowRelatedInstance[]; decision?: OperationWorkflowDecision; workflow: string; instance_id: string; contract_version: number; state?: OperationWorkflowState; steps: OperationWorkflowInstanceStep[]; allowed_transitions?: OperationWorkflowInstanceTransition[]; transitions: OperationWorkflowStateHistoryEntry[]; has_more: boolean; next_milestone_cursor?: string; next_transition_cursor?: string }
+export interface OperationWorkflowInstanceSnapshot { bottlenecks?: OperationWorkflowBottlenecks; resolution_verifications?: OperationWorkflowResolutionVerification[]; awaiting_verification_count?: number; resolution_verification_count?: number; readiness?: OperationWorkflowReadinessOverview; dependency_trace?: OperationWorkflowDependencyTrace; dependency_impact?: OperationWorkflowDependencyImpact; related_workflows?: OperationWorkflowRelatedInstance[]; decision?: OperationWorkflowDecision; workflow: string; instance_id: string; contract_version: number; state?: OperationWorkflowState; steps: OperationWorkflowInstanceStep[]; allowed_transitions?: OperationWorkflowInstanceTransition[]; transitions: OperationWorkflowStateHistoryEntry[]; has_more: boolean; next_milestone_cursor?: string; next_transition_cursor?: string }
 export interface OperationWorkflowOutcomeEntry { app_id: string; scope: string; platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState }
 export interface OperationWorkflowOutcomesResponse { items: OperationWorkflowOutcomeEntry[]; evaluated_at: string; next_cursor?: string }
 export interface OperationWorkflowOutcomeGroup { value: string; workflow_count: number }
 export interface OperationWorkflowOutcomeSummary { group_by: 'outcome' | 'workflow' | 'customer'; evaluated_at: string; workflow_count: number; groups: OperationWorkflowOutcomeGroup[]; next_cursor?: string }
 export interface OperationWorkflowOutcomeOptions { appID: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string }
 export interface OperationWorkflowOutcomeSummaryOptions extends OperationWorkflowOutcomeOptions { groupBy?: 'outcome' | 'workflow' }
-export interface OperationWorkflowAttentionEntry { dependency_attention?: OperationWorkflowRelatedInstance[]; app_id: string; scope: string; platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState; reasons: Array<'blocked' | 'stale' | 'overdue' | 'dependency'> }
+export interface OperationWorkflowBlockerEscalation { code: string; operation: string; owner: string; after_seconds: number; escalated_at: string }
+export interface OperationWorkflowResolutionVerification { resolution: OperationWorkflowBlockerResolution; resolution_operation_id: string; resolution_report_id: string; resolution_revision: number; status: 'awaiting_verification' | 'verified'; verified_at?: string }
+export interface OperationWorkflowAttentionEntry { resolution_verifications?: OperationWorkflowResolutionVerification[]; awaiting_verification_count?: number; resolution_verification_count?: number; escalations?: OperationWorkflowBlockerEscalation[]; dependency_attention?: OperationWorkflowRelatedInstance[]; app_id: string; scope: string; platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState; reasons: Array<'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk'> }
 export interface OperationWorkflowAttentionResponse { items: OperationWorkflowAttentionEntry[]; evaluated_at: string; next_cursor?: string }
-export interface OperationWorkflowAttentionStats { dependency_workflow_count: number; dependency_count: number; overdue_workflow_count: number; earliest_overdue_deadline_at?: string; longest_overdue_seconds?: number; workflow_count: number; blocked_workflow_count: number; stale_workflow_count: number; blocker_count: number; unknown_age_blockers: number; oldest_blocker_at?: string; oldest_blocker_age_seconds?: number }
+export interface OperationWorkflowAttentionStats { sla_at_risk_workflow_count: number; sla_breached_workflow_count: number; sla_unknown_workflow_count: number; awaiting_verification_workflow_count: number; awaiting_verification_resolution_count: number; low_blocker_count: number; normal_blocker_count: number; high_blocker_count: number; urgent_blocker_count: number; unacknowledged_blocker_count: number; follow_up_overdue_blocker_count: number; escalated_workflow_count: number; escalated_blocker_count: number; dependency_workflow_count: number; dependency_count: number; overdue_workflow_count: number; earliest_overdue_deadline_at?: string; longest_overdue_seconds?: number; workflow_count: number; blocked_workflow_count: number; stale_workflow_count: number; blocker_count: number; unknown_age_blockers: number; oldest_blocker_at?: string; oldest_blocker_age_seconds?: number }
 export interface OperationWorkflowAttentionGroup { value: string; stats: OperationWorkflowAttentionStats }
-export interface OperationWorkflowAttentionSummary { group_by: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' | 'customer'; evaluated_at: string; totals: OperationWorkflowAttentionStats; groups: OperationWorkflowAttentionGroup[]; next_cursor?: string }
-export interface OperationWorkflowAttentionSummaryOptions extends OperationWorkflowAttentionOptions { groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' }
-export interface OperationWorkflowAttentionOptions { dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; appID: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string }
+export interface OperationWorkflowAttentionSummary { group_by: 'owner' | 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' | 'customer'; evaluated_at: string; totals: OperationWorkflowAttentionStats; groups: OperationWorkflowAttentionGroup[]; next_cursor?: string }
+export interface OperationWorkflowAttentionSummaryOptions extends OperationWorkflowAttentionOptions { groupBy?: 'owner' | 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' }
+export interface OperationWorkflowAttentionOptions { priority?: 'low' | 'normal' | 'high' | 'urgent'; sort?: 'updated_at' | 'deadline'; owner?: string; unassigned?: boolean; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; appID: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk'; limit?: number; cursor?: string }
 export interface OperationMilestonePageOptions { limit?: number; cursor?: string }
 export interface OperationBusinessMilestoneOptions extends OperationMilestonePageOptions { appID: string; scope: string; subjectType: string; subjectID: string; workflow?: string; workflowInstanceID?: string; workflowStateCursor?: string; staleOnly?: boolean }
 export interface OperationMilestones { milestones: OperationMilestone[]; workflow_states?: OperationWorkflowState[]; workflow_state_history?: OperationWorkflowStateHistoryEntry[]; workflow_instance?: OperationWorkflowInstanceSnapshot; next_cursor?: string; next_workflow_state_cursor?: string }
@@ -174,9 +176,10 @@ export class GregaleOperationClient {
     if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
     if (options.dependencyStatus !== undefined && !['waiting','unknown','outcome_mismatch'].includes(options.dependencyStatus)) throw new Error('Invalid dependency status');
     if (options.requiredOutcomeCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.requiredOutcomeCode)) throw new Error('Invalid required outcome');
-    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency'].includes(options.reason)) throw new Error('Invalid attention reason');
+    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency', 'escalated', 'unacknowledged', 'follow_up_overdue', 'awaiting_verification'].includes(options.reason)) throw new Error('Invalid attention reason');
     const query = milestonePageQuery(options);
     query.set('app_id', options.appID); query.set('scope', options.scope);
+    appendAttentionOwnerQuery(query, options);
     if (options.workflow !== undefined) query.set('workflow', options.workflow);
     if (options.targetOperation !== undefined) query.set('target_operation', options.targetOperation);
     if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
@@ -193,10 +196,11 @@ export class GregaleOperationClient {
     if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
     if (options.dependencyStatus !== undefined && !['waiting','unknown','outcome_mismatch'].includes(options.dependencyStatus)) throw new Error('Invalid dependency status');
     if (options.requiredOutcomeCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.requiredOutcomeCode)) throw new Error('Invalid required outcome');
-    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency'].includes(options.reason)) throw new Error('Invalid attention reason');
-    if (options.groupBy !== undefined && !['workflow','blocker_code','target_operation','dependency_status','required_outcome_code'].includes(options.groupBy)) throw new Error('Invalid summary grouping');
+    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency', 'escalated', 'unacknowledged', 'follow_up_overdue', 'awaiting_verification'].includes(options.reason)) throw new Error('Invalid attention reason');
+    if (options.groupBy !== undefined && !['owner','workflow','blocker_code','target_operation','dependency_status','required_outcome_code'].includes(options.groupBy)) throw new Error('Invalid summary grouping');
     const query = milestonePageQuery(options);
     query.set('app_id', options.appID); query.set('scope', options.scope);
+    appendAttentionOwnerQuery(query, options);
     if (options.workflow !== undefined) query.set('workflow', options.workflow);
     if (options.targetOperation !== undefined) query.set('target_operation', options.targetOperation);
     if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
@@ -206,6 +210,22 @@ export class GregaleOperationClient {
     if (options.reason !== undefined) query.set('reason', options.reason);
     if (options.groupBy !== undefined) query.set('group_by', options.groupBy);
     return this.request('/v1/platform-tenant-self/workflow-attention/summary?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowPerformanceInstances(options: OperationWorkflowPerformanceInstanceOptions, signal?: AbortSignal): Promise<OperationWorkflowPerformanceInstancesResponse> {
+    if (!UUID.test(options.appID) || typeof options.scope !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (typeof options.workflow !== 'string' || !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Explicit workflow required');
+    if (!['completed', 'ongoing'].includes(options.cohort) || !['state_time', 'blocked_time', 'verification_wait', 'state', 'blocker', 'verification_owner'].includes(options.dimension)) throw new Error('Invalid performance cohort or dimension');
+    const query = new URLSearchParams({ app_id: options.appID, scope: options.scope, workflow: options.workflow, cohort: options.cohort, dimension: options.dimension });
+    for (const key of ['contract_version', 'state', 'operation', 'code', 'owner'] as const) { if (options[key] !== undefined) query.set(key, String(options[key])); }
+    if (options.unassigned !== undefined) query.set('unassigned', String(options.unassigned));
+    if (options.cohortToken !== undefined) query.set('cohort_token', options.cohortToken);
+    return this.request('/v1/platform-tenant-self/workflow-performance/instances?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowPerformanceSummary(options: OperationWorkflowPerformanceOptions, signal?: AbortSignal): Promise<OperationWorkflowPerformanceSummary> {
+    if (!UUID.test(options.appID) || typeof options.scope !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (typeof options.workflow !== 'string' || !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Explicit workflow required');
+    const query = new URLSearchParams({ app_id: options.appID, scope: options.scope, workflow: options.workflow });
+    return this.request('/v1/platform-tenant-self/workflow-performance/summary?' + query, 'GET', undefined, undefined, signal);
   }
   workflowOutcomes(options: OperationWorkflowOutcomeOptions, signal?: AbortSignal): Promise<OperationWorkflowOutcomesResponse> {
     if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
@@ -398,3 +418,41 @@ export interface OperationWorkflowUnmetInvariant {requirement: OperationWorkflow
 export interface OperationWorkflowEffectRequirement {milestone: string; code: string; version: string}
 export interface OperationWorkflowPlannedEffect {milestone: string; effect: import('./customer-operation-effects.js').OperationBusinessEffect}
 export interface OperationWorkflowUnmetEffect {requirement: OperationWorkflowEffectRequirement; reason: 'missing'|'mismatched'|'pending'|'failed'}
+
+function appendAttentionOwnerQuery(query: URLSearchParams, options: OperationWorkflowAttentionOptions): void {
+ if (options.priority !== undefined) {
+  if (!['low','normal','high','urgent'].includes(options.priority)) throw new Error('Invalid priority filter');
+  query.set('priority', options.priority);
+ }
+ if (options.sort !== undefined) {
+  if (!['updated_at','deadline'].includes(options.sort)) throw new Error('Invalid queue sort');
+  query.set('sort', options.sort);
+ }
+ if (options.unassigned !== undefined && typeof options.unassigned !== 'boolean') throw new Error('Invalid unassigned filter');
+ if (options.owner !== undefined) {
+  if (typeof options.owner !== 'string' || !options.owner || new TextEncoder().encode(options.owner).length > OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES || /[\uD800-\uDFFF]/u.test(options.owner) || /[\x00-\x1f\x7f]/.test(options.owner) || options.unassigned) throw new Error('Invalid or conflicting owner filter');
+  query.set('owner', options.owner);
+ }
+ if (options.unassigned) query.set('unassigned', 'true');
+}
+
+export interface OperationWorkflowBottlenecks { evaluated_at: string; history_complete: boolean; incomplete_reasons: string[]; observed_from?: string; observed_through?: string; reports_in_window: number; history_truncated: boolean; ongoing: boolean; state_seconds: number; blocked_seconds: number; verification_wait_seconds: number; verification_unknown_start_count: number; states: OperationWorkflowStateDuration[]; blockers: OperationWorkflowBlockerDuration[]; verification_owners: OperationWorkflowVerificationDuration[]; states_truncated: boolean; blockers_truncated: boolean; verification_owners_truncated: boolean }
+export interface OperationWorkflowStateDuration { contract_version: number; state: string; observed_seconds: number; observation_count: number; ongoing: boolean }
+export interface OperationWorkflowBlockerDuration { contract_version: number; operation: string; code: string; owner: string; observed_seconds: number; observation_count: number; ongoing: boolean }
+export interface OperationWorkflowVerificationDuration { owner: string; observed_seconds: number; resolution_count: number; pending_count: number; unknown_start_count: number }
+
+export interface OperationWorkflowPerformanceOptions { appID: string; scope: string; workflow: string }
+export interface OperationWorkflowPerformanceSummary { cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
+export interface OperationWorkflowDurationDistribution { workflow_count: number; total_seconds: number; p50_seconds: number; p95_seconds: number }
+export interface OperationWorkflowPerformanceCoverageReason { reason: string; workflow_count: number }
+export interface OperationWorkflowPerformanceCohort { sla_configured_workflow_count: number; sla_evaluated_workflow_count: number; sla_breached_workflow_count: number; sla_unknown_workflow_count: number; matching_workflow_count: number; sampled_workflow_count: number; complete_history_workflow_count: number; excluded_incomplete_workflow_count: number; cohort_truncated: boolean; exclusions: OperationWorkflowPerformanceCoverageReason[]; state_time: OperationWorkflowDurationDistribution; blocked_time: OperationWorkflowDurationDistribution; verification_wait: OperationWorkflowDurationDistribution; states: OperationWorkflowStatePerformance[]; blockers: OperationWorkflowBlockerPerformance[]; verification_owners: OperationWorkflowVerificationPerformance[]; states_truncated: boolean; blockers_truncated: boolean; verification_owners_truncated: boolean }
+export interface OperationWorkflowStatePerformance { sla_evaluated_visit_count: number; sla_breached_visit_count: number; contract_version: number; state: string; duration: OperationWorkflowDurationDistribution }
+export interface OperationWorkflowBlockerPerformance { contract_version: number; operation: string; code: string; owner: string; duration: OperationWorkflowDurationDistribution }
+export interface OperationWorkflowVerificationPerformance { owner: string; pending_resolution_count: number; duration: OperationWorkflowDurationDistribution }
+
+export interface OperationWorkflowPerformanceGroup { dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner'; contract_version?: number; state?: string; operation?: string; code?: string; owner?: string; unassigned?: boolean }
+export interface OperationWorkflowPerformanceInstanceOptions extends OperationWorkflowPerformanceOptions, OperationWorkflowPerformanceGroup { cohort: 'completed' | 'ongoing'; cohortToken?: string }
+export interface OperationWorkflowPerformanceInstance { platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState; observed_seconds: number; resolution_verifications: OperationWorkflowResolutionVerification[]; awaiting_verification_count: number; resolution_verification_count: number }
+export interface OperationWorkflowPerformanceInstancesResponse { evaluated_at: string; cohort_token: string; workflow: string; cohort: 'completed' | 'ongoing'; group: OperationWorkflowPerformanceGroup; matching_workflow_count: number; sampled_workflow_count: number; complete_history_workflow_count: number; excluded_incomplete_workflow_count: number; cohort_truncated: boolean; exclusions: OperationWorkflowPerformanceCoverageReason[]; duration: OperationWorkflowDurationDistribution; items: OperationWorkflowPerformanceInstance[] }
+
+export interface OperationWorkflowStateSLA { evaluated_at: string; budget_seconds: number; warning_percent?: number; warning_at?: string; status: 'within_budget' | 'at_risk' | 'breached' | 'unknown'; history_complete: boolean; entered_at?: string; due_at?: string; elapsed_seconds?: number; remaining_seconds?: number; breached_seconds?: number }

@@ -24,7 +24,7 @@ import (
 // names the file + line number of the violation. ADR-094 references
 // this gate as the architectural pin.
 func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
-	const apidMainPath = "cmd/apid/main.go"
+	const apidMainPath = "pkg/apid/apidserver/main.go"
 	// Walk via parser.ParseFile (path is relative to the repo root
 	// where `go test ./...` is run).
 	fset := token.NewFileSet()

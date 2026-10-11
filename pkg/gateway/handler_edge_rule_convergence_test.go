@@ -9,7 +9,7 @@ import (
 
 type convergingEdgeRuleMatcher struct{ noOpEdgeRuleMatcher }
 
-func (convergingEdgeRuleMatcher) Converging(string) bool { return true }
+func (convergingEdgeRuleMatcher) Converging(string, string) bool { return true }
 
 // adr: 091 — policy mutations fence the affected host before any request can
 // reach routing, authentication, wake admission, or the application backend.

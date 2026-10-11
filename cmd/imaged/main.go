@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
@@ -465,7 +466,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: githubd mTLS client configured", "target", githubdTarget)
 	}
 
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
+		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
@@ -473,14 +479,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
 		WithOpsMetrics(ops).
-		// Issue #472 / ADR-054: per-app cosign signature-enforcement
-		// at deploy time. Default off (the apps.require_signed=false
-		// default means the open-deploy posture stays in place).
-		// Operators populate /etc/faas/secrets/trusted-publishers/
-		// and set FAAS_TRUSTED_PUBLISHERS_DIR to enable. apid emits
-		// pg_notify('trusted_signer_changed') on every CRUD op, and
-		// imaged's HandleNotification refreshes the in-memory cache.
-		WithTrustedPublishersDir(os.Getenv("FAAS_TRUSTED_PUBLISHERS_DIR")).
 		// Issue #299 / ADR-038 Phase 3 + Tier-2 ship blocker.
 		// Wire the production runners explicitly so a misconfigured
 		// imaged (e.g. an ansible role that forgets to install

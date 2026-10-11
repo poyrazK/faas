@@ -210,7 +210,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if !ok {
 		return fmt.Errorf("sched: warm pool: unknown plan %q", acct.Plan)
 	}
-	snap, haveSnap, _ := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+	snap, haveSnap, _ := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
 	if !haveSnap || snap.StorageKey == "" {
 		// A first deployment may not have completed snapshot prime yet.
 		// Warm capacity is best-effort cache, so leave the target pending.
@@ -413,7 +413,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
 	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
-		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey,
+		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey, MemBytes: snap.MemBytes,
 	})
 	cancel()
 	if err != nil {

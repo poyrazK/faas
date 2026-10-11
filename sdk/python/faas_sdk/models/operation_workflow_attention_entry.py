@@ -14,7 +14,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_blocker_escalation import OperationWorkflowBlockerEscalation
     from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+    from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
     from ..models.operation_workflow_state import OperationWorkflowState
 
 
@@ -35,6 +37,12 @@ class OperationWorkflowAttentionEntry:
     state: OperationWorkflowState
     """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     reasons: list[OperationWorkflowAttentionEntryReasonsItem]
+    resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+    """Bounded preview with pending obligations first. Exact counts cover all retained distinct obligations."""
+    awaiting_verification_count: int | Unset = UNSET
+    resolution_verification_count: int | Unset = UNSET
+    escalations: list[OperationWorkflowBlockerEscalation] | Unset = UNSET
+    """Passed blocker escalation thresholds; missing observation times do not produce findings."""
     dependency_attention: list[OperationWorkflowRelatedInstance] | Unset = UNSET
     """Unresolved direct references on an active source. These entries carry dependency and status; target state is
     available in the workflow instance detail."""
@@ -56,6 +64,24 @@ class OperationWorkflowAttentionEntry:
         for reasons_item_data in self.reasons:
             reasons_item: str = reasons_item_data
             reasons.append(reasons_item)
+
+        resolution_verifications: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.resolution_verifications, Unset):
+            resolution_verifications = []
+            for resolution_verifications_item_data in self.resolution_verifications:
+                resolution_verifications_item = resolution_verifications_item_data.to_dict()
+                resolution_verifications.append(resolution_verifications_item)
+
+        awaiting_verification_count = self.awaiting_verification_count
+
+        resolution_verification_count = self.resolution_verification_count
+
+        escalations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.escalations, Unset):
+            escalations = []
+            for escalations_item_data in self.escalations:
+                escalations_item = escalations_item_data.to_dict()
+                escalations.append(escalations_item)
 
         dependency_attention: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.dependency_attention, Unset):
@@ -80,6 +106,14 @@ class OperationWorkflowAttentionEntry:
                 "reasons": reasons,
             }
         )
+        if resolution_verifications is not UNSET:
+            field_dict["resolution_verifications"] = resolution_verifications
+        if awaiting_verification_count is not UNSET:
+            field_dict["awaiting_verification_count"] = awaiting_verification_count
+        if resolution_verification_count is not UNSET:
+            field_dict["resolution_verification_count"] = resolution_verification_count
+        if escalations is not UNSET:
+            field_dict["escalations"] = escalations
         if dependency_attention is not UNSET:
             field_dict["dependency_attention"] = dependency_attention
         if platform_tenant_id is not UNSET:
@@ -90,7 +124,9 @@ class OperationWorkflowAttentionEntry:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_blocker_escalation import OperationWorkflowBlockerEscalation
         from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+        from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
         from ..models.operation_workflow_state import OperationWorkflowState
 
         d = dict(src_dict)
@@ -110,6 +146,30 @@ class OperationWorkflowAttentionEntry:
             reasons_item = check_operation_workflow_attention_entry_reasons_item(reasons_item_data)
 
             reasons.append(reasons_item)
+
+        _resolution_verifications = d.pop("resolution_verifications", UNSET)
+        resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+        if _resolution_verifications is not UNSET:
+            resolution_verifications = []
+            for resolution_verifications_item_data in _resolution_verifications:
+                resolution_verifications_item = OperationWorkflowResolutionVerification.from_dict(
+                    resolution_verifications_item_data
+                )
+
+                resolution_verifications.append(resolution_verifications_item)
+
+        awaiting_verification_count = d.pop("awaiting_verification_count", UNSET)
+
+        resolution_verification_count = d.pop("resolution_verification_count", UNSET)
+
+        _escalations = d.pop("escalations", UNSET)
+        escalations: list[OperationWorkflowBlockerEscalation] | Unset = UNSET
+        if _escalations is not UNSET:
+            escalations = []
+            for escalations_item_data in _escalations:
+                escalations_item = OperationWorkflowBlockerEscalation.from_dict(escalations_item_data)
+
+                escalations.append(escalations_item)
 
         _dependency_attention = d.pop("dependency_attention", UNSET)
         dependency_attention: list[OperationWorkflowRelatedInstance] | Unset = UNSET
@@ -134,6 +194,10 @@ class OperationWorkflowAttentionEntry:
             operation_id=operation_id,
             state=state,
             reasons=reasons,
+            resolution_verifications=resolution_verifications,
+            awaiting_verification_count=awaiting_verification_count,
+            resolution_verification_count=resolution_verification_count,
+            escalations=escalations,
             dependency_attention=dependency_attention,
             platform_tenant_id=platform_tenant_id,
         )

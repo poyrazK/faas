@@ -57,16 +57,25 @@ func TestBuildLocalOCIAppLayerBuildsCompanionLayers(t *testing.T) {
 
 	h := newFunctionTestHarness(t, api.PlanPro, "")
 	dep, err := h.store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: h.app.ID, Kind: state.DeploymentKindTarball, SourcePath: h.dep.SourcePath, Sidecars: sidecars,
+		AppID: h.app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployImaging, SourcePath: h.dep.SourcePath, Sidecars: sidecars,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep.RootfsPath = archive
+	if err := h.store.SetDeploymentRootfs(context.Background(), dep.ID, archive, "builder/companion-source", 1); err != nil {
+		t.Fatal(err)
+	}
+	dep, err = h.store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.dep = dep
 	handler := New(h.store, h.notif, mp, h.bld, "./init", h.appsR, silentLogger())
-	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, &h.dep, h.acct); err != nil {
 		t.Fatalf("buildLocalOCIAppLayer: %v", err)
+	}
+	if h.dep.ImageDigest != manifestDigest {
+		t.Fatalf("source digest = %q, want %q", h.dep.ImageDigest, manifestDigest)
 	}
 	rows, err := h.store.ListDeploymentSidecarLayers(context.Background(), h.dep.ID)
 	if err != nil {

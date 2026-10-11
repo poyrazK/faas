@@ -13,4 +13,6 @@ API_CONSUMER_USAGE_COMPLETENESS_RESPONSE_STATUS_VALUES: set[APIConsumerUsageComp
 def check_api_consumer_usage_completeness_response_status(value: str) -> APIConsumerUsageCompletenessResponseStatus:
     if value in API_CONSUMER_USAGE_COMPLETENESS_RESPONSE_STATUS_VALUES:
         return value
-    raise TypeError(f"Unexpected value {value!r}. Expected one of {API_CONSUMER_USAGE_COMPLETENESS_RESPONSE_STATUS_VALUES!r}")
+    raise TypeError(
+        f"Unexpected value {value!r}. Expected one of {API_CONSUMER_USAGE_COMPLETENESS_RESPONSE_STATUS_VALUES!r}"
+    )

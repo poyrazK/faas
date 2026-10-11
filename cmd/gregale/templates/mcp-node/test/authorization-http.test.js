@@ -65,7 +65,7 @@ async function catalog(endpoint, version, credential, method, field) {
 for (const version of ['2026-07-28', '2025-11-25']) test(`${version}: caller-specific discovery and independent execution policy`, { timeout: 10000 }, async t => {
   const { endpoint, logs } = await serve(t);
   const reader = await token('mcp:tools math:read');
-  const writer = await token('mcp:tools math:read math:write records:read reports:read');
+  const writer = await token('mcp:tools math:read math:write records:read reports:read', 'demo-caller-a');
   if (version === '2025-11-25') {
     const init = await request(endpoint, version, reader, 'initialize', { protocolVersion: version, clientInfo: { name: 'fixture', version: '1' }, capabilities: {} });
     assert.equal(init.response.status, 200);
@@ -84,13 +84,13 @@ for (const version of ['2026-07-28', '2025-11-25']) test(`${version}: caller-spe
   const welcome = await request(endpoint, version, reader, 'resources/read', { uri: 'greeting://welcome' });
   assert.equal(welcome.response.status, 200, welcome.text);
   assert.match(welcome.text, /Welcome to the Gregale MCP starter/);
-  const hiddenResource = await request(endpoint, version, reader, 'resources/read', { uri: 'customer://records/record-123' }, { 'Mcp-Name': 'welcome', 'Mcp-Method': 'prompts/list' });
+  const hiddenResource = await request(endpoint, version, reader, 'resources/read', { uri: 'customer://records/example-1' }, { 'Mcp-Name': 'welcome', 'Mcp-Method': 'prompts/list' });
   assert.equal(hiddenResource.response.status, 403);
   assert.match(hiddenResource.response.headers.get('www-authenticate'), /scope="mcp:tools records:read"/);
-  assert.ok(!hiddenResource.text.includes('record-123'));
-  const visibleResource = await request(endpoint, version, writer, 'resources/read', { uri: 'customer://records/record-123' });
+  assert.ok(!hiddenResource.text.includes('example-1'));
+  const visibleResource = await request(endpoint, version, writer, 'resources/read', { uri: 'customer://records/example-1' });
   assert.equal(visibleResource.response.status, 200);
-  assert.match(visibleResource.messages.find(message => message.id === 1).result.contents[0].text, /"recordId":"record-123"/);
+  assert.match(visibleResource.messages.find(message => message.id === 1).result.contents[0].text, /"recordId":"example-1"/);
 
   const hiddenPrompt = await request(endpoint, version, reader, 'prompts/get', { name: 'summarize', arguments: { text: 'private input' } });
   assert.equal(hiddenPrompt.response.status, 403);

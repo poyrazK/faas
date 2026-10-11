@@ -4,14 +4,67 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"golang.org/x/sys/unix"
 )
+
+func TestWaitForJobStartIsBoundedAndCancellationWins(t *testing.T) {
+	started := make(chan struct{})
+	signals := make(chan os.Signal, 1)
+	signals <- syscall.SIGTERM
+	if released, signal := waitForJobStart(started, signals, time.Second); released || signal != syscall.SIGTERM {
+		t.Fatalf("cancel-before-release = released %t, signal %v", released, signal)
+	}
+	if released, signal := waitForJobStart(make(chan struct{}), nil, time.Millisecond); released || signal != nil {
+		t.Fatalf("unreleased gate = released %t, signal %v", released, signal)
+	}
+	releasedGate := make(chan struct{})
+	close(releasedGate)
+	if released, signal := waitForJobStart(releasedGate, signals, time.Second); !released || signal != nil {
+		t.Fatalf("released gate = released %t, signal %v", released, signal)
+	}
+}
+
+func TestHeldJobStartControlAcknowledgesIdempotentRelease(t *testing.T) {
+	started := make(chan struct{})
+	signals := make(chan os.Signal, 2)
+	var once sync.Once
+	for attempt := 0; attempt < 2; attempt++ {
+		fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go handleJobStartControl(fds[1], started, signals, &once)
+		var frame [8]byte
+		binary.BigEndian.PutUint32(frame[:4], VsockJobStartMsgType)
+		if _, err := unix.Write(fds[0], frame[:]); err != nil {
+			_ = unix.Close(fds[0])
+			t.Fatal(err)
+		}
+		var ack [1]byte
+		if _, err := unix.Read(fds[0], ack[:]); err != nil || ack[0] != VsockJobControlAckOK {
+			_ = unix.Close(fds[0])
+			t.Fatalf("release attempt %d ack=%d err=%v", attempt, ack[0], err)
+		}
+		_ = unix.Close(fds[0])
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("start gate remained closed after acknowledged release")
+	}
+}
 
 func TestSuperviseJobCommandCapturesExit(t *testing.T) {
 	payload := superviseJobCommand(JobManifest{
@@ -71,5 +124,22 @@ func TestSuperviseJobCommandShipsStructuredOutcomeForFailedPartition(t *testing.
 	result, err := jobresult.Validate(payload.OutputManifest)
 	if err != nil || result.OutcomeCode != "invalid_record" || len(result.Artifacts) != 0 {
 		t.Fatalf("failed result manifest = %+v, err %v; want outcome without artifacts", result, err)
+	}
+}
+
+func TestBuildEnvForJobSecretOverridesJobEnvironment(t *testing.T) {
+	const key = "GREGALE_JOB_SECRET_PRECEDENCE_TEST"
+	t.Setenv(key, "system-value")
+	job := JobManifest{Env: map[string]string{key: "job-value", "FAAS_JOB": "0"}}
+	got := buildEnvForJobWithSecrets(job, map[string]string{key: "sealed-secret"})
+	values := map[string]string{}
+	for _, entry := range got {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[name] = value
+		}
+	}
+	if values[key] != "sealed-secret" || values["FAAS_JOB"] != "1" || values["FAAS_RUNTIME_KIND"] != "job" {
+		t.Fatalf("job environment precedence = secret %q, FAAS_JOB %q, runtime %q", values[key], values["FAAS_JOB"], values["FAAS_RUNTIME_KIND"])
 	}
 }

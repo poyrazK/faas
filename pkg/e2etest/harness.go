@@ -2913,16 +2913,9 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	if h.SignKeyPath == "" {
 		_ = writeScheddSignPub(t, h)
 	}
-	// guest/init lives at repo root in dev; tests don't run a real guest,
-	// but imaged still wants the path. Use a placeholder file so its
-	// existence check passes — the metal test will overwrite with the
-	// real binary if it needs to.
-	guestInit := os.Getenv("FAAS_GUEST_INIT")
-	if guestInit == "" {
-		guestInit = filepath.Join(tmp, "init")
-		if err := os.WriteFile(guestInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatalf("e2etest: write placeholder guest init: %v", err)
-		}
+	guestInit, err := harnessGuestInit(tmp, os.Getenv("FAAS_GUEST_INIT"), os.Getenv("FAAS_TEST_KERNEL"))
+	if err != nil {
+		t.Fatalf("e2etest: guest init prerequisite: %v", err)
 	}
 	env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
 	// imaged must sign with the same keypair schedd verifies against
@@ -2974,4 +2967,20 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
 	}
 	t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
+}
+
+// A placeholder is safe only when no guest kernel is configured. Otherwise
+// imaged can replace a real base's PID 1 with a script that immediately exits.
+func harnessGuestInit(tmp, configured, kernel string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	if kernel != "" {
+		return "", fmt.Errorf("FAAS_TEST_KERNEL requires an explicit FAAS_GUEST_INIT; refusing placeholder PID 1")
+	}
+	path := filepath.Join(tmp, "init")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }

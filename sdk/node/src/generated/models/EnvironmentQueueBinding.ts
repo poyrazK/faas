@@ -9,6 +9,9 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 export type EnvironmentQueueBinding = {
   queue_name: string;
   mode?: 'pull' | 'push';
+  /**
+   * worker or job, or http for push-only bindings on function workloads
+   */
   workload_class: string;
   enabled?: boolean;
   max_concurrency?: number;

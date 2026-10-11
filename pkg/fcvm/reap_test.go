@@ -412,6 +412,47 @@ func TestReapOrphanedLayerClones_ScansFlatDirs(t *testing.T) {
 	}
 }
 
+// Snapshot temp files in TMPDIR are instance-addressed too: an orphan is
+// reclaimed, a live owner's file stays, and legacy unnamed files are never
+// guessed at.
+func TestReapOrphanedLayerClones_ReapsInstanceAddressedSnapshotTemps(t *testing.T) {
+	tmp := t.TempDir()
+	old := time.Now().Add(-time.Hour)
+	write := func(name string) string {
+		t.Helper()
+		path := filepath.Join(tmp, name)
+		if err := os.WriteFile(path, []byte("snapshot"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	deadMem := write("faas-snap-" + idDead + "-ZBDMMW3EJBV6U4LEV6MJOAMVOK.mem")
+	deadBin := write("faas-snap-" + idDead + "-JT2VFCHWXLPRCN2TBWLFRTNAMK.bin")
+	liveBin := write("faas-snap-" + idLive + "-SUXUBSH4AMZO5AIIAVTHAA4HQT.bin")
+	legacy := []string{write("faas-snap-3798213616.bin"), write("faas-snap-FH4222JKECUJ3XRLRLFSYAABCT.bin"), write("base-amd64.ext4")}
+	rep, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{
+		Root:     t.TempDir(),
+		FlatDirs: []string{tmp},
+		IsLive:   func(_ context.Context, id string) (bool, error) { return id == idLive, nil },
+	})
+	if err != nil || rep.Reaped != 2 || rep.SkippedLive != 1 {
+		t.Fatalf("report = %+v err = %v, want two reaped, one live", rep, err)
+	}
+	for _, path := range []string{deadMem, deadBin} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("orphan %s still exists: %v", path, err)
+		}
+	}
+	for _, path := range append([]string{liveBin}, legacy...) {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed: %v", path, err)
+		}
+	}
+}
+
 func TestReapOrphanedLayerClones_RefusesUngatedSweep(t *testing.T) {
 	root := t.TempDir()
 	if _, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{Root: root}); err == nil {

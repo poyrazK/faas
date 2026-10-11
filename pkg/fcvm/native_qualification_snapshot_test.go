@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,31 @@ import (
 type qualificationCaptureVMM struct {
 	*recoveryVMMFixture
 	capture func(context.Context, Lease, SnapshotSpec) (SnapshotInfo, error)
+}
+
+type qualificationCohortVMM struct {
+	*qualificationCaptureVMM
+	produce func(context.Context, Lease, BackingIdentity) (SnapshotInfo, error)
+	resumes int
+}
+
+func (v *qualificationCohortVMM) captureEnvironmentQualificationSnapshot(ctx context.Context, lease Lease, backing BackingIdentity) (SnapshotInfo, error) {
+	return v.produce(ctx, lease, backing)
+}
+
+func (v *qualificationCohortVMM) ResumeVM(context.Context, Lease) error {
+	v.resumes++
+	return errors.New("cohort producer borrowed legacy resume")
+}
+
+type qualificationCohortStorage struct {
+	storage.StorageBackend
+	writes int
+}
+
+func (b *qualificationCohortStorage) Put(context.Context, string, io.Reader) error {
+	b.writes++
+	return errors.New("Manager borrowed ordinary publication around native producer")
 }
 
 // This is a portable producer fixture, not a supported native export adapter.
@@ -88,6 +114,31 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 	return m, j, frame, ctx, captureVMM, calls
 }
 
+// This bypasses the append-only writer to model on-disk tampering in readers'
+// refusal tests. Normal producers must use writeCapture.
+func writeTamperedNativeQualificationCapture(t *testing.T, j *nativeQualificationJournal, incoming nativeQualificationRecord, capture nativeQualificationCaptureRecord) {
+	t.Helper()
+	path, err := j.capturePath(incoming.Execution.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNativeJournalValue(path, capture); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCompleteNativeQualificationCapture(t *testing.T, j *nativeQualificationJournal, incoming nativeQualificationRecord, capture nativeQualificationCaptureRecord) {
+	t.Helper()
+	start := capture
+	start.CompletedAt, start.Info, start.Backing = time.Time{}, SnapshotInfo{}, BackingIdentity{}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.writeCapture(incoming, capture); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNativeQualificationSnapshotCompletesOriginalImmutableCapture(t *testing.T) {
 	m, j, frame, ctx, _, calls := qualificationCaptureFixture(t)
 	if _, err := m.WarmSnapshot(ctx, frame.InstanceID, SnapshotSpec{}); err == nil || calls.Load() != 0 {
@@ -101,7 +152,9 @@ func TestNativeQualificationSnapshotCompletesOriginalImmutableCapture(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proof != qualificationSnapshotProof(incoming, SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}) || proof.CaptureID == proof.NativeGeneration {
+	wantProof := qualificationSnapshotProof(incoming, SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288})
+	wantProof.FCVersion = m.fcVersion
+	if proof != wantProof || proof.CaptureID == proof.NativeGeneration {
 		t.Fatal("capture borrowed another identity or namespace")
 	}
 	for _, key := range []string{proof.StorageKey, proof.VMStateStorageKey, proof.DriveStorageKey, proof.BackingStorageKey} {
@@ -145,6 +198,114 @@ func TestNativeQualificationSnapshotRealBackendRemainsUnavailableBeforeEffects(t
 				t.Fatal("unsupported native backend recorded capture start", err)
 			}
 		})
+	}
+}
+
+func TestNativeQualificationSnapshotCohortOwnsResumeAndBackingPublication(t *testing.T) {
+	for _, outcome := range []string{"complete", "uncertain"} {
+		t.Run(outcome, func(t *testing.T) {
+			m, j, frame, ctx, original, legacy := qualificationCaptureFixture(t)
+			v := &qualificationCohortVMM{qualificationCaptureVMM: original}
+			canonical := m.storage
+			observed := &qualificationCohortStorage{StorageBackend: canonical}
+			m.storage = observed
+			productions := 0
+			v.produce = func(ctx context.Context, lease Lease, backing BackingIdentity) (SnapshotInfo, error) {
+				productions++
+				permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
+				if !ok || !sameNativePhysicalLease(permit.Physical.Lease, lease) || backing != m.instanceBacking[frame.InstanceID] {
+					return SnapshotInfo{}, errors.New("cohort lost original physical/backing authority")
+				}
+				if outcome == "uncertain" {
+					return SnapshotInfo{}, errors.New("modeled native capture outcome uncertain")
+				}
+				keys := qualificationSnapshotProof(permit.Incoming, SnapshotInfo{})
+				for _, key := range []string{keys.StorageKey, keys.VMStateStorageKey, keys.DriveStorageKey} {
+					if err := canonical.Put(ctx, key, bytes.NewReader([]byte("modeled original capture"))); err != nil {
+						return SnapshotInfo{}, err
+					}
+				}
+				body, err := json.Marshal(backing)
+				if err != nil {
+					return SnapshotInfo{}, err
+				}
+				if err := canonical.Put(ctx, keys.BackingStorageKey, bytes.NewReader(body)); err != nil {
+					return SnapshotInfo{}, err
+				}
+				return SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}, nil
+			}
+			m.vmm = v
+			proof, err := m.CaptureEnvironmentQualification(ctx, frame)
+			if (err == nil) != (outcome == "complete") || v.resumes != 0 || legacy.Load() != 0 || productions != 1 || observed.writes != 0 {
+				t.Fatal("Manager mixed native cohort with legacy effects", err, v.resumes, legacy.Load(), productions)
+			}
+			incoming, err := j.read(frame.InstanceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys := qualificationSnapshotProof(incoming, SnapshotInfo{})
+			body, readErr := m.storage.Get(ctx, keys.BackingStorageKey)
+			if body != nil {
+				_ = body.Close()
+			}
+			if (readErr == nil) != (outcome == "complete") {
+				t.Fatal("cohort did not retain its own backing publication", readErr)
+			}
+			capture, err := j.readCapture(incoming)
+			if err != nil || capture.CompletedAt.IsZero() != (outcome == "uncertain") {
+				t.Fatal("Manager promoted uncertain cohort", err)
+			}
+			if outcome == "complete" && proof.MemBytes != 1024 {
+				t.Fatal("Manager lost original cohort result")
+			}
+			if _, err := m.CaptureEnvironmentQualification(ctx, frame); (err == nil) != (outcome == "complete") || productions != 1 || v.resumes != 0 {
+				t.Fatal("duplicate delivery repeated native effects", err, productions, v.resumes)
+			}
+		})
+	}
+}
+
+func TestNativeQualificationCaptureJournalPinsVersionAtStartAndCompletion(t *testing.T) {
+	m, j, frame, _, _, _ := qualificationCaptureFixture(t)
+	incoming, err := j.read(frame.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := nativeQualificationCaptureRecord{Version: 1, InstanceID: frame.InstanceID, CaptureID: incoming.Generation,
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: m.fcVersion,
+		StartedAt: incoming.AcceptedAt.Add(time.Millisecond)}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	changedVersion := start
+	changedVersion.FCVersion = "1.8.0"
+	changedVersion.CompletedAt = start.StartedAt.Add(time.Millisecond)
+	changedVersion.Info = SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}
+	changedVersion.Backing = m.instanceBacking[frame.InstanceID]
+	if err := j.writeCapture(incoming, changedVersion); err == nil {
+		t.Fatal("capture completion was accepted without a durable start")
+	}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.writeCapture(incoming, changedVersion); err == nil {
+		t.Fatal("capture completion changed the Firecracker version pinned before effects")
+	}
+	completed := start
+	completed.CompletedAt = start.StartedAt.Add(time.Millisecond)
+	completed.Info = SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}
+	completed.Backing = m.instanceBacking[frame.InstanceID]
+	if err := j.writeCapture(incoming, completed); err != nil {
+		t.Fatal(err)
+	}
+	changedCompletion := completed
+	changedCompletion.Info.StoredBytes++
+	if err := j.writeCapture(incoming, changedCompletion); err == nil {
+		t.Fatal("completed capture receipt was rewritten")
+	}
+	got, err := j.readCapture(incoming)
+	if err != nil || got != completed {
+		t.Fatalf("capture receipt changed after completion: %+v %v", got, err)
 	}
 }
 

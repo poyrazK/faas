@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "endpoint": "/mcp",
+  "transport": "streamable-http",
+  "mode": "stateless",
+  "legacy": false,
+  "allowed_origins": [],
+  "tasks": {
+    "enabled": false,
+    "database_url_env": "DATABASE_URL",
+    "owner_key_env": "MCP_TASK_OWNER_KEY",
+    "namespace_env": "FAAS_APP_ID",
+    "ttl_seconds": 86400,
+    "poll_interval_ms": 2000,
+    "max_outstanding": 1000,
+    "max_outstanding_per_owner": 100
+  },
+  "auth": {
+    "mode": "open",
+    "tool_scopes": { "greet": [], "add": [], "build_report": [] },
+    "resource_scopes": {
+      "greeting://welcome": [],
+      "customer://records/{recordId}": []
+    },
+    "prompt_scopes": { "summarize": [] }
+  }
+}

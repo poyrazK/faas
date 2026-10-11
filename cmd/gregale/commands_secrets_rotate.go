@@ -162,24 +162,31 @@ func secretsRotate(args []string) int {
 			resp.Key, resp.RotatedAt, shortKid)
 	}
 	if *restart {
-		out, err := client.RestartAppFresh(context.Background(), *app)
+		wakeID, parked, err := restartAfterSecretChange(context.Background(), client, *app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
-		receipt.WakeID = out.WakeID
+		if parked {
+			if jsonOutput {
+				return writeReceipt()
+			}
+			PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			return 0
+		}
+		receipt.WakeID = wakeID
 		if !*waitForAck {
 			if jsonOutput {
 				return writeReceipt()
 			}
-			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", wakeID)
 			return 0
 		}
-		if strings.TrimSpace(out.WakeID) == "" {
+		if strings.TrimSpace(wakeID) == "" {
 			return printErr("Restart failed", errors.New("server accepted the restart without returning a wake_id"))
 		}
 		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
 		defer cancel()
-		instance, err := waitForAppWake(waitCtx, client, *app, out.WakeID, *timeout, 250*time.Millisecond)
+		instance, err := waitForAppWake(waitCtx, client, *app, wakeID, *timeout, 250*time.Millisecond)
 		if err != nil {
 			return printErr("Waiting for restarted app failed", err)
 		}
@@ -192,7 +199,7 @@ func secretsRotate(args []string) int {
 		if jsonOutput {
 			return writeReceipt()
 		}
-		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", out.WakeID, instance.ID)
+		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", wakeID, instance.ID)
 		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
 		return 0
 	}

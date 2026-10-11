@@ -8,6 +8,9 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
+    from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
+    from ..models.operation_workflow_step_state_sla_warning_percent import OperationWorkflowStepStateSlaWarningPercent
     from ..models.operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
     from ..models.operation_workflow_transition import OperationWorkflowTransition
 
@@ -28,6 +31,9 @@ class OperationWorkflowStep:
     label: str
     milestone: str
     position: int
+    blocker_escalations: OperationWorkflowStepBlockerEscalations | Unset = UNSET
+    """Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend
+    escalation for active workflows with known blocker age."""
     allow_reconciliation: bool | Unset = UNSET
     """Explicit permission for evidence-backed state reconciliation snapshots."""
     version: int | Unset = UNSET
@@ -36,6 +42,14 @@ class OperationWorkflowStep:
     """App-declared business state vocabulary pinned with this workflow mapping."""
     terminal_states: list[str] | Unset = UNSET
     """App-declared terminal states, which must be in states and cannot have outgoing transitions."""
+    state_sla_warning_percent: OperationWorkflowStepStateSlaWarningPercent | Unset = UNSET
+    """Optional whole-percent warning thresholds for states with SLA budgets. At the threshold a known current
+    visit becomes at_risk until its budget is breached. Omitted states have no early warning. All steps must agree;
+    publish a new workflow contract version when changing thresholds."""
+    state_sla_budget_seconds: OperationWorkflowStepStateSlaBudgetSeconds | Unset = UNSET
+    """Optional observed state visit budgets. Keys must be declared nonterminal states. All workflow steps in one
+    definition must agree; publish a new workflow contract version for budget changes. Metadata updates do not reset
+    a visit clock. Unknown retained entry times do not imply a breach."""
     state_stale_after_seconds: OperationWorkflowStepStateStaleAfterSeconds | Unset = UNSET
     """App-declared age thresholds in seconds for active states. Keys must be states and cannot be terminal states."""
     transitions: list[OperationWorkflowTransition] | Unset = UNSET
@@ -60,6 +74,10 @@ class OperationWorkflowStep:
 
         position = self.position
 
+        blocker_escalations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.blocker_escalations, Unset):
+            blocker_escalations = self.blocker_escalations.to_dict()
+
         allow_reconciliation = self.allow_reconciliation
 
         version = self.version
@@ -71,6 +89,14 @@ class OperationWorkflowStep:
         terminal_states: list[str] | Unset = UNSET
         if not isinstance(self.terminal_states, Unset):
             terminal_states = self.terminal_states
+
+        state_sla_warning_percent: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.state_sla_warning_percent, Unset):
+            state_sla_warning_percent = self.state_sla_warning_percent.to_dict()
+
+        state_sla_budget_seconds: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.state_sla_budget_seconds, Unset):
+            state_sla_budget_seconds = self.state_sla_budget_seconds.to_dict()
 
         state_stale_after_seconds: dict[str, Any] | Unset = UNSET
         if not isinstance(self.state_stale_after_seconds, Unset):
@@ -101,6 +127,8 @@ class OperationWorkflowStep:
                 "position": position,
             }
         )
+        if blocker_escalations is not UNSET:
+            field_dict["blocker_escalations"] = blocker_escalations
         if allow_reconciliation is not UNSET:
             field_dict["allow_reconciliation"] = allow_reconciliation
         if version is not UNSET:
@@ -109,6 +137,10 @@ class OperationWorkflowStep:
             field_dict["states"] = states
         if terminal_states is not UNSET:
             field_dict["terminal_states"] = terminal_states
+        if state_sla_warning_percent is not UNSET:
+            field_dict["state_sla_warning_percent"] = state_sla_warning_percent
+        if state_sla_budget_seconds is not UNSET:
+            field_dict["state_sla_budget_seconds"] = state_sla_budget_seconds
         if state_stale_after_seconds is not UNSET:
             field_dict["state_stale_after_seconds"] = state_stale_after_seconds
         if transitions is not UNSET:
@@ -124,6 +156,11 @@ class OperationWorkflowStep:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
+        from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
+        from ..models.operation_workflow_step_state_sla_warning_percent import (
+            OperationWorkflowStepStateSlaWarningPercent,
+        )
         from ..models.operation_workflow_step_state_stale_after_seconds import (
             OperationWorkflowStepStateStaleAfterSeconds,
         )
@@ -142,6 +179,13 @@ class OperationWorkflowStep:
 
         position = d.pop("position")
 
+        _blocker_escalations = d.pop("blocker_escalations", UNSET)
+        blocker_escalations: OperationWorkflowStepBlockerEscalations | Unset
+        if isinstance(_blocker_escalations, Unset):
+            blocker_escalations = UNSET
+        else:
+            blocker_escalations = OperationWorkflowStepBlockerEscalations.from_dict(_blocker_escalations)
+
         allow_reconciliation = d.pop("allow_reconciliation", UNSET)
 
         version = d.pop("version", UNSET)
@@ -149,6 +193,22 @@ class OperationWorkflowStep:
         states = cast(list[str], d.pop("states", UNSET))
 
         terminal_states = cast(list[str], d.pop("terminal_states", UNSET))
+
+        _state_sla_warning_percent = d.pop("state_sla_warning_percent", UNSET)
+        state_sla_warning_percent: OperationWorkflowStepStateSlaWarningPercent | Unset
+        if isinstance(_state_sla_warning_percent, Unset):
+            state_sla_warning_percent = UNSET
+        else:
+            state_sla_warning_percent = OperationWorkflowStepStateSlaWarningPercent.from_dict(
+                _state_sla_warning_percent
+            )
+
+        _state_sla_budget_seconds = d.pop("state_sla_budget_seconds", UNSET)
+        state_sla_budget_seconds: OperationWorkflowStepStateSlaBudgetSeconds | Unset
+        if isinstance(_state_sla_budget_seconds, Unset):
+            state_sla_budget_seconds = UNSET
+        else:
+            state_sla_budget_seconds = OperationWorkflowStepStateSlaBudgetSeconds.from_dict(_state_sla_budget_seconds)
 
         _state_stale_after_seconds = d.pop("state_stale_after_seconds", UNSET)
         state_stale_after_seconds: OperationWorkflowStepStateStaleAfterSeconds | Unset
@@ -181,10 +241,13 @@ class OperationWorkflowStep:
             label=label,
             milestone=milestone,
             position=position,
+            blocker_escalations=blocker_escalations,
             allow_reconciliation=allow_reconciliation,
             version=version,
             states=states,
             terminal_states=terminal_states,
+            state_sla_warning_percent=state_sla_warning_percent,
+            state_sla_budget_seconds=state_sla_budget_seconds,
             state_stale_after_seconds=state_stale_after_seconds,
             transitions=transitions,
             transitions_declared=transitions_declared,

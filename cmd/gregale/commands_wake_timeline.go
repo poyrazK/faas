@@ -184,8 +184,35 @@ func renderWakeTimelinePageWithOptions(w io.Writer, p api.WakeTimelineResponse, 
 			if breakdown := renderColdBootBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
+			if breakdown := renderPostRPCBreakdown(ev); breakdown != "" {
+				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
+			}
 		}
 	}
+}
+
+// renderPostRPCBreakdown renders schedd's steps between the vmmd RPC
+// returning and the instance publishing RUNNING. Older events omit them.
+func renderPostRPCBreakdown(ev api.WakeTimelineEvent) string {
+	if ev.Kind != "wake.boot_completed" {
+		return ""
+	}
+	parts := []string{}
+	for _, f := range []struct{ key, label string }{
+		{"post_rpc_pre_commit_ms", "pre_commit"},
+		{"post_rpc_stamp_join_ms", "stamp_join"},
+		{"post_rpc_lock_wait_ms", "lock_wait"},
+		{"post_rpc_publish_ms", "publish"},
+		{"post_rpc_finalize_ms", "finalize"},
+	} {
+		if ms, ok := timelineMillis(ev.Data[f.key]); ok {
+			parts = append(parts, fmt.Sprintf("%s=%dms", f.label, ms))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "post-rpc " + strings.Join(parts, " ")
 }
 
 // renderWakeTimingSummary renders the stable, customer-useful subset of wake

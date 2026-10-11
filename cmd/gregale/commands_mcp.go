@@ -45,7 +45,16 @@ func cmdMCP(args []string) int {
 		return cmdMCPResourceWatch(args[1:])
 	case "complete":
 		return cmdMCPComplete(args[1:])
-	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "doctor":
+		for i, arg := range args[1:] {
+			if arg == "--hosting" {
+				flags := append([]string{}, args[1:i+1]...)
+				flags = append(flags, args[i+2:]...)
+				return cmdMCPTasksReport(flags, true)
+			}
+		}
+		return cmdMCPRemote("doctor", args[1:])
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
@@ -55,13 +64,17 @@ func cmdMCP(args []string) int {
 func cmdMCPInit(args []string) int {
 	fs := newFlagSet("mcp-init", flag.ContinueOnError)
 	dir := fs.String("path", "", "empty destination directory")
+	language := fs.String("language", "node", "starter language: node, go, or python")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *dir == "" {
 		return printErr("MCP init", errors.New("--path is required"))
 	}
-	return cmdInit([]string{"--template", "mcp-node", "--path", *dir})
+	if *language != "node" && *language != "go" && *language != "python" {
+		return printErr("MCP init", errors.New("--language must be node, go, or python"))
+	}
+	return cmdInit([]string{"--template", "mcp-" + *language, "--path", *dir})
 }
 
 func mcpToken(env string) (string, error) {
@@ -548,7 +561,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 
 type mcpDeployOptions struct {
 	path, slug, profile, tokenEnv, secretsFile string
-	releasePolicy                              string
+	releasePolicy, idempotencyKey              string
 	timeout                                    int
 }
 
@@ -562,6 +575,10 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
+	// A failed submission's recovery hint tells the user to retry with this
+	// flag; without it the documented retry was an unknown-flag error
+	// (hunt #9 H9-63).
+	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -606,13 +623,7 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}
-	deployArgs := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
-	if o.profile != "" {
-		deployArgs = append(deployArgs, "--profile", o.profile)
-	}
-	if o.secretsFile != "" {
-		deployArgs = append(deployArgs, "--secrets-file", o.secretsFile)
-	}
+	deployArgs := mcpDeployArgs(o, dir)
 	// Preserve the existing ingress gate until the new app passes readiness.
 	var candidate api.DeploymentResponse
 	code := quietMCPDeploy(deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
@@ -622,9 +633,29 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
 }
 
+// mcpDeployArgs builds the underlying deploy invocation. The new app takes
+// no traffic until finishMCPDeploy has verified discovery.
+func mcpDeployArgs(o mcpDeployOptions, dir string) []string {
+	args := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
+	if o.profile != "" {
+		args = append(args, "--profile", o.profile)
+	}
+	if o.secretsFile != "" {
+		args = append(args, "--secrets-file", o.secretsFile)
+	}
+	if o.idempotencyKey != "" {
+		args = append(args, "--idempotency-key", o.idempotencyKey)
+	}
+	return args
+}
+
 func quietMCPDeploy(args []string, execution deployExecution) int {
+	return quietMCPDeployContext(context.Background(), args, execution)
+}
+
+func quietMCPDeployContext(ctx context.Context, args []string, execution deployExecution) int {
 	old := osStdout
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
-	return cmdDeployTarballToExisting(context.Background(), args, false, execution)
+	return cmdDeployTarballToExisting(ctx, args, false, execution)
 }

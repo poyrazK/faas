@@ -23,9 +23,10 @@ const nativeHostHelperScope = "gregale-host-helpers"
 type nativeHostHelperPurpose string
 
 const (
-	nativeHostHelperEffect         nativeHostHelperPurpose = "effect"
-	nativeHostHelperNetworkCleanup nativeHostHelperPurpose = "network_cleanup"
-	nativeHostHelperJailDevices    nativeHostHelperPurpose = "jail_devices"
+	nativeHostHelperEffect          nativeHostHelperPurpose = "effect"
+	nativeHostHelperNetworkCleanup  nativeHostHelperPurpose = "network_cleanup"
+	nativeHostHelperJailDevices     nativeHostHelperPurpose = "jail_devices"
+	nativeHostHelperSnapshotOutputs nativeHostHelperPurpose = "snapshot_outputs"
 )
 
 // One helper and all its descendants are born into this exclusive cgroup.
@@ -37,11 +38,12 @@ type nativeHostHelperGroup struct {
 }
 
 type nativeHostHelperRecord struct {
-	OwnerGeneration string                  `json:"owner_generation"`
-	Launch          nativeLaunchRecord      `json:"launch"`
-	Group           nativeHostHelperGroup   `json:"group"`
-	Purpose         nativeHostHelperPurpose `json:"purpose,omitempty"`
-	JailDevice      *nativeJailDeviceFrame  `json:"jail_device,omitempty"`
+	OwnerGeneration string                     `json:"owner_generation"`
+	Launch          nativeLaunchRecord         `json:"launch"`
+	Group           nativeHostHelperGroup      `json:"group"`
+	Purpose         nativeHostHelperPurpose    `json:"purpose,omitempty"`
+	JailDevice      *nativeJailDeviceFrame     `json:"jail_device,omitempty"`
+	SnapshotOutput  *nativeSnapshotOutputFrame `json:"snapshot_output,omitempty"`
 }
 
 func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
@@ -53,7 +55,10 @@ func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			fields, err = nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group", "purpose", "jail_device"})
 			if err != nil {
-				return err
+				fields, err = nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group", "purpose", "snapshot_output"})
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -81,7 +86,7 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	if !canonicalNativeHelperID(r.Launch.Generation) || !validNativeHelperGroupPath(r.Group.Path, r.Launch.Generation) || (r.Group.Inode == 0) != (r.Group.Device == 0) || r.Launch.Authorized && r.Group.Inode == 0 {
 		return errors.New("native helper: invalid cgroup ownership")
 	}
-	if r.Purpose != "" && r.Purpose != nativeHostHelperEffect && r.Purpose != nativeHostHelperNetworkCleanup && r.Purpose != nativeHostHelperJailDevices {
+	if r.Purpose != "" && r.Purpose != nativeHostHelperEffect && r.Purpose != nativeHostHelperNetworkCleanup && r.Purpose != nativeHostHelperJailDevices && r.Purpose != nativeHostHelperSnapshotOutputs {
 		return errors.New("native helper: unsupported command purpose")
 	}
 	if r.Purpose == nativeHostHelperNetworkCleanup && (!owner.Revoked || !owner.ExitConfirmed) {
@@ -89,6 +94,14 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	}
 	if (r.Purpose == nativeHostHelperJailDevices) != (r.JailDevice != nil) {
 		return errors.New("native helper: jail device scope is missing or exceeds command purpose")
+	}
+	if (r.Purpose == nativeHostHelperSnapshotOutputs) != (r.SnapshotOutput != nil) {
+		return errors.New("native helper: snapshot output scope exceeds purpose")
+	}
+	if r.SnapshotOutput != nil {
+		if err := r.SnapshotOutput.validate(owner, r.Launch); err != nil {
+			return err
+		}
 	}
 	if r.JailDevice != nil {
 		s := r.JailDevice.Scope
@@ -146,6 +159,13 @@ type nativeHostHelperJournal struct {
 	writeValue func(string, nativeHostHelperRecord) error
 	purpose    nativeHostHelperPurpose
 	deviceRoot string
+	// Only the full native capture producer uses this while retaining its
+	// original physical lock through helper join and source FD closure.
+	lockedOwner     *nativeLaunchRecord
+	snapshotPermit  *nativeSnapshotCapturePermit
+	snapshotFiles   [2]*os.File
+	snapshotRecords [2]nativeImageSourceRecord
+	snapshotRefs    [2]nativeImageReference
 }
 
 func (j *nativeHostHelperJournal) root(generation string) string {
@@ -238,20 +258,23 @@ func newNativeHostHelperCommand(helper string, argv []string) (*exec.Cmd, error)
 // cleanup can only delete the exact resources of an already retired VM lease.
 func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLaunchRecord, cmd *exec.Cmd) (record nativeHostHelperRecord, started bool, err error) {
 	deviceCommand := j.purpose == nativeHostHelperJailDevices
+	snapshotCommand := j.purpose == nativeHostHelperSnapshotOutputs
 	validCommand := cmd != nil && filepath.IsAbs(cmd.Path) && len(cmd.ExtraFiles) == 0 && j.groups != nil
 	if validCommand && deviceCommand {
 		validCommand = slices.Equal(cmd.Args, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"})
+	} else if validCommand && snapshotCommand {
+		validCommand = slices.Equal(cmd.Args, []string{"vmmd-host-helper", "--launch-snapshot-output-setup", "3"})
 	} else if validCommand {
 		validCommand = len(cmd.Args) >= 5 && cmd.Args[0] == "vmmd-host-helper" && cmd.Args[1] == "--launch-host-command" && cmd.Args[2] == "3" && cmd.Args[3] == "--" && filepath.IsAbs(cmd.Args[4])
 	}
 	if !validCommand {
 		return record, false, errors.New("native helper: command bypasses durable ownership")
 	}
-	lock, err := j.owner.lock(ctx, expected.Lease.Instance)
+	unlock, err := j.lockOwner(ctx, expected)
 	if err != nil {
 		return record, false, err
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, unlock()) }()
 	owner, err := j.owner.read(expected.Lease.Instance)
 	if err != nil {
 		return record, false, err
@@ -260,7 +283,7 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		return record, false, errors.New("native helper: launch owner changed or was revoked")
 	}
 	argv := cmd.Args
-	if !deviceCommand {
+	if !deviceCommand && !snapshotCommand {
 		argv = cmd.Args[4:]
 	}
 	if err := validateNativeHostHelperAuthority(owner, j.purpose, argv, cmd.Stdin != nil); err != nil {
@@ -281,14 +304,19 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		}
 	}
 	images := nativeImageSourceJournal{owner: j.owner, backend: j.owner.imageSources}
-	if err := images.require(ctx, owner, owner.Revoked); err != nil {
-		return record, false, err
+	if !snapshotCommand {
+		if err := images.require(ctx, owner, owner.Revoked); err != nil {
+			return record, false, err
+		}
+	} else if j.lockedOwner == nil || j.snapshotPermit == nil {
+		return record, false, errors.New("native snapshot handoff: held physical and output owners required")
 	}
 	tun := nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds}
 	if err := tun.require(owner, owner.Revoked); err != nil {
 		return record, false, err
 	}
 	var deviceInputs nativeJailDeviceInputs
+	var snapshotInputs *nativeSnapshotOutputInputs
 	if deviceCommand {
 		deviceInputs, err = j.prepareDeviceInputs(ctx, owner)
 		if deviceInputs != nil {
@@ -299,6 +327,15 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		}
 	} else if !owner.Revoked {
 		if err := j.requireDeviceReady(owner); err != nil {
+			return record, false, err
+		}
+	}
+	if snapshotCommand {
+		snapshotInputs, err = j.prepareSnapshotOutputInputs(ctx, owner)
+		if snapshotInputs != nil {
+			defer func() { err = errors.Join(err, snapshotInputs.Close()) }()
+		}
+		if err != nil {
 			return record, false, err
 		}
 	}
@@ -319,6 +356,14 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 			}
 		}
 		data, marshalErr := json.Marshal(record.JailDevice.Scope)
+		if marshalErr != nil {
+			return record, false, marshalErr
+		}
+		cmd.Args = append(cmd.Args, string(data))
+	}
+	if snapshotInputs != nil {
+		record.SnapshotOutput = &nativeSnapshotOutputFrame{Scope: snapshotInputs.scope}
+		data, marshalErr := json.Marshal(snapshotInputs.scope)
 		if marshalErr != nil {
 			return record, false, marshalErr
 		}
@@ -368,6 +413,9 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if deviceInputs != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, deviceInputs.Files()...)
 	}
+	if snapshotInputs != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, snapshotInputs.files...)
+	}
 	if err := ctx.Err(); err != nil {
 		return record, false, err
 	}
@@ -383,6 +431,12 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 			return record, true, err
 		}
 		record.JailDevice.InputsClosed = true
+	}
+	if snapshotInputs != nil {
+		if err := snapshotInputs.Close(); err != nil {
+			return record, true, err
+		}
+		record.SnapshotOutput.InputsClosed = true
 	}
 	startTime := j.startTime
 	if startTime == nil {
@@ -408,11 +462,11 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 // Retirement rereads durable ownership, then revokes before killing. Caller
 // cancellation or an uncertain kernel acknowledgement never erases the frame.
 func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLaunchRecord, id string) (err error) {
-	lock, err := j.owner.lock(ctx, expected.Lease.Instance)
+	unlock, err := j.lockOwner(ctx, expected)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, unlock()) }()
 	owner, err := j.owner.read(expected.Lease.Instance)
 	if err != nil {
 		return err
@@ -451,6 +505,12 @@ func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLau
 				return err
 			}
 			record.JailDevice.InputsClosed = true
+		}
+		if record.SnapshotOutput != nil && !record.SnapshotOutput.InputsClosed {
+			if err := nativeSnapshotOutputInputsRemoved(ctx, record.SnapshotOutput.Scope); err != nil {
+				return err
+			}
+			record.SnapshotOutput.InputsClosed = true
 		}
 		record.Launch.ExitConfirmed, record.Launch.ResourcesRemoved = true, true
 		return j.write(owner, record)
@@ -549,15 +609,18 @@ func (j *nativeHostHelperJournal) allRecords(ctx context.Context, current []nati
 			return nil, err
 		}
 		if owner.ResourcesRemoved || !ok {
+			if err := j.requireSnapshotMemoryDisposed(owner); err != nil {
+				return nil, err
+			}
 			for _, frame := range frames {
 				if !frame.Launch.ResourcesRemoved {
 					return nil, errors.New("native helper: finished VM ownership retains an unfinished helper")
 				}
-				if frame.JailDevice != nil {
+				if scope := nativeSnapshotNamespaceScope(frame); scope != nil {
 					if j.owner.jailDevices == nil {
 						return nil, errors.New("native jail device recovery: namespace proof backend unavailable")
 					}
-					if err := j.owner.jailDevices.NamespaceRemoved(ctx, frame.JailDevice.Scope); err != nil {
+					if err := j.owner.jailDevices.NamespaceRemoved(ctx, *scope); err != nil {
 						return nil, err
 					}
 				}
@@ -680,6 +743,10 @@ func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeH
 	case nativeHostHelperJailDevices:
 		if owner.Revoked || !owner.Authorized || owner.Lease.Networkless || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"}) {
 			return errors.New("native jail device setup: command lacks original authorized lease")
+		}
+	case nativeHostHelperSnapshotOutputs:
+		if owner.Revoked || !owner.Authorized || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", "--launch-snapshot-output-setup", "3"}) {
+			return errors.New("native snapshot handoff: command lacks original authorized lease")
 		}
 	default:
 		return errors.New("native helper: unsupported command purpose")

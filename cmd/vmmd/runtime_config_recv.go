@@ -88,6 +88,17 @@ type runtimeConfigReceiver struct {
 
 func (*runtimeConfigReceiver) Close() {}
 
+// A candidate's private restore may only use configuration frozen into its
+// reviewed request. Metadata requests fail closed until a scoped qualification
+// projection is implemented.
+func (r *runtimeConfigReceiver) handleQualificationRestoreStream(ctx context.Context, _ state.EnvironmentQualificationExecution, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "qualification_config_unavailable"})
+	return err
+}
+
 func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn) (string, error) {
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return "read", fmt.Errorf("runtime config set deadline: %w", err)

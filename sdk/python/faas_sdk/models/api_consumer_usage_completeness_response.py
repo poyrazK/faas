@@ -18,12 +18,12 @@ T = TypeVar("T", bound="APIConsumerUsageCompletenessResponse")
 
 @_attrs_define
 class APIConsumerUsageCompletenessResponse:
-    """Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."""
+    """Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-954)."""
 
     consumer_id: UUID
     status: APIConsumerUsageCompletenessResponseStatus
-    """gaps_detected means telemetry saw successful requests the ledger never billed; partial means telemetry confirms
-    only part of the billed requests; unverifiable means telemetry holds no evidence for them."""
+    """gaps_detected means telemetry saw successful requests the ledger never billed; partial means telemetry
+    confirms only part of the billed requests; unverifiable means telemetry holds no evidence for them."""
     checked_from: datetime.datetime
     """First whole UTC hour checked, clamped to request telemetry retention."""
     checked_until: datetime.datetime
