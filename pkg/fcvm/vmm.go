@@ -263,9 +263,14 @@ type restoreTimingBreakdown struct {
 	// PreBootJoinWaitMs is how long the restore waited for the concurrent
 	// pre-boot write after the rest of the jail was staged. Operator-only.
 	PreBootJoinWaitMs int64
-	StageSnapshotMs   int64
-	HelperMs          int64
-	StartJailerMs     int64
+	// StageWritableMs is the per-instance drive clone inside StageDrivesMs,
+	// and PreBootSkipped reports whether the pre-boot write was skipped
+	// because the captured drive already held it. Operator-only.
+	StageWritableMs int64
+	PreBootSkipped  bool
+	StageSnapshotMs int64
+	HelperMs        int64
+	StartJailerMs   int64
 	// NetworkWaitMs is how long the restore blocked on the overlapped wake
 	// network before startJailer (wake_network.go). Operator-only, like the
 	// TUN subphases: it is not on the customer wake.restore_breakdown event.
@@ -2032,6 +2037,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tSnapshotStart).Milliseconds(),
 		PreBootJoinWaitMs:    tPreBootJoined.Sub(tHelper).Milliseconds(),
+		StageWritableMs:      tStageWritable.Sub(tStageWritableStart).Milliseconds(),
+		PreBootSkipped:       preBootSkipped,
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
 		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
 		NetworkWaitMs:        networkWait.Milliseconds(),
@@ -2052,6 +2059,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
+	v.wakePhaseMetrics.ObserveRestorePhases(breakdown)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay

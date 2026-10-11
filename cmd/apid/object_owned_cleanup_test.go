@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -118,7 +119,7 @@ func ownedBucketCleanupSuite(t *testing.T, srv *server, st state.Store, account 
 					t.Fatal(err)
 				}
 				restarted := newServer(st, testLogger(), "gregale.dev", noopNotifier{}).WithObjectStorage(srv.objectStorage)
-				err = restarted.reconcileObjectBuckets(t.Context(), nil)
+				err = restarted.object.ReconcileObjectBuckets(t.Context(), nil)
 			} else {
 				err = srv.cleanupDevSessionBucket(t.Context(), buckets, bucket)
 			}

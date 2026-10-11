@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -270,8 +272,8 @@ func capturedCloneObjectWorkerSourceCredentials(t *testing.T, srv *server, store
 		if i == 0 {
 			credential.ManagedAppID, credential.ManagedScope, credential.ManagedPrefix = app.ID, "production", "FILES"
 			credential.Label, credential.Permission = "compute", "read_write"
-			values := objectStorageBindingSecretValues(objectStorageBindingSecretKeys("FILES"), srv.objectStorage.PublicEndpoint, srv.objectStorage.PublicRegion, bucket.Name, key, "production-only-key")
-			secrets, problem := srv.sealObjectStorageBindingValues(account, app, credential.ID, "production", values, api.MustLimitsFor(account.Plan))
+			values := object.ObjectStorageBindingSecretValues(object.ObjectStorageBindingSecretKeys("FILES"), srv.objectStorage.PublicEndpoint, srv.objectStorage.PublicRegion, bucket.Name, key, "production-only-key")
+			secrets, problem := srv.object.SealObjectStorageBindingValues(account, app, credential.ID, "production", values, api.MustLimitsFor(account.Plan))
 			if problem != nil {
 				t.Fatal(problem)
 			}

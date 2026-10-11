@@ -23,9 +23,9 @@ func apiRecoveryFixture(t *testing.T, target string) (entityHTTPEnv, state.App, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durableEntities = engine
+	e.s.durable.Engine = engine
 	selectors := entityRequest("recovery")
-	id, _, problem := e.s.durableEntityIdentity((&http.Request{}).WithContext(t.Context()), e.acct, app, selectors)
+	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, selectors)
 	if problem != nil {
 		t.Fatal(problem)
 	}
@@ -178,7 +178,7 @@ func TestEntityRecoveryRechecksMutationAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "app-disabled":
-				delete(e.s.durableEntityApps, app.ID)
+				delete(e.s.durable.Apps, app.ID)
 				want = http.StatusServiceUnavailable
 			case "suspended-customer":
 				tenant, _, err := e.store.CreatePlatformTenant(t.Context(), e.acct.ID, "recover-customer", "Recovery customer", 10)

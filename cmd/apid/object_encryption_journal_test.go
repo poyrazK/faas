@@ -16,7 +16,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -144,7 +146,7 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.executeObjectMultipartOperation(ctx, sessions, b, u); err != nil {
+	if err = s.object.ExecuteObjectMultipartOperation(ctx, sessions, b, u); err != nil {
 		t.Fatal(err)
 	}
 	u, err = sessions.GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
@@ -187,7 +189,7 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.executeObjectMultipartOperation(ctx, sessions, b, u); !errors.Is(err, objectstorage.ErrUnavailable) {
+	if err = s.object.ExecuteObjectMultipartOperation(ctx, sessions, b, u); !errors.Is(err, objectstorage.ErrUnavailable) {
 		t.Fatal("lost completion acknowledged", err)
 	}
 	u, err = sessions.GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
@@ -204,14 +206,14 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	}
 	// Reconstruct both the owner and native clients. Ingress is disabled by default.
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+	if err = fresh.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	done, err := st.(state.ObjectMultipartUploadStore).GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
 	if err != nil || done.State != state.ObjectMultipartCompleted || done.CompletionETag != `"completed"` || !state.ValidObjectVersionID(done.CompletionVersionID) || !done.Encryption.Equal(snapshot) {
 		t.Fatal("reconstruction failed", done, err)
 	}
-	raw, err := json.Marshal(viewMultipartUpload(done))
+	raw, err := json.Marshal(object.ViewMultipartUpload(done))
 	if err != nil || strings.Contains(string(raw), journalNativeKMSKey) || strings.Contains(string(raw), "native-private") {
 		t.Fatal("private enrollment escaped projection", string(raw), err)
 	}
@@ -352,7 +354,7 @@ func encryptionWriteRecovery(t *testing.T, s *server, st state.Store, account st
 	disabled, corrupt = true, true
 	mu.Unlock()
 	// Ordinary receipt/size matches cannot settle the deliberately corrupted proof.
-	if _, err = s.probeObjectUpload(t.Context(), c); err == nil {
+	if _, err = s.object.ProbeObjectUpload(t.Context(), c); err == nil {
 		t.Fatal("corrupted encrypted proof accepted")
 	}
 	mu.Lock()
@@ -367,7 +369,7 @@ func encryptionWriteRecovery(t *testing.T, s *server, st state.Store, account st
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.reconcileObjectUploads(t.Context(), nil); err != nil {
+	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	done, err := st.(state.ObjectTrackedUploadStore).GetObjectUploadReceipt(t.Context(), account.ID, b.AppID, "", "subject", c.ID)

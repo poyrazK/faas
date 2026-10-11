@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -23,7 +24,7 @@ func TestObjectMultipartConditionalRecovery(t *testing.T) {
 			setS3Flag(t, e, true)
 			bucket := reserveRecoveryBucket(t, e)
 			ctx := t.Context()
-			if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+			if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			qualifyObjectAccounting(t, e, bucket.ID)
@@ -60,7 +61,7 @@ func TestObjectMultipartConditionalRecovery(t *testing.T) {
 			time.Sleep(1100 * time.Millisecond)
 			setS3Flag(t, e, false)
 			provider.multipartErr = cause
-			if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+			if err = e.s.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			got, err := uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID)
@@ -81,7 +82,7 @@ func TestObjectMultipartConditionalRecovery(t *testing.T) {
 					t.Fatal("rejection still completing", got)
 				}
 				provider.multipartErr = nil
-				if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+				if err = e.s.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 					t.Fatal(err)
 				}
 				got, err = uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID)

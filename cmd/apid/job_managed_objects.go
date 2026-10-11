@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -61,36 +63,36 @@ func (s *server) loadJobManagedObject(w http.ResponseWriter, r *http.Request, ac
 			"Invalid object URI", err.Error()))
 		return state.ObjectBucket{}, nil, "", false
 	}
-	if !s.objectStorageEnabled() {
-		bucketProblem(w, errObjectStorageDisabled)
+	if !s.object.ObjectStorageEnabled() {
+		object.BucketProblem(w, object.ErrObjectStorageDisabled)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	if s.objectStorage.Accounting.GatewaySafety() {
 		// These paths read directly and can return reusable native URLs;
 		// neither is covered by the prospective gateway safety meter.
-		bucketProblem(w, objectstorage.ErrUnsupported)
+		object.BucketProblem(w, objectstorage.ErrUnsupported)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	st, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		object.BucketProblem(w, objectstorage.ErrUnavailable)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	bucket, err := st.GetObjectBucket(r.Context(), acct.ID, appID, bucketID)
 	if err != nil {
-		bucketProblem(w, err)
+		object.BucketProblem(w, err)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	if bucket.State != "ready" {
-		bucketProblem(w, state.ErrConflict)
+		object.BucketProblem(w, state.ErrConflict)
 		return state.ObjectBucket{}, nil, "", false
 	}
-	if !s.authorizeBucketData(w, r, bucket, state.ObjectBucketPermissionRead) {
+	if !s.object.AuthorizeBucketData(w, r, bucket, state.ObjectBucketPermissionRead) {
 		return state.ObjectBucket{}, nil, "", false
 	}
 	backend, err := s.objectStorage.Resolve(bucket.BackendID, bucket.BackendFingerprint)
 	if err != nil {
-		bucketProblem(w, err)
+		object.BucketProblem(w, err)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	return bucket, backend.Provider, key, true
@@ -216,7 +218,7 @@ func (s *server) downloadJobArtifact(w http.ResponseWriter, r *http.Request, acc
 	}
 	reader, ok := provider.(objectstorage.ObjectReader)
 	if !ok {
-		bucketProblem(w, objectstorage.ErrUnsupported)
+		object.BucketProblem(w, objectstorage.ErrUnsupported)
 		return
 	}
 	size, err := verifyJobManagedArtifact(r.Context(), reader, bucket.PhysicalName, key, *artifact)
@@ -225,18 +227,18 @@ func (s *server) downloadJobArtifact(w http.ResponseWriter, r *http.Request, acc
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Output artifact verification failed", "the object bytes differ from the task's output manifest"))
 		} else {
-			bucketProblem(w, err)
+			object.BucketProblem(w, err)
 		}
 		return
 	}
 	sign := objectstorage.SignRequest{Method: http.MethodGet, Key: key, ExpiresIn: api.JobArtifactDownloadURLExpiresSec}
-	if err := s.admitObjectURL(r.Context(), bucket, sign); err != nil {
-		bucketProblem(w, err)
+	if err := s.object.AdmitObjectURL(r.Context(), bucket, sign); err != nil {
+		object.BucketProblem(w, err)
 		return
 	}
 	signed, err := provider.Presign(r.Context(), bucket.PhysicalName, sign)
 	if err != nil {
-		bucketProblem(w, err)
+		object.BucketProblem(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.JobArtifactDownloadResponse{

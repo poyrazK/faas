@@ -8,7 +8,9 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -129,10 +131,10 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 		if len(objectSecretKeys) == 0 {
 			continue
 		}
-		if !s.objectStorageEnabled() {
+		if !s.object.ObjectStorageEnabled() {
 			return nil, errors.New("object storage is unavailable for binding cloning")
 		}
-		if !objectStorageSecretSealReady() {
+		if !s.object.ObjectStorageSecretSealReady() {
 			return nil, errors.New("object storage secret sealing is unavailable for binding cloning")
 		}
 		bucketStore, bucketOK := s.store.(state.ObjectBucketStore)
@@ -173,7 +175,7 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 					return nil, errIsolatedObjectStorageCloneUnsupported
 				}
 			}
-			expected := objectStorageBindingSecretKeys(foundCredential.ManagedPrefix)
+			expected := object.ObjectStorageBindingSecretKeys(foundCredential.ManagedPrefix)
 			for _, key := range []string{expected.Endpoint, expected.Region, expected.Bucket, expected.AccessKeyID, expected.SecretAccessKey, expected.AddressingStyle} {
 				if !keys[key] {
 					return nil, fmt.Errorf("object storage binding %q is missing a managed secret", credentialID)
@@ -327,7 +329,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 	if !ok {
 		return errors.New("object storage binding cloning is unavailable")
 	}
-	if !objectStorageSecretSealReady() {
+	if !s.object.ObjectStorageSecretSealReady() {
 		return errors.New("object storage secret sealing is unavailable")
 	}
 	recipient := setSecretRecipient()
@@ -340,13 +342,13 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 		return fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
 	credentialID := uuid.NewString()
-	values := objectStorageBindingSecretValues(
-		objectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix),
+	values := object.ObjectStorageBindingSecretValues(
+		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix),
 		s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion,
 		plan.bucket.Name, accessKeyID, secretAccessKey,
 	)
 	limits := api.MustLimitsFor(acct.Plan)
-	secrets, problem := s.sealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
+	secrets, problem := s.object.SealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
 	if problem != nil {
 		return errors.New(problem.Detail)
 	}

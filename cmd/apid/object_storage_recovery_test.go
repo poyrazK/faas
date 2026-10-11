@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -64,7 +66,7 @@ func TestObjectStorageHotFlag(t *testing.T) {
 	}
 	// A persisted true flag alone must never construct a provider or enable access.
 	e.s.WithObjectStorage(nil)
-	if e.s.objectStorageEnabled() {
+	if e.s.object.ObjectStorageEnabled() {
 		t.Fatal("enabled without registry")
 	}
 }
@@ -93,14 +95,14 @@ func TestObjectStorageRecoveryAndDisabledCleanup(t *testing.T) {
 	e.s.WithObjectStorage(objectRegistry(t, a, b, "external"))
 	row := reserveRecoveryBucket(t, e)
 	ctx := context.Background()
-	if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+	if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(a.created) != 0 {
 		t.Fatal("provisioned while disabled")
 	}
 	setS3Flag(t, e, true)
-	if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+	if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := e.store.GetObjectBucket(ctx, row.AccountID, row.AppID, row.ID)
@@ -115,7 +117,7 @@ func TestObjectStorageRecoveryAndDisabledCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	setS3Flag(t, e, false)
-	if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+	if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.store.GetObjectBucket(ctx, row.AccountID, row.AppID, row.ID); !errors.Is(err, state.ErrNotFound) {
@@ -135,15 +137,15 @@ func TestObjectStorageRecoveryPersistsCooldown(t *testing.T) {
 			setS3Flag(t, e, true)
 			row := reserveRecoveryBucket(t, e)
 			ctx := context.Background()
-			if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+			if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			got, err := e.store.GetObjectBucket(ctx, row.AccountID, row.AppID, row.ID)
-			code, delay := objectRetryPolicy(cause, 1)
+			code, delay := object.ObjectRetryPolicy(cause, 1)
 			if err != nil || got.AttemptCount != 1 || got.LastErrorCode != code || time.Until(got.RetryAt) < delay-time.Second || got.LeaseToken != "" {
 				t.Fatal(got, err)
 			}
-			if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+			if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			if len(a.created) != 1 {
@@ -160,7 +162,7 @@ func TestObjectStorageMultipartRecoveryAbortsExpiredUploadWhileDisabled(t *testi
 	setS3Flag(t, e, true)
 	bucket := reserveRecoveryBucket(t, e)
 	ctx := context.Background()
-	if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+	if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +184,7 @@ func TestObjectStorageMultipartRecoveryAbortsExpiredUploadWhileDisabled(t *testi
 	}
 
 	setS3Flag(t, e, false)
-	if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, upload.ID)
@@ -207,7 +209,7 @@ func TestObjectStorageRetryPolicy(t *testing.T) {
 		{objectstorage.ErrConfiguration, 1, "configuration", time.Hour},
 		{objectstorage.ErrInvalid, 1, "invalid", time.Hour},
 	} {
-		code, delay := objectRetryPolicy(tt.err, tt.attempt)
+		code, delay := object.ObjectRetryPolicy(tt.err, tt.attempt)
 		if code != tt.code || delay != tt.delay {
 			t.Fatal(code, delay, tt)
 		}
@@ -240,7 +242,7 @@ func TestObjectStorageRecoveryStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	done := make(chan struct{})
-	go func() { e.s.runObjectStorageRecovery(ctx); close(done) }()
+	go func() { e.s.object.RunObjectStorageRecovery(ctx); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -263,7 +265,7 @@ func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
 			setS3Flag(t, e, true)
 			bucket := reserveRecoveryBucket(t, e)
 			ctx := t.Context()
-			if err := e.s.reconcileObjectBuckets(ctx, nil); err != nil {
+			if err := e.s.object.ReconcileObjectBuckets(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			qualifyObjectAccounting(t, e, bucket.ID)
@@ -300,7 +302,7 @@ func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
 			if tc.latePart {
 				provider.multipartParts = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, SizeBytes: 30, ETag: "etag"}}}
 			}
-			if err = e.s.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+			if err = e.s.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			got, err := uploads.GetObjectMultipartUpload(ctx, bucket.AccountID, bucket.AppID, bucket.ID, u.ID)

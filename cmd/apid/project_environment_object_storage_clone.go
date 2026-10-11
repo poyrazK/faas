@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -65,7 +67,7 @@ func (s *server) ensureProjectEnvironmentObjectStorageCloneBucket(
 		})
 	}
 	if reserved.State == "provisioning" {
-		reserved, err = s.provisionBucket(ctx, store, reserved)
+		reserved, err = s.object.ProvisionBucket(ctx, store, reserved)
 		if err != nil {
 			return state.ObjectBucket{}, err
 		}
@@ -122,10 +124,10 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	plan projectEnvironmentBindingClone,
 	cleanup *[]func(context.Context) error,
 ) (string, int, error) {
-	if !s.objectStorageEnabled() {
+	if !s.object.ObjectStorageEnabled() {
 		return "", 0, objectstorage.ErrUnavailable
 	}
-	if !objectStorageSecretSealReady() {
+	if !s.object.ObjectStorageSecretSealReady() {
 		return "", 0, errors.New("object storage secret sealing is unavailable")
 	}
 	backend, err := s.objectStorage.Resolve(plan.bucket.BackendID, plan.bucket.BackendFingerprint)
@@ -156,12 +158,12 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 		return "", 0, fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
 	credentialID := uuid.NewString()
-	values := objectStorageBindingSecretValues(
-		objectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
+	values := object.ObjectStorageBindingSecretValues(
+		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
 		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
 	)
 	limits := api.MustLimitsFor(acct.Plan)
-	secrets, problem := s.sealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
+	secrets, problem := s.object.SealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
 	if problem != nil {
 		return "", 0, errors.New(problem.Detail)
 	}
@@ -217,5 +219,5 @@ func (s *server) deleteProjectEnvironmentObjectStorageCloneBucket(ctx context.Co
 	if err != nil {
 		return err
 	}
-	return s.executeBucketOperation(ctx, buckets, claimed)
+	return s.object.ExecuteBucketOperation(ctx, buckets, claimed)
 }

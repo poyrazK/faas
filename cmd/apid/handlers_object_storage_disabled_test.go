@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
@@ -28,7 +29,7 @@ func TestCreateBucketWhenObjectStorageDisabledSaysNotEnabled(t *testing.T) {
 	if problem.Code != "object_storage_unavailable" || !strings.Contains(problem.Detail, "not enabled on this Gregale installation") || strings.Contains(problem.Detail, "retry later") {
 		t.Fatalf("problem = %+v", problem)
 	}
-	if !errors.Is(errObjectStorageDisabled, objectstorage.ErrUnavailable) {
+	if !errors.Is(object.ErrObjectStorageDisabled, objectstorage.ErrUnavailable) {
 		t.Fatal("disabled sentinel must still match objectstorage.ErrUnavailable")
 	}
 }

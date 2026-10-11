@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -862,7 +863,7 @@ func (s *server) applyProjectEnvironmentPromotionRollback(ctx context.Context, a
 				errors.New("workload no longer belongs to the project"))
 		}
 		rollbackStatus, restoredID, rollbackErr := rollbackProjectEnvironmentPromotionWorkload(
-			s.validatorPromotionContext(ctx), s.store, promotion, workload, app.ID)
+			s.durable.PromotionContext(ctx), s.store, promotion, workload, app.ID)
 		if rollbackErr != nil {
 			return s.recordProjectEnvironmentPromotionRollbackFailure(ctx, acct, promotion, workload, rollbackErr)
 		}
@@ -971,7 +972,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 			fmt.Errorf("%w: active target release graph changed after promotion", state.ErrConflict))
 	}
 	if previousGraph != nil {
-		if err := s.checkProjectValidatorMembers(ctx, previousGraph.Members); err != nil {
+		if err := s.durable.CheckProjectValidatorMembers(ctx, previousGraph.Members); err != nil {
 			return err
 		}
 		var restored state.ProjectReleaseSet
@@ -1127,7 +1128,7 @@ func rollbackProjectEnvironmentPromotionWorkload(ctx context.Context, store stat
 		if candidate.ID == "" || !hasCurrent || current.ID != candidate.ID || candidate.Status != state.DeployLive {
 			return "", "", fmt.Errorf("%w: target changed after promotion; refusing to overwrite it", state.ErrConflict)
 		}
-		if err := transferPromotionValidator(ctx, previous, previous.ID); err != nil {
+		if err := durable.TransferPromotionValidator(ctx, previous, previous.ID); err != nil {
 			return "", "", err
 		}
 		if err := store.MarkDeploymentLive(ctx, previous.ID); err != nil {
@@ -1221,7 +1222,7 @@ func validateProjectEnvironmentPromotionResume(wire projectEnvironmentPromotionT
 }
 
 func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload, plan projectEnvironmentPromotionPlan) (api.ProjectEnvironmentPromotionResponse, *api.Problem) {
-	ctx = s.validatorPromotionContext(ctx)
+	ctx = s.durable.PromotionContext(ctx)
 	if promotion.Status == "succeeded" {
 		return projectEnvironmentPromotionResponse(promotion, workloads), nil
 	}
@@ -1243,7 +1244,7 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 		if existing, found, err := projectEnvironmentPromotionDeployment(ctx, s.store, plan.Apps[workload.WorkloadSlug].ID, promotion.ToEnvironment, promotion.ID); err != nil {
 			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not inspect environment promotion checkpoint")
 		} else if found {
-			if err := s.checkProjectValidatorMembers(ctx, []state.ProjectReleaseMember{{AppID: existing.AppID, DeploymentID: existing.ID}}); err != nil {
+			if err := s.durable.CheckProjectValidatorMembers(ctx, []state.ProjectReleaseMember{{AppID: existing.AppID, DeploymentID: existing.ID}}); err != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("validator binding unavailable for resumed promotion")
 			}
 			updated, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, "")
@@ -1349,7 +1350,7 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 		return promotion, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Release graph promotion is incomplete", "the staged target does not include every project workload")
 	}
-	if err := s.checkProjectValidatorMembers(ctx, members); err != nil {
+	if err := s.durable.CheckProjectValidatorMembers(ctx, members); err != nil {
 		return promotion, api.ErrCapacity("validator artifact preflight blocked graph publication")
 	}
 	active, problem := s.activeProjectEnvironmentReleaseSet(ctx, acct.ID, promotion.ProjectID, promotion.ToEnvironment)
@@ -1710,7 +1711,7 @@ func promoteProjectEnvironmentDeploymentDark(ctx context.Context, store state.St
 }
 
 func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool, configuration ...state.ProjectEnvironmentPromotionWorkloadSpecInput) (state.Deployment, error) {
-	if err := transferPromotionValidator(ctx, source, ""); err != nil {
+	if err := durable.TransferPromotionValidator(ctx, source, ""); err != nil {
 		return state.Deployment{}, err
 	}
 	rootfsPath, rootfsKey, rootfsBytes := source.RootfsPath, source.RootfsKey, source.RootfsBytes
@@ -1781,7 +1782,7 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 			return state.Deployment{}, err
 		}
 	}
-	if err := transferPromotionValidator(ctx, source, created.ID); err != nil {
+	if err := durable.TransferPromotionValidator(ctx, source, created.ID); err != nil {
 		return state.Deployment{}, err
 	}
 

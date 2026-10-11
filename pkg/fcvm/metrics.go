@@ -231,6 +231,20 @@ type WakePhaseMetrics struct {
 	// exists in code and never appears in a scrape.
 	materializeSeconds *prometheus.HistogramVec
 	materializeBytes   *prometheus.CounterVec
+	// restorePhases / preBootFiles expose the restore sub-phases that only
+	// reached a Debug log ("restore timing breakdown"). Production-us hunt #9
+	// measured stage_drives 52-61 ms and stage_snapshot 20-24 ms per restore
+	// against ~0 on the metal harness, and could not attribute them.
+	restorePhases *prometheus.HistogramVec
+	preBootFiles  *prometheus.CounterVec
+}
+
+// restorePhaseNames is the closed phase label set of
+// vmmd_restore_phase_duration_seconds, in restore order.
+var restorePhaseNames = []string{
+	"restore_gate_wait", "chroot", "resolve_images", "stage_drives", "stage_writable",
+	"stage_pre_boot_files", "pre_boot_join_wait", "stage_snapshot", "helper",
+	"network_wait", "start_jailer", "bind_tun", "load_snapshot", "resume_hook", "wait_ready",
 }
 
 // NewWakePhaseMetrics registers vmmd_wake_phase_duration_seconds on
@@ -276,8 +290,47 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 			m.materializeBytes.WithLabelValues(artifact, source)
 		}
 	}
-	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes)
+	m.restorePhases = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "vmmd_restore_phase_duration_seconds",
+		Help:    "Snapshot restore sub-phase durations, operator-only (the customer wake.restore_breakdown event carries a subset). stage_writable is the per-instance drive clone inside stage_drives; pre_boot_join_wait and network_wait are the critical-path waits on the concurrent pre-boot write and wake network.",
+		Buckets: []float64{0.001, 0.0025, 0.005, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0},
+	}, []string{"phase"})
+	m.preBootFiles = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "vmmd_restore_pre_boot_files_total",
+		Help: "Restores by pre-boot file staging outcome: skipped (the captured drive already held the files) or written.",
+	}, []string{"outcome"})
+	for _, phase := range restorePhaseNames {
+		m.restorePhases.WithLabelValues(phase)
+	}
+	for _, outcome := range []string{"skipped", "written"} {
+		m.preBootFiles.WithLabelValues(outcome)
+	}
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.preBootFiles)
 	return m
+}
+
+// ObserveRestorePhases records one restore's sub-phases. Safe on a nil
+// receiver.
+func (m *WakePhaseMetrics) ObserveRestorePhases(b restoreTimingBreakdown) {
+	if m == nil {
+		return
+	}
+	values := map[string]int64{
+		"restore_gate_wait": b.RestoreGateWaitMs, "chroot": b.ChrootMs, "resolve_images": b.ResolveImagesMs,
+		"stage_drives": b.StageDrivesMs, "stage_writable": b.StageWritableMs,
+		"stage_pre_boot_files": b.StagePreBootFilesMs, "pre_boot_join_wait": b.PreBootJoinWaitMs,
+		"stage_snapshot": b.StageSnapshotMs, "helper": b.HelperMs, "network_wait": b.NetworkWaitMs,
+		"start_jailer": b.StartJailerMs, "bind_tun": b.BindTunMs, "load_snapshot": b.LoadSnapshotMs,
+		"resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
+	}
+	for _, phase := range restorePhaseNames {
+		m.restorePhases.WithLabelValues(phase).Observe(float64(values[phase]) / 1000.0)
+	}
+	outcome := "written"
+	if b.PreBootSkipped {
+		outcome = "skipped"
+	}
+	m.preBootFiles.WithLabelValues(outcome).Inc()
 }
 
 // ObserveMaterialize records one resolved restore input. artifact and source

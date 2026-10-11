@@ -282,6 +282,14 @@ spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synth
 adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet over docs/adr/DUPLICATE_NUMBERS_BASELINE.txt)
 	bash scripts/ci/check_adr_number_uniqueness.sh
 
+.PHONY: apid-size-check
+apid-size-check: ## Reject growth of cmd/apid non-test code past scripts/ci/apid_size_baseline.txt (ADR-977)
+	bash scripts/ci/check_apid_size.sh
+
+.PHONY: apid-size-check-test
+apid-size-check-test: ## Exercise the cmd/apid size gate against synthetic packages
+	bash scripts/ci/check_apid_size_test.sh
+
 .PHONY: adr-number-uniqueness-check-test
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
@@ -698,7 +706,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check apid-size-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1327,7 +1335,8 @@ data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter insta
 
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls
-	@node --test tests/data-api/staging/canary.test.mjs
+	@npm run build --prefix sdk/data
+	@node --test tests/data-api/staging/*.test.mjs
 
 data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
 	@bash scripts/ci/run-data-api-staging-canary.sh

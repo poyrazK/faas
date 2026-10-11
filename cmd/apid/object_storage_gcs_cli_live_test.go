@@ -19,6 +19,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -159,7 +160,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		if e = st.ClaimObjectInventory(ctx, b.ID, "initial"); e != nil {
 			t.Fatal(e)
 		}
-		if e = srv.scanObjectInventory(ctx, st, b, "initial"); e != nil {
+		if e = srv.object.ScanObjectInventory(ctx, st, b, "initial"); e != nil {
 			t.Fatal("real initial GCS inventory failed", e)
 		}
 	}
@@ -173,19 +174,19 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	propagated := time.Now().UTC().Add(-4 * time.Minute)
 	st.SetClockForTest(func() time.Time { return propagated })
-	if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	st.SetClockForTest(time.Now)
-	if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,7 +236,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		job := run(t, "bucket", "reconcile", "start", app.Slug, b.ID)
 		var id string
 		_ = json.Unmarshal(job["id"], &id)
-		if err := srv.reconcileObjectCapacity(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		status := run(t, "bucket", "reconcile", "status", app.Slug, b.ID, id)
@@ -247,11 +248,11 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		run(t, "bucket", "versioning", "status", app.Slug, b.ID)
 		run(t, "bucket", "encryption", "status", app.Slug, b.ID)
 		run(t, "bucket", "encryption", "AES256", app.Slug, b.ID)
-		if err := srv.reconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		run(t, "bucket", "encryption", "clear", app.Slug, b.ID)
-		if err := srv.reconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		credential, err := client.CreateObjectS3Credential(ctx, app.Slug, b.ID, api.CreateObjectS3CredentialRequest{Label: "copy-grant", Permission: "read_write"})
@@ -464,19 +465,19 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		st.SetClockForTest(func() time.Time { return past })
 		defer st.SetClockForTest(time.Now)
 		run(t, "bucket", "versioning", "enable", app.Slug, b.ID)
-		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		propagated := time.Now().UTC().Add(-4 * time.Minute)
 		st.SetClockForTest(func() time.Time { return propagated })
-		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := srv.reconcileObjectCapacity(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		st.SetClockForTest(time.Now)
-		if err := srv.reconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		// Real GCS requires propagation before replacing a versioned object.

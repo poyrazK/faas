@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -274,7 +275,7 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	if _, err = client.PutObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID, selection); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	var gateway http.Handler
@@ -412,7 +413,7 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.reconcileObjectUploads(t.Context(), nil); err != nil {
+	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := st.(state.ObjectTrackedGatewayCopyStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", credential.ID, lostID)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -89,7 +90,7 @@ func (s *server) operationArtifactObject(ctx context.Context, op state.Operation
 	if app != op.AppID {
 		return state.ObjectBucket{}, nil, "", state.ErrNotFound
 	}
-	if !s.objectStorageEnabled() {
+	if !s.object.ObjectStorageEnabled() {
 		return state.ObjectBucket{}, nil, "", objectstorage.ErrUnavailable
 	}
 	store, ok := s.store.(state.ObjectBucketStore)
@@ -120,7 +121,7 @@ func (s *server) verifyOperationArtifact(ctx context.Context, op state.Operation
 		if err != nil {
 			return nil, err
 		}
-		if err := s.admitObjectURL(ctx, bucket, objectstorage.SignRequest{Method: http.MethodGet, Key: key}); err != nil {
+		if err := s.object.AdmitObjectURL(ctx, bucket, objectstorage.SignRequest{Method: http.MethodGet, Key: key}); err != nil {
 			return nil, err
 		}
 		return reader.ReadObject(ctx, bucket.PhysicalName, key)
@@ -194,7 +195,7 @@ func writeOperationArtifactError(w http.ResponseWriter, err error) {
 		writeOperationError(w, err)
 		return
 	}
-	bucketProblem(w, err)
+	object.BucketProblem(w, err)
 }
 
 func (s *server) runtimeOperation(w http.ResponseWriter, r *http.Request) (state.Operation, state.OperationExecutionAuthority, bool) {

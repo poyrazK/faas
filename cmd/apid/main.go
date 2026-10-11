@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
@@ -738,8 +739,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
 		go srv.runOperationArtifactCleanup(ctx)
-		go srv.runObjectStorageRecovery(ctx)
-		go srv.runObjectStorageAccounting(ctx)
+		go srv.object.RunObjectStorageRecovery(ctx)
+		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
@@ -757,11 +758,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimePush(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
-		go srv.runDurableEntityAlarms(ctx)
-		go srv.runDurableEntityOutbox(ctx)
-		go srv.runDurableEntityMaintenance(ctx)
-		go srv.runDurableEntityHealth(ctx)
-		go srv.runDurableEntityBackups(ctx)
+		go srv.durable.RunAlarms(ctx)
+		go srv.durable.RunOutbox(ctx)
+		go srv.durable.RunMaintenance(ctx)
+		go srv.durable.RunHealth(ctx)
+		go srv.durable.RunBackups(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -829,7 +830,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
-			BeforeAccountDelete: srv.cleanupExpiredAccountObjectBuckets,
+			BeforeAccountDelete: srv.object.CleanupExpiredAccountObjectBuckets,
 			Mailer:              graceSenderAdapter{m: srv.mailer},
 			Log:                 log,
 			Interval:            graceIntervalFromEnv(log),
@@ -1562,7 +1563,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: load billing provider: %w", err)
 		}
 		provName = loadedName
-		if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+		if err := object.ValidateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
 			return err
 		}
 		if billingProv != nil {

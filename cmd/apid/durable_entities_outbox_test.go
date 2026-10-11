@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,17 +29,17 @@ func entityOutboxHook(t *testing.T, e entityHTTPEnv, app state.App) state.AppWeb
 
 func seedAPIOutbox(t *testing.T, e entityHTTPEnv, app state.App, request api.DurableEntityInvokeRequest, hookID string) durableentity.OutboxWork {
 	t.Helper()
-	id, _, problem := e.s.durableEntityIdentity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
-	_, err := e.s.durableEntities.Invoke(t.Context(), id, uuid.NewString(), durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
+	_, err := e.s.durable.Engine.Invoke(t.Context(), id, uuid.NewString(), durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
 		return durableentity.Transition{Data: json.RawMessage(`{"count":1}`), Result: json.RawMessage(`{"count":1}`), Outbox: []durableentity.OutboxIntent{{WebhookID: hookID, EventType: "reservation.confirmed", Payload: json.RawMessage(`{"reservation":"123"}`)}}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := e.s.durableEntities.PendingOutbox(t.Context(), id)
+	view, err := e.s.durable.Engine.PendingOutbox(t.Context(), id)
 	if err != nil || len(view.Messages) != 1 {
 		t.Fatal(view, err)
 	}
@@ -66,7 +68,7 @@ func TestDurableEntityOutboxRestartsAfterLostAcceptanceAcknowledgement(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durableEntities, e.s.durableEntityOutboxEnabled = engine, true
+	e.s.durable.Engine, e.s.durable.OutboxEnabled = engine, true
 	hook := entityOutboxHook(t, e, app)
 	request := entityRequest("confirmation")
 	request.Environment = "staging"
@@ -74,7 +76,7 @@ func TestDurableEntityOutboxRestartsAfterLostAcceptanceAcknowledgement(t *testin
 	store := &lostEntityOutboxAcceptanceStore{MemStore: e.store}
 	store.lose.Store(true)
 	e.s.store = store
-	if err := e.s.deliverDurableEntityOutbox(t.Context(), work); err == nil {
+	if err := e.s.durable.DeliverOutbox(t.Context(), work); err == nil {
 		t.Fatal("lost acceptance ACK reported success")
 	}
 	status, err := engine.InspectOutbox(t.Context(), work.Entity)
@@ -92,8 +94,8 @@ func TestDurableEntityOutboxRestartsAfterLostAcceptanceAcknowledgement(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durableEntities, e.s.durableEntityOwner = restarted, uuid.NewString()
-	if _, err := e.s.sweepDurableEntityOutbox(t.Context(), outboxSweepCursor{}); err != nil {
+	e.s.durable.Engine, e.s.durable.Owner = restarted, uuid.NewString()
+	if _, err := e.s.durable.SweepOutbox(t.Context(), durable.OutboxCursor{}); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
@@ -126,7 +128,7 @@ func TestDurableEntityOutboxRechecksScopeAdmissionAndDestination(t *testing.T) {
 	for _, kind := range []string{"account", "abuse", "plan", "app", "allowlist", "disabled", "tenant", "environment", "destination", "foreign-destination"} {
 		t.Run(kind, func(t *testing.T) {
 			e, app, dispatch, _ := entityAPIFixture(t, kind == "environment")
-			e.s.durableEntityOutboxEnabled = true
+			e.s.durable.OutboxEnabled = true
 			hook := entityOutboxHook(t, e, app)
 			request := entityRequest("confirmation")
 			if kind == "environment" {
@@ -165,9 +167,9 @@ func TestDurableEntityOutboxRechecksScopeAdmissionAndDestination(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "allowlist":
-				delete(e.s.durableEntityApps, app.ID)
+				delete(e.s.durable.Apps, app.ID)
 			case "disabled":
-				e.s.durableEntityOutboxEnabled = false
+				e.s.durable.OutboxEnabled = false
 			case "tenant":
 				if _, err := e.store.SetPlatformTenantStatus(t.Context(), e.acct.ID, request.PlatformTenantID, state.PlatformTenantSuspended); err != nil {
 					t.Fatal(err)
@@ -192,10 +194,10 @@ func TestDurableEntityOutboxRechecksScopeAdmissionAndDestination(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := e.s.deliverDurableEntityOutbox(t.Context(), work); err == nil {
+			if err := e.s.durable.DeliverOutbox(t.Context(), work); err == nil {
 				t.Fatal("inadmissible work was accepted")
 			}
-			pending, err := e.s.durableEntities.PendingOutbox(t.Context(), work.Entity)
+			pending, err := e.s.durable.Engine.PendingOutbox(t.Context(), work.Entity)
 			if err != nil || len(pending.Messages) != 1 || pending.Version != 1 || dispatch.calls.Load() != 0 {
 				t.Fatal(pending, err)
 			}
@@ -209,12 +211,12 @@ func TestDurableEntityOutboxRechecksScopeAdmissionAndDestination(t *testing.T) {
 
 func TestDurableEntityOutboxWorkerDisabledAndCancellation(t *testing.T) {
 	e, _, _, _ := entityAPIFixture(t, false)
-	e.s.runDurableEntityOutbox(t.Context())
-	e.s.durableEntityOutboxEnabled = true
+	e.s.durable.RunOutbox(t.Context())
+	e.s.durable.OutboxEnabled = true
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	done := make(chan struct{})
-	go func() { e.s.runDurableEntityOutbox(ctx); close(done) }()
+	go func() { e.s.durable.RunOutbox(ctx); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):

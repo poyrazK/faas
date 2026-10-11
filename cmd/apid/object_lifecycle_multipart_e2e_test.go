@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -139,7 +140,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 	}
 	s := owner(true)
 	before := requests.Load()
-	if err = s.reconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != before {
+	if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != before {
 		t.Fatal("abort discovery called the provider", err, requests.Load(), before)
 	}
 	stored, err := f.st.GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, *u.UploadId)
@@ -166,7 +167,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			t.Fatal(err)
 		}
 	} else {
-		if err = owner(true).reconcileObjectLifecycle(ctx, nil); err != nil {
+		if err = owner(true).object.ReconcileObjectLifecycle(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		j, e := f.st.GetObjectLifecycleScan(ctx, f.account.ID, f.bucket.ID, stored.LifecycleAbort.ScanID)
@@ -174,7 +175,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			t.Fatal("scan did not finish discovery", j, e)
 		}
 	}
-	if err = owner(false).reconcileObjectMultipartUploads(ctx, nil); err != nil {
+	if err = owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertUsage(10)
@@ -186,7 +187,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		if _, e := f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=clock_timestamp() WHERE id=$1`, *u.UploadId); e != nil {
 			t.Fatal(e)
 		}
-		if e := owner(false).reconcileObjectMultipartUploads(ctx, nil); e != nil {
+		if e := owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -215,7 +216,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		t.Fatal("restart lost terminal receipt", got, err)
 	}
 	finalRequests := requests.Load()
-	if err = owner(false).reconcileObjectMultipartUploads(ctx, nil); err != nil || requests.Load() != finalRequests {
+	if err = owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || requests.Load() != finalRequests {
 		t.Fatal("terminal cleanup replay", err, requests.Load())
 	}
 }

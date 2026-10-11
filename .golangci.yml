@@ -35,10 +35,12 @@ linters:
         # apid is control-plane only: it is the sole writer of customer-intent
         # rows and signals downstream via Postgres + pg_notify. It must never
         # reach into the VM / scheduler layer (CLAUDE.md: "apid must not call
-        # vmmd").
+        # vmmd"). pkg/apid/** is apid code lifted out of cmd/apid (ADR-977) and
+        # keeps the same ownership boundary.
         apid-control-plane-only:
           files:
             - "**/cmd/apid/**"
+            - "**/pkg/apid/**"
           deny:
             - pkg: github.com/onebox-faas/faas/pkg/fcvm
               desc: "apid is control-plane only; it must not touch the firecracker/jailer layer — record intent in Postgres and let schedd/vmmd react"

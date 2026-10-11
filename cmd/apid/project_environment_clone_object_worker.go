@@ -145,7 +145,7 @@ func validateCapturedProjectEnvironmentObjectResources(plans []capturedProjectEn
 }
 
 func (s *server) capturedCloneObjectProvider(plan capturedProjectEnvironmentObjectPlan) (objectstorage.Provider, error) {
-	if !s.objectStorageEnabled() {
+	if !s.object.ObjectStorageEnabled() {
 		return nil, objectstorage.ErrUnavailable
 	}
 	backend, err := s.objectStorage.Resolve(plan.source.BackendID, plan.source.BackendFingerprint)
@@ -247,7 +247,7 @@ func (s *server) captureProjectEnvironmentCloneObjects(ctx context.Context, leas
 		}
 		callCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 		if bucket.State == "provisioning" {
-			bucket, err = s.provisionBucket(callCtx, store, bucket)
+			bucket, err = s.object.ProvisionBucket(callCtx, store, bucket)
 		}
 		if err != nil {
 			cancel()

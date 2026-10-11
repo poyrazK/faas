@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -126,27 +127,27 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.State != "waiting" || j.Revision != 1 || !j.EnabledRequired || j.DesiredConfiguration == nil || !j.DesiredConfiguration.Equal(cfg) {
 		t.Fatal("accept intent", j, err)
 	}
-	if err = s.reconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 0 {
+	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 0 {
 		t.Fatal("versioning drain bypassed", err, puts.Load())
 	}
 	if _, err = st.(state.ObjectBucketVersioningStore).RequestObjectBucketVersioning(t.Context(), acct.ID, b.AppID, b.ID, "Suspended"); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("suspension allowed", err)
 	}
-	if err = s.reconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	advance()
-	if err = s.reconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectCapacity(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectCapacity(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	advance()
-	if err = s.reconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 1 {
+	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 1 {
 		t.Fatal("lost ACK not dispatched", err, puts.Load())
 	}
 	durable, err := st.(state.ObjectBucketObjectLockStore).GetObjectBucketObjectLock(t.Context(), acct.ID, b.AppID, b.ID)
@@ -166,7 +167,7 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.State != "waiting" || calls.Load() != before {
 		t.Fatal("disabled progress read contacted native", j, err)
 	}
-	if err = s.reconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 		t.Fatal("disabled recovery", err)
 	}
 	j, err = client.GetObjectBucketObjectLock(t.Context(), "encrypted-journal", b.ID)
@@ -186,7 +187,7 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.Revision != 2 {
 		t.Fatal("accept clear", j, err)
 	}
-	if err = s.reconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = client.GetObjectBucketObjectLock(t.Context(), "encrypted-journal", b.ID)

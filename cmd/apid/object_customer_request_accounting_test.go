@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -279,11 +280,11 @@ func TestObjectCustomerRequestAccountingMissingMeter(t *testing.T) {
 	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
 	e.s.objectStorage.Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
 	e.s.store = struct{ state.Store }{e.store}
-	if err := e.s.customerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, state.ErrObjectUsageStale) {
+	if err := e.s.object.CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, state.ErrObjectUsageStale) {
 		t.Fatal("missing request meter did not fail closed", err)
 	}
 	e.s.objectStorage.Accounting.AccountingMode = ""
-	if err := e.s.customerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, objectstorage.ErrConfiguration) {
+	if err := e.s.object.CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, objectstorage.ErrConfiguration) {
 		t.Fatal("legacy customer request escaped without a meter", err)
 	}
 }

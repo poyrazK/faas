@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -174,7 +175,7 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	if err = buckets.FinishObjectBucket(t.Context(), b.ID, "create", "ready"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.cleanupExpiredAccountObjectBuckets(t.Context(), account); !errors.Is(err, state.ErrConflict) || calls.Load() != 0 {
+	if err = s.object.CleanupExpiredAccountObjectBuckets(t.Context(), account); !errors.Is(err, state.ErrConflict) || calls.Load() != 0 {
 		t.Fatal("cleanup ran before grace", err, calls.Load())
 	}
 	if err = st.MarkAccountDeletionPending(t.Context(), account.ID); err != nil {
@@ -201,7 +202,7 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	if _, err = buckets.ReserveObjectBucket(t.Context(), newBucket, 10); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("inactive account accepted new bucket", err)
 	}
-	loop := grace.New(grace.Params{Store: st, BeforeAccountDelete: s.cleanupExpiredAccountObjectBuckets})
+	loop := grace.New(grace.Params{Store: st, BeforeAccountDelete: s.object.CleanupExpiredAccountObjectBuckets})
 	checkPending := func(code string) {
 		t.Helper()
 		kept, err := buckets.GetObjectBucket(t.Context(), account.ID, app.ID, b.ID)
@@ -245,28 +246,28 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	// customer ingress/capability enrollment disabled.
 	restarted := newServer(st, testLogger(), "gregale.dev", noopNotifier{}).WithObjectStorage(objectLockTestRegistry(t, upstream.URL, p, objectstorage.ObjectLockConfig{}))
 	advance()
-	if err = restarted.reconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("cleanup_pending")
 	advance()
-	if err = restarted.reconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("temporary") // Native nonempty response never reopens ownership.
 	advance()
-	if err = restarted.reconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("temporary") // Native bucket DELETE committed, acknowledgment lost.
 	advance()
-	if err = restarted.reconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = buckets.GetObjectBucket(t.Context(), account.ID, app.ID, b.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("native bucket not tombstoned", err)
 	}
-	loop = grace.New(grace.Params{Store: st, BeforeAccountDelete: restarted.cleanupExpiredAccountObjectBuckets})
+	loop = grace.New(grace.Params{Store: st, BeforeAccountDelete: restarted.object.CleanupExpiredAccountObjectBuckets})
 	if err = loop.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
