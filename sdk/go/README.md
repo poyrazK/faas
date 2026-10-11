@@ -907,3 +907,5 @@ observation time, and acceptance cutoff. `EventPendingWaitingReasonCountsComplet
 checks that a dictionary has the known keys, nonnegative counts, and an exact sum.
 A nil aggregate from an older server means unavailable evidence. Backlog consumer
 `PendingWaitingReasons` counts matching pending recipients before pagination.
+
+Delivery-health watch options also accept `WaitingReasonCounts: map[string]int64{"ordering_blocked": 10, "retry_backoff": 100}` and `WaitingReasonDurations: map[string]time.Duration{"subscription_rate_limited": 5 * time.Minute}`. These use complete pending reason counts, independent of sample truncation. Duration thresholds measure consecutive fresh local nonzero observations (at least two), not individual recipient duration. Missing or invalid evidence loses confirmation. Both options use the existing invocation-local lifecycle notifications; see ADR-964.

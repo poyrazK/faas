@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -92,6 +95,42 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	fs.DurationVar(&f.options.Paused, "pause-threshold", 0, "subscription pause duration threshold; zero disables")
 	fs.DurationVar(&f.options.CircuitBlocked, "circuit-threshold", 0, "locally sampled circuit restriction duration; zero disables")
 	fs.DurationVar(&f.options.CapacityBlocked, "capacity-threshold", 0, "locally sampled capacity wait duration; zero disables")
+	fs.Func("waiting-reason-count", "repeatable REASON=N pending recipient threshold", func(value string) error {
+		reason, raw, ok := strings.Cut(value, "=")
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if !ok || err != nil || n <= 0 || n > api.EventDeliveryHealthWatchCountMax {
+			return fmt.Errorf("expected REASON=N with a positive bounded count")
+		}
+		if _, known := api.NewEventPendingWaitingReasonCounts()[reason]; !known {
+			return fmt.Errorf("unknown waiting reason %q", reason)
+		}
+		if f.options.WaitingReasonCounts == nil {
+			f.options.WaitingReasonCounts = map[string]int64{}
+		}
+		if _, exists := f.options.WaitingReasonCounts[reason]; exists {
+			return fmt.Errorf("duplicate waiting reason count %q", reason)
+		}
+		f.options.WaitingReasonCounts[reason] = n
+		return nil
+	})
+	fs.Func("waiting-reason-duration", "repeatable REASON=DURATION sustained nonzero wait threshold", func(value string) error {
+		reason, raw, ok := strings.Cut(value, "=")
+		d, err := time.ParseDuration(raw)
+		if !ok || err != nil || d < api.EventDeliveryHealthWatchThresholdMin || d > api.EventDeliveryHealthWatchThresholdMax {
+			return fmt.Errorf("expected REASON=DURATION (100ms-24h)")
+		}
+		if _, known := api.NewEventPendingWaitingReasonCounts()[reason]; !known {
+			return fmt.Errorf("unknown waiting reason %q", reason)
+		}
+		if f.options.WaitingReasonDurations == nil {
+			f.options.WaitingReasonDurations = map[string]time.Duration{}
+		}
+		if _, exists := f.options.WaitingReasonDurations[reason]; exists {
+			return fmt.Errorf("duplicate waiting reason duration %q", reason)
+		}
+		f.options.WaitingReasonDurations[reason] = d
+		return nil
+	})
 	return f
 }
 

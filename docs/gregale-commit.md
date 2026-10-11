@@ -1816,3 +1816,14 @@ coverage, and observation time before concluding anything about the current back
 The backlog consumer API also exposes `pending_waiting_reasons` for each matching
 consumer group, respecting its existing filters and excluding processing recipients.
 Existing capacity alerts continue to use their complete capacity aggregates.
+
+Waiting-reason health alerts use complete pending aggregates, even when the event sample is truncated:
+
+```sh
+gregale events subscription-delivery-health my-app SUBSCRIPTION_ID --watch \
+  --waiting-reason-count ordering_blocked=10 \
+  --waiting-reason-count retry_backoff=100 \
+  --waiting-reason-duration subscription_rate_limited=5m --timeout 15m --alerts-json
+```
+
+Both flags are repeatable for different known reason keys; duplicates within one flag kind are rejected. Count thresholds are inclusive. Duration thresholds measure consecutive fresh local observations with a nonzero reason count, requiring at least two observations; they do not track the same recipients. Missing, incomplete, stale or inconsistent aggregates cause confirmation loss rather than clearing an alert. Notifications remain invocation-local and are emitted once per transition on stderr. See ADR-964.

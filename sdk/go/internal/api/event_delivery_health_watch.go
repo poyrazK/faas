@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,7 +19,10 @@ type EventDeliveryHealthWatchOptions struct {
 	Interval, Timeout, MaxAge                              time.Duration
 	OldestPending, Paused, CircuitBlocked, CapacityBlocked time.Duration
 	Retrying, DeadLetters                                  int64
-	OnProgress                                             func(EventDeliveryHealthWatchResult) error
+	// WaitingReasonCounts and WaitingReasonDurations select known pending reasons.
+	WaitingReasonCounts    map[string]int64
+	WaitingReasonDurations map[string]time.Duration
+	OnProgress             func(EventDeliveryHealthWatchResult) error
 }
 
 type EventDeliveryHealthAlert struct {
@@ -81,6 +85,19 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		}
 		enabled = enabled || n > 0
 	}
+	known := NewEventPendingWaitingReasonCounts()
+	for reason, n := range o.WaitingReasonCounts {
+		if _, ok := known[reason]; !ok || n <= 0 || n > EventDeliveryHealthWatchCountMax {
+			return ErrValidation("invalid waiting reason count threshold")
+		}
+		enabled = true
+	}
+	for reason, d := range o.WaitingReasonDurations {
+		if _, ok := known[reason]; !ok || d < EventDeliveryHealthWatchThresholdMin || d > EventDeliveryHealthWatchThresholdMax {
+			return ErrValidation("invalid waiting reason duration threshold")
+		}
+		enabled = true
+	}
 	if !enabled {
 		return ErrValidation("enable at least one delivery health threshold")
 	}
@@ -103,6 +120,19 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 	} {
 		if v.threshold > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: v.threshold}, sustained: v.sustained})
+		}
+	}
+	reasons := make([]string, 0, len(NewEventPendingWaitingReasonCounts()))
+	for reason := range NewEventPendingWaitingReasonCounts() {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		if n := o.WaitingReasonCounts[reason]; n > 0 {
+			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "waiting_reason." + reason + ".recipients", State: "unknown", Threshold: float64(n)}})
+		}
+		if d := o.WaitingReasonDurations[reason]; d > 0 {
+			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "waiting_reason." + reason + ".seconds", State: "unknown", Threshold: d.Seconds()}, sustained: true})
 		}
 	}
 	return out

@@ -6,6 +6,9 @@ import (
 )
 
 func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	if strings.HasPrefix(metric, "waiting_reason.") {
+		return deliveryHealthWaitingReasonValue(h, metric)
+	}
 	r, e := h.Routing, h.Execution
 	if metric != "retrying_executions" && metric != "dead_lettered_executions" && metric != "capacity_blocked_seconds" && r.Coverage != "bounded_recorded_outcomes" {
 		return 0, false, r.ObservedAt
@@ -72,4 +75,24 @@ func deliveryHealthCapacityValue(h EventConsumerDeliveryHealth) (float64, bool, 
 		remaining -= count
 	}
 	return float64(counts.PendingRecipients - remaining), valid, counts.ObservedAt
+}
+
+func deliveryHealthWaitingReasonValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	counts := h.WaitingReasons
+	if counts == nil {
+		return 0, false, time.Time{}
+	}
+	parts := strings.Split(metric, ".")
+	if len(parts) != 3 || (parts[2] != "recipients" && parts[2] != "seconds") {
+		return 0, false, counts.ObservedAt
+	}
+	n, known := counts.Counts[parts[1]]
+	valid := known && counts.Complete && counts.Coverage == "all_pending_application_recipients" && strings.EqualFold(counts.AppID, h.Routing.AppID) && strings.EqualFold(counts.SubscriptionID, h.Routing.SubscriptionID) && !counts.WindowAt.IsZero() && !counts.WindowAt.After(counts.ObservedAt) && EventPendingWaitingReasonCountsComplete(counts.Counts, counts.PendingRecipients)
+	if parts[2] == "seconds" {
+		if n > 0 {
+			return 1, valid, counts.ObservedAt
+		}
+		return 0, valid, counts.ObservedAt
+	}
+	return float64(n), valid && n <= EventDeliveryHealthWatchCountMax, counts.ObservedAt
 }
