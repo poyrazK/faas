@@ -1557,3 +1557,11 @@ Retain the latest decision plus a bounded journal of the latest 32 choices, with
 explicit truncation and durable timeline events. Add the journal bound to the central
 limits table and timeline projection budget. Existing JSON progress storage suffices;
 no new migration or application lifecycle writer is required.
+
+### Clone schema coverage for workflow coordination
+
+The workflow state report's selected-path and change-reason columns remain
+operational state. Readiness subscriptions, notifications, and playbook progress
+are also registered as operational tables in the environment clone schema
+inventory. Clone preflight can recognize their schema without copying retained
+customer reports, inboxes, or live coordination records into another environment.
