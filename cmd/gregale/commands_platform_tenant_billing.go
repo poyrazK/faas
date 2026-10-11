@@ -22,10 +22,12 @@ var platformTenantBillingVerbs = map[string][]string{
 	"statement-show":     {"id", "statement-id"},
 	"statement-finalize": {"id", "statement-id"},
 	"statement-handoff":  {"id", "statement-id", "invoice-id"},
+	"statement-export":   {"id", "statement-id", "customer"},
 }
 
 type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
+	customer                      string
 	currency, effectiveFrom       string
 	priceMillicents               int64
 	includedUnits                 int64
@@ -45,6 +47,7 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.StringVar(&f.id, "id", "", "platform tenant UUID")
 	fs.StringVar(&f.statementID, "statement-id", "", "statement revision UUID")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference")
+	fs.StringVar(&f.customer, "customer", "", "Stripe customer ID cus_… (statement-export; default: the tenant's external_ref)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
@@ -131,6 +134,8 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		out, err = client.FinalizePlatformTenantStatement(ctx, f.id, f.statementID)
 	case "statement-handoff":
 		out, err = client.ClaimPlatformTenantStatement(ctx, f.id, f.statementID, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: f.invoiceID})
+	case "statement-export":
+		out, err = client.ExportPlatformTenantStatementToStripe(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Customer: strings.TrimSpace(f.customer)})
 	}
 	if err != nil {
 		return printErr("Platform tenant "+verb+" failed", err)
@@ -167,6 +172,8 @@ func printPlatformTenantBilling(out any) error {
 		}
 	case api.PlatformTenantStatementResponse:
 		printStatementSummary(tw, v.ID, v.PeriodStart, v.PeriodEnd, v.Revision, v.Status, v.Currency, v.BillableUnits, v.UnpricedUnits, v.AmountMillicents)
+	case api.StatementInvoiceExportResponse:
+		printStatementInvoiceExport(tw, v)
 	case api.PlatformTenantStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
 	default:

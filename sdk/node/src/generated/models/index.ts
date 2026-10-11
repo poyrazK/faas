@@ -204,6 +204,7 @@ export type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 export type { BillingCancelResponse } from './BillingCancelResponse.js';
 export type { BillingCatalogEntry } from './BillingCatalogEntry.js';
 export type { BillingCatalogResponse } from './BillingCatalogResponse.js';
+export type { BillingConnectionResponse } from './BillingConnectionResponse.js';
 export type { BillingPaddleOveragePreflightResponse } from './BillingPaddleOveragePreflightResponse.js';
 export type { BillingPortalResponse } from './BillingPortalResponse.js';
 export type { BillingReconcileResponse } from './BillingReconcileResponse.js';
@@ -325,6 +326,7 @@ export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnv
 export type { CreateProjectEnvironmentQualificationRequest } from './CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
+export type { CreateStatementInvoiceRequest } from './CreateStatementInvoiceRequest.js';
 export type { CreateTCPListenerRequest } from './CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './CreateTriggerBatchRequest.js';
@@ -1453,6 +1455,7 @@ export type { PutOutboundCredentialRequest } from './PutOutboundCredentialReques
 export type { PutOutboundDailyRequestBudgetRequest } from './PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './PutOutboundRunsBindingRequest.js';
+export type { PutStripeConnectionRequest } from './PutStripeConnectionRequest.js';
 export type { PutWebhookAutomationBindingRequest } from './PutWebhookAutomationBindingRequest.js';
 export type { QueueBindingResponse } from './QueueBindingResponse.js';
 export type { QueueBindingStatusResponse } from './QueueBindingStatusResponse.js';
@@ -1721,6 +1724,7 @@ export type { SimulateAutomationResponse } from './SimulateAutomationResponse.js
 export type { Slug } from './Slug.js';
 export type { SourceRefDeployRequest } from './SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './SourceTarballDeployRequest.js';
+export type { StatementInvoiceExportResponse } from './StatementInvoiceExportResponse.js';
 export type { StatusIncident } from './StatusIncident.js';
 export type { StatusPage } from './StatusPage.js';
 export type { StatusUptimeBucket } from './StatusUptimeBucket.js';

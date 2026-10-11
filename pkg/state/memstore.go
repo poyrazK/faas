@@ -852,7 +852,11 @@ type MemStore struct {
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	// apiConsumerUsageAlerts are recorded plan alert crossings (ADR-849).
 	apiConsumerUsageAlerts []APIConsumerUsageAlert
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	// billingConnections and statementInvoiceExports back statement invoice
+	// exports (ADR-976); keyed by account/provider and export ID.
+	billingConnections      map[string]BillingConnection
+	statementInvoiceExports map[string]StatementInvoiceExport
+	apiConsumerUsageEvents  map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.

@@ -116,8 +116,8 @@ from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerU
 from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
-from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
+from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -397,6 +397,8 @@ from .billing_catalog_entry import BillingCatalogEntry
 from .billing_catalog_entry_kind import BillingCatalogEntryKind
 from .billing_catalog_entry_plan import BillingCatalogEntryPlan
 from .billing_catalog_response import BillingCatalogResponse
+from .billing_connection_response import BillingConnectionResponse
+from .billing_connection_response_provider import BillingConnectionResponseProvider
 from .billing_paddle_overage_preflight_response import BillingPaddleOveragePreflightResponse
 from .billing_portal_response import BillingPortalResponse
 from .billing_reconcile_response import BillingReconcileResponse
@@ -648,6 +650,7 @@ from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_statement_invoice_request import CreateStatementInvoiceRequest
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -2701,6 +2704,7 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_stripe_connection_request import PutStripeConnectionRequest
 from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
 from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
 from .queue_binding_response import QueueBindingResponse
@@ -3219,6 +3223,9 @@ from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .statement_invoice_export_response import StatementInvoiceExportResponse
+from .statement_invoice_export_response_provider import StatementInvoiceExportResponseProvider
+from .statement_invoice_export_response_status import StatementInvoiceExportResponseStatus
 from .status_incident import StatusIncident
 from .status_incident_severity import StatusIncidentSeverity
 from .status_page import StatusPage
@@ -3651,8 +3658,8 @@ __all__ = (
     "APIConsumerUsageStatementHandoffResponse",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
-    "APIConsumerUsageThresholdWebhookPayload",
     "APIConsumerUsageStatementResponseStatus",
+    "APIConsumerUsageThresholdWebhookPayload",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
@@ -3932,6 +3939,8 @@ __all__ = (
     "BillingCatalogEntryKind",
     "BillingCatalogEntryPlan",
     "BillingCatalogResponse",
+    "BillingConnectionResponse",
+    "BillingConnectionResponseProvider",
     "BillingPaddleOveragePreflightResponse",
     "BillingPortalResponse",
     "BillingReconcileResponse",
@@ -4171,6 +4180,7 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateStatementInvoiceRequest",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -6130,6 +6140,7 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutStripeConnectionRequest",
     "PutWebhookAutomationBindingRequest",
     "PutWebhookAutomationBindingRequestFilter",
     "QueueBindingResponse",
@@ -6632,6 +6643,9 @@ __all__ = (
     "SourceRefDeployRequestTag",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StatementInvoiceExportResponse",
+    "StatementInvoiceExportResponseProvider",
+    "StatementInvoiceExportResponseStatus",
     "StatusIncident",
     "StatusIncidentSeverity",
     "StatusPage",

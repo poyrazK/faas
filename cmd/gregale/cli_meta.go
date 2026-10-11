@@ -504,7 +504,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo)",
+		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe)",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -521,6 +521,7 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
+			{Name: "stripe", Short: "Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}"}},
 		},
 	},
 	{
@@ -2423,6 +2424,9 @@ var cliCommands = []cliCommand{
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
+			{Name: "statement-export", Short: "Create a draft Stripe invoice for a finalized revision and record its handoff", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
+				{Name: "customer", Short: "Stripe customer ID (default: the consumer's external_ref when it is one)", Value: "cus_ID"},
+			}},
 			{Name: "plans", Short: "List an app's consumer plans", Positionals: []string{"<slug>"}},
 			{Name: "plan-create", Short: "Create a consumer plan with request limits", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "name", Short: "plan name (lowercase letters, digits, hyphens)", Value: "NAME", Req: true},
@@ -2526,6 +2530,10 @@ var cliCommands = []cliCommand{
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Flags: []cliFlag{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
+			}},
+			{Name: "statement-export", Short: "Create a draft Stripe invoice for a finalized revision and record its handoff", Flags: []cliFlag{
+				platformTenantIDFlag, platformTenantStatementIDFlag,
+				{Name: "customer", Short: "Stripe customer ID (default: the tenant's external_ref when it is one)", Value: "cus_ID"},
 			}},
 		},
 	},

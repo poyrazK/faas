@@ -7207,6 +7207,124 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/stripe-invoice:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose statement is exported.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized cross-app statement revision to export.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantStatementStripeInvoice
+      summary: Read the platform tenant statement's Stripe invoice export.
+      responses:
+        '200':
+          description: The platform tenant statement's export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: exportPlatformTenantStatementToStripe
+      summary: Export a finalized platform tenant statement as a draft Stripe invoice.
+      description: |
+        Exports one finalized platform tenant statement revision.
+        Creates a draft invoice in the account's own Stripe (connect it with
+        PUT /v1/account/billing-connections/stripe) with one item per rate card
+        and unit price, plus a rounding item when needed so the invoice equals
+        the statement total rounded to the cent. The draft is never finalized
+        or sent. On success the statement's handoff records the Stripe invoice
+        ID. Retrying after a failure resumes the same invoice and skips items
+        Stripe already holds; repeating a completed export returns it.
+        Two-decimal currencies only.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStatementInvoiceRequest' }
+      responses:
+        '200':
+          description: The completed platform tenant statement export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The platform tenant statement or customer cannot be invoiced, or Stripe rejected the request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached (`billing_provider_unavailable`); retry to resume the platform tenant statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-connections/stripe:
+    get:
+      tags: [account]
+      operationId: getStripeConnection
+      summary: Describe the account's Stripe key for statement invoice exports.
+      responses:
+        '200':
+          description: The connection; the key itself is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [account]
+      operationId: putStripeConnection
+      summary: Store or replace the account's Stripe key.
+      description: |
+        Checks the key against Stripe, then seals it at rest. Use a restricted
+        key (rk_live_… or rk_test_…) with read and write access to invoices
+        and invoice items. Only the last four characters and the mode are
+        ever returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutStripeConnectionRequest' }
+      responses:
+        '200':
+          description: The stored connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: Not a Stripe secret or restricted key, or Stripe rejected it.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [account]
+      operationId: deleteStripeConnection
+      summary: Remove the account's Stripe key.
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/webhooks:
     parameters:
       - name: id
@@ -10421,6 +10539,72 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose statement is exported.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized statement revision to export.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatementStripeInvoice
+      summary: Read the app consumer statement's Stripe invoice export.
+      responses:
+        '200':
+          description: The app consumer statement's export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: exportAPIConsumerUsageStatementToStripe
+      summary: Export a finalized app consumer statement as a draft Stripe invoice.
+      description: |
+        Exports one finalized app consumer statement revision.
+        Creates a draft invoice in the account's own Stripe (connect it with
+        PUT /v1/account/billing-connections/stripe) with one item per rate card
+        and unit price, plus a rounding item when needed so the invoice equals
+        the statement total rounded to the cent. The draft is never finalized
+        or sent. On success the statement's handoff records the Stripe invoice
+        ID. Retrying after a failure resumes the same invoice and skips items
+        Stripe already holds; repeating a completed export returns it.
+        Two-decimal currencies only.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStatementInvoiceRequest' }
+      responses:
+        '200':
+          description: The completed app consumer statement export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The app consumer statement or customer cannot be invoiced, or Stripe rejected the request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/rate-cards:
     parameters:
@@ -70082,6 +70266,47 @@ components:
         used_units: { type: integer, format: int64, minimum: 0 }
         month_start: { type: string, format: date-time }
         crossed_at: { type: string, format: date-time }
+
+    PutStripeConnectionRequest:
+      description: "The account's own Stripe key for statement invoice exports (ADR-976)."
+      type: object
+      required: [secret_key]
+      properties:
+        secret_key: { type: string, minLength: 12, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…); prefer a restricted key limited to invoices and invoice items.", writeOnly: true }
+
+    BillingConnectionResponse:
+      description: "A stored payment-provider key, identified without revealing it."
+      type: object
+      required: [provider, key_last4, livemode, created_at, updated_at]
+      properties:
+        provider: { type: string, enum: [stripe] }
+        key_last4: { type: string, minLength: 4, maxLength: 4 }
+        livemode: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateStatementInvoiceRequest:
+      description: "Target of a statement invoice export."
+      type: object
+      properties:
+        customer: { type: string, pattern: '^cus_[A-Za-z0-9]+$', description: "Stripe customer ID; omitted, the consumer's or tenant's external_ref is used when it is one." }
+
+    StatementInvoiceExportResponse:
+      description: "A finalized statement's draft invoice in the account's Stripe (ADR-976)."
+      type: object
+      required: [statement_id, provider, customer, status, currency, amount_minor, livemode, created_at]
+      properties:
+        statement_id: { type: string, format: uuid }
+        provider: { type: string, enum: [stripe] }
+        customer: { type: string }
+        status: { type: string, enum: [creating, completed], description: "creating means an earlier attempt stopped part-way; repeat the export to resume it." }
+        invoice_id: { type: string }
+        dashboard_url: { type: string, format: uri }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_minor: { type: integer, format: int64, description: "Invoice total in the currency's minor unit (cents): the statement total rounded to the cent." }
+        livemode: { type: boolean }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
 
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object
