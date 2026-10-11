@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
@@ -24,7 +25,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
-    if (req.url === '/healthz' && req.method === 'GET') return readiness(res, readyPort)
+    if (req.url === '/healthz' && req.method === 'GET') {
+      try {
+        const gate = config.refreshStatus ? await config.refreshStatus() : null
+        return readiness(res, readyPort, gate ? { refresh_paused: gate.paused } : {})
+      } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
+    }
     if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
@@ -54,12 +60,23 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }
     if (req.url === '/__gregale/schema') {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
-      return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint })
+      try {
+        const gate = config.refreshStatus ? await config.refreshStatus(req.headers['x-gregale-refresh-token']) : null
+        return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) })
+      } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
     }
     try {
       // Only the binding login may become the SQL role. External role claims
       // cannot select an administrator, owner or another application's role.
       const claims = { ...payload, role: config.role }
+      // Never accept reserved coordination claims from an application JWT.
+      if (config.coordinatedRefresh) {
+        delete claims.gregale_refresh_hash
+        delete claims.gregale_serving_fingerprint
+        claims.gregale_serving_fingerprint = servingFingerprint
+        const refreshHash = refreshTokenHash(req.headers['x-gregale-refresh-token'])
+        if (refreshHash) claims.gregale_refresh_hash = refreshHash
+      }
       const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
       if (res.destroyed || req.aborted) return
       proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1')
@@ -153,19 +170,30 @@ export async function main(env = process.env) {
   config.fingerprint = fingerprint(snapshot)
   // Reject stale owner policies before starting an engine process.
   servingContracts(config)
+  const refresh = config.coordinatedRefresh ? refreshStatusReader(config.connection) : null
+  if (refresh) {
+    let gate
+    try { gate = await refresh.read() } catch (error) { await refresh.close(); throw error }
+    if (!gate.paused && gate.fingerprint && gate.fingerprint !== config.fingerprint) { await refresh.close(); throw new Error('Serving refresh contract changed') }
+    config.refreshStatus = refresh.read
+  }
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))
   const child = spawn(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', [], { env: { ...childEnv, ...config.postgrestEnv }, stdio: ['ignore', 'ignore', 'ignore'] })
   const server = createServer(config, verify)
+  server.on('close', () => { void refresh?.close() })
   let stopping = false
   server.requestTimeout = limits.queryMs + 5000
   server.headersTimeout = 10000
   child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
   child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; server.close(); child.kill(signal) })
-  process.on('SIGUSR1', () => child.kill('SIGUSR1'))
+  process.on('SIGUSR1', () => {
+    if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
+    else child.kill('SIGUSR1')
+  })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
 }
 

@@ -9878,10 +9878,11 @@ gregale data-api refresh notes-data --wait --timeout 5m
 
 Run migrations, refresh the API, export types and check the client
 
-`gregale data-api sync --config <FILE> [--timeout <DURATION>] <name>`
+`gregale data-api sync [--resume-only] --config <FILE> [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--resume-only` | reverify an owned paused refresh without rerunning migrations |  |
 | `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
 | `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |
 

@@ -146,3 +146,15 @@ application workflow examples with the shipped CLI/runtime, compiling their
 generated clients and replaying required scenarios. The checksum-bound report
 records each example's schema fingerprint. This local qualification remains
 separate from hosted staging acceptance and release publication.
+
+## Coordinated hosted schema refresh
+
+Opt-in runtimes can use a durable per-binding PostgreSQL admission barrier.
+Coordinated sync drains admitted transactions before migrations, refreshes while
+ordinary requests remain paused, rechecks compatibility approvals, and requires
+client and authorization checks before release. Release re-inspects the live
+role-filtered schema; stale runtimes and missing control state fail closed.
+`--resume-only` repeats verification after a failure without repeating migrations.
+The owner-installed control schema stays private. See ADR-981 and the
+coordinated hosted schema updates section in `docs/data-api.md` for setup,
+recovery, connection budgeting and the boundary around out-of-band owner DDL.

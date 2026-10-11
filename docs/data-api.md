@@ -1667,3 +1667,103 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 `cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
+
+### Coordinated hosted schema updates
+
+Opt-in coordinated sync keeps ordinary SQL traffic paused until compatibility,
+client and authorization checks finish. Install its private database barrier
+before enabling the runtime. Use a materialized `data-api` template as the local
+owner tool directory; install its pinned Node dependencies there:
+
+```sh
+gregale init data-api-runtime --template data-api
+npm ci --prefix data-api-runtime
+# Configure MIGRATION_DATABASE_URL locally with owner credentials.
+node data-api-runtime/refresh.mjs install YOUR_BINDING_LOGIN_ROLE
+# Deploy the current runtime to every instance using this binding first.
+gregale env set --app notes-data DATA_API_COORDINATED_REFRESH=1
+gregale data-api refresh notes-data --wait
+gregale data-api types notes-data --snapshot --output schema.before.json
+```
+
+The owner connection must be able to create the private control schema and
+`SET ROLE` to the binding login for role-filtered inspection. Set matching
+`DATA_API_SCHEMAS` in the local owner environment when exposing multiple schemas.
+Do not expose `gregale_data_api` or grant serving credentials control-table
+access. All runtimes sharing this role must enable coordination and expose the
+same schemas; use separate binding roles for distinct exposures.
+
+Extend the existing sync JSON with `coordination`:
+
+```json
+{
+  "output": "web/database.types.ts",
+  "migrate": { "directory": "migrations", "command": ["npm", "run", "migrate"] },
+  "check": { "directory": "web", "command": ["npm", "run", "typecheck"] },
+  "coordination": {
+    "baseline": "schema.before.json",
+    "pause": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "pause", "YOUR_BINDING_LOGIN_ROLE"] },
+    "resume": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "resume", "YOUR_BINDING_LOGIN_ROLE"] },
+    "authorization": { "directory": "web", "command": ["npm", "run", "test:data-api-authorization"] }
+  }
+}
+```
+
+Set an unpredictable private `GREGALE_DATA_API_REFRESH_TOKEN` (64 lowercase
+hexadecimal characters, generated from 32 random bytes), keep it for recovery,
+and configure the application JWT in `GREGALE_DATA_API_ACCESS_TOKEN` as before.
+Do not commit either token or put it in a URL. An optional `token_env` selects
+another local environment variable. Commands receive the private token under
+`GREGALE_DATA_API_REFRESH_TOKEN`; client/authorization/resume commands also
+receive `GREGALE_DATA_API_REFRESH_FINGERPRINT`. Only a client that sends both its
+normal application JWT and `X-Gregale-Refresh-Token` can execute verification
+requests while paused. The token grants no extra SQL or RLS permissions. Run
+multi-user and multi-tenant denial scenarios with the respective application
+identities; the token alone is insufficient. These are trusted owner checks,
+not headers to ship in an ordinary browser application.
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+# After correcting a failed check or reviewing a breaking change:
+gregale data-api sync notes-data --config data-api.json --resume-only
+```
+
+A normal run verifies the saved baseline against live inspection and the
+serving runtime, acquires the durable pause, runs migrations/permissions,
+refreshes the engine, and verifies the generated and serving fingerprints.
+The baseline is compared structurally with the new snapshot. Unapproved
+breaking changes stop the workflow; optional `coordination.approval` points to
+an exact reviewed approval file in the existing `data-api diff` format. Existing
+accepted-client deployment policies must also match the new runtime; stale
+policies fail startup. The workflow then runs client and authorization checks
+before releasing the barrier. Release re-inspects the live schema as the binding
+role and rejects drift. The database records the verified fingerprint, so older
+coordinated runtimes receive 409 before executing application SQL.
+
+Pause waits for transactions admitted by the PostgREST pre-request hook,
+including read-only GET transactions. Ordinary requests receive 503 while
+paused; a queued request cannot slip through when the barrier commits.
+Competing coordinators cannot replace an existing pause. The barrier is stored
+in PostgreSQL and survives fresh restarts. `/healthz` remains a transport/engine
+health check and adds `refresh_paused`; it does not mean ordinary SQL traffic
+is admitted. The authenticated schema endpoint adds `refresh_protocol`,
+`refresh_paused`, `refresh_verified` (whether this request owns the pause), and
+`refresh_fingerprint`; it never returns the token/hash.
+
+Migration, startup, compatibility, client, or authorization failures leave the
+barrier paused. Recovery must use the same private token and baseline;
+`--resume-only` skips migrations and permission setup, but repeats refresh and
+all verification. No step automatically clears a pause on cancellation or
+failure. If the resume command loses its acknowledgement, release may already
+have committed: inspect the serving contract before taking further action.
+Generated types are retained after a client-check failure, and completed DDL
+is not rolled back. Losing the private token requires owner-controlled recovery
+of the database barrier; the CLI does not adopt another session automatically.
+
+This mode reserves one of the existing two connections for its control reader
+and one for PostgREST. Engine-only SIGUSR1 reloads are rejected; use coordinated
+sync. Owner/superuser DDL and direct database connections remain outside this
+barrier. Serialize DDL through the workflow; fingerprints do not cover policy
+bodies or every behavioral change. Upgrade every runtime sharing the binding
+before relying on the barrier. Real hosted multi-replica qualification remains
+pending until staging is configured.
