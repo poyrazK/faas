@@ -72,13 +72,25 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, account, entity stri
 		api.WriteProblem(w, api.ErrValidation("entity sockets accept authenticated service clients without an Origin header"))
 		return
 	}
+	h.serve(w, r, account, entity, nil, invoke)
+}
+
+// ServeBrowser requires a previously authenticated grant and an exact Origin.
+func (h *Hub) ServeBrowser(w http.ResponseWriter, r *http.Request, account, entity, origin string, invoke func(Frame) Reply) {
+	if len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin || !ValidOrigin(origin) {
+		api.WriteProblem(w, api.ErrValidation("browser Origin does not match grant"))
+		return
+	}
+	h.serve(w, r, account, entity, []string{BrowserProtocol}, invoke)
+}
+func (h *Hub) serve(w http.ResponseWriter, r *http.Request, account, entity string, protocols []string, invoke func(Frame) Reply) {
 	release, ok := h.acquire(account, entity)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "durable_entity_socket_capacity", "Socket capacity reached", "retry connection later"))
 		return
 	}
 	defer release()
-	upgrader := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(*http.Request) bool { return true }}
+	upgrader := websocket.Upgrader{Subprotocols: protocols, HandshakeTimeout: 5 * time.Second, CheckOrigin: func(*http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return

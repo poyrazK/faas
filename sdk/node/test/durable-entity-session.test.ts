@@ -120,3 +120,21 @@ test('invalid acknowledgement cannot advance the session cursor', async()=>{
  assert.throws(()=>decodeDurableSessionAcknowledgement({...response,result:{...response.result,version:Number.MAX_SAFE_INTEGER+1}},pending,v=>v));
  assert.throws(()=>decodeDurableSessionAcknowledgement({...response,status:503},pending,v=>v));
 });
+
+import {connectDurableEntityBrowserSession, type DurableEntityBrowserGrant} from '../src/durable-entity-browser.js';
+test('browser connector keeps scoped credentials out of URLs and rejects unsafe targets',()=>{
+ const original=globalThis.WebSocket;
+ const calls:Array<{url:string;protocols:unknown}>=[];
+ class FakeSocket {constructor(url:string|URL,protocols?:string|string[]){calls.push({url:String(url),protocols});}}
+ globalThis.WebSocket=FakeSocket as unknown as typeof WebSocket;
+ try {
+  const grant:DurableEntityBrowserGrant={credential:`${id}.${'a'.repeat(43)}`,connect_path:'/v1/apps/rooms/entities/session-connect',expires_at:new Date(Date.now()+60000).toISOString(),protocol:'gregale.entity.v1'};
+  connectDurableEntityBrowserSession('https://api.example.com',grant);
+  assert.equal(calls[0]?.url,'wss://api.example.com/v1/apps/rooms/entities/session-connect');
+  assert.deepEqual(calls[0]?.protocols,['gregale.entity.v1',`gregale.grant.${grant.credential}`]);
+  for(const origin of ['http://api.example.com','https://owner:secret@api.example.com','https://api.example.com/?token=secret'])assert.throws(()=>connectDurableEntityBrowserSession(origin,grant));
+  assert.throws(()=>connectDurableEntityBrowserSession('https://api.example.com',{...grant,connect_path:'//attacker.example/connect'}));
+  assert.throws(()=>connectDurableEntityBrowserSession('https://api.example.com',{...grant,expires_at:'invalid'}));
+  assert.throws(()=>connectDurableEntityBrowserSession('https://api.example.com',{...grant,expires_at:new Date(0).toISOString()}));
+ } finally {globalThis.WebSocket=original;}
+});

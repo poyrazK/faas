@@ -63,6 +63,7 @@ type server struct {
 	durableEntities                          *durableentity.Manager
 	durableEntityOwner                       string
 	durableEntitySockets                     *entitysocket.Hub
+	durableEntitySessionGrants               *entitysocket.Grants
 	durableEntityApps                        map[string]bool
 	durableEntityAlarmsEnabled               bool
 	durableEntityHealthEnabled               bool
@@ -2877,6 +2878,9 @@ func (s *server) handler() http.Handler {
 	// they're the customer-facing event surface; the existing
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/session-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mintEntitySessionGrant))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/entities/session-grants/{grant}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeEntitySessionGrant))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/session-connect", s.connectEntityBrowserSession)
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/connect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.connectDurableEntity))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeDurableEntity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/inspect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectDurableEntity))))

@@ -17,6 +17,11 @@ import (
 
 func (s *server) configureDurableEntities(ctx context.Context, getenv func(string) string) error {
 	s.durableEntitySockets = nil
+	s.durableEntitySessionGrants = nil
+	browser := getenv("FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED") == "1"
+	if browser && getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") != "1" {
+		return errors.New("browser sessions require entity sockets")
+	}
 	sockets := getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") == "1"
 	if sockets && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
 		return errors.New("entity sockets require durable entities")
@@ -137,6 +142,9 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	}
 	if sockets {
 		s.durableEntitySockets = entitysocket.New()
+		if browser {
+			s.durableEntitySessionGrants = &entitysocket.Grants{Store: store}
+		}
 	}
 	s.durableEntityRestoreValidationEnabled = getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1"
 	s.durableEntityBackupsEnabled = backups

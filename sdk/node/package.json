@@ -51,6 +51,10 @@
     "./durable-entities/session": {
       "types": "./dist/durable-entity-session.d.ts",
       "import": "./dist/durable-entity-session.js"
+    },
+    "./durable-entities/browser": {
+      "types": "./dist/durable-entity-browser.d.ts",
+      "import": "./dist/durable-entity-browser.js"
     }
   },
   "files": [
