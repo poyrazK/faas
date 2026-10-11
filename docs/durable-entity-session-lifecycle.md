@@ -127,6 +127,12 @@ assumes forward recovery of the committed state, not reuse of an obsolete backup
 
 ## Qualification
 
+[CI run 38127768064](https://github.com/poyrazK/faas/actions/runs/38127768064)
+passed for source `0fbfaf3116f18a0e8d8db7df3d0ae2cbb9fa557a`: all 15 focused SDK
+tests, SDK compilation/build, the packed-starter suite with 8 nested cases, and
+the Go package/CLI/authenticated-API checks with race detection. The Go workflow
+now allows 30 minutes for cold builds and saves its own complete build cache.
+
 Focused CI covers status snapshots versus replay, checkpoint recovery, lost
 acknowledgements, activity-based expiry, retention boundaries, failed publication,
 generation fences after receipt removal, legacy/application migrations, typed

@@ -1,7 +1,7 @@
 # Durable entity release qualification
 
 Scope: the Node developer workflow, typed client generation, operational
-visibility and reconnectable service-session preview. This is a release review and an acceptance handoff, not evidence that
+visibility, reconnectable service sessions and session recovery/lifecycle. This is a release review and an acceptance handoff, not evidence that
 native storage or runtime behavior has passed. Production preview gates remain
 off until the operator's native qualification is recorded.
 
@@ -61,6 +61,28 @@ API integration uses fake execution and in-memory storage. It does not establish
 native GCS publication, restart or multi-owner behavior. Socket admission remains
 separately disabled by default. Local tests/builds were not run.
 
+## Recorded session recovery/lifecycle qualification
+
+[CI run 38127768064](https://github.com/poyrazK/faas/actions/runs/38127768064)
+passed both jobs for source commit
+`0fbfaf3116f18a0e8d8db7df3d0ae2cbb9fa557a`.
+
+SDK compilation/build and 15 focused SDK tests passed. The packed-starter suite
+passed with 8 nested cases, including generation-qualified typed clients and
+isolated recoverable-room restore validation. Go race checks passed for all four
+durableentity packages, the focused CLI checks and authenticated socket API tests.
+Lifecycle coverage includes fresh versus replayed status snapshots, lost
+acknowledgements, idle/retention boundaries, failed publication, generation fencing
+after receipt removal, legacy/application migrations and invalid async migration
+rejection before publication.
+
+An earlier run exceeded the 20-minute Go job budget during the API step. The
+replacement workflow allows 30 minutes, retains race detection/resource bounds,
+and uses a workflow-specific Go cache; the successful run saved the complete cache.
+No local tests/builds or native acceptance were run. Status is a committed snapshot,
+expiry uses explicit authenticated service ticks, and reclamation frees a closed
+cohort's slots without deleting platform receipts. Native release gates remain off.
+
 ## Acceptance environment
 
 The acceptance agent should use the dedicated Gregale internal node and private
@@ -91,6 +113,10 @@ Use isolated test identities; do not inject failures into production workloads.
 | Socket admission changes | Revoke the service credential, disable app sockets or suspend the tenant between frames | Next frame cannot dispatch; no acknowledged state change |
 | Socket scope replacement | Replace the selected environment or app while a connection remains open | Existing connection cannot dispatch into a new immutable scope; deliberate reconnect is required |
 | Socket bounds | Fill the configured process/account/entity slots, send oversized or malformed frames, and leave connections idle | Caps hold, rejected frames do not dispatch, and closed connections release slots |
+| Session progress recovery | Lose a committed message acknowledgement, restart, replay its exact frame and issue a fresh status query | Original result replays without another transition; fresh status matches its committed sequence; an old query remains an old snapshot |
+| Session expiry and reclamation | Drive authenticated logical ticks around idle/retention boundaries, reclaim a closed cohort, then retry old-generation frames after receipt retirement | No early reclamation; business state survives; obsolete generations cannot reopen or mutate state |
+| Session lifecycle owner takeover | Race a message, expiry and reclaim through two ownership paths, then resume the obsolete owner | One authoritative generation and serialized state; obsolete owner cannot publish pre-reclamation session state |
+| Session application migration | Deploy a higher schema with application-only migration; interrupt publication and retry after restart | Business state migrates once with generation, clock and sequences preserved; invalid migration cannot publish |
 
 A simulator test cannot replace any native case. Owner takeover needs an actual
 second ownership path and provider CAS evidence, not just killing the local dev
