@@ -228,6 +228,18 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 	if _, err = pool.Exec(t.Context(), quotaParts[1]); err != nil {
 		t.Fatal(err)
 	}
+	// The later empty provisioning journal also retains an owner foreign key.
+	provisioning, err := os.ReadFile("../../migrations/20261011120000001_app_provisioning_receipts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioningParts := strings.Split(string(provisioning), "-- +goose Down")
+	if len(provisioningParts) != 2 {
+		t.Fatal("provisioning migration sections")
+	}
+	if _, err = pool.Exec(t.Context(), provisioningParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	// Roll back later binding triggers before their ADR-737 dependencies.
 	bindings, err := os.ReadFile("../../migrations/20261004101500003_global_regional_organization_bindings.sql")
 	if err != nil {
@@ -251,6 +263,9 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(t.Context(), quotaParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), provisioningParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.AppBySlug(t.Context(), owner, app.Slug); err != nil || got.ID != app.ID {

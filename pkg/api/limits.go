@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+// ADR-798: signed complete regional compute observations. Quantities retain
+// the exact integer protocol range; these are transport bounds, not entitlements.
+const (
+	GlobalRuntimeUsageQuantityMax      = int64(9007199254740991)
+	GlobalRuntimeUsagePayloadMaxBytes  = 4 << 10
+	GlobalRuntimeUsageEnvelopeMaxBytes = 8 << 10
+)
+
 // ADR-730 directory/proof protocol bounds. These do not grant runtime capacity.
 const (
 	// ADR-740: protocol bounds; plan concurrency comes from the plan table below.

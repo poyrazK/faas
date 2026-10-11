@@ -990,6 +990,7 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	GlobalRuntimeUsageStore
 	// ADR-797: decorators preserve the local global-management admission read.
 	RegionalAppProvisionAdmissionReader
 	// ADR-744: admission authority must survive Store decorators and scheduler

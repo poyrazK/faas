@@ -263,6 +263,8 @@ type MemStore struct {
 	regionalRuntimeLaunchSources  map[string]RegionalRuntimeLaunchSource
 	regionalRuntimeServingSeats   map[string]RegionalRuntimeServingSeatReceipt
 	regionalRuntimeServingResumes map[string]RegionalRuntimeServingResumeReceipt
+	globalRuntimeUsageAuthority   GlobalRuntimeUsageAuthority
+	globalRuntimeUsageReceipts    map[string]GlobalRuntimeUsageReceipt
 	deployTokens                  map[string]DeployToken
 	deployTokenByHash             map[string]DeployToken
 	apps                          map[string]App
@@ -21611,6 +21613,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	m.usageByMonth = keptMonth
+	for key, receipt := range m.globalRuntimeUsageReceipts {
+		if receipt.AccountID == id {
+			delete(m.globalRuntimeUsageReceipts, key)
+		}
+	}
 	// Finally: clear stripeByCustomer reverse-index, then the parent.
 	for sc, acid := range m.stripeByCustomer {
 		if acid == id {

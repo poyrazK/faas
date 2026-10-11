@@ -894,6 +894,7 @@ type Querier interface {
 	// ADR-730: global app directory. Writes are apid-owned; all credentials stay
 	// outside these tables. Scope and generation locks precede intent changes.
 	GlobalDirectoryUnbound(ctx context.Context, db DBTX) (bool, error)
+	GlobalRuntimeBillingReady(ctx context.Context, db DBTX, arg GlobalRuntimeBillingReadyParams) (bool, error)
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error)
@@ -1025,9 +1026,11 @@ type Querier interface {
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
 	InsertGlobalQuotaDelivery(ctx context.Context, db DBTX, arg InsertGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
+	InsertGlobalRuntimeCanonicalUsage(ctx context.Context, db DBTX, arg InsertGlobalRuntimeCanonicalUsageParams) (int64, error)
 	InsertGlobalRuntimeConsent(ctx context.Context, db DBTX, arg InsertGlobalRuntimeConsentParams) (GlobalRuntimeConsent, error)
 	// ADR-772: durable directory issuer, independent of regional cell identity.
 	InsertGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) error
+	InsertGlobalRuntimeUsage(ctx context.Context, db DBTX, arg InsertGlobalRuntimeUsageParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
@@ -2382,6 +2385,9 @@ type Querier interface {
 	ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error)
 	ReadGlobalRuntimeQuotaIssuer(ctx context.Context, db DBTX) (string, error)
 	ReadGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaPolicyParams) (ReadGlobalRuntimeQuotaPolicyRow, error)
+	ReadGlobalRuntimeUsage(ctx context.Context, db DBTX, arg ReadGlobalRuntimeUsageParams) (GlobalRuntimeUsageMinute, error)
+	// ADR-798: exact issued allocation identity, independent of today's registry.
+	ReadGlobalRuntimeUsageBinding(ctx context.Context, db DBTX, arg ReadGlobalRuntimeUsageBindingParams) (ReadGlobalRuntimeUsageBindingRow, error)
 	// Keep the app alert's 2xx/5xx denominator, weighted by publisher counts.
 	// The cutover minute and unfinished ingestion minutes are excluded by callers.
 	ReadHistoricalAlertDeploymentEvidence(ctx context.Context, db DBTX, arg ReadHistoricalAlertDeploymentEvidenceParams) (ReadHistoricalAlertDeploymentEvidenceRow, error)

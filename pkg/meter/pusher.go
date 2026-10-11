@@ -121,6 +121,7 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 	// surface. See providerOpsFor below.
 	ops := providerOpsFor(p.pusher)
 	pushed := 0
+	var firstErr error
 	for _, acct := range accounts {
 		if acct.Plan == "free" {
 			// Free plan: no customer id, no overage — skip.
@@ -152,6 +153,13 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		// non-Free, non-Suspended/DeletedPending account so the SDK
 		// gets a chance to log the skip + the dedupe record stays
 		// consistent for both providers.
+		if err := p.globalRuntimeBillingComplete(ctx, acct.ID, start); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: regional billing coverage incomplete", "account", acct.ID, "hour", start, "err", err)
+			continue
+		}
 		rows, err := p.store.UsageByHour(ctx, acct.ID, start, end)
 		if err != nil {
 			p.log.Warn("meter: usage_by_hour", "account", acct.ID, "err", err)
@@ -197,7 +205,7 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 			"code", code, "mb_seconds", mbSec, "billable_mb_seconds", billableMBSeconds)
 		pushed++
 	}
-	return pushed, nil
+	return pushed, firstErr
 }
 
 // PushPending replays all positive completed usage windows in lookback. The
@@ -275,6 +283,13 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			p.log.Warn("meter: billing identity incomplete",
 				"account", acct.ID, "provider_customer_id_set", acct.ProviderCustomerID != "",
 				"subscription_id_set", acct.StripeSubscriptionItem != "", "replay", true)
+			continue
+		}
+		if err := p.globalRuntimeBillingComplete(ctx, acct.ID, window.Hour); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: regional billing coverage incomplete", "account", acct.ID, "hour", window.Hour, "err", err)
 			continue
 		}
 		billableMBSeconds := window.MBSeconds
@@ -373,6 +388,12 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 	for _, window := range windows {
 		acct, exists := byID[window.AccountID]
 		if !exists || acct.Plan == api.PlanFree || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
+			continue
+		}
+		if err := p.globalRuntimeBillingComplete(ctx, acct.ID, window.Hour); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)

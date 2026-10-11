@@ -1116,6 +1116,32 @@ END $$;
 
 
 --
+-- Name: capture_global_runtime_financial_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_global_runtime_financial_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE receipt global_runtime_usage_minutes%ROWTYPE;
+BEGIN
+  IF NEW.corrects_source_id IS NOT NULL THEN RETURN NEW; END IF;
+  SELECT * INTO receipt FROM global_runtime_usage_minutes
+    WHERE billing_instance_id=NEW.instance_id AND minute=NEW.source_start;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+  IF NEW.account_id<>receipt.account_id OR NEW.meter<>'compute' OR NEW.quantity<>(receipt.usage_claims->>'MBSeconds')::bigint THEN
+    RAISE EXCEPTION 'global runtime financial source conflicts' USING ERRCODE='23514';
+  END IF;
+  NEW.plan := receipt.usage_claims->'Grant'->'Policy'->>'plan';
+  NEW.attribution := jsonb_build_object('app_id',receipt.global_app_id::text,'name',receipt.app_slug);
+  SELECT version INTO NEW.price_version FROM financial_price_snapshots
+    WHERE account_id=NEW.account_id AND meter=NEW.meter AND plan=NEW.plan
+      AND period_start<=NEW.source_start AND period_end>NEW.source_start AND effective_from<=NEW.source_start
+    ORDER BY effective_from DESC,recorded_at DESC,version LIMIT 1;
+  RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18526,6 +18552,34 @@ CREATE TABLE public.global_runtime_quota_policies (
 
 
 --
+-- Name: global_runtime_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_usage_minutes (
+    global_app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    account_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    billing_instance_id uuid NOT NULL,
+    usage_claims jsonb NOT NULL,
+    envelope jsonb NOT NULL,
+    imported_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT global_runtime_usage_minutes_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_app_slug_check CHECK ((((length(app_slug) >= 3) AND (length(app_slug) <= 40)) AND (app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_runtime_usage_minutes_billing_instance_id_check CHECK ((billing_instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_envelope_check CHECK (((jsonb_typeof(envelope) = 'object'::text) AND (octet_length((envelope)::text) <= 8192))),
+    CONSTRAINT global_runtime_usage_minutes_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_imported_at_check CHECK (isfinite(imported_at)),
+    CONSTRAINT global_runtime_usage_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_trunc('minute'::text, minute)) AND (minute > '1970-01-01 00:00:00+00'::timestamp with time zone))),
+    CONSTRAINT global_runtime_usage_minutes_usage_claims_check CHECK (((jsonb_typeof(usage_claims) = 'object'::text) AND (octet_length((usage_claims)::text) <= 4096)))
+);
+
+
+--
 -- Name: global_runtime_quota_targets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18549,6 +18603,27 @@ CREATE TABLE public.global_runtime_quota_targets (
     CONSTRAINT global_runtime_quota_targets_released_at_check CHECK (isfinite(released_at)),
     CONSTRAINT global_runtime_quota_targets_rollout_concurrency_check CHECK ((rollout_concurrency >= 0))
 );
+
+
+--
+-- Name: global_runtime_billing_issued; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.global_runtime_billing_issued AS
+ SELECT owner.account_id,
+    app.slug AS app_slug,
+    allocation.global_app_id,
+    allocation.allocation_id,
+    (target.snapshot ->> 'CellID'::text) AS cell_id,
+    target.issued_at,
+    target.released_at,
+    jsonb_build_object('IssuerID', (issuer.issuer_id)::text, 'GlobalAppID', (allocation.global_app_id)::text, 'OwnerID', (allocation.owner_id)::text, 'AllocationID', (allocation.allocation_id)::text, 'Generation', allocation.generation, 'Binding', jsonb_build_object('CellID', (target.snapshot ->> 'CellID'::text), 'Region', (target.snapshot ->> 'Region'::text), 'CellGeneration', (target.snapshot -> 'CellGeneration'::text), 'RegionalAccountID', (target.snapshot ->> 'RegionalAccountID'::text), 'RegionalOrgID', COALESCE((target.snapshot ->> 'RegionalOrgID'::text), ''::text), 'RegionalAppID', (target.snapshot ->> 'RegionalAppID'::text), 'RegionalAppSlug', (target.snapshot ->> 'RegionalAppSlug'::text), 'APIBase', (target.snapshot ->> 'APIBase'::text)), 'Policy', jsonb_build_object('id', allocation.policy_id, 'plan', allocation.plan, 'concurrency', allocation.max_concurrency, 'peak_concurrency', allocation.max_peak_concurrency), 'Concurrency', target.concurrency, 'RolloutConcurrency', target.rollout_concurrency, 'IssuedAtMicros', ((EXTRACT(epoch FROM target.issued_at) * (1000000)::numeric))::bigint) AS grant_claims
+   FROM ((((public.global_runtime_quota_allocations allocation
+     JOIN public.global_apps app ON (((app.id = allocation.global_app_id) AND (app.owner_id = allocation.owner_id))))
+     JOIN public.global_directory_owners owner ON ((owner.id = allocation.owner_id)))
+     JOIN public.global_runtime_quota_targets target USING (global_app_id, allocation_id))
+     LEFT JOIN public.global_runtime_quota_issuer issuer ON (true))
+  WHERE ((owner.account_id IS NOT NULL) AND (owner.org_id IS NULL) AND (target.issued_at IS NOT NULL));
 
 
 --
@@ -28331,6 +28406,22 @@ ALTER TABLE ONLY public.global_runtime_quota_targets
 
 
 --
+-- Name: global_runtime_usage_minutes global_runtime_usage_minutes_billing_instance_id_minute_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_usage_minutes
+    ADD CONSTRAINT global_runtime_usage_minutes_billing_instance_id_minute_key UNIQUE (billing_instance_id, minute);
+
+
+--
+-- Name: global_runtime_usage_minutes global_runtime_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_usage_minutes
+    ADD CONSTRAINT global_runtime_usage_minutes_pkey PRIMARY KEY (global_app_id, allocation_id, cell_id, minute);
+
+
+--
 -- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37836,6 +37927,13 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: financial_usage_evidence aa_global_runtime_financial_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER aa_global_runtime_financial_identity BEFORE INSERT ON public.financial_usage_evidence FOR EACH ROW EXECUTE FUNCTION public.capture_global_runtime_financial_identity();
+
+
+--
 -- Name: app_tasks aa_regional_runtime_quota_app_task_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -40759,6 +40857,20 @@ CREATE TRIGGER projects_cell_region_guard BEFORE INSERT OR UPDATE OF compute_reg
 --
 
 CREATE TRIGGER projects_compute_region_guard BEFORE INSERT OR UPDATE OF compute_region ON public.projects FOR EACH ROW EXECUTE FUNCTION public.enforce_project_compute_region();
+
+
+--
+-- Name: global_runtime_usage_minutes protect_global_runtime_usage; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER protect_global_runtime_usage BEFORE DELETE OR UPDATE ON public.global_runtime_usage_minutes FOR EACH ROW EXECUTE FUNCTION public.protect_financial_history();
+
+
+--
+-- Name: global_runtime_usage_minutes protect_global_runtime_usage_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER protect_global_runtime_usage_truncate BEFORE TRUNCATE ON public.global_runtime_usage_minutes FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_quota_truncate();
 
 
 --
@@ -44432,6 +44544,14 @@ ALTER TABLE ONLY public.global_runtime_quota_allocations
 
 ALTER TABLE ONLY public.global_runtime_quota_targets
     ADD CONSTRAINT global_runtime_quota_targets_global_app_id_allocation_id_fkey FOREIGN KEY (global_app_id, allocation_id) REFERENCES public.global_runtime_quota_allocations(global_app_id, allocation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_runtime_usage_minutes global_runtime_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_usage_minutes
+    ADD CONSTRAINT global_runtime_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

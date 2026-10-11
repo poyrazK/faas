@@ -3365,6 +3365,22 @@
     "kind": "account_identity"
   },
   {
+    "table": "global_app_provisioning",
+    "columns": [
+      "api_base",
+      "cell_generation",
+      "cell_id",
+      "global_app_id",
+      "owner_id",
+      "provision_id",
+      "region",
+      "regional_account_id",
+      "request",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "global_app_targets",
     "columns": [
       "cell_generation",
@@ -3606,6 +3622,22 @@
       "released_at",
       "rollout_concurrency",
       "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "global_runtime_usage_minutes",
+    "columns": [
+      "account_id",
+      "allocation_id",
+      "app_slug",
+      "billing_instance_id",
+      "cell_id",
+      "envelope",
+      "global_app_id",
+      "imported_at",
+      "minute",
+      "usage_claims"
     ],
     "kind": "operational"
   },
@@ -7016,6 +7048,21 @@
       "build_id",
       "claimed_at",
       "org_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "regional_app_provision_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "app_slug",
+      "cell_id",
+      "created_at",
+      "global_app_id",
+      "provision_id",
+      "region",
+      "request"
     ],
     "kind": "operational"
   },

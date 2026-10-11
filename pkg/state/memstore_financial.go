@@ -82,11 +82,16 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		plan = price.Plan
 	}
 	a := financial.Attribution{AppID: current.AppID}
+	regional, globalUsage := m.globalRuntimeUsageReceipts[globalRuntimeUsageRowKey(current.InstanceID, current.Minute)]
+	if globalUsage {
+		plan = regional.Usage.Grant.Policy.Plan
+		a.Name = regional.AppSlug
+	}
 	if current.MeterKind == "job" {
 		a.AppID = ""
 		a.JobID = current.JobID
 		a.Name = m.jobs[current.JobID].Name
-	} else {
+	} else if !globalUsage {
 		app := m.apps[current.AppID]
 		a.Name = app.Slug
 		a.ProjectID = app.ProjectID

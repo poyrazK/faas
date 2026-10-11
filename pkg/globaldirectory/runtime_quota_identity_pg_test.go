@@ -77,6 +77,7 @@ func TestRuntimeQuotaIssuerDowngrade(t *testing.T) {
 	if len(parts) != 2 {
 		t.Fatal("migration sections")
 	}
+	usageParts := runtimeUsageMigrationParts(t)
 	for _, populated := range []bool{false, true} {
 		name := "empty"
 		if populated {
@@ -89,6 +90,11 @@ func TestRuntimeQuotaIssuerDowngrade(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// Remove the empty later ledger before its issuer dependency, so
+			// the retained case still tests the issuer's own downgrade guard.
+			if _, err := pool.Exec(t.Context(), usageParts[1]); err != nil {
+				t.Fatal(err)
+			}
 			_, err := pool.Exec(t.Context(), parts[1])
 			if populated {
 				if err == nil {
@@ -100,6 +106,9 @@ func TestRuntimeQuotaIssuerDowngrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(t.Context(), parts[0]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(t.Context(), usageParts[0]); err != nil {
 				t.Fatal(err)
 			}
 			if err := NewPgStore(pool).BindRuntimeQuotaIssuer(t.Context(), uuid.NewString()); err != nil {

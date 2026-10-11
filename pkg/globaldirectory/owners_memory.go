@@ -12,6 +12,9 @@ import (
 func NewMemoryStoreWithOrgAuthority(authority OrgAuthority) *MemoryStore {
 	s := NewMemoryStore()
 	s.orgAuthority = authority
+	if billing, ok := authority.(*state.MemStore); ok {
+		billing.BindGlobalRuntimeUsageAuthority(s)
+	}
 	return s
 }
 func (s *MemoryStore) OwnerByID(_ context.Context, id string) (Owner, error) {

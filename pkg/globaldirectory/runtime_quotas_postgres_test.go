@@ -149,7 +149,14 @@ func quotaMigrationParts(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Split(string(m), "-- +goose Down")
+	parts := strings.Split(string(m), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatal("quota migration sections")
+	}
+	// ADR-798's retained issuance view depends on these quota tables. Exercise
+	// the empty ledger's real downgrade before its dependencies, then restore it.
+	usage := runtimeUsageMigrationParts(t)
+	return []string{parts[0] + "\n" + usage[0], usage[1] + "\n" + parts[1]}
 }
 
 func TestGlobalRuntimeQuotaPostgresSQLGuards(t *testing.T) {

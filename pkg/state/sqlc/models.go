@@ -3025,6 +3025,17 @@ type GlobalReleaseRecoveryWork struct {
 	CursorID      pgtype.UUID
 }
 
+type GlobalRuntimeBillingIssued struct {
+	AccountID    pgtype.UUID
+	AppSlug      string
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+	CellID       interface{}
+	IssuedAt     pgtype.Timestamptz
+	ReleasedAt   pgtype.Timestamptz
+	GrantClaims  []byte
+}
+
 type GlobalRuntimeConsent struct {
 	ID                pgtype.UUID
 	IssuerID          pgtype.UUID
@@ -3108,6 +3119,19 @@ type GlobalRuntimeQuotaTarget struct {
 	IssuedAt           pgtype.Timestamptz
 	ReleasedAt         pgtype.Timestamptz
 	DrainConfirmation  []byte
+}
+
+type GlobalRuntimeUsageMinute struct {
+	GlobalAppID       pgtype.UUID
+	AllocationID      pgtype.UUID
+	CellID            pgtype.UUID
+	Minute            pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	AppSlug           string
+	BillingInstanceID pgtype.UUID
+	UsageClaims       []byte
+	Envelope          []byte
+	ImportedAt        pgtype.Timestamptz
 }
 
 type GooseDbVersion struct {
