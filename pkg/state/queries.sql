@@ -16054,3 +16054,14 @@ SELECT lock_environment_qualification_cleanup_writers();
 -- name: RecordCloneCheckpointWakeDispatch :exec
 SELECT record_clone_checkpoint_wake_dispatch(sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,
  sqlc.arg(deployment_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(method)::text);
+
+-- Original dispatch rows survive metadata deletion; never join current instances
+-- or infer ownership from their current state or a caller-supplied deployment.
+-- name: ListCloneCheckpointWakeDispatchesForRetirement :many
+SELECT w.* FROM project_environment_clone_wake_dispatches w
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=sqlc.arg(operation_id)::uuid
+WHERE r.state IN ('requested','retired') AND (
+ w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text))))
+AND (sqlc.arg(after_instance_id)::text='' OR w.instance_id>NULLIF(sqlc.arg(after_instance_id)::text,'')::uuid)
+ORDER BY w.instance_id LIMIT sqlc.arg(page_limit)::integer;

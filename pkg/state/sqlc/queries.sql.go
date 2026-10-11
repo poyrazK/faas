@@ -26839,6 +26839,53 @@ func (q *Queries) ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listCloneCheckpointWakeDispatchesForRetirement = `-- name: ListCloneCheckpointWakeDispatchesForRetirement :many
+SELECT w.instance_id, w.app_id, w.deployment_id, w.node_id, w.wake_id, w.request_reason, w.method, w.dispatched_at FROM project_environment_clone_wake_dispatches w
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text))))
+AND ($2::text='' OR w.instance_id>NULLIF($2::text,'')::uuid)
+ORDER BY w.instance_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointWakeDispatchesForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterInstanceID string
+	PageLimit       int32
+}
+
+// Original dispatch rows survive metadata deletion; never join current instances
+// or infer ownership from their current state or a caller-supplied deployment.
+func (q *Queries) ListCloneCheckpointWakeDispatchesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointWakeDispatchesForRetirementParams) ([]ProjectEnvironmentCloneWakeDispatch, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointWakeDispatchesForRetirement, arg.OperationID, arg.AfterInstanceID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneWakeDispatch{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneWakeDispatch
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.NodeID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.Method,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClonePostgresWriteFences = `-- name: ListClonePostgresWriteFences :many
 SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
 WHERE operation_id=$1 ORDER BY source_database_id FOR UPDATE

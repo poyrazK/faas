@@ -9879,3 +9879,30 @@ pre-upgrade RPCs are not retroactively recorded. Migration source/destination
 closure, legacy wake qualification and public full-stage admission remain gated.
 The tests use PostgreSQL and controlled router clients; native metal and leak
 acceptance have not been run in this managed environment.
+
+### Authenticated original wake recovery inventory
+
+A private PostgreSQL recovery reader now pages the retained ordinary wake
+journal under the current compensation lease. Before reading, it authenticates
+the original source compensation, materialization and frozen workload retirement
+plan and requires a requested or retired journal. Lease authority is checked
+again before commit. Failed authentication returns no partial inventory.
+
+Pages contain only non-secret original instance, app, deployment, node, wake ID,
+request namespace, boot method and dispatch timestamp. Selection uses original
+target deployment IDs or the complete original operation request namespace,
+without joining current instance or deployment rows. Requests whose instance or
+extra deployment metadata was removed remain discoverable; another operation's
+requests remain excluded. UUID ordering and an exclusive cursor support stable
+continuation after worker handoff. The page cap is centrally defined by
+`CheckpointWorkloadWakeRecoveryBatchMax` and invalid bounds or cursors fail before
+reading. Returned records are independent copies of the original journal.
+
+This reader neither closes a producer nor releases dispatch evidence. Reading an
+inventory cannot turn an unknown wake into an accepted retirement receipt.
+Native host-generation correlation, independent producer-closure observations,
+proof-backed collection and migration source/destination recovery still need a
+qualified protocol. Public full-stage admission remains gated. PostgreSQL tests
+exercise metadata absence, operation isolation, stale/foreign leases, paging,
+adapter mutation, empty inventories and recovery across worker handoff without
+native VMs or live provider qualification.

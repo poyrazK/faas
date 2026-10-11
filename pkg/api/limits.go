@@ -8843,6 +8843,9 @@ const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
 // Non-secret original workload ownership and native retirement observations.
 const CheckpointWorkloadRetirementMaxBytes = 2 << 20
 
+// Private recovery pages bound original clone wake dispatch ownership reads.
+const CheckpointWorkloadWakeRecoveryBatchMax = 100
+
 // CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
 const CloneConfigurationOwnershipMaxBytes = 32 << 10
 

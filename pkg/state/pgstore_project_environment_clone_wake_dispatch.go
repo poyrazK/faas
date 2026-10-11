@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -25,4 +27,40 @@ func (s *PgStore) RecordCloneCheckpointWakeDispatch(ctx context.Context, instanc
 		return fmt.Errorf("record clone wake dispatch: %w", err)
 	}
 	return nil
+}
+
+var _ ProjectEnvironmentCloneWakeRecoveryStore = (*PgStore)(nil)
+
+func (s *PgStore) ListProjectEnvironmentCloneWakeDispatchesForRetirement(ctx context.Context, l ProjectEnvironmentCloneLease, afterInstanceID string, limit int) ([]ProjectEnvironmentCloneWakeDispatch, error) {
+	if (afterInstanceID != "" && !checkpointWorkloadRetirementID(afterInstanceID)) || limit < 1 || limit > api.CheckpointWorkloadWakeRecoveryBatchMax {
+		return nil, ErrInvalidArgument
+	}
+	var out []ProjectEnvironmentCloneWakeDispatch
+	err := s.checkpointSourceCompensationTx(ctx, l, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) error {
+		in, err := readCheckpointWorkloadRetirementTx(ctx, tx, op)
+		if err != nil {
+			return err
+		}
+		if in.State != "requested" && in.State != "retired" {
+			return ErrConflict
+		}
+		rows, err := sqlc.New().ListCloneCheckpointWakeDispatchesForRetirement(ctx, tx, sqlc.ListCloneCheckpointWakeDispatchesForRetirementParams{
+			OperationID: mustPgUUID(op.ID), AfterInstanceID: afterInstanceID, PageLimit: int32(limit),
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		out = make([]ProjectEnvironmentCloneWakeDispatch, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, ProjectEnvironmentCloneWakeDispatch{
+				InstanceID: pgUUIDString(row.InstanceID), AppID: pgUUIDString(row.AppID), DeploymentID: pgUUIDString(row.DeploymentID), NodeID: pgUUIDString(row.NodeID), WakeID: pgUUIDString(row.WakeID),
+				RequestReason: row.RequestReason, Method: row.Method, DispatchedAt: row.DispatchedAt.Time.UTC(),
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
