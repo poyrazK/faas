@@ -7,6 +7,14 @@
  */
 export type OperationBusinessConditionDefinition = {
   /**
+   * Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no controls or surrounding whitespace. Omission is unassigned.
+   */
+  refresh_owner?: string;
+  /**
+   * Optional public application-declared refresh instructions. UTF-8 byte bound; no controls or surrounding whitespace. Displayed as text and never executed.
+   */
+  refresh_instructions?: string;
+  /**
    * Optional pinned maximum condition report age in seconds. Zero or omission disables the budget; this measures reporting freshness without changing the application result.
    */
   evidence_max_age_seconds?: number;

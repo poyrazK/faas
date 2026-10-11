@@ -39,6 +39,8 @@ func workflowConditionFreshnessDefinition(definitions []api.OperationBusinessCon
 	for _, definition := range definitions {
 		if definition.ID == result.ID && definition.Description == result.Description {
 			out.EvidenceMaxAgeSeconds = definition.EvidenceMaxAgeSeconds
+			out.RefreshOwner = definition.RefreshOwner
+			out.RefreshInstructions = definition.RefreshInstructions
 			break
 		}
 	}
@@ -49,6 +51,8 @@ func workflowEvaluateConditionFreshness(fact *api.OperationWorkflowDecisionOutco
 	freshness := api.OperationWorkflowConditionFreshness{Status: "no_budget"}
 	if fact.ConditionFreshness != nil {
 		freshness.EvidenceMaxAgeSeconds = fact.ConditionFreshness.EvidenceMaxAgeSeconds
+		freshness.RefreshOwner = fact.ConditionFreshness.RefreshOwner
+		freshness.RefreshInstructions = fact.ConditionFreshness.RefreshInstructions
 	}
 	if freshness.EvidenceMaxAgeSeconds > 0 {
 		due := fact.OccurredAt.Add(time.Duration(freshness.EvidenceMaxAgeSeconds) * time.Second)

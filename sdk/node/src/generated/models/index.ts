@@ -1092,6 +1092,7 @@ export type { OperationWorkflowConditionEvidence } from './OperationWorkflowCond
 export type { OperationWorkflowConditionFreshness } from './OperationWorkflowConditionFreshness.js';
 export type { OperationWorkflowConditionOutcomeGroup } from './OperationWorkflowConditionOutcomeGroup.js';
 export type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
+export type { OperationWorkflowConditionRefreshOwnerGroup } from './OperationWorkflowConditionRefreshOwnerGroup.js';
 export type { OperationWorkflowControlResponse } from './OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
 export type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';

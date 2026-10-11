@@ -35,6 +35,13 @@ class OperationWorkflowPerformanceInstance:
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
+    refresh_evidence_count: int | Unset = UNSET
+    """Exact number of overdue selected conditions for this workflow and refresh owner. Present on
+    condition_refresh_owner contributors."""
+    refresh_evidence_truncated: bool | Unset = UNSET
+    refresh_evidence: list[OperationWorkflowDecisionOutcomeEvidence] | Unset = UNSET
+    """First 16 matching overdue condition facts in canonical identity order with pinned refresh guidance and
+    token-bound deadlines. More conditions may qualify; refresh_evidence_count remains exact."""
     decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset = UNSET
     """Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
     active condition groups use the latest matching fact among current decision contexts. The optional business
@@ -60,6 +67,17 @@ class OperationWorkflowPerformanceInstance:
 
         resolution_verification_count = self.resolution_verification_count
 
+        refresh_evidence_count = self.refresh_evidence_count
+
+        refresh_evidence_truncated = self.refresh_evidence_truncated
+
+        refresh_evidence: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.refresh_evidence, Unset):
+            refresh_evidence = []
+            for refresh_evidence_item_data in self.refresh_evidence:
+                refresh_evidence_item = refresh_evidence_item_data.to_dict()
+                refresh_evidence.append(refresh_evidence_item)
+
         decision_evidence: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision_evidence, Unset):
             decision_evidence = self.decision_evidence.to_dict()
@@ -81,6 +99,12 @@ class OperationWorkflowPerformanceInstance:
                 "resolution_verification_count": resolution_verification_count,
             }
         )
+        if refresh_evidence_count is not UNSET:
+            field_dict["refresh_evidence_count"] = refresh_evidence_count
+        if refresh_evidence_truncated is not UNSET:
+            field_dict["refresh_evidence_truncated"] = refresh_evidence_truncated
+        if refresh_evidence is not UNSET:
+            field_dict["refresh_evidence"] = refresh_evidence
         if decision_evidence is not UNSET:
             field_dict["decision_evidence"] = decision_evidence
         if platform_tenant_id is not UNSET:
@@ -117,6 +141,19 @@ class OperationWorkflowPerformanceInstance:
 
         resolution_verification_count = d.pop("resolution_verification_count")
 
+        refresh_evidence_count = d.pop("refresh_evidence_count", UNSET)
+
+        refresh_evidence_truncated = d.pop("refresh_evidence_truncated", UNSET)
+
+        _refresh_evidence = d.pop("refresh_evidence", UNSET)
+        refresh_evidence: list[OperationWorkflowDecisionOutcomeEvidence] | Unset = UNSET
+        if _refresh_evidence is not UNSET:
+            refresh_evidence = []
+            for refresh_evidence_item_data in _refresh_evidence:
+                refresh_evidence_item = OperationWorkflowDecisionOutcomeEvidence.from_dict(refresh_evidence_item_data)
+
+                refresh_evidence.append(refresh_evidence_item)
+
         _decision_evidence = d.pop("decision_evidence", UNSET)
         decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset
         if isinstance(_decision_evidence, Unset):
@@ -139,6 +176,9 @@ class OperationWorkflowPerformanceInstance:
             resolution_verifications=resolution_verifications,
             awaiting_verification_count=awaiting_verification_count,
             resolution_verification_count=resolution_verification_count,
+            refresh_evidence_count=refresh_evidence_count,
+            refresh_evidence_truncated=refresh_evidence_truncated,
+            refresh_evidence=refresh_evidence,
             decision_evidence=decision_evidence,
             platform_tenant_id=platform_tenant_id,
         )

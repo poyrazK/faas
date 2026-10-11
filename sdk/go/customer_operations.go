@@ -211,3 +211,5 @@ type OperationWorkflowActiveConditionSummary = api.OperationWorkflowActiveCondit
 type OperationWorkflowActiveConditionGroup = api.OperationWorkflowActiveConditionGroup
 
 type OperationWorkflowConditionFreshness = api.OperationWorkflowConditionFreshness
+
+type OperationWorkflowConditionRefreshOwnerGroup = api.OperationWorkflowConditionRefreshOwnerGroup

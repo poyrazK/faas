@@ -117,6 +117,10 @@ func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) e
 		return s != "" && len(s) <= api.OperationNameMaxBytes && operationHistoryName.MatchString(s)
 	}
 	switch g.Dimension {
+	case "condition_refresh_owner":
+		if g.ContractVersion != 0 || g.State != "" || g.Operation != "" || g.Code != "" || !ownerSelected || strings.TrimSpace(g.Owner) != g.Owner {
+			return ErrInvalidArgument
+		}
 	case "state_time", "blocked_time", "verification_wait":
 		if g.ContractVersion != 0 || g.State != "" || g.Operation != "" || g.Code != "" || ownerSelected {
 			return ErrInvalidArgument
@@ -175,7 +179,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	if businessOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
-	if activeConditionDimension(opts.Dimension) && (opts.Cohort != "ongoing" || opts.CohortToken == "") {
+	if (activeConditionDimension(opts.Dimension) || opts.Dimension == "condition_refresh_owner") && (opts.Cohort != "ongoing" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
 	opts.OperationWorkflowPerformanceOptions = base
@@ -251,6 +255,19 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 		}
 	}
+	if opts.Dimension == "condition_refresh_owner" {
+		out.ActiveConditions = workflowActiveConditions(cohort, at)
+		found := false
+		for _, group := range out.ActiveConditions.RefreshOwners {
+			if group.Owner == opts.Owner && group.Unassigned == opts.Unassigned {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+		}
+	}
 	type identity struct {
 		InstanceID, OperationID string
 		Subject                 api.OperationSubject
@@ -275,6 +292,13 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			seconds, decisionEvidence = workflowActiveConditionContribution(i, opts.OperationWorkflowPerformanceGroup, at)
 			matched = decisionEvidence != nil
 		}
+		var refreshEvidence []api.OperationWorkflowDecisionOutcomeEvidence
+		var refreshCount int64
+		if opts.Dimension == "condition_refresh_owner" {
+			refreshEvidence, refreshCount = workflowConditionRefreshContribution(i, opts.Owner, at)
+			matched = refreshCount > 0
+			seconds = i.Bottlenecks.BlockedSeconds
+		}
 		if !matched {
 			continue
 		}
@@ -285,7 +309,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		if decisionEvidence != nil {
 			decisionEvidence.ConditionComparison = workflowContributorConditionComparison(i, *decisionEvidence)
 		}
-		entry := api.OperationWorkflowPerformanceInstance{DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
+		entry := api.OperationWorkflowPerformanceInstance{RefreshEvidence: refreshEvidence, RefreshEvidenceCount: refreshCount, RefreshEvidenceTruncated: refreshCount > int64(len(refreshEvidence)), DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
 		if !operator {
 			entry.PlatformTenantID = ""
 			entry.State.PlatformTenantID = ""

@@ -829,3 +829,52 @@ application performed a new verification. Unknown remains an explicit business
 result and is independent of reporting freshness. Unreported conditions and
 incomplete histories retain their existing coverage handling. Workflow state
 staleness is separate. No facts expire and no application actions are triggered.
+
+### Condition evidence refresh ownership and guidance
+
+Pinned condition definitions may include independent optional `refresh_owner`
+(up to 128 UTF-8 bytes) and `refresh_instructions` (up to 1024 UTF-8 bytes).
+Both are public text without controls or surrounding whitespace. Omission leaves
+the owner unassigned or instructions unavailable; neither field configures a
+freshness budget or triggers an action. For example:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+    refresh_owner: payments-team
+    refresh_instructions: Recheck the payment provider and publish an updated decision snapshot.
+```
+
+Contributor `condition_freshness` carries the selected fact's pinned owner and
+instructions, including overdue evidence. The source definition belongs to the
+reporting Operation and milestone; current deployment changes do not reinterpret
+retained reports. Existing definition JSON, metadata projections and cohort
+fingerprints carry these fields, so no SQL schema migration is needed.
+
+Active summaries also expose `refresh_owners`, grouping eligible ongoing
+workflows with overdue selected condition reports. A workflow contributes once
+per owner; multiple overdue conditions for that owner increase
+`overdue_condition_count` without multiplying full-workflow durations. Workflow
+memberships overlap across owners. Missing owners use the explicit unassigned
+group. `overdue_workflow_count` and `overdue_condition_count` remain exact across
+the eligible sample before display limits. The first 64 lexical owner strings
+are displayed (unassigned first), with `refresh_owners_truncated` when limited.
+These counts are independent of condition-group display truncation and inherit
+incomplete-history, conflicting-snapshot and evidence-limit exclusions.
+
+`dimension=condition_refresh_owner` requires `cohort=ongoing`, the summary token,
+and exactly one of `owner` or `unassigned=true` matching a returned owner group.
+Contract, state, blocker, decision, path, outcome and condition/status selectors
+are rejected. Contributors rank by full observed blocked duration with stable
+workflow ties, rather than inferred time under an owner. Each carries the first
+16 overdue condition facts in canonical identity order as `refresh_evidence`,
+with exact `refresh_evidence_count` and `refresh_evidence_truncated`. Fact links,
+report timestamps, refresh deadlines and per-condition guidance remain visible;
+a workflow with many conditions is still counted once. Dashboard owner links
+open this same bound contributor view.
+
+Refresh instructions are displayed as text and never executed. Applications own
+verification, authorization and actions. Reporting freshness, condition results,
+and workflow state staleness remain separate observations.

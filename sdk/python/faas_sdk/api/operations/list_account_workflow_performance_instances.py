@@ -250,7 +250,12 @@ def sync_detailed(
     optional condition_evidence_status selector restricts active contributors to within_budget, overdue
     or no_budget. Status counters partition each returned group and the chosen status must have
     contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
-    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -383,7 +388,12 @@ def sync(
     optional condition_evidence_status selector restricts active contributors to within_budget, overdue
     or no_budget. Status counters partition each returned group and the chosen status must have
     contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
-    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -511,7 +521,12 @@ async def asyncio_detailed(
     optional condition_evidence_status selector restricts active contributors to within_budget, overdue
     or no_budget. Status counters partition each returned group and the chosen status must have
     contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
-    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -642,7 +657,12 @@ async def asyncio(
     optional condition_evidence_status selector restricts active contributors to within_budget, overdue
     or no_budget. Status counters partition each returned group and the chosen status must have
     contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
-    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):

@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_active_condition_group import OperationWorkflowActiveConditionGroup
+    from ..models.operation_workflow_condition_refresh_owner_group import OperationWorkflowConditionRefreshOwnerGroup
 
 
 T = TypeVar("T", bound="OperationWorkflowActiveConditionSummary")
@@ -23,6 +24,15 @@ class OperationWorkflowActiveConditionSummary:
 
     """
 
+    overdue_workflow_count: int
+    """Eligible sampled workflows with at least one overdue selected condition report; counted once before owner
+    display limits."""
+    overdue_condition_count: int
+    """Exact selected overdue condition identities across eligible sampled workflows before owner display limits."""
+    refresh_owners_truncated: bool
+    refresh_owners: list[OperationWorkflowConditionRefreshOwnerGroup]
+    """First 64 owner strings in lexical order; unassigned sorts first. Counts for returned owners are exact.
+    Workflows may overlap across owners."""
     matching_workflow_count: int
     sampled_workflow_count: int
     linked_workflow_count: int
@@ -37,6 +47,17 @@ class OperationWorkflowActiveConditionSummary:
     exact counts for returned groups."""
 
     def to_dict(self) -> dict[str, Any]:
+        overdue_workflow_count = self.overdue_workflow_count
+
+        overdue_condition_count = self.overdue_condition_count
+
+        refresh_owners_truncated = self.refresh_owners_truncated
+
+        refresh_owners = []
+        for refresh_owners_item_data in self.refresh_owners:
+            refresh_owners_item = refresh_owners_item_data.to_dict()
+            refresh_owners.append(refresh_owners_item)
+
         matching_workflow_count = self.matching_workflow_count
 
         sampled_workflow_count = self.sampled_workflow_count
@@ -64,6 +85,10 @@ class OperationWorkflowActiveConditionSummary:
 
         field_dict.update(
             {
+                "overdue_workflow_count": overdue_workflow_count,
+                "overdue_condition_count": overdue_condition_count,
+                "refresh_owners_truncated": refresh_owners_truncated,
+                "refresh_owners": refresh_owners,
                 "matching_workflow_count": matching_workflow_count,
                 "sampled_workflow_count": sampled_workflow_count,
                 "linked_workflow_count": linked_workflow_count,
@@ -82,8 +107,24 @@ class OperationWorkflowActiveConditionSummary:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_active_condition_group import OperationWorkflowActiveConditionGroup
+        from ..models.operation_workflow_condition_refresh_owner_group import (
+            OperationWorkflowConditionRefreshOwnerGroup,
+        )
 
         d = dict(src_dict)
+        overdue_workflow_count = d.pop("overdue_workflow_count")
+
+        overdue_condition_count = d.pop("overdue_condition_count")
+
+        refresh_owners_truncated = d.pop("refresh_owners_truncated")
+
+        refresh_owners = []
+        _refresh_owners = d.pop("refresh_owners")
+        for refresh_owners_item_data in _refresh_owners:
+            refresh_owners_item = OperationWorkflowConditionRefreshOwnerGroup.from_dict(refresh_owners_item_data)
+
+            refresh_owners.append(refresh_owners_item)
+
         matching_workflow_count = d.pop("matching_workflow_count")
 
         sampled_workflow_count = d.pop("sampled_workflow_count")
@@ -110,6 +151,10 @@ class OperationWorkflowActiveConditionSummary:
             groups.append(groups_item)
 
         operation_workflow_active_condition_summary = cls(
+            overdue_workflow_count=overdue_workflow_count,
+            overdue_condition_count=overdue_condition_count,
+            refresh_owners_truncated=refresh_owners_truncated,
+            refresh_owners=refresh_owners,
             matching_workflow_count=matching_workflow_count,
             sampled_workflow_count=sampled_workflow_count,
             linked_workflow_count=linked_workflow_count,

@@ -112,6 +112,8 @@ func CanonicalOperationWorkflowChangeReason(input *OperationWorkflowChangeReason
 
 // OperationBusinessConditionDefinition declares public reasoning vocabulary on a pinned milestone step.
 type OperationBusinessConditionDefinition struct {
+	RefreshOwner          string `json:"refresh_owner,omitempty" yaml:"refresh_owner,omitempty" toml:"refresh_owner,omitempty"`
+	RefreshInstructions   string `json:"refresh_instructions,omitempty" yaml:"refresh_instructions,omitempty" toml:"refresh_instructions,omitempty"`
 	EvidenceMaxAgeSeconds int64  `json:"evidence_max_age_seconds,omitempty" yaml:"evidence_max_age_seconds,omitempty" toml:"evidence_max_age_seconds,omitempty"`
 	ID                    string `json:"id" yaml:"id" toml:"id"`
 	Description           string `json:"description" yaml:"description" toml:"description"`
@@ -131,6 +133,9 @@ func CanonicalOperationBusinessConditions(input []OperationBusinessConditionDefi
 	out := append([]OperationBusinessConditionDefinition(nil), input...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	for i, c := range out {
+		if !validBusinessConditionRefreshText(c.RefreshOwner, OperationBusinessConditionRefreshOwnerMaxBytes) || !validBusinessConditionRefreshText(c.RefreshInstructions, OperationBusinessConditionRefreshInstructionsMaxBytes) {
+			return nil, fmt.Errorf("condition refresh guidance requires bounded public text without controls or surrounding whitespace")
+		}
 		if c.EvidenceMaxAgeSeconds < 0 || c.EvidenceMaxAgeSeconds > OperationBusinessConditionEvidenceMaxAgeSeconds {
 			return nil, fmt.Errorf("condition evidence age budget is out of range")
 		}
@@ -190,3 +195,10 @@ func SameOperationBusinessDecision(a, b OperationBusinessDecision) bool {
 }
 
 const OperationBusinessConditionEvidenceMaxAgeSeconds int64 = 10 * 365 * 24 * 60 * 60
+
+func validBusinessConditionRefreshText(value string, limit int) bool {
+	return len(value) <= limit && utf8.ValidString(value) && strings.TrimSpace(value) == value && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
+const OperationBusinessConditionRefreshOwnerMaxBytes = 128
+const OperationBusinessConditionRefreshInstructionsMaxBytes = 1024

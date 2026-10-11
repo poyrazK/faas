@@ -1,5 +1,5 @@
 export interface OperationBusinessConditionResult { id: string; description: string; result: 'pass' | 'fail' | 'unknown' }
-export interface OperationBusinessConditionDefinition { evidence_max_age_seconds?: number; id: string; description: string }
+export interface OperationBusinessConditionDefinition { refresh_owner?: string; refresh_instructions?: string; evidence_max_age_seconds?: number; id: string; description: string }
 export function canonicalBusinessConditions(input: unknown): OperationBusinessConditionResult[] | undefined {
  if (input === undefined || input === null) return undefined;
  if (!Array.isArray(input) || input.length > 16) throw new TypeError('Business conditions exceed limit');

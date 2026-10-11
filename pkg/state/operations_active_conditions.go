@@ -170,6 +170,7 @@ func workflowActiveConditions(instances []workflowPerformanceInstance, at time.T
 		bucket.Group.EvidenceAge = workflowDurationDistribution(bucket.Age)
 		out.Groups = append(out.Groups, bucket.Group)
 	}
+	workflowConditionRefreshOwners(instances, at, out)
 	return out
 }
 func workflowConditionEvidenceAge(fact api.OperationWorkflowDecisionOutcomeEvidence, at time.Time) int64 {

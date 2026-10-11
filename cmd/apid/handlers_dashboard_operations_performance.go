@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.RefreshOwnerGroups = workflowConditionRefreshOwnerLinks(data.SummaryURL, opts, summary)
 		data.ActiveConditionGroups = workflowActiveConditionLinks(data.SummaryURL, opts, summary)
 		data.ConditionGroups = workflowConditionOutcomeLinks(data.SummaryURL, opts, summary)
 		if summary.DecisionOutcomes != nil {
@@ -165,6 +166,18 @@ func workflowActiveConditionLinks(path string, opts api.OperationWorkflowPerform
 		group.ConditionEvidenceStatus = "overdue"
 		link.OverdueURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
 		links = append(links, link)
+	}
+	return links
+}
+
+func workflowConditionRefreshOwnerLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowConditionRefreshOwnerLink {
+	links := []dashboard.WorkflowConditionRefreshOwnerLink{}
+	if summary.ActiveConditions == nil {
+		return links
+	}
+	for _, group := range summary.ActiveConditions.RefreshOwners {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_owner", Owner: group.Owner, Unassigned: group.Unassigned}
+		links = append(links, dashboard.WorkflowConditionRefreshOwnerLink{OperationWorkflowConditionRefreshOwnerGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
 	}
 	return links
 }

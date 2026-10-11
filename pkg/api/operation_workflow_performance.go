@@ -195,16 +195,20 @@ type OperationWorkflowConditionOutcomeGroup struct {
 
 // OperationWorkflowActiveConditionSummary describes latest explicit snapshots in ongoing runs.
 type OperationWorkflowActiveConditionSummary struct {
-	MatchingWorkflowCount                  int64                                   `json:"matching_workflow_count"`
-	SampledWorkflowCount                   int64                                   `json:"sampled_workflow_count"`
-	LinkedWorkflowCount                    int64                                   `json:"linked_workflow_count"`
-	ExcludedIncompleteWorkflowCount        int64                                   `json:"excluded_incomplete_workflow_count"`
-	ExcludedAmbiguousWorkflowCount         int64                                   `json:"excluded_ambiguous_workflow_count"`
-	ExcludedConditionEvidenceWorkflowCount int64                                   `json:"excluded_condition_evidence_workflow_count"`
-	UnclassifiedWorkflowCount              int64                                   `json:"unclassified_workflow_count"`
-	CohortTruncated                        bool                                    `json:"cohort_truncated"`
-	GroupsTruncated                        bool                                    `json:"groups_truncated"`
-	Groups                                 []OperationWorkflowActiveConditionGroup `json:"groups"`
+	OverdueWorkflowCount                   int64                                         `json:"overdue_workflow_count"`
+	OverdueConditionCount                  int64                                         `json:"overdue_condition_count"`
+	RefreshOwnersTruncated                 bool                                          `json:"refresh_owners_truncated"`
+	RefreshOwners                          []OperationWorkflowConditionRefreshOwnerGroup `json:"refresh_owners"`
+	MatchingWorkflowCount                  int64                                         `json:"matching_workflow_count"`
+	SampledWorkflowCount                   int64                                         `json:"sampled_workflow_count"`
+	LinkedWorkflowCount                    int64                                         `json:"linked_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                         `json:"excluded_incomplete_workflow_count"`
+	ExcludedAmbiguousWorkflowCount         int64                                         `json:"excluded_ambiguous_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                         `json:"excluded_condition_evidence_workflow_count"`
+	UnclassifiedWorkflowCount              int64                                         `json:"unclassified_workflow_count"`
+	CohortTruncated                        bool                                          `json:"cohort_truncated"`
+	GroupsTruncated                        bool                                          `json:"groups_truncated"`
+	Groups                                 []OperationWorkflowActiveConditionGroup       `json:"groups"`
 }
 
 // OperationWorkflowActiveConditionGroup measures full workflow durations, not condition latency.
@@ -227,8 +231,19 @@ type OperationWorkflowActiveConditionGroup struct {
 
 // OperationWorkflowConditionFreshness measures report age against the pinned definition, not condition truth.
 type OperationWorkflowConditionFreshness struct {
+	RefreshOwner          string     `json:"refresh_owner,omitempty"`
+	RefreshInstructions   string     `json:"refresh_instructions,omitempty"`
 	Status                string     `json:"status"`
 	EvidenceMaxAgeSeconds int64      `json:"evidence_max_age_seconds,omitempty"`
 	RefreshDueAt          *time.Time `json:"refresh_due_at,omitempty"`
 	OverdueSeconds        int64      `json:"overdue_seconds,omitempty"`
+}
+
+// OperationWorkflowConditionRefreshOwnerGroup counts ongoing runs once per refresh owner; owner groups overlap.
+type OperationWorkflowConditionRefreshOwnerGroup struct {
+	Owner                 string                                `json:"owner,omitempty"`
+	Unassigned            bool                                  `json:"unassigned"`
+	OverdueConditionCount int64                                 `json:"overdue_condition_count"`
+	ElapsedTime           OperationWorkflowDurationDistribution `json:"elapsed_time"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
 }

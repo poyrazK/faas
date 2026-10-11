@@ -9662,3 +9662,9 @@ const OperationWorkflowActiveConditionGroupsMax = 64
 
 // Optional condition evidence budgets allow at most ten years. Zero disables the budget.
 const OperationBusinessConditionEvidenceMaxAgeSeconds int64 = 10 * 365 * 24 * 60 * 60
+
+const OperationBusinessConditionRefreshOwnerMaxBytes = 128
+const OperationBusinessConditionRefreshInstructionsMaxBytes = 1024
+
+const OperationWorkflowConditionRefreshOwnersMax = 64
+const OperationWorkflowConditionRefreshEvidenceMax = 16

@@ -32,15 +32,18 @@ type OperationWorkflowPerformanceInstanceOptions struct {
 
 // OperationWorkflowPerformanceInstance is a complete-history contributor.
 type OperationWorkflowPerformanceInstance struct {
-	DecisionEvidence            *OperationWorkflowDecisionOutcomeEvidence `json:"decision_evidence,omitempty"`
-	PlatformTenantID            string                                    `json:"platform_tenant_id,omitempty"`
-	Subject                     OperationSubject                          `json:"subject"`
-	OperationID                 string                                    `json:"operation_id"`
-	State                       OperationWorkflowState                    `json:"state"`
-	ObservedSeconds             int64                                     `json:"observed_seconds"`
-	ResolutionVerifications     []OperationWorkflowResolutionVerification `json:"resolution_verifications"`
-	AwaitingVerificationCount   int64                                     `json:"awaiting_verification_count"`
-	ResolutionVerificationCount int64                                     `json:"resolution_verification_count"`
+	RefreshEvidence             []OperationWorkflowDecisionOutcomeEvidence `json:"refresh_evidence,omitempty"`
+	RefreshEvidenceCount        int64                                      `json:"refresh_evidence_count,omitempty"`
+	RefreshEvidenceTruncated    bool                                       `json:"refresh_evidence_truncated,omitempty"`
+	DecisionEvidence            *OperationWorkflowDecisionOutcomeEvidence  `json:"decision_evidence,omitempty"`
+	PlatformTenantID            string                                     `json:"platform_tenant_id,omitempty"`
+	Subject                     OperationSubject                           `json:"subject"`
+	OperationID                 string                                     `json:"operation_id"`
+	State                       OperationWorkflowState                     `json:"state"`
+	ObservedSeconds             int64                                      `json:"observed_seconds"`
+	ResolutionVerifications     []OperationWorkflowResolutionVerification  `json:"resolution_verifications"`
+	AwaitingVerificationCount   int64                                      `json:"awaiting_verification_count"`
+	ResolutionVerificationCount int64                                      `json:"resolution_verification_count"`
 }
 
 // OperationWorkflowPerformanceInstancesResponse preserves cohort coverage alongside ranked contributors.
