@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"github.com/onebox-faas/faas/pkg/durableentity"
 	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
@@ -119,5 +122,22 @@ func TestDurableEntitySocketFlagRequiresInvocationPreview(t *testing.T) {
 	})
 	if err == nil || e.s.durableEntitySockets != nil {
 		t.Fatal("socket flag enabled without invocation preview")
+	}
+}
+
+func TestDurableEntitySocketScopeFenceRefusesRetargetedIdentity(t *testing.T) {
+	e, app, dispatch, _ := entityAPIFixture(t, false)
+	body, err := json.Marshal(entityRequest("scope-fence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/v1/apps/"+app.Slug+"/entities/invoke", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+e.key)
+	expected := durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: "original-environment", Namespace: "counters", Key: "customer:456"}
+	request = request.WithContext(context.WithValue(request.Context(), entitySocketScopeFence{}, expected))
+	response := httptest.NewRecorder()
+	e.h.ServeHTTP(response, request)
+	if response.Code != 403 || dispatch.calls.Load() != 0 {
+		t.Fatalf("scope fence status %d, dispatched %d", response.Code, dispatch.calls.Load())
 	}
 }
