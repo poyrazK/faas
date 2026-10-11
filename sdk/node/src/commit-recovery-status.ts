@@ -19,6 +19,7 @@ export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
 export interface CommitRecoveryDiagnosticProgress {
+  max_diagnostic_age_ms: number; freshness_checked_at: string; freshness: Record<string, number>; fresh_complete: boolean;
   next_index: number; retry_next_index: number; refresh_next_index: number; target_count: number; remaining: number; deferred: number; retained: number; reads: number; counts: Record<string, number>; complete: boolean;
 }
 export interface CommitRecoveryDiagnostics {
@@ -72,9 +73,11 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
 }
 /** Read guarded evidence only. An unknown attempt remains unknown even when delivery advances. */
 export async function getCommitRecoveryStatus(source: string, reviewed: CommitRecoveryPlan, applied: CommitRecoveryApplyResult,
-  options: { diagnostics?: boolean; maxObservationAgeMs?: number; limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
+  options: { diagnostics?: boolean; maxDiagnosticAgeMs?: number; maxObservationAgeMs?: number; limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal, maxObservationAgeMs = 0 } = options;
   validateObservationAge(maxObservationAgeMs);
+  validateObservationAge(options.maxDiagnosticAgeMs ?? 0);
+  if ((options.maxDiagnosticAgeMs ?? 0) > 0 && !options.diagnostics) throw new TypeError("maximum diagnostic age requires diagnostics");
   if (options.resume && options.refresh) throw new TypeError('choose resume or refresh');
   const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh!) : undefined;
   const diagnosticPrevious = options.resume ? structuredClone(previous) : undefined;
@@ -151,13 +154,13 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
         row.status = 'read_error'; row.reason = 'evidence_read_failed'; out.complete = false; cause = cause ? new AggregateError([cause, error], 'recovery status reads failed') : error;
       }
     }
-    if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, cause ? AbortSignal.abort() : controller.signal, diagnosticPrevious));
+    if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, cause ? AbortSignal.abort() : controller.signal, diagnosticPrevious, options.maxDiagnosticAgeMs));
   } catch (error) { cause = error; }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   if (controller.signal.aborted) { cause ??= new Error('status interrupted'); for (const row of out.items) if (row.status === 'not_observed') row.reason = 'interrupted'; }
   recount(out);
   if (cause) out.complete = false;
-  if (cause && options.diagnostics && !out.diagnostics_progress) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious));
+  if (cause && options.diagnostics && !out.diagnostics_progress) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious, options.maxDiagnosticAgeMs));
   if (cause) throw new CommitRecoveryStatusError(out, cause);
   return out;
 }
@@ -232,13 +235,15 @@ export function commitRecoveryStatusSettled(out: CommitRecoveryStatusResult): bo
 
 /** Poll a fixed selection; errors retain the last/partial result. */
 export async function watchCommitRecoveryStatus(source: string, plan: CommitRecoveryPlan, applied: CommitRecoveryApplyResult, options: {
-  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; diagnostics?: boolean; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
+  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; diagnostics?: boolean; maxDiagnosticAgeMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
   resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
   onProgress?: (status: CommitRecoveryStatusResult) => void;
 } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit, recipientPages, onProgress, signal } = options;
   const maxObservationAgeMs = options.maxObservationAgeMs ?? 0;
   validateObservationAge(maxObservationAgeMs);
+  validateObservationAge(options.maxDiagnosticAgeMs ?? 0);
+  if ((options.maxDiagnosticAgeMs ?? 0) > 0 && !options.diagnostics) throw new TypeError("maximum diagnostic age requires diagnostics");
   const readRetries = options.readRetries ?? 0;
   if (!Number.isInteger(readRetries) || readRetries < 0 || readRetries > 20) throw new TypeError('invalid recovery watch read retry budget');
   const intervalMs = options.intervalMs ?? 1000, timeoutMs = options.timeoutMs ?? 120000;
@@ -276,7 +281,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       } catch (error) {
         if (!(error instanceof CommitRecoveryStatusError)) throw error;
         out = error.result;
-        if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious));
+        if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious, options.maxDiagnosticAgeMs));
         const retryAfter = recoveryReadRetry(error.cause);
         if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) {
           if (retryAfter !== undefined && readRetries > 0 && usedRetries >= readRetries) reason = 'retry_exhausted';
@@ -285,7 +290,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
         usedRetries++; failed = true;
         delay = Math.max(Math.min(60000, intervalMs * 2 ** (usedRetries - 1)), retryAfter);
       }
-      if (options.diagnostics && !failed) out = await diagnoseCommitRecoveryStatus(out, controller.signal, diagnosticPrevious);
+      if (options.diagnostics && !failed) out = await diagnoseCommitRecoveryStatus(out, controller.signal, diagnosticPrevious, options.maxDiagnosticAgeMs);
       out.monitoring = summarize('running');
       phase = 'callback';
       onProgress?.(structuredClone(out));
@@ -371,11 +376,12 @@ const diagnosticReadMax = 50;
 const diagnosticRefreshReserve = 1;
 
 /** Rotate exact lookups on validated status; previous must have the same selection and attempts. */
-export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal, previous?: CommitRecoveryStatusResult): Promise<CommitRecoveryStatusResult> {
+export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal, previous?: CommitRecoveryStatusResult, maxDiagnosticAgeMs = 0): Promise<CommitRecoveryStatusResult> {
+  validateObservationAge(maxDiagnosticAgeMs);
   const out = structuredClone(status), prior = structuredClone(previous ?? status);
   if (out.source_id.toLowerCase() !== prior.source_id.toLowerCase() || (out.subscription_id ?? '').toLowerCase() !== (prior.subscription_id ?? '').toLowerCase() || out.items.length !== prior.items.length || out.items.some((row, i) => !row.selection || !prior.items[i]?.selection || !sameSelection(row.selection, prior.items[i]!.selection!) || canonical(row.attempt) !== canonical(prior.items[i]!.attempt))) throw new TypeError('saved diagnostic selection mismatch');
   const cursor = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 && value! < out.items.length ? value! : 0;
-  const progress: CommitRecoveryDiagnosticProgress = { next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
+  const progress: CommitRecoveryDiagnosticProgress = { max_diagnostic_age_ms: maxDiagnosticAgeMs, freshness_checked_at: new Date().toISOString(), freshness: {fresh: 0, stale: 0, unread: 0}, fresh_complete: false, next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
   for (let i = 0; i < out.items.length; i++) {
     const row = out.items[i]!, old = prior.items[i]!.diagnostics;
     row.diagnostics = { status: 'budget_exhausted' };
@@ -394,6 +400,10 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
   const failures = candidates(progress.retry_next_index, 1), successes = candidates(progress.refresh_next_index, 2);
   const reserve = successes.length > 0 && failures.length > 0 && remaining > diagnosticRefreshReserve ? diagnosticRefreshReserve : 0;
   const failed = failures.slice(0, remaining - reserve); remaining -= failed.length;
+  if (maxDiagnosticAgeMs > 0) {
+    const now = Date.now();
+    successes.sort((a, b) => Number(diagnosticFreshness(out.items[b]!, now, maxDiagnosticAgeMs) === 'stale') - Number(diagnosticFreshness(out.items[a]!, now, maxDiagnosticAgeMs) === 'stale'));
+  }
   const covered = successes.slice(0, remaining);
   const selected = [unread, failed, covered].flatMap((indices, group) => indices.map(index => ({index, group})));
   const queries = selected.map(({index}) => {
@@ -427,16 +437,20 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
       row.diagnostics = validDiagnostic(diagnostic, row) ? diagnostic : { status: 'read_error', reason: 'invalid_evidence' };
     }
   }
+  progress.freshness_checked_at = new Date().toISOString();
+  const checked = Date.parse(progress.freshness_checked_at);
   for (const row of out.items) {
     const diagnostic = row.diagnostics!;
     progress.counts[diagnostic.status] = (progress.counts[diagnostic.status] ?? 0) + 1;
     if (!diagnosticTarget(row)) continue;
     progress.target_count++;
+    progress.freshness[diagnosticFreshness(row, checked, maxDiagnosticAgeMs)]!++;
     if (!diagnosticQueryable(row)) progress.deferred++;
     if (!validDiagnostic(diagnostic, row)) progress.remaining++;
     else if (diagnostic.retained) progress.retained++;
   }
   progress.complete = progress.remaining === 0;
+  progress.fresh_complete = progress.freshness.fresh === progress.target_count;
   out.diagnostics_progress = progress;
   return out;
 }
@@ -450,4 +464,10 @@ function validDiagnostic(diagnostic: CommitRecoveryDiagnostics | undefined, row:
   if (diagnostic.status !== 'available') return false;
   const recipient = diagnostic.recipient, publication = row.selection.publication;
   return Boolean(recipient && recipient.event_source === publication.source && recipient.event_id === publication.id && typeof recipient.accepted_at === 'string' && sameAcceptance(recipient.accepted_at, publication.accepted_at) && typeof recipient.subscription_id === 'string' && recipient.subscription_id.toLowerCase() === row.attempt.subscription_id.toLowerCase() && recipient.consumer_kind === 'application' && recipient.state === diagnostic.routing_state && ['pending', 'processing'].includes(recipient.state));
+}
+
+function diagnosticFreshness(row: CommitRecoveryStatusItem, now: number, age: number): string {
+  if (!validDiagnostic(row.diagnostics, row)) return 'unread';
+  const observed = Date.parse(row.diagnostics!.observed_at!);
+  return age > 0 && (!Number.isFinite(observed) || observed > now || now - observed > age) ? 'stale' : 'fresh';
 }

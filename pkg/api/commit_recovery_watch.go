@@ -19,6 +19,7 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 
 // CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
 type CommitRecoveryWatchOptions struct {
+	MaxDiagnosticAge  time.Duration
 	Diagnostics       bool
 	ReadRetries       int
 	MaxObservationAge time.Duration
@@ -55,6 +56,12 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax || readRetries < 0 || readRetries > CommitRecoveryWatchReadRetriesMax || maxAge < 0 || maxAge > CommitRecoveryWatchObservationAgeMax || (maxAge > 0 && maxAge < CommitRecoveryWatchObservationAgeMin) {
 		return out, ErrValidation("watch requires a deadline and a valid polling interval")
 	}
+	if ageErr := validateDiagnosticAge(options.MaxDiagnosticAge); ageErr != nil {
+		return out, ageErr
+	}
+	if options.MaxDiagnosticAge > 0 && !options.Diagnostics {
+		return out, ErrValidation("maximum diagnostic age requires diagnostics")
+	}
 	// Freeze caller-owned inputs across polling passes and progress callbacks.
 	saved, err := cloneCommitRecoveryWatchInputs(plan, applied, previous)
 	if err != nil {
@@ -84,7 +91,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				stop()
 				diagnosticCtx = paused
 			}
-			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious)
+			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious, options.MaxDiagnosticAge)
 			if diagnosticErr == nil {
 				out = diagnosed
 			}

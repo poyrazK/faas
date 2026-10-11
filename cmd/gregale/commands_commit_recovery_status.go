@@ -21,6 +21,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
 	diagnostics := fs.Bool("diagnostics", false, "include bounded live delivery blocker diagnostics")
+	diagnosticAge := fs.Duration("max-diagnostic-age", 0, "maximum diagnostic sample age (100ms-24h; requires diagnostics; default disabled)")
 	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
 	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
@@ -30,7 +31,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *diagnosticAge < 0 || *diagnosticAge > api.CommitRecoveryDiagnosticAgeMax || (*diagnosticAge > 0 && (*diagnosticAge < api.CommitRecoveryDiagnosticAgeMin || !*diagnostics)) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -122,20 +123,20 @@ func cmdCommitRecoveryStatus(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
 				if status.DiagnosticsProgress != nil {
 					d := status.DiagnosticsProgress
-					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d\n", d.Remaining, d.Counts, d.Retained, d.Deferred)
+					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d; freshness=%v\n", d.Remaining, d.Counts, d.Retained, d.Deferred, d.Freshness)
 				}
 				if freshness != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery freshness: %v\n", freshness)
 				}
 			}
 		}
-		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics})
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, MaxDiagnosticAge: *diagnosticAge})
 	}
 	if !*watch && err == nil && *diagnostics {
 		if saved != nil && *resumePath != "" {
-			out, err = client.ResumeCommitRecoveryDiagnostics(ctx, out, *saved)
+			out, err = client.DiagnoseCommitRecoveryStatusWithOptions(ctx, out, saved, api.CommitRecoveryDiagnosticsOptions{MaxDiagnosticAge: *diagnosticAge})
 		} else {
-			out = client.DiagnoseCommitRecoveryStatus(ctx, out)
+			out, err = client.DiagnoseCommitRecoveryStatusWithOptions(ctx, out, nil, api.CommitRecoveryDiagnosticsOptions{MaxDiagnosticAge: *diagnosticAge})
 		}
 	}
 	var validation *api.Problem
@@ -196,5 +197,5 @@ func commitRecoveryDiagnosticSummary(progress *api.CommitRecoveryDiagnosticProgr
 	if progress == nil {
 		return nil
 	}
-	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained}
+	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained, progress.Freshness, progress.FreshComplete}
 }

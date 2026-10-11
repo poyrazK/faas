@@ -22,22 +22,26 @@ type CommitRecoveryDiagnostics struct {
 
 // CommitRecoveryDiagnosticProgress describes diagnostic sampling independently of delivery.
 type CommitRecoveryDiagnosticProgress struct {
-	NextIndex        int            `json:"next_index"`
-	RetryNextIndex   int            `json:"retry_next_index"`
-	RefreshNextIndex int            `json:"refresh_next_index"`
-	TargetCount      int            `json:"target_count"`
-	Remaining        int            `json:"remaining"`
-	Deferred         int            `json:"deferred"`
-	Retained         int            `json:"retained"`
-	Reads            int            `json:"reads"`
-	Counts           map[string]int `json:"counts"`
-	Complete         bool           `json:"complete"`
+	MaxDiagnosticAgeMS int64          `json:"max_diagnostic_age_ms"`
+	FreshnessCheckedAt time.Time      `json:"freshness_checked_at"`
+	Freshness          map[string]int `json:"freshness"`
+	FreshComplete      bool           `json:"fresh_complete"`
+	NextIndex          int            `json:"next_index"`
+	RetryNextIndex     int            `json:"retry_next_index"`
+	RefreshNextIndex   int            `json:"refresh_next_index"`
+	TargetCount        int            `json:"target_count"`
+	Remaining          int            `json:"remaining"`
+	Deferred           int            `json:"deferred"`
+	Retained           int            `json:"retained"`
+	Reads              int            `json:"reads"`
+	Counts             map[string]int `json:"counts"`
+	Complete           bool           `json:"complete"`
 }
 
 // DiagnoseCommitRecoveryStatus rotates exact lookups within the existing read cap.
 // Only call with validated status; retained samples keep their original timestamps.
 func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult) CommitRecoveryStatusResult {
-	out, err := c.diagnoseCommitRecoveryStatus(ctx, status, nil)
+	out, err := c.diagnoseCommitRecoveryStatus(ctx, status, nil, 0)
 	if err != nil {
 		return status
 	}
@@ -47,10 +51,26 @@ func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 // ResumeCommitRecoveryDiagnostics binds earlier samples and cursors to the exact
 // validated selection and attempts. Saved aggregate counters are never trusted.
 func (c *Client) ResumeCommitRecoveryDiagnostics(ctx context.Context, status, previous CommitRecoveryStatusResult) (CommitRecoveryStatusResult, error) {
-	return c.diagnoseCommitRecoveryStatus(ctx, status, &previous)
+	return c.diagnoseCommitRecoveryStatus(ctx, status, &previous, 0)
 }
 
-func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult) (CommitRecoveryStatusResult, error) {
+// CommitRecoveryDiagnosticsOptions controls diagnostic age independently of settlement.
+type CommitRecoveryDiagnosticsOptions struct{ MaxDiagnosticAge time.Duration }
+
+// DiagnoseCommitRecoveryStatusWithOptions recomputes saved freshness under the current policy.
+func (c *Client) DiagnoseCommitRecoveryStatusWithOptions(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, options CommitRecoveryDiagnosticsOptions) (CommitRecoveryStatusResult, error) {
+	return c.diagnoseCommitRecoveryStatus(ctx, status, previous, options.MaxDiagnosticAge)
+}
+func validateDiagnosticAge(age time.Duration) error {
+	if age < 0 || age > CommitRecoveryDiagnosticAgeMax || (age > 0 && age < CommitRecoveryDiagnosticAgeMin) {
+		return ErrValidation("maximum diagnostic age must be zero or 100ms..24h")
+	}
+	return nil
+}
+func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, maxAge time.Duration) (CommitRecoveryStatusResult, error) {
+	if err := validateDiagnosticAge(maxAge); err != nil {
+		return status, err
+	}
 	raw, err := json.Marshal(struct {
 		Current  CommitRecoveryStatusResult
 		Previous *CommitRecoveryStatusResult
@@ -102,6 +122,18 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 	unread := diagnosticCandidates(out, progress.NextIndex, 0)
 	failed := diagnosticCandidates(out, progress.RetryNextIndex, 1)
 	covered := diagnosticCandidates(out, progress.RefreshNextIndex, 2)
+	if maxAge > 0 {
+		stale, fresh := []int{}, []int{}
+		now := time.Now()
+		for _, index := range covered {
+			if diagnosticFreshness(out.Items[index], now, maxAge) == "stale" {
+				stale = append(stale, index)
+			} else {
+				fresh = append(fresh, index)
+			}
+		}
+		covered = append(stale, fresh...)
+	}
 	unread = unread[:min(len(unread), CommitRecoveryDiagnosticsReadMax)]
 	remaining := CommitRecoveryDiagnosticsReadMax - len(unread)
 	reserve := 0
@@ -158,6 +190,9 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			}
 		}
 	}
+	progress.MaxDiagnosticAgeMS = maxAge.Milliseconds()
+	progress.FreshnessCheckedAt = time.Now().UTC()
+	progress.Freshness = map[string]int{"fresh": 0, "stale": 0, "unread": 0}
 	progress.Counts = map[string]int{"available": 0, "not_waiting": 0, "unavailable": 0, "acceptance_replaced": 0, "read_error": 0, "budget_exhausted": 0, "deferred": 0, "unsupported_recipient": 0}
 	for _, row := range out.Items {
 		progress.Counts[row.Diagnostics.Status]++
@@ -165,6 +200,7 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			continue
 		}
 		progress.TargetCount++
+		progress.Freshness[diagnosticFreshness(row, progress.FreshnessCheckedAt, maxAge)]++
 		if !diagnosticQueryable(row) {
 			progress.Deferred++
 		}
@@ -175,6 +211,7 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 		}
 	}
 	progress.Complete = progress.Remaining == 0
+	progress.FreshComplete = progress.Freshness["fresh"] == progress.TargetCount
 	out.DiagnosticsProgress = progress
 	return out, nil
 }
@@ -263,4 +300,14 @@ func observeCommitRecoveryDiagnostic(result EventRecipientBlockerResponse, query
 
 func sameRecipientBlockerQuery(a, b EventRecipientBlockerQuery) bool {
 	return a.Source == b.Source && a.ID == b.ID && a.SubscriptionID == b.SubscriptionID && a.ExpectedAcceptedAt.Equal(b.ExpectedAcceptedAt)
+}
+
+func diagnosticFreshness(row CommitRecoveryStatusItem, now time.Time, maxAge time.Duration) string {
+	if !validCommitRecoveryDiagnostic(row.Diagnostics, row) {
+		return "unread"
+	}
+	if maxAge > 0 && (row.Diagnostics.ObservedAt.After(now) || now.Sub(*row.Diagnostics.ObservedAt) > maxAge) {
+		return "stale"
+	}
+	return "fresh"
 }

@@ -1538,3 +1538,20 @@ acceptance guard, snapshot and result or error. The batch shares a five-second
 read deadline; later items may report `read_timeout` and rotate into retries.
 Coverage reads count recipient attempts, rather than HTTP requests. Batch
 coverage does not prove delivery success or handler completion.
+
+### Limit diagnostic sample age
+
+Use `--diagnostics --max-diagnostic-age 30s` with ordinary, resumed or watched
+recovery status. The default `0` disables the age policy; enabled values are
+100ms–24h. Stale samples refresh ahead of fresh samples within the covered
+refresh pool, after unread and failed-read scheduling, under the same
+50-recipient batch cap.
+
+`diagnostics_progress.freshness` reports `fresh`, `stale` and `unread` counts,
+with `freshness_checked_at`, `max_diagnostic_age_ms` and `fresh_complete`.
+Future timestamps count as stale when the policy is enabled. Disabled age
+policy counts every valid sample as fresh. Historical `complete` still means
+sample coverage; diagnostic freshness never gates delivery settlement or
+command success. A resumed checkpoint uses the current invocation's age policy
+and recomputes counts from the original sample timestamps. An age limit shorter
+than the monitoring interval may leave samples stale on every pass.

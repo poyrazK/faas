@@ -107,6 +107,7 @@ async def aget_commit_recovery_status(
     timeout: float = 120,
     max_observation_age: float = 0,
     diagnostics: bool = False,
+    max_diagnostic_age: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -114,6 +115,9 @@ async def aget_commit_recovery_status(
     if resume is not None and refresh is not None:
         raise ValueError("choose resume or refresh")
     _validate_observation_age(max_observation_age)
+    _validate_observation_age(max_diagnostic_age)
+    if max_diagnostic_age > 0 and not diagnostics:
+        raise ValueError("maximum diagnostic age requires diagnostics")
     source = str(UUID(str(source)))
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
     previous = copy.deepcopy(resume if resume is not None else refresh)
@@ -313,9 +317,11 @@ async def aget_commit_recovery_status(
                 reading_index = None
             if diagnostics:
                 out = (
-                    await adiagnose_commit_recovery_status(client, out, previous=diagnostic_previous)
+                    await adiagnose_commit_recovery_status(
+                        client, out, previous=diagnostic_previous, max_diagnostic_age=max_diagnostic_age
+                    )
                     if cause is None
-                    else _prepare_diagnostics(out, diagnostic_previous)
+                    else _prepare_diagnostics(out, diagnostic_previous, max_diagnostic_age)
                 )
     except (Exception, asyncio.CancelledError) as error:
         if isinstance(error, CommitRecoveryStatusError):
@@ -332,7 +338,7 @@ async def aget_commit_recovery_status(
         if reading_index is not None:
             out["items"][reading_index].update(status="read_error", reason="evidence_read_failed")
     if cause is not None and diagnostics and "diagnostics_progress" not in out:
-        out = _prepare_diagnostics(out, diagnostic_previous)
+        out = _prepare_diagnostics(out, diagnostic_previous, max_diagnostic_age)
     _recount(out)
     if cause is not None:
         out["complete"] = False
@@ -488,6 +494,7 @@ async def awatch_commit_recovery_status(
     read_retries: int = 0,
     max_observation_age: float = 0,
     diagnostics: bool = False,
+    max_diagnostic_age: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -501,6 +508,9 @@ async def awatch_commit_recovery_status(
     ):
         raise ValueError("invalid recovery watch options")
     _validate_observation_age(max_observation_age)
+    _validate_observation_age(max_diagnostic_age)
+    if max_diagnostic_age > 0 and not diagnostics:
+        raise ValueError("maximum diagnostic age requires diagnostics")
     if type(read_retries) is not int or not 0 <= read_retries <= 20:
         raise ValueError("invalid recovery watch read retry budget")
     if resume is not None and refresh is not None:
@@ -558,7 +568,7 @@ async def awatch_commit_recovery_status(
                 except CommitRecoveryStatusError as error:
                     out = error.result
                     if diagnostics:
-                        out = _prepare_diagnostics(out, diagnostic_previous)
+                        out = _prepare_diagnostics(out, diagnostic_previous, max_diagnostic_age)
                         error.result = out
                     retry_after = _read_retry(error.__cause__)
                     if retry_after is None or used_retries >= read_retries:
@@ -569,7 +579,9 @@ async def awatch_commit_recovery_status(
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
                 if diagnostics and not failed:
-                    out = await adiagnose_commit_recovery_status(client, out, previous=diagnostic_previous)
+                    out = await adiagnose_commit_recovery_status(
+                        client, out, previous=diagnostic_previous, max_diagnostic_age=max_diagnostic_age
+                    )
                 out["monitoring"] = summarize("running")
                 phase = "callback"
                 if on_progress is not None:
@@ -741,7 +753,10 @@ def _valid_diagnostic(diagnostic: Any, row: dict[str, Any]) -> bool:
     )
 
 
-def _prepare_diagnostics(status: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+def _prepare_diagnostics(
+    status: dict[str, Any], previous: dict[str, Any] | None, max_diagnostic_age: float = 0
+) -> dict[str, Any]:
+    _validate_observation_age(max_diagnostic_age)
     out, prior = copy.deepcopy(status), copy.deepcopy(previous if previous is not None else status)
     if (
         out["source_id"].lower() != prior["source_id"].lower()
@@ -769,6 +784,7 @@ def _prepare_diagnostics(status: dict[str, Any], previous: dict[str, Any] | None
         "retry_next_index": cursor("retry_next_index"),
         "refresh_next_index": cursor("refresh_next_index"),
         "reads": 0,
+        "max_diagnostic_age_ms": max_diagnostic_age * 1000,
     }
     for row, old in zip(out["items"], prior["items"], strict=True):
         diagnostic = old.get("diagnostics")
@@ -792,6 +808,8 @@ def _prepare_diagnostics(status: dict[str, Any], previous: dict[str, Any] | None
 def _recount_diagnostics(out: dict[str, Any]) -> None:
     progress = out["diagnostics_progress"]
     progress.update(
+        freshness_checked_at=datetime.now(UTC).isoformat(),
+        freshness={"fresh": 0, "stale": 0, "unread": 0},
         target_count=0,
         remaining=0,
         deferred=0,
@@ -810,12 +828,15 @@ def _recount_diagnostics(out: dict[str, Any]) -> None:
             0,
         ),
     )
+    checked = datetime.fromisoformat(progress["freshness_checked_at"]).timestamp()
+    age = progress["max_diagnostic_age_ms"] / 1000
     for row in out["items"]:
         diagnostic = row["diagnostics"]
         progress["counts"][diagnostic["status"]] += 1
         if not _diagnostic_target(row):
             continue
         progress["target_count"] += 1
+        progress["freshness"][_diagnostic_freshness(row, checked, age)] += 1
         if not _diagnostic_queryable(row):
             progress["deferred"] += 1
         if not _valid_diagnostic(diagnostic, row):
@@ -823,13 +844,18 @@ def _recount_diagnostics(out: dict[str, Any]) -> None:
         elif diagnostic.get("retained"):
             progress["retained"] += 1
     progress["complete"] = progress["remaining"] == 0
+    progress["fresh_complete"] = progress["freshness"]["fresh"] == progress["target_count"]
 
 
 async def adiagnose_commit_recovery_status(
-    client: AuthenticatedClient, status: dict[str, Any], *, previous: dict[str, Any] | None = None
+    client: AuthenticatedClient,
+    status: dict[str, Any],
+    *,
+    previous: dict[str, Any] | None = None,
+    max_diagnostic_age: float = 0,
 ) -> dict[str, Any]:
     """Rotate bounded exact lookups; previous must bind to the validated selection."""
-    out = _prepare_diagnostics(status, previous)
+    out = _prepare_diagnostics(status, previous, max_diagnostic_age)
     progress = out["diagnostics_progress"]
 
     def candidates(start: int, group: int) -> list[int]:
@@ -854,6 +880,9 @@ async def adiagnose_commit_recovery_status(
     reserve = _DIAGNOSTIC_REFRESH_RESERVE if successes and failures and remaining > _DIAGNOSTIC_REFRESH_RESERVE else 0
     failed = failures[: remaining - reserve]
     remaining -= len(failed)
+    if max_diagnostic_age > 0:
+        now = datetime.now(UTC).timestamp()
+        successes.sort(key=lambda index: _diagnostic_freshness(out["items"][index], now, max_diagnostic_age) != "stale")
     covered = successes[:remaining]
     selected = [
         (cursor_name, index)
@@ -952,3 +981,13 @@ async def adiagnose_commit_recovery_status(
         raise CommitRecoveryStatusError(out) from interrupted
     _recount_diagnostics(out)
     return out
+
+
+def _diagnostic_freshness(row: dict[str, Any], now: float, age: float) -> str:
+    if not _valid_diagnostic(row.get("diagnostics"), row):
+        return "unread"
+    try:
+        observed = datetime.fromisoformat(row["diagnostics"]["observed_at"].replace("Z", "+00:00")).timestamp()
+    except (ValueError, OverflowError, TypeError):
+        return "stale" if age > 0 else "fresh"
+    return "stale" if age > 0 and (observed > now or now - observed > age) else "fresh"

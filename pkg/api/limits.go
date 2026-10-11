@@ -9674,3 +9674,7 @@ const (
 // Exact recipient batches bound storage work and request memory.
 const EventRecipientBlockerBatchMax = 50
 const EventRecipientBlockerBatchBodyMaxBytes = 65536
+
+// Optional diagnostic age policy uses the receipt observation age bounds.
+const CommitRecoveryDiagnosticAgeMin = CommitRecoveryWatchObservationAgeMin
+const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
