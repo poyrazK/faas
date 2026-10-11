@@ -17208,6 +17208,7 @@ CREATE TABLE public.customer_operation_workflow_claims (
     CONSTRAINT customer_operation_workflow_claims_lease_until_check CHECK (isfinite(lease_until))
 );
 
+
 --
 -- Name: customer_operation_workflow_guest_claims; Type: TABLE; Schema: public; Owner: -
 --
@@ -28168,6 +28169,7 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_pkey PRIMARY KEY (workflow_run_id);
+
 
 --
 -- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -44073,6 +44075,7 @@ ALTER TABLE ONLY public.customer_operation_workflow_claims
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
     ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
 
 --
 -- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_execution_identity_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
