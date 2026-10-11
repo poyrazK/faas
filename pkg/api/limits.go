@@ -8854,3 +8854,6 @@ const CloneConfigurationOwnershipMaxBytes = 32 << 10
 
 // CloneCompensationReceiptMaxBytes bounds the private terminal cleanup report.
 const CloneCompensationReceiptMaxBytes = 4 << 10
+
+// Private recovery pages bound retained destination adoption dispatch reads.
+const CheckpointWorkloadMigrationAdoptionRecoveryBatchMax = 100

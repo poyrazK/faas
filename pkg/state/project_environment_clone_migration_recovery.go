@@ -1,6 +1,9 @@
 package state
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ProjectEnvironmentCloneMigrationHolding carries retained source-side handoff
 // evidence. Lease is private cleanup authority and must not enter public output.
@@ -13,4 +16,17 @@ type ProjectEnvironmentCloneMigrationHolding struct {
 
 type ProjectEnvironmentCloneMigrationRecoveryStore interface {
 	ListProjectEnvironmentCloneMigrationHoldingsForRetirement(context.Context, ProjectEnvironmentCloneLease, string, int) ([]ProjectEnvironmentCloneMigrationHolding, error)
+}
+
+// ProjectEnvironmentCloneMigrationAdoption preserves destination dispatch
+// ownership independently of current source metadata. Reading is not closure
+// proof and never authorizes adoption replay or evidence release.
+type ProjectEnvironmentCloneMigrationAdoption struct {
+	DispatchID, AppID, DeploymentID, WakeID, RequestReason, DestinationNodeID string
+	SourceLease                                                               MigrationLease `json:"-"`
+	DispatchedAt                                                              time.Time
+}
+
+type ProjectEnvironmentCloneMigrationAdoptionRecoveryStore interface {
+	ListProjectEnvironmentCloneMigrationAdoptionsForRetirement(context.Context, ProjectEnvironmentCloneLease, string, int) ([]ProjectEnvironmentCloneMigrationAdoption, error)
 }

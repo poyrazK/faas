@@ -9965,3 +9965,27 @@ not native completion. Authenticated destination recovery, source cancel/resume
 closure, host-generation correlation and proof-backed release remain pending.
 No native VM or live provider qualification was performed; public full-stage
 admission remains gated.
+
+### Authenticated migration destination recovery inventory
+
+A private recovery reader now pages retained destination adoption dispatches under
+the current compensation lease. It authenticates original source compensation,
+materialization and the frozen workload retirement plan, requires the permanent
+requested/retired fence and rechecks worker authority before commit. Requests
+with invalid UUID cursors or bounds fail before reading; the centrally defined
+`CheckpointWorkloadMigrationAdoptionRecoveryBatchMax` caps each page.
+
+Selection uses original target deployment IDs or the complete original operation
+request namespace without joining current catalog or source lease rows. UUID
+ordering by dispatch identity preserves continuation when one instance has
+multiple original source leases. Source token, snapshot handles and original
+lease timestamps remain in a private source lease field excluded from JSON.
+Results are independent copies of immutable evidence, recoverable after worker
+handoff and source metadata deletion.
+
+Recovery does not authorize replay, resume, evidence deletion or an all-clear
+receipt. Source cancel/resume closure, destination host-generation correlation
+and proof-backed release still need a qualified native protocol. PostgreSQL tests
+exercise catalog absence, namespace isolation, paging, private serialization,
+worker authentication and handoff. No native VM or live provider was exercised;
+public full-stage admission remains gated.

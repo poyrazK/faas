@@ -26842,6 +26842,58 @@ func (q *Queries) ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listCloneCheckpointMigrationAdoptionsForRetirement = `-- name: ListCloneCheckpointMigrationAdoptionsForRetirement :many
+SELECT a.dispatch_id, a.instance_id, a.app_id, a.deployment_id, a.wake_id, a.request_reason, a.lease_token, a.source_node_id, a.destination_node_id, a.lease_created_at, a.lease_expires_at, a.mem_storage_key, a.vmstate_storage_key, a.dispatched_at FROM project_environment_clone_migration_adoptions a
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text))))
+AND ($2::text='' OR a.dispatch_id>NULLIF($2::text,'')::uuid)
+ORDER BY a.dispatch_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationAdoptionsForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterDispatchID string
+	PageLimit       int32
+}
+
+// Original dispatch ownership survives source lease and catalog cleanup.
+func (q *Queries) ListCloneCheckpointMigrationAdoptionsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationAdoptionsForRetirementParams) ([]ProjectEnvironmentCloneMigrationAdoption, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationAdoptionsForRetirement, arg.OperationID, arg.AfterDispatchID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneMigrationAdoption{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneMigrationAdoption
+		if err := rows.Scan(
+			&i.DispatchID,
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.DestinationNodeID,
+			&i.LeaseCreatedAt,
+			&i.LeaseExpiresAt,
+			&i.MemStorageKey,
+			&i.VmstateStorageKey,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCloneCheckpointMigrationHoldingsForRetirement = `-- name: ListCloneCheckpointMigrationHoldingsForRetirement :many
 SELECT m.instance_id, m.lease_token, m.source_node_id, m.created_at, m.lease_expires_at, m.mem_storage_key, m.vmstate_storage_key, m.pending,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
 FROM migration_leases m JOIN instances i ON i.id=m.instance_id

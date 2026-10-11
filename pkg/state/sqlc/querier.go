@@ -1369,6 +1369,8 @@ type Querier interface {
 	ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error)
 	ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error)
 	ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg ListBuildsAwaitingImageParams) ([]ListBuildsAwaitingImageRow, error)
+	// Original dispatch ownership survives source lease and catalog cleanup.
+	ListCloneCheckpointMigrationAdoptionsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationAdoptionsForRetirementParams) ([]ProjectEnvironmentCloneMigrationAdoption, error)
 	// The permanent fence retains original source leases and their instance owners.
 	// Do not filter expiry or terminal state, or infer destination launch ownership.
 	ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationHoldingsForRetirementParams) ([]ListCloneCheckpointMigrationHoldingsForRetirementRow, error)

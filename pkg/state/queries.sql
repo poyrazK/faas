@@ -16086,3 +16086,13 @@ ORDER BY m.instance_id LIMIT sqlc.arg(page_limit)::integer;
 SELECT record_clone_checkpoint_migration_adoption(sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,
  sqlc.arg(deployment_id)::uuid,sqlc.arg(destination_node_id)::uuid,sqlc.arg(mem_storage_key)::text,
  sqlc.arg(vmstate_storage_key)::text,sqlc.arg(lease_token)::text);
+
+-- Original dispatch ownership survives source lease and catalog cleanup.
+-- name: ListCloneCheckpointMigrationAdoptionsForRetirement :many
+SELECT a.* FROM project_environment_clone_migration_adoptions a
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=sqlc.arg(operation_id)::uuid
+WHERE r.state IN ('requested','retired') AND (
+ a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text))))
+AND (sqlc.arg(after_dispatch_id)::text='' OR a.dispatch_id>NULLIF(sqlc.arg(after_dispatch_id)::text,'')::uuid)
+ORDER BY a.dispatch_id LIMIT sqlc.arg(page_limit)::integer;
