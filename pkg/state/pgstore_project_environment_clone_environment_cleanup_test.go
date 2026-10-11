@@ -170,6 +170,7 @@ func TestPgCloneEnvironmentCleanupRejectsChangedEvidence(t *testing.T) {
 
 func dropEmptyCloneEnvironmentCleanupForParentMigration(t *testing.T, tx pgx.Tx) {
 	t.Helper()
+	dropEmptyCloneCompensationReceiptForParentMigration(t, tx)
 	raw, err := migrations.FS.ReadFile(cloneEnvironmentCleanupMigration)
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +192,7 @@ func TestPgCloneEnvironmentCleanupMigrationRefusesEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
+	dropEmptyCloneCompensationReceiptForParentMigration(t, tx)
 	for _, statement := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(t.Context(), statement); err != nil {
 			t.Fatal(err)

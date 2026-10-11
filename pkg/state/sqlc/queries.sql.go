@@ -6389,6 +6389,37 @@ func (q *Queries) CompleteCloneCheckpointUnusedObjectReservation(ctx context.Con
 	return result.RowsAffected(), nil
 }
 
+const completeCloneTerminalCompensation = `-- name: CompleteCloneTerminalCompensation :execrows
+UPDATE project_environment_clone_operations SET status='compensated',revision=revision+1,
+ lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=$1::uuid AND account_id=$2::uuid AND project_id=$3::uuid
+ AND status='compensating' AND revision=$4::bigint
+ AND lease_token=$5::uuid AND lease_until>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_compensation_receipts r WHERE r.operation_id=project_environment_clone_operations.id)
+`
+
+type CompleteCloneTerminalCompensationParams struct {
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompleteCloneTerminalCompensation(ctx context.Context, db DBTX, arg CompleteCloneTerminalCompensationParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCloneTerminalCompensation,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
 DELETE FROM customer_operation_result_blobs WHERE id = $1::uuid AND state = 'deleting'
 AND lease_token = $2::text AND lease_until > $3::timestamptz
@@ -19462,6 +19493,30 @@ func (q *Queries) InsertClonePostgresWriteFence(ctx context.Context, db DBTX, ar
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertCloneTerminalCompensationReceipt = `-- name: InsertCloneTerminalCompensationReceipt :exec
+INSERT INTO project_environment_clone_compensation_receipts(operation_id,worker_token_sha256,report,receipt_sha256,completed_at)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertCloneTerminalCompensationReceiptParams struct {
+	OperationID       pgtype.UUID
+	WorkerTokenSha256 string
+	Report            []byte
+	ReceiptSha256     string
+	CompletedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, arg InsertCloneTerminalCompensationReceiptParams) error {
+	_, err := db.Exec(ctx, insertCloneTerminalCompensationReceipt,
+		arg.OperationID,
+		arg.WorkerTokenSha256,
+		arg.Report,
+		arg.ReceiptSha256,
+		arg.CompletedAt,
+	)
+	return err
 }
 
 const insertCloneWorkloadCleanup = `-- name: InsertCloneWorkloadCleanup :exec
@@ -50362,6 +50417,23 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 		&i.ReleasedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readCloneTerminalCompensationReceipt = `-- name: ReadCloneTerminalCompensationReceipt :one
+SELECT operation_id, worker_token_sha256, report, receipt_sha256, completed_at FROM project_environment_clone_compensation_receipts WHERE operation_id=$1
+`
+
+func (q *Queries) ReadCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCompensationReceipt, error) {
+	row := db.QueryRow(ctx, readCloneTerminalCompensationReceipt, operationID)
+	var i ProjectEnvironmentCloneCompensationReceipt
+	err := row.Scan(
+		&i.OperationID,
+		&i.WorkerTokenSha256,
+		&i.Report,
+		&i.ReceiptSha256,
+		&i.CompletedAt,
 	)
 	return i, err
 }

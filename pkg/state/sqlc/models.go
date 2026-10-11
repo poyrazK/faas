@@ -5293,6 +5293,14 @@ type ProjectEnvironmentCloneCheckpointWorkloadRetirement struct {
 	RetiredAt         pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCompensationReceipt struct {
+	OperationID       pgtype.UUID
+	WorkerTokenSha256 string
+	Report            []byte
+	ReceiptSha256     string
+	CompletedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneConfigurationCapture struct {
 	OperationID       pgtype.UUID
 	Version           int32

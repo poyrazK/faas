@@ -43176,3 +43176,15 @@ LANGUAGE plpgsql AS $$ BEGIN
  LOCK TABLE app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
 END $$;
 -- +goose StatementEnd
+
+-- +goose Up
+-- ADR-590: private terminal compensation preserves original inventory and proof.
+CREATE TABLE project_environment_clone_compensation_receipts (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id) ON DELETE RESTRICT
+  REFERENCES project_environment_clone_environment_cleanups(operation_id) ON DELETE RESTRICT
+  REFERENCES project_environment_clone_deployment_cleanups(operation_id) ON DELETE RESTRICT,
+ worker_token_sha256 text NOT NULL CHECK(worker_token_sha256 ~ '^[a-f0-9]{64}$'),
+ report jsonb NOT NULL CHECK(jsonb_typeof(report)='object' AND octet_length(report::text)<=4096),
+ receipt_sha256 text NOT NULL CHECK(receipt_sha256 ~ '^[a-f0-9]{64}$'),
+ completed_at timestamptz NOT NULL
+);

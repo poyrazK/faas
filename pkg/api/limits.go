@@ -8845,3 +8845,6 @@ const CheckpointWorkloadRetirementMaxBytes = 2 << 20
 
 // CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
 const CloneConfigurationOwnershipMaxBytes = 32 << 10
+
+// CloneCompensationReceiptMaxBytes bounds the private terminal cleanup report.
+const CloneCompensationReceiptMaxBytes = 4 << 10

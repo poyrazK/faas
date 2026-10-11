@@ -9705,3 +9705,30 @@ can consume the complete report and persist its receipt in the same transaction.
 A returned report is still only evidence of the committed read: a subsequent
 borrower invalidates a later reconciliation. It grants no terminal mutation or
 native dispatch authority. The terminal receipt and writer remain pending.
+
+### Private terminal compensation receipt
+
+The dedicated private completion writer now consumes the complete compensation
+report in the fenced transaction. Every data, native workload, original ownership
+and settings/workload/deployment/environment cleanup proof must authenticate;
+missing steps, unknown resources and published releases remain blockers. It saves
+the report and terminal receipt, increments the operation revision once, marks
+the operation compensated and clears its worker lease atomically. Original
+resource inventory, error history and retirement journals remain unchanged.
+
+`CloneCompensationReceiptMaxBytes` bounds the saved report to 4 KiB. The receipt
+digest binds the report, completion time, original project/source/target identity
+and completing worker token digest. That digest is private and never appears in
+the returned receipt. Replay requires the same completing token and pre-terminal
+revision, the terminal operation revision and unchanged original inventory. An
+expired worker can replay its committed receipt but cannot authorize a new write.
+Replay returns historical completion evidence; it does not revalidate a new
+cleanup scope or authorize native dispatch. A failed commit leaves neither a
+terminal operation nor a receipt.
+
+Foreign keys retain the capture retirement, deployment cleanup and environment
+cleanup predecessors, including their own retained proof chains. Migration
+rollback refuses to discard any terminal receipt. Generic terminal transitions
+remain guarded. This closes the modeled private unpublished compensation path;
+worker integration, published-release withdrawal, other operational retirement
+and native/provider qualification remain before public full-stage admission.

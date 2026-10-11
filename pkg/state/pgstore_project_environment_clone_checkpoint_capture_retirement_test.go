@@ -256,6 +256,7 @@ func TestPgCheckpointCaptureRetirementMigrationAndChangedOwnership(t *testing.T)
 	if _, err = tx.Exec(ctx, strings.SplitN(string(newer), "-- +goose Down", 2)[1]); err != nil {
 		t.Fatal("empty newer catalogue downgrade", err)
 	}
+	dropEmptyCloneCompensationReceiptForParentMigration(t, tx)
 	for _, sql := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(ctx, sql); err != nil {
 			t.Fatal("empty migration round trip", err)

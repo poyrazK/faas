@@ -262,6 +262,7 @@ type Querier interface {
 	CompensateCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointPostgresFenceParams) (int64, error)
 	CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error)
 	CompleteCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg CompleteCloneCheckpointUnusedObjectReservationParams) (int64, error)
+	CompleteCloneTerminalCompensation(ctx context.Context, db DBTX, arg CompleteCloneTerminalCompensationParams) (int64, error)
 	CompleteCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg CompleteCustomerOperationBlobCleanupParams) (int64, error)
 	CompleteCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg CompleteCustomerOperationWorkflowStepParams) (int64, error)
 	CompleteCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg CompleteCustomerOperationWorkflowStepAttemptParams) (int64, error)
@@ -962,6 +963,7 @@ type Querier interface {
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	InsertClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, arg InsertClonePostgresSecretWithdrawalParams) error
 	InsertClonePostgresWriteFence(ctx context.Context, db DBTX, arg InsertClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	InsertCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, arg InsertCloneTerminalCompensationReceiptParams) error
 	InsertCloneWorkloadCleanup(ctx context.Context, db DBTX, arg InsertCloneWorkloadCleanupParams) error
 	// CP-1 (operator observability): append one row to the heartbeat
 	// history. The schedd Heartbeat.Tick goroutine is the only writer.
@@ -2339,6 +2341,7 @@ type Querier interface {
 	ReadClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentClonePostgresSecretWithdrawal, error)
 	// ADR-531: source recovery holds precede any remote PostgreSQL closure.
 	ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg ReadClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	ReadCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCompensationReceipt, error)
 	ReadCloneWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneWorkloadCleanup, error)
 	ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneWorkloadConfigurationBorrowersParams) (ReadCloneWorkloadConfigurationBorrowersRow, error)
 	ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error)

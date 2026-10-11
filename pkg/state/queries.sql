@@ -16010,3 +16010,18 @@ SELECT (EXISTS(SELECT 1 FROM project_environment_clone_configuration_cleanups c 
  OR EXISTS(SELECT 1 FROM project_environment_clone_workload_cleanups w WHERE w.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups d WHERE d.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups e WHERE e.operation_id=sqlc.arg(operation_id)::uuid))::boolean;
+
+-- name: ReadCloneTerminalCompensationReceipt :one
+SELECT * FROM project_environment_clone_compensation_receipts WHERE operation_id=$1;
+
+-- name: InsertCloneTerminalCompensationReceipt :exec
+INSERT INTO project_environment_clone_compensation_receipts(operation_id,worker_token_sha256,report,receipt_sha256,completed_at)
+VALUES($1,$2,$3,$4,$5);
+
+-- name: CompleteCloneTerminalCompensation :execrows
+UPDATE project_environment_clone_operations SET status='compensated',revision=revision+1,
+ lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(operation_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND project_id=sqlc.arg(project_id)::uuid
+ AND status='compensating' AND revision=sqlc.arg(expected_revision)::bigint
+ AND lease_token=sqlc.arg(worker_token)::uuid AND lease_until>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_compensation_receipts r WHERE r.operation_id=project_environment_clone_operations.id);

@@ -6072,6 +6072,17 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_compensation_receipts",
+    "columns": [
+      "completed_at",
+      "operation_id",
+      "receipt_sha256",
+      "report",
+      "worker_token_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_configuration_captures",
     "columns": [
       "configuration",
