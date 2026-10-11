@@ -154,6 +154,9 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 		if tracked {
 			applyExecutionCoverage(&out, c, coverage.AttemptsExpired)
 		}
+		if err = observeEventExecutionLedgerWindow(ctx, q, tx, &out, account); err != nil {
+			return out, err
+		}
 		return out, tx.Commit(ctx)
 	}
 	executions, err := q.EventConsumerExecutionInvocations(ctx, tx, sqlc.EventConsumerExecutionInvocationsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), NowAt: pgtypeFromTime(now), Roots: ids, InvocationLimit: api.EventConsumerExecutionInvocationsMax + 1})
@@ -189,6 +192,9 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 	finishConsumerExecutionHealth(&out, latencies)
 	if tracked {
 		applyExecutionCoverage(&out, c, coverage.AttemptsExpired)
+	}
+	if err = observeEventExecutionLedgerWindow(ctx, q, tx, &out, account); err != nil {
+		return out, err
 	}
 	return out, tx.Commit(ctx)
 }
@@ -320,6 +326,7 @@ func (m *MemStore) GetEventConsumerExecutionHealth(ctx context.Context, account,
 		}
 		applyExecutionCoverage(&out, c, expired)
 	}
+	m.observeEventExecutionLedgerWindowLocked(&out, account)
 	return out, nil
 }
 

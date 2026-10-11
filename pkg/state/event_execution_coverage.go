@@ -6,11 +6,14 @@ import (
 )
 
 type executionCoverage struct {
-	app      string
-	started  time.Time
-	baseline bool
-	lost     *time.Time
-	reason   string
+	ledgerStarted     time.Time
+	ledgerBaseline    bool
+	ledgerLostThrough *time.Time
+	app               string
+	started           time.Time
+	baseline          bool
+	lost              *time.Time
+	reason            string
 }
 
 func applyExecutionCoverage(out *api.EventConsumerExecutionHealth, c executionCoverage, expired bool) {

@@ -2548,13 +2548,44 @@ type EventDeliverySlot struct {
 }
 
 type EventExecutionCoverage struct {
-	SubscriptionID pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	StartedAt      pgtype.Timestamptz
-	BaselineKnown  bool
-	LostAt         pgtype.Timestamptz
-	LossReason     string
+	SubscriptionID      pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	StartedAt           pgtype.Timestamptz
+	BaselineKnown       bool
+	LostAt              pgtype.Timestamptz
+	LossReason          string
+	LedgerStartedAt     pgtype.Timestamptz
+	LedgerBaselineKnown bool
+	LedgerLostThroughAt pgtype.Timestamptz
+}
+
+type EventExecutionOutcome struct {
+	RootInvocationID    pgtype.UUID
+	RootCreatedAt       pgtype.Timestamptz
+	InvocationID        pgtype.UUID
+	ReplayGeneration    int64
+	Attempt             int32
+	Kind                string
+	SubscriptionID      pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	FinishedAt          pgtype.Timestamptz
+	Outcome             string
+	LatencySeconds      float64
+	RetainUntil         pgtype.Timestamptz
+	InvocationCreatedAt pgtype.Timestamptz
+}
+
+type EventExecutionRoot struct {
+	RootInvocationID pgtype.UUID
+	RootCreatedAt    pgtype.Timestamptz
+	SubscriptionID   pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	OutboxID         int64
+	RetentionSeconds int32
 }
 
 type EventFanoutAttemptHistory struct {

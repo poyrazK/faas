@@ -363,7 +363,7 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	if m.eventExecutionCoverage == nil {
 		m.eventExecutionCoverage = map[string]executionCoverage{}
 	}
-	m.eventExecutionCoverage[subscription.ID] = executionCoverage{app: subscription.AppID, started: now, baseline: true}
+	m.eventExecutionCoverage[subscription.ID] = executionCoverage{app: subscription.AppID, started: now, baseline: true, ledgerStarted: now, ledgerBaseline: true}
 	return subscription, true, nil
 }
 

@@ -179,6 +179,7 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 func (m *MemStore) setInvocationLocked(id string, inv Invocation) {
 	old := m.invocations[id]
 	now := time.Now().UTC()
+	m.captureEventExecutionTransitionLocked(old, inv, now, false)
 	if old.ID != "" && (old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) || old.ReplayRootInvocationID != inv.ReplayRootInvocationID || old.ReplayedFromInvocationID != inv.ReplayedFromInvocationID || (old.State == InvocationCompleted && (inv.State != InvocationCompleted || !equalCoverageTime(old.CompletedAt, inv.CompletedAt)))) {
 		m.loseExecutionCoverageLocked(old.AppID, "execution_replaced", now)
 	}

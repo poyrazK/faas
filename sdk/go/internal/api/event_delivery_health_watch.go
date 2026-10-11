@@ -414,3 +414,7 @@ const EventDeliveryHealthSLOMinimumSamplesDefault int64 = 10
 const EventDeliveryHealthSLOSustainDefault = time.Minute
 const EventDeliveryHealthSLOPercentageMin = 0.000001
 const EventDeliveryHealthSLOPercentageMax = 100.0
+
+const EventExecutionLedgerRetention = 30 * 24 * time.Hour
+const EventExecutionLedgerPruneBatchDefault = 500
+const EventExecutionLedgerPruneBatchMax = 5000

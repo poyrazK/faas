@@ -33,10 +33,11 @@ class EventConsumerDeliveryHealth:
     rates then represent retained samples. Latency runs from event acceptance to successful routing admission."""
     execution: EventConsumerExecutionHealth
     """Current retained execution states for admitted application event deliveries and retained handler replays.
-    Attempts and successful completion latency use the requested window. Counts are bounded observations, include
-    backfills, and are not unique event counts. Version filtering and routing failures are excluded. History
-    completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines
-    remain unknown and evidence loss is partial."""
+    Attempts and successful completion latency use an immutable, per-subscription outcome ledger with 30-day
+    retention. Window evidence survives source deletion and is independent of retained execution-state truncation.
+    Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and
+    routing failures are excluded. History completeness is established only for fully covered windows of newly
+    instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial."""
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""

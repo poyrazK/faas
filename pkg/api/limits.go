@@ -9720,3 +9720,8 @@ const EventDeliveryHealthSLOSustainDefault = time.Minute
 
 const EventDeliveryHealthSLOPercentageMin = 0.000001
 const EventDeliveryHealthSLOPercentageMax = 100.0
+
+// Event execution metadata outcomes are retained independently of invocation results.
+const EventExecutionLedgerRetention = 30 * 24 * time.Hour
+const EventExecutionLedgerPruneBatchDefault = 500
+const EventExecutionLedgerPruneBatchMax = 5000

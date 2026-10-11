@@ -1008,6 +1008,8 @@ from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
 from .event_consumer_execution_health_history_status import EventConsumerExecutionHealthHistoryStatus
+from .event_consumer_execution_health_window_coverage import EventConsumerExecutionHealthWindowCoverage
+from .event_consumer_execution_health_window_history_status import EventConsumerExecutionHealthWindowHistoryStatus
 from .event_consumer_health import EventConsumerHealth
 from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_consumer_pending_sample import EventConsumerPendingSample
@@ -4436,6 +4438,8 @@ __all__ = (
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",
     "EventConsumerExecutionHealthHistoryStatus",
+    "EventConsumerExecutionHealthWindowCoverage",
+    "EventConsumerExecutionHealthWindowHistoryStatus",
     "EventConsumerHealth",
     "EventConsumerHealthCoverage",
     "EventConsumerPendingSample",

@@ -11,6 +11,85 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const associateEventExecutionRoot = `-- name: AssociateEventExecutionRoot :one
+WITH baseline AS (
+ INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known)
+ VALUES($2::uuid,$3::uuid,$4::uuid,clock_timestamp(),false,clock_timestamp(),false)
+ ON CONFLICT DO NOTHING RETURNING subscription_id
+), owner AS (
+ SELECT subscription_id FROM baseline UNION ALL
+ SELECT subscription_id FROM event_execution_coverage WHERE subscription_id=$2::uuid
+ AND account_id=$3::uuid AND app_id=$4::uuid
+), associated AS (
+ INSERT INTO event_execution_roots(root_invocation_id,root_created_at,subscription_id,account_id,app_id,accepted_at,outbox_id,retention_seconds)
+ SELECT i.id,i.created_at,owner.subscription_id,i.account_id,i.app_id,$5::timestamptz,
+ $6::bigint,$7::integer
+ FROM invocations i CROSS JOIN owner WHERE i.id=$1::uuid AND i.account_id=$3::uuid AND i.app_id=$4::uuid
+ ON CONFLICT(root_invocation_id,root_created_at) DO UPDATE SET root_invocation_id=excluded.root_invocation_id
+ WHERE event_execution_roots.subscription_id=excluded.subscription_id AND event_execution_roots.account_id=excluded.account_id
+ AND event_execution_roots.app_id=excluded.app_id AND event_execution_roots.accepted_at=excluded.accepted_at
+ AND event_execution_roots.outbox_id=excluded.outbox_id AND event_execution_roots.retention_seconds=excluded.retention_seconds
+ RETURNING root_invocation_id
+)
+SELECT EXISTS(SELECT 1 FROM invocations WHERE id=$1::uuid) AS invocation_exists,
+ EXISTS(SELECT 1 FROM associated) AS associated
+`
+
+type AssociateEventExecutionRootParams struct {
+	InvocationID     pgtype.UUID
+	SubscriptionID   pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	OutboxID         int64
+	RetentionSeconds int32
+}
+
+type AssociateEventExecutionRootRow struct {
+	InvocationExists bool
+	Associated       bool
+}
+
+func (q *Queries) AssociateEventExecutionRoot(ctx context.Context, db DBTX, arg AssociateEventExecutionRootParams) (AssociateEventExecutionRootRow, error) {
+	row := db.QueryRow(ctx, associateEventExecutionRoot,
+		arg.InvocationID,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+		arg.AcceptedAt,
+		arg.OutboxID,
+		arg.RetentionSeconds,
+	)
+	var i AssociateEventExecutionRootRow
+	err := row.Scan(&i.InvocationExists, &i.Associated)
+	return i, err
+}
+
+const captureAssociatedEventAttempts = `-- name: CaptureAssociatedEventAttempts :exec
+SELECT record_event_execution_outcome(h.invocation_id,child.created_at,h.root_invocation_id,h.root_created_at,
+ h.account_id,h.app_id,h.replay_generation,h.attempt,'attempt',h.finished_at,h.outcome)
+FROM invocation_attempt_history h JOIN invocations i ON i.id=$1::uuid
+JOIN invocations child ON child.id=h.invocation_id AND child.account_id=i.account_id AND child.app_id=i.app_id AND child.replay_generation=h.replay_generation
+WHERE h.root_invocation_id=i.id AND h.root_created_at=i.created_at AND h.account_id=i.account_id AND h.app_id=i.app_id
+ AND h.finished_at IS NOT NULL AND h.started_at>=child.created_at AND h.finished_at>=child.created_at AND h.retain_until>clock_timestamp()
+`
+
+func (q *Queries) CaptureAssociatedEventAttempts(ctx context.Context, db DBTX, invocationID pgtype.UUID) error {
+	_, err := db.Exec(ctx, captureAssociatedEventAttempts, invocationID)
+	return err
+}
+
+const captureAssociatedEventCompletion = `-- name: CaptureAssociatedEventCompletion :exec
+SELECT record_event_execution_outcome(i.id,i.created_at,i.replay_root_invocation_id,i.replay_root_created_at,
+ i.account_id,i.app_id,i.replay_generation,0,'completion',i.completed_at,'succeeded')
+FROM invocations i WHERE i.id=$1::uuid AND i.state='completed' AND i.completed_at IS NOT NULL
+`
+
+func (q *Queries) CaptureAssociatedEventCompletion(ctx context.Context, db DBTX, invocationID pgtype.UUID) error {
+	_, err := db.Exec(ctx, captureAssociatedEventCompletion, invocationID)
+	return err
+}
+
 const eventConsumerExecutionAttempts = `-- name: EventConsumerExecutionAttempts :one
 SELECT count(*) FILTER (WHERE outcome='succeeded')::bigint AS successful_attempts,
  count(*) FILTER (WHERE outcome IN ('retry','failed','dead_letter'))::bigint AS failed_attempts,
@@ -241,4 +320,115 @@ func (q *Queries) EventConsumerExecutionTarget(ctx context.Context, db DBTX, arg
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const eventExecutionLedgerWindow = `-- name: EventExecutionLedgerWindow :one
+SELECT c.ledger_started_at,c.ledger_baseline_known,c.ledger_lost_through_at,
+ count(*) FILTER (WHERE o.kind='attempt' AND o.outcome='succeeded' AND o.retain_until>$1::timestamptz)::bigint AS successful_attempts,
+ count(*) FILTER (WHERE o.kind='attempt' AND o.outcome IN ('retry','failed','dead_letter') AND o.retain_until>$1::timestamptz)::bigint AS failed_attempts,
+ count(*) FILTER (WHERE o.kind='attempt' AND o.outcome='unknown' AND o.retain_until>$1::timestamptz)::bigint AS unknown_attempts,
+ count(*) FILTER (WHERE o.kind='attempt' AND o.outcome='dead_letter' AND o.retain_until>$1::timestamptz)::bigint AS dead_letters,
+ count(*) FILTER (WHERE o.kind='completion' AND o.retain_until>$1::timestamptz)::bigint AS completions,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY o.latency_seconds) FILTER (WHERE o.kind='completion' AND o.retain_until>$1::timestamptz),0)::double precision AS completion_latency_p95_seconds,
+ (max(o.finished_at) FILTER (WHERE o.retain_until<=$1::timestamptz))::timestamptz AS expired_through_at,
+ (min(o.retain_until) FILTER (WHERE o.retain_until>$1::timestamptz))::timestamptz AS retain_until
+FROM event_execution_coverage c LEFT JOIN event_execution_outcomes o ON o.subscription_id=c.subscription_id
+ AND o.account_id=c.account_id AND o.app_id=c.app_id
+ AND o.finished_at>=$2::timestamptz AND o.finished_at<=$1::timestamptz
+WHERE c.account_id=$3::uuid AND c.app_id=$4::uuid AND c.subscription_id=$5::uuid
+GROUP BY c.subscription_id
+`
+
+type EventExecutionLedgerWindowParams struct {
+	NowAt          pgtype.Timestamptz
+	SinceAt        pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+type EventExecutionLedgerWindowRow struct {
+	LedgerStartedAt             pgtype.Timestamptz
+	LedgerBaselineKnown         bool
+	LedgerLostThroughAt         pgtype.Timestamptz
+	SuccessfulAttempts          int64
+	FailedAttempts              int64
+	UnknownAttempts             int64
+	DeadLetters                 int64
+	Completions                 int64
+	CompletionLatencyP95Seconds float64
+	ExpiredThroughAt            pgtype.Timestamptz
+	RetainUntil                 pgtype.Timestamptz
+}
+
+func (q *Queries) EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg EventExecutionLedgerWindowParams) (EventExecutionLedgerWindowRow, error) {
+	row := db.QueryRow(ctx, eventExecutionLedgerWindow,
+		arg.NowAt,
+		arg.SinceAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var i EventExecutionLedgerWindowRow
+	err := row.Scan(
+		&i.LedgerStartedAt,
+		&i.LedgerBaselineKnown,
+		&i.LedgerLostThroughAt,
+		&i.SuccessfulAttempts,
+		&i.FailedAttempts,
+		&i.UnknownAttempts,
+		&i.DeadLetters,
+		&i.Completions,
+		&i.CompletionLatencyP95Seconds,
+		&i.ExpiredThroughAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const pruneEventExecutionOutcomes = `-- name: PruneEventExecutionOutcomes :execrows
+DELETE FROM event_execution_outcomes WHERE (invocation_id,invocation_created_at,replay_generation,attempt,kind) IN (
+ SELECT invocation_id,invocation_created_at,replay_generation,attempt,kind FROM event_execution_outcomes
+ WHERE retain_until<=$1::timestamptz ORDER BY retain_until,invocation_id
+ FOR UPDATE SKIP LOCKED LIMIT $2::integer
+)
+`
+
+type PruneEventExecutionOutcomesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionOutcomes(ctx context.Context, db DBTX, arg PruneEventExecutionOutcomesParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionOutcomes, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneEventExecutionRoots = `-- name: PruneEventExecutionRoots :execrows
+DELETE FROM event_execution_roots r WHERE (r.root_invocation_id,r.root_created_at) IN (
+ SELECT r.root_invocation_id,r.root_created_at FROM event_execution_roots r
+ WHERE r.root_created_at<=$1::timestamptz
+ AND NOT EXISTS (SELECT 1 FROM event_execution_outcomes o WHERE o.root_invocation_id=r.root_invocation_id AND o.root_created_at=r.root_created_at)
+ AND NOT EXISTS (SELECT 1 FROM invocations i WHERE i.account_id=r.account_id AND i.app_id=r.app_id
+  AND ((i.id=r.root_invocation_id AND i.created_at=r.root_created_at) OR (i.replay_root_invocation_id=r.root_invocation_id AND i.replay_root_created_at=r.root_created_at) OR i.replayed_from_invocation_id=r.root_invocation_id))
+ AND NOT EXISTS (SELECT 1 FROM event_fanout_outbox o WHERE o.id=r.outbox_id)
+ AND NOT EXISTS (SELECT 1 FROM event_recovery_jobs j WHERE j.account_id=r.account_id AND j.app_id=r.app_id AND (j.state IN ('running','paused') OR (j.selection->>'mode'='execution' AND j.execution_finished_at IS NULL)))
+ ORDER BY r.root_created_at,r.root_invocation_id FOR UPDATE OF r SKIP LOCKED LIMIT $2::integer
+)
+`
+
+type PruneEventExecutionRootsParams struct {
+	BeforeAt   pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionRoots(ctx context.Context, db DBTX, arg PruneEventExecutionRootsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionRoots, arg.BeforeAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -136,6 +136,7 @@ func (m *MemStore) validateEnvironmentInvocationCleanupLocked(environmentID stri
 func (m *MemStore) deleteEnvironmentInvocationsLocked(environmentID string) {
 	for id, inv := range m.invocations {
 		if inv.EnvironmentID == environmentID {
+			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
 			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)

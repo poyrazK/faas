@@ -83,6 +83,8 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	}
 	// Stage the maps changed by enqueue, supersession and cancellation. Restore
 	// them if a helper fails or the lease expires while applying its mutations.
+	roots, outcomes, coverage := m.eventExecutionRoots, m.eventExecutionOutcomes, m.eventExecutionCoverage
+	m.eventExecutionRoots, m.eventExecutionOutcomes, m.eventExecutionCoverage = maps.Clone(roots), maps.Clone(outcomes), maps.Clone(coverage)
 	results := m.eventRecoveryExecutionResults
 	m.eventRecoveryExecutionResults = maps.Clone(results)
 	invocations, cancellations, history, next := m.invocations, m.workCancellations, m.invocationAttemptHistory, m.nextInvocationAttemptID
@@ -101,11 +103,15 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	var err error
 	if scope == "" && controlReason == "" {
 		created, err = m.performEventAdmissionLocked(receipt, p)
+		if err == nil && p.matched && !p.cancel {
+			err = m.associateEventExecutionRootLocked(receipt, p)
+		}
 	}
 	if err == nil && !eventRoutingClaimValidLocked(receipt, r, claim) {
 		err = ErrConflict
 	}
 	if err != nil {
+		m.eventExecutionRoots, m.eventExecutionOutcomes, m.eventExecutionCoverage = roots, outcomes, coverage
 		m.eventRecoveryExecutionResults = results
 		m.invocations, m.workCancellations, m.invocationAttemptHistory, m.nextInvocationAttemptID = invocations, cancellations, history, next
 		if controlBefore != nil {

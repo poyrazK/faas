@@ -134,11 +134,14 @@ func deliveryHealthSLOObservation(h EventConsumerDeliveryHealth, out EventDelive
 		}
 	case "slo.completion_latency_p95_seconds", "slo.dead_letter_rate_per_second":
 		out.Coverage, out.ObservedAt, out.WindowStart = e.Coverage, e.ObservedAt, e.WindowStart
-		valid = e.Coverage == "bounded_retained_execution_roots" && e.HistoryComplete && !e.Truncated && e.MissingRoots == 0 && e.Unknown == 0 && e.UnknownAttempts == 0 && e.RetainedRoots > 0
+		valid = e.CompleteWindowEvidence()
+		if e.WindowCoverage != "" {
+			out.Coverage = e.WindowCoverage
+		}
 		if out.Metric == "slo.completion_latency_p95_seconds" {
 			out.Value = e.CompletionLatencyP95Seconds
 			out.Samples = e.WindowCompletions
-			valid = valid && e.WindowCompletions >= 0 && e.WindowCompletions <= EventDeliveryHealthWatchCountMax && e.WindowCompletions <= e.Succeeded
+			valid = valid && e.WindowCompletions >= 0 && e.WindowCompletions <= EventDeliveryHealthWatchCountMax && (e.WindowCoverage != "" || e.WindowCompletions <= e.Succeeded)
 		} else {
 			var countsValid bool
 			out.Samples, countsValid = sloSampleTotal(e.SuccessfulAttempts, e.FailedAttempts)
@@ -147,12 +150,16 @@ func deliveryHealthSLOObservation(h EventConsumerDeliveryHealth, out EventDelive
 				out.Value = float64(e.WindowDeadLetters) / e.ObservedAt.Sub(e.WindowStart).Seconds()
 			}
 		}
-		if !e.HistoryComplete {
-			out.Reason = "history_incomplete"
-			if e.HistoryReason != "" {
-				out.Reason = e.HistoryReason
+		if !e.CompleteWindowEvidence() {
+			if e.WindowCoverage != "" {
+				out.Reason = e.WindowHistoryReason
+			} else {
+				out.Reason = "history_incomplete"
+				if e.HistoryReason != "" {
+					out.Reason = e.HistoryReason
+				}
 			}
-		} else if e.Truncated {
+		} else if e.Truncated && e.WindowCoverage == "" {
 			out.Reason = "history_truncated"
 		}
 	}
