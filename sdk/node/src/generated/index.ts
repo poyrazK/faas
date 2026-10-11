@@ -1108,6 +1108,10 @@ export type { OperationWorkflowConditionRefreshProgressChange } from './models/O
 export type { OperationWorkflowConditionRefreshProgressCount } from './models/OperationWorkflowConditionRefreshProgressCount.js';
 export type { OperationWorkflowConditionRefreshProgressInstance } from './models/OperationWorkflowConditionRefreshProgressInstance.js';
 export type { OperationWorkflowControlResponse } from './models/OperationWorkflowControlResponse.js';
+export type { OperationWorkflowCoordinationTimeline } from './models/OperationWorkflowCoordinationTimeline.js';
+export type { OperationWorkflowCoordinationTimelineEvent } from './models/OperationWorkflowCoordinationTimelineEvent.js';
+export type { OperationWorkflowCoordinationTimelineOptions } from './models/OperationWorkflowCoordinationTimelineOptions.js';
+export type { OperationWorkflowCoordinationTimelineSource } from './models/OperationWorkflowCoordinationTimelineSource.js';
 export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
 export type { OperationWorkflowDecisionOutcomeEvidence } from './models/OperationWorkflowDecisionOutcomeEvidence.js';
 export type { OperationWorkflowDecisionOutcomeGroup } from './models/OperationWorkflowDecisionOutcomeGroup.js';

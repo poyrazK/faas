@@ -1638,6 +1638,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.checkPlatformTenantSelfWorkflowReadiness)))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAccountWorkflowReadiness))))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/compare", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.comparePlatformTenantSelfWorkflowReadiness)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowCoordinationTimeline))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/timeline", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowCoordinationTimeline)))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/follow-ups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowReadinessFollowUps))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/follow-ups", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowReadinessFollowUps)))
 

@@ -121,3 +121,29 @@ func (c *Client) ListPlatformTenantSelfWorkflowReadinessFollowUps(ctx context.Co
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/follow-ups?"+readinessFollowUpQuery(opts).Encode(), nil, &out)
 	return out, err
 }
+
+func workflowCoordinationTimelineQuery(opts OperationWorkflowCoordinationTimelineOptions) url.Values {
+	q := readinessSubscriptionQuery(opts.AppID, opts.Scope, opts.TenantID)
+	q.Set("subject_type", opts.SubjectType)
+	q.Set("subject_id", opts.SubjectID)
+	q.Set("workflow", opts.Workflow)
+	q.Set("instance_id", opts.InstanceID)
+	if opts.Offset != 0 {
+		q.Set("offset", strconv.Itoa(opts.Offset))
+	}
+	if opts.Limit != 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	return q
+}
+func (c *Client) GetAccountWorkflowCoordinationTimeline(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCoordinationTimeline, error) {
+	var out OperationWorkflowCoordinationTimeline
+	opts.AppID = ""
+	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/timeline?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) GetPlatformTenantSelfWorkflowCoordinationTimeline(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCoordinationTimeline, error) {
+	var out OperationWorkflowCoordinationTimeline
+	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/timeline?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
+	return out, err
+}

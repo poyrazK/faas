@@ -314,3 +314,55 @@ type OperationWorkflowReadinessEscalationResponseEvent struct {
 	Owner                    string                                  `json:"owner"`
 	Reassigned               bool                                    `json:"reassigned"`
 }
+
+// Timeline is a live projection of retained inbox observations, not a complete workflow audit.
+type OperationWorkflowCoordinationTimelineOptions struct {
+	AppID, Scope, TenantID, SubjectType, SubjectID, Workflow, InstanceID string
+	Offset, Limit                                                        int
+}
+type OperationWorkflowCoordinationTimelineEvent struct {
+	ID                    string     `json:"id"`
+	At                    time.Time  `json:"at"`
+	Kind                  string     `json:"kind"`
+	Summary               string     `json:"summary"`
+	SubscriptionID        string     `json:"subscription_id"`
+	SubscriptionName      string     `json:"subscription_name"`
+	SubscriptionTenantID  string     `json:"subscription_tenant_id,omitempty"`
+	NotificationID        string     `json:"notification_id"`
+	Sequence              int64      `json:"sequence"`
+	Actor                 string     `json:"actor,omitempty"`
+	Owner                 string     `json:"owner,omitempty"`
+	Status                string     `json:"status,omitempty"`
+	Note                  string     `json:"note,omitempty"`
+	FollowUpAt            *time.Time `json:"follow_up_at,omitempty"`
+	ExpectedOutcomeCode   string     `json:"expected_outcome_code,omitempty"`
+	ReportedOutcomeCode   string     `json:"reported_outcome_code,omitempty"`
+	StateRevision         int64      `json:"state_revision,omitempty"`
+	ReportingOperationIDs []string   `json:"reporting_operation_ids"`
+}
+type OperationWorkflowCoordinationTimelineSource struct {
+	SubscriptionID    string `json:"subscription_id"`
+	Name              string `json:"name"`
+	EarliestSequence  int64  `json:"earliest_sequence"`
+	LatestSequence    int64  `json:"latest_sequence"`
+	RetainedCount     int    `json:"retained_count"`
+	GapBefore         bool   `json:"gap_before"`
+	MissingDuringRead bool   `json:"missing_during_read"`
+}
+type OperationWorkflowCoordinationTimeline struct {
+	Items            []OperationWorkflowCoordinationTimelineEvent  `json:"items"`
+	Sources          []OperationWorkflowCoordinationTimelineSource `json:"sources"`
+	Subject          OperationSubject                              `json:"subject"`
+	Workflow         string                                        `json:"workflow"`
+	InstanceID       string                                        `json:"instance_id"`
+	Scope            string                                        `json:"scope"`
+	PlatformTenantID string                                        `json:"platform_tenant_id,omitempty"`
+	EvaluatedAt      time.Time                                     `json:"evaluated_at"`
+	TotalCount       int                                           `json:"total_count"`
+	NextOffset       int                                           `json:"next_offset"`
+	HasMore          bool                                          `json:"has_more"`
+	RetentionLimited bool                                          `json:"retention_limited"`
+	SourcesTruncated bool                                          `json:"sources_truncated"`
+	HistoryTruncated bool                                          `json:"history_truncated"`
+	Limitations      []string                                      `json:"limitations"`
+}

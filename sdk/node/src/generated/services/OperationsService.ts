@@ -44,6 +44,7 @@ import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkf
 import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
 import type { OperationWorkflowAttentionSummary } from '../models/OperationWorkflowAttentionSummary.js';
 import type { OperationWorkflowControlResponse } from '../models/OperationWorkflowControlResponse.js';
+import type { OperationWorkflowCoordinationTimeline } from '../models/OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkflowOutcomesResponse.js';
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
@@ -5535,6 +5536,172 @@ export class OperationsService {
         'offset': offset,
         'limit': limit,
         'reminder_only': reminderOnly,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read account workflow coordination timeline
+   * GetAccountWorkflowCoordinationTimeline. Read a bounded chronological projection from current retained readiness inboxes for an exact subject and workflow instance. Observation clocks are server times; latest snapshots do not reconstruct every past edit. This is not a complete audit trail and does not authorize execution. Sources are read independently and live offset pages may move. Account access requires read scope and MFA; customer access requires Operations read.
+   * @returns OperationWorkflowCoordinationTimeline GetAccountWorkflowCoordinationTimeline. Retained workflow coordination timeline with source coverage and limitations.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowCoordinationTimeline({
+    slug,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    tenantId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetAccountWorkflowCoordinationTimeline.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.tenant_id. Exact customer identity. Omission selects account-owned workflows only, not all customers.
+     */
+    tenantId?: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh after edits or retention changes.
+     */
+    offset?: number,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.limit. Maximum events per page.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCoordinationTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/timeline',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read customer workflow coordination timeline
+   * GetPlatformTenantSelfWorkflowCoordinationTimeline. Read a bounded chronological projection from current retained readiness inboxes for an exact subject and workflow instance. Observation clocks are server times; latest snapshots do not reconstruct every past edit. This is not a complete audit trail and does not authorize execution. Sources are read independently and live offset pages may move. Account access requires read scope and MFA; customer access requires Operations read.
+   * @returns OperationWorkflowCoordinationTimeline GetPlatformTenantSelfWorkflowCoordinationTimeline. Retained workflow coordination timeline with source coverage and limitations.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowCoordinationTimeline({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh after edits or retention changes.
+     */
+    offset?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.limit. Maximum events per page.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCoordinationTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/timeline',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -2118,6 +2118,10 @@ from .operation_workflow_condition_refresh_progress_count_status import (
 )
 from .operation_workflow_condition_refresh_progress_instance import OperationWorkflowConditionRefreshProgressInstance
 from .operation_workflow_control_response import OperationWorkflowControlResponse
+from .operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
+from .operation_workflow_coordination_timeline_event import OperationWorkflowCoordinationTimelineEvent
+from .operation_workflow_coordination_timeline_options import OperationWorkflowCoordinationTimelineOptions
+from .operation_workflow_coordination_timeline_source import OperationWorkflowCoordinationTimelineSource
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
 from .operation_workflow_decision_outcome_evidence_observed_condition_results_item import (
@@ -5736,6 +5740,10 @@ __all__ = (
     "OperationWorkflowConditionRefreshProgressCountStatus",
     "OperationWorkflowConditionRefreshProgressInstance",
     "OperationWorkflowControlResponse",
+    "OperationWorkflowCoordinationTimeline",
+    "OperationWorkflowCoordinationTimelineEvent",
+    "OperationWorkflowCoordinationTimelineOptions",
+    "OperationWorkflowCoordinationTimelineSource",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionOutcomeEvidence",
     "OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem",

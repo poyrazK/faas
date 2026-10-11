@@ -37779,6 +37779,205 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/apps/{slug}/workflow-readiness/timeline:
+    get:
+      operationId: GetAccountWorkflowCoordinationTimeline
+      summary: Read account workflow coordination timeline
+      description: GetAccountWorkflowCoordinationTimeline. Read a bounded chronological projection from current retained
+        readiness inboxes for an exact subject and workflow instance. Observation clocks are server times; latest
+        snapshots do not reconstruct every past edit. This is not a complete audit trail and does not authorize execution.
+        Sources are read independently and live offset pages may move. Account access requires read scope and MFA;
+        customer access requires Operations read.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: GetAccountWorkflowCoordinationTimeline.tenant_id. Exact customer identity. Omission selects account-owned
+          workflows only, not all customers.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: GetAccountWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: offset
+        in: query
+        required: false
+        description: GetAccountWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh after edits
+          or retention changes.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 56000
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        description: GetAccountWorkflowCoordinationTimeline.limit. Maximum events per page.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: GetAccountWorkflowCoordinationTimeline. Retained workflow coordination timeline with source
+            coverage and limitations.
+          content:
+            application/json:
+              example: {items: [], sources: [], subject: {type: order, id: order-1}, workflow: checkout, instance_id: order-1, scope: prod, evaluated_at: "2026-10-11T08:00:00Z", total_count: 0, next_offset: 0, has_more: false, retention_limited: true, sources_truncated: false, history_truncated: false, limitations: ["Only retained inbox history is available."]}
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowCoordinationTimeline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/timeline:
+    get:
+      operationId: GetPlatformTenantSelfWorkflowCoordinationTimeline
+      summary: Read customer workflow coordination timeline
+      description: GetPlatformTenantSelfWorkflowCoordinationTimeline. Read a bounded chronological projection from
+        current retained readiness inboxes for an exact subject and workflow instance. Observation clocks are server
+        times; latest snapshots do not reconstruct every past edit. This is not a complete audit trail and does not
+        authorize execution. Sources are read independently and live offset pages may move. Account access requires
+        read scope and MFA; customer access requires Operations read.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.app_id. Application UUID; customer identity
+          comes from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: offset
+        in: query
+        required: false
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh
+          after edits or retention changes.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 56000
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        description: GetPlatformTenantSelfWorkflowCoordinationTimeline.limit. Maximum events per page.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: GetPlatformTenantSelfWorkflowCoordinationTimeline. Retained workflow coordination timeline
+            with source coverage and limitations.
+          content:
+            application/json:
+              example: {items: [], sources: [], subject: {type: order, id: order-1}, workflow: checkout, instance_id: order-1, scope: prod, evaluated_at: "2026-10-11T08:00:00Z", total_count: 0, next_offset: 0, has_more: false, retention_limited: true, sources_truncated: false, history_truncated: false, limitations: ["Only retained inbox history is available."]}
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowCoordinationTimeline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
 
   securitySchemes:
@@ -76171,6 +76370,273 @@ components:
       - id
       - due_at
       - created_at
+
+    OperationWorkflowCoordinationTimelineEvent:
+      type: object
+      description: OperationWorkflowCoordinationTimelineEvent. Retained inbox coordination projection metadata.
+      required:
+      - id
+      - at
+      - kind
+      - summary
+      - subscription_id
+      - subscription_name
+      - notification_id
+      - sequence
+      - reporting_operation_ids
+      properties:
+        id:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCoordinationTimelineEvent.at. Retained server observation or action clock; never
+            inferred application occurrence time.
+        kind:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.kind. Notification, retained action, outcome observation
+            or latest coordination snapshot.
+        summary:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.summary. Explanation of the retained event and any
+            evidence limitation.
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID.
+        subscription_name:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name.
+        subscription_tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimelineEvent.subscription_tenant_id. Operator-only original subscription
+            tenant used to navigate the source inbox; omitted for broad subscriptions.
+        notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence.
+        actor:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.actor. Retained coordination actor, when available.
+        owner:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.owner. Retained coordination owner label.
+        status:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.status. Status in the event kind context.
+        note:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.note. Retained human coordination note.
+        follow_up_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCoordinationTimelineEvent.follow_up_at. Associated follow-up or reminder due
+            clock.
+        expected_outcome_code:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.expected_outcome_code. Application-declared expected
+            business outcome.
+        reported_outcome_code:
+          type: string
+          description: OperationWorkflowCoordinationTimelineEvent.reported_outcome_code. Observed application-reported
+            business outcome.
+        state_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowCoordinationTimelineEvent.state_revision. Observed workflow report revision.
+        reporting_operation_ids:
+          type: array
+          maxItems: 48
+          items:
+            type: string
+            format: uuid
+          description: OperationWorkflowCoordinationTimelineEvent.reporting_operation_ids. Available operation evidence
+            links; absence does not imply success or failure.
+    OperationWorkflowCoordinationTimelineSource:
+      type: object
+      description: OperationWorkflowCoordinationTimelineSource. Retained inbox coordination projection metadata.
+      required:
+      - subscription_id
+      - name
+      - earliest_sequence
+      - latest_sequence
+      - retained_count
+      - gap_before
+      - missing_during_read
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimelineSource.subscription_id. Read subscription UUID.
+        name:
+          type: string
+          description: OperationWorkflowCoordinationTimelineSource.name. Current subscription name.
+        earliest_sequence:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowCoordinationTimelineSource.earliest_sequence. Earliest retained sequence, or
+            zero when empty.
+        latest_sequence:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowCoordinationTimelineSource.latest_sequence. Latest published sequence at source
+            read.
+        retained_count:
+          type: integer
+          minimum: 0
+          description: OperationWorkflowCoordinationTimelineSource.retained_count. Notifications retained in this source,
+            including other workflow identities.
+        gap_before:
+          type: boolean
+          description: OperationWorkflowCoordinationTimelineSource.gap_before. Older notifications were pruned or an
+            inbox resynchronization is required.
+        missing_during_read:
+          type: boolean
+          description: OperationWorkflowCoordinationTimelineSource.missing_during_read. Subscription disappeared between
+            listing and reading.
+    OperationWorkflowCoordinationTimeline:
+      type: object
+      description: OperationWorkflowCoordinationTimeline. Retained inbox coordination projection metadata.
+      required:
+      - items
+      - sources
+      - subject
+      - workflow
+      - instance_id
+      - scope
+      - evaluated_at
+      - total_count
+      - next_offset
+      - has_more
+      - retention_limited
+      - sources_truncated
+      - history_truncated
+      - limitations
+      properties:
+        items:
+          example: []
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowCoordinationTimelineEvent'
+          description: OperationWorkflowCoordinationTimeline.items. Chronological page ordered by retained server clock
+            then stable event identity.
+        sources:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/OperationWorkflowCoordinationTimelineSource'
+          description: OperationWorkflowCoordinationTimeline.sources. Coverage of current subscriptions within the authenticated
+            role, app and environment.
+        subject:
+          type: object
+          $ref: '#/components/schemas/OperationSubject'
+          description: OperationWorkflowCoordinationTimeline.subject. Exact requested business subject.
+        workflow:
+          type: string
+          description: OperationWorkflowCoordinationTimeline.workflow. Exact requested workflow name.
+        instance_id:
+          type: string
+          description: OperationWorkflowCoordinationTimeline.instance_id. Exact requested workflow instance.
+        scope:
+          type: string
+          description: OperationWorkflowCoordinationTimeline.scope. Application environment.
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimeline.platform_tenant_id. Operator-only exact customer selection;
+            omitted for account-owned workflows.
+        evaluated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCoordinationTimeline.evaluated_at. Server clock after independent source reads.
+        total_count:
+          type: integer
+          minimum: 0
+          description: OperationWorkflowCoordinationTimeline.total_count. Matching retained event count before live
+            pagination.
+        next_offset:
+          type: integer
+          minimum: 0
+          description: OperationWorkflowCoordinationTimeline.next_offset. Offset for the next live page.
+        has_more:
+          type: boolean
+          description: OperationWorkflowCoordinationTimeline.has_more. More events existed at evaluation.
+        retention_limited:
+          type: boolean
+          description: 'OperationWorkflowCoordinationTimeline.retention_limited. Always true: deleted sources and pruned
+            records cannot be reconstructed.'
+        sources_truncated:
+          type: boolean
+          description: OperationWorkflowCoordinationTimeline.sources_truncated. Current source list exceeded the bounded
+            projection.
+        history_truncated:
+          type: boolean
+          description: OperationWorkflowCoordinationTimeline.history_truncated. A matching response target lost older
+            assignment history.
+        limitations:
+          type: array
+          items:
+            type: string
+          description: OperationWorkflowCoordinationTimeline.limitations. Explicit retention, snapshot and pagination
+            limitations.
+
+    OperationWorkflowCoordinationTimelineOptions:
+      type: object
+      description: OperationWorkflowCoordinationTimelineOptions. Explicit business identity and live pagination selectors.
+      properties:
+        app_id:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.app_id. Exact timeline query selector; customer
+            identity comes from authentication.
+          format: uuid
+        scope:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.scope. Exact timeline query selector; customer identity
+            comes from authentication.
+        tenant_id:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.tenant_id. Exact timeline query selector; customer
+            identity comes from authentication.
+          format: uuid
+        subject_type:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.subject_type. Exact timeline query selector; customer
+            identity comes from authentication.
+        subject_id:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.subject_id. Exact timeline query selector; customer
+            identity comes from authentication.
+        workflow:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.workflow. Exact timeline query selector; customer
+            identity comes from authentication.
+        instance_id:
+          type: string
+          description: OperationWorkflowCoordinationTimelineOptions.instance_id. Exact timeline query selector; customer
+            identity comes from authentication.
+        offset:
+          type: integer
+          description: OperationWorkflowCoordinationTimelineOptions.offset. Exact timeline query selector; customer
+            identity comes from authentication.
+          minimum: 0
+          maximum: 56000
+        limit:
+          type: integer
+          description: OperationWorkflowCoordinationTimelineOptions.limit. Exact timeline query selector; customer identity
+            comes from authentication.
+          minimum: 1
+          maximum: 100
 
   responses:
     OperationConflict:

@@ -68,6 +68,27 @@
 <noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
 </section>
 
+<section class="card" id="workflow-timeline" data-url="{{.Data.TimelineURL}}" data-list-url="{{.Data.ListURL}}" data-queue-url="{{.Data.QueueURL}}">
+<h2>Workflow coordination timeline</h2>
+<p>Read retained coordination events for one exact business workflow instance. Times use your browser's local timezone. Latest snapshots do not reconstruct every earlier edit; gaps and deleted inboxes limit this history.</p>
+<form id="workflow-timeline-form">
+<label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="Blank for account-owned workflows"></label>
+<label>Subject type <input name="subject_type" required maxlength="63"></label>
+<label>Subject ID <input name="subject_id" required maxlength="256"></label>
+<label>Workflow <input name="workflow" required maxlength="63" value="{{.Data.Options.Workflow}}"></label>
+<label>Instance <input name="instance_id" required maxlength="256"></label>
+<label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+<button type="submit">Load timeline</button>
+</form>
+<p id="workflow-timeline-message" role="status" aria-live="polite"></p>
+<ul id="workflow-timeline-sources"></ul>
+<ul id="workflow-timeline-limitations"></ul>
+<ol id="workflow-timeline-items" aria-live="polite"></ol>
+<button type="button" id="workflow-timeline-more" hidden>Load more events</button>
+<noscript><p>Enable JavaScript to read the timeline, or use the API and SDKs.</p></noscript>
+</section>
+
 <section class="card" id="readiness-followups" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
 <h2>Follow-up work queue</h2>
 <p role="status" aria-live="polite">Due reminders for these filters: <strong id="readiness-due-reminder-count">Checking…</strong></p>
@@ -561,6 +582,79 @@
  window.setInterval(()=>{void refreshCount();},30000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCount();});
  void refreshCount();
+})();
+
+(() => {
+ 'use strict';
+ const root=document.getElementById('workflow-timeline');
+ if (!root || !root.dataset.url) return;
+ const form=document.getElementById('workflow-timeline-form'), message=document.getElementById('workflow-timeline-message');
+ const items=document.getElementById('workflow-timeline-items'), sources=document.getElementById('workflow-timeline-sources');
+ const limitations=document.getElementById('workflow-timeline-limitations'), more=document.getElementById('workflow-timeline-more');
+ let generation=0, active=null, next=0, pending=false, seen=new Set();
+ const node=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n;};
+ const clock=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?'Unavailable clock':d.toLocaleString();};
+ const safeURL=path=>{const u=new URL(path,window.location.origin);if(u.origin!==window.location.origin)throw new Error('Timeline must remain on this site');return u;};
+ function renderTimelineEvent(event,result) {
+  const row=node('li','');
+  row.append(node('p',clock(event.at)+' · '+event.kind+' · '+event.summary));
+  const details=[];
+  if(event.actor)details.push('Actor: '+event.actor);
+  if(event.owner)details.push('Owner: '+event.owner);
+  if(event.status)details.push('Status: '+event.status);
+  if(event.follow_up_at)details.push('Follow-up: '+clock(event.follow_up_at));
+  if(event.expected_outcome_code)details.push('Expected outcome: '+event.expected_outcome_code);
+  if(event.reported_outcome_code)details.push('Reported outcome: '+event.reported_outcome_code);
+  if(event.state_revision)details.push('Report revision: '+event.state_revision);
+  if(details.length)row.append(node('p',details.join(' · ')));
+  if(event.note)row.append(node('p',event.note));
+  const inbox=safeURL(root.dataset.queueUrl);inbox.searchParams.set('scope',result.scope);
+  if(event.subscription_tenant_id)inbox.searchParams.set('tenant_id',event.subscription_tenant_id);
+  inbox.hash='readiness-subscriptions/'+encodeURIComponent(event.subscription_id)+'/'+event.sequence;
+  const link=node('a','Inbox: '+event.subscription_name+' #'+event.sequence);link.href=inbox.href;row.append(link);
+  for(const id of event.reporting_operation_ids||[]){
+   const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(id));url.searchParams.set('scope',result.scope);
+   row.append(node('span',' · '));const evidence=node('a','Operation evidence '+id);evidence.href=url.href;row.append(evidence);
+  }
+  return row;
+ }
+ function renderCoverage(result) {
+  sources.replaceChildren();limitations.replaceChildren();
+  for(const source of result.sources||[]) {
+   let text=source.name+': '+source.retained_count+' retained notifications; sequences '+source.earliest_sequence+'–'+source.latest_sequence;
+   if(source.gap_before)text+=' · Older history missing';
+   if(source.missing_during_read)text+=' · Inbox disappeared during read';
+   sources.append(node('li',text));
+  }
+  for(const text of result.limitations||[])limitations.append(node('li',text));
+  if(result.sources_truncated)limitations.append(node('li','Source coverage was truncated.'));
+  if(result.history_truncated)limitations.append(node('li','Older assignment changes are missing.'));
+  if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
+ }
+ async function loadTimeline(append) {
+  const token=generation, query=new URLSearchParams(active);query.set('offset',String(append?next:0));
+  pending=true;more.disabled=true;message.textContent='Reading retained timeline…';
+  try {
+   const url=safeURL(root.dataset.url);url.search=query.toString();
+   const response=await fetch(url.href,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'application/json'}});
+   if(!response.ok)throw new Error('Timeline could not be read (HTTP '+response.status+').');
+   const result=await response.json();if(token!==generation)return;
+   if(!Array.isArray(result.items)||!Array.isArray(result.sources)||!Number.isSafeInteger(result.next_offset))throw new Error('Invalid timeline response.');
+   renderCoverage(result);
+   for(const event of result.items){if(seen.has(event.id))continue;seen.add(event.id);items.append(renderTimelineEvent(event,result));}
+   next=result.next_offset;more.hidden=!result.has_more;
+   message.textContent=seen.size+' displayed of '+result.total_count+' retained events · Observed '+clock(result.evaluated_at)+'. Pages are live; reload after changes.';
+  } catch(error) {if(token===generation)message.textContent=error instanceof Error?error.message:'Timeline could not be read.';}
+  finally {if(token===generation){pending=false;more.disabled=false;}}
+ }
+ form.addEventListener('submit',event=>{
+  event.preventDefault();generation++;active=new URLSearchParams();
+  const data=new FormData(form);
+  for(const key of ['scope','tenant_id','subject_type','subject_id','workflow','instance_id','limit']){const value=String(data.get(key)||'');if(value)active.set(key,value);}
+  next=0;seen=new Set();items.replaceChildren();sources.replaceChildren();limitations.replaceChildren();more.hidden=true;
+  void loadTimeline(false);
+ });
+ more.addEventListener('click',()=>{if(active&&!pending)void loadTimeline(true);});
 })();
 </script>
 </body></html>
