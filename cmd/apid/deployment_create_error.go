@@ -32,5 +32,11 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, problem)
 		return
 	}
+	// The client only sees "Briefly at capacity", and no caller logs the
+	// cause, so without this line the failure is untraceable (hunt #9
+	// H9-9/H9-63: two production deploys refused with nothing in the log).
+	if s.log != nil {
+		s.log.Error("create deployment failed", "err", err)
+	}
 	api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 }
