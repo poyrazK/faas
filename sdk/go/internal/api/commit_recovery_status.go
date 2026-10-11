@@ -40,6 +40,8 @@ type CommitRecoveryStatusChange struct {
 
 // CommitRecoveryMonitoring describes this watch invocation, not delivery success.
 type CommitRecoveryMonitoring struct {
+	StallThresholdMS               int64                             `json:"stall_threshold_ms,omitempty"`
+	ConsumerStalls                 []CommitRecoveryConsumerStall     `json:"consumer_stalls,omitempty"`
 	DiagnosticEstimate             *CommitRecoveryDiagnosticEstimate `json:"diagnostic_estimate,omitempty"`
 	WatchMode                      string                            `json:"watch_mode"`
 	DiagnosticCoverageComplete     bool                              `json:"diagnostic_coverage_complete"`

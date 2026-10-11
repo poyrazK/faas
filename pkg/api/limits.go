@@ -9678,3 +9678,7 @@ const EventRecipientBlockerBatchBodyMaxBytes = 65536
 // Optional diagnostic age policy uses the receipt observation age bounds.
 const CommitRecoveryDiagnosticAgeMin = CommitRecoveryWatchObservationAgeMin
 const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
+
+// Optional stall detection uses the diagnostic age duration bounds.
+const CommitRecoveryStallThresholdMin = CommitRecoveryDiagnosticAgeMin
+const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax

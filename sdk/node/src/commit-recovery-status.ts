@@ -40,6 +40,7 @@ export interface CommitRecoveryStatusItem {
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryMonitoring {
+ stall_threshold_ms?: number; consumer_stalls?: CommitRecoveryConsumerStall[];
   diagnostic_estimate?: CommitRecoveryDiagnosticEstimate;
   watch_mode?: string; diagnostic_coverage_complete?: boolean;
   max_observation_age_ms?: number; freshness?: Record<string, number>;
@@ -241,7 +242,7 @@ export function commitRecoveryStatusSettled(out: CommitRecoveryStatusResult): bo
 
 /** Poll a fixed selection; errors retain the last/partial result. */
 export async function watchCommitRecoveryStatus(source: string, plan: CommitRecoveryPlan, applied: CommitRecoveryApplyResult, options: {
-  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; watchDiagnostics?: boolean; diagnostics?: boolean; maxDiagnosticAgeMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
+  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; stallThresholdMs?: number; watchDiagnostics?: boolean; diagnostics?: boolean; maxDiagnosticAgeMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
   resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
   onProgress?: (status: CommitRecoveryStatusResult) => void;
 } = {}): Promise<CommitRecoveryStatusResult> {
@@ -251,6 +252,9 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   validateObservationAge(maxObservationAgeMs);
   validateObservationAge(options.maxDiagnosticAgeMs ?? 0);
   if ((options.maxDiagnosticAgeMs ?? 0) > 0 && !diagnostics) throw new TypeError("maximum diagnostic age requires diagnostics");
+  const stallThresholdMs = options.stallThresholdMs ?? 0;
+  validateObservationAge(stallThresholdMs);
+  if (stallThresholdMs > 0 && (!diagnostics || !(options.maxDiagnosticAgeMs! > 0))) throw new TypeError("stall threshold requires diagnostics and a positive diagnostic age limit");
   const readRetries = options.readRetries ?? 0;
   if (!Number.isInteger(readRetries) || readRetries < 0 || readRetries > 20) throw new TypeError('invalid recovery watch read retry budget');
   const intervalMs = options.intervalMs ?? 1000, timeoutMs = options.timeoutMs ?? 120000;
@@ -267,15 +271,17 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   let usedRetries = 0, passes = 0;
   let reason = 'read_failure', phase = 'read';
   const estimator = new DiagnosticEstimator();
+  const stalls = new StallTracker();
   let estimateDelayMs = intervalMs;
   const readDiagnostics = async (readSignal: AbortSignal, strictReads = false): Promise<CommitRecoveryStatusResult> => {
     const diagnosticStarted = performance.now();
     try {
       const sampled = await diagnoseCommitRecoveryStatus(out, readSignal, diagnosticPrevious, options.maxDiagnosticAgeMs, strictReads);
       estimator.observe(sampled, performance.now() - diagnosticStarted);
+      stalls.observe(sampled, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs);
       return sampled;
     } catch (error) {
-      if (error instanceof CommitRecoveryStatusError) estimator.observe(error.result, performance.now() - diagnosticStarted);
+      if (error instanceof CommitRecoveryStatusError) {estimator.observe(error.result, performance.now() - diagnosticStarted); stalls.observe(error.result, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs);}
       throw error;
     }
   };
@@ -284,6 +290,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
     return {
       watch_mode: options.watchDiagnostics ? "diagnostic_coverage" : "recovery_settlement", diagnostic_coverage_complete: stop_reason === "diagnostic_coverage_complete" ? Boolean(out.diagnostics_progress?.complete && out.diagnostics_progress?.fresh_complete) : diagnosticCoverageComplete(out, options.maxDiagnosticAgeMs ?? 0),
       diagnostic_estimate: estimator.estimate(out, performance.now() - started, estimateDelayMs),
+      ...(stallThresholdMs > 0 ? {stall_threshold_ms: stallThresholdMs, consumer_stalls: stalls.summarize(out, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs)} : {}),
       stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
       acknowledged_executions_terminal: commitRecoveryStatusSettled(out) && (!freshness || freshness.fresh === out.items.length),
       ...(freshness ? { max_observation_age_ms: maxObservationAgeMs, freshness } : {}),
@@ -666,4 +673,52 @@ function diagnosticConsumers(out: CommitRecoveryStatusResult): CommitRecoveryDia
   }
  }
  return [...groups.values()].sort((a,b)=>a.subscription_id < b.subscription_id ? -1 : a.subscription_id > b.subscription_id ? 1 : 0);
+}
+
+export interface CommitRecoveryPersistentBlocker {
+ query: EventRecipientBlockerQuery; waiting_reason: string; state: string; first_observed_at: string; last_observed_at: string; samples: number; monitored_ms: number;
+}
+export interface CommitRecoveryConsumerStall {
+ subscription_id: string; counts: Record<string,number>; blockers: CommitRecoveryPersistentBlocker[];
+}
+interface StallSample { observation: CommitRecoveryDiagnosticObservation; first: string; started: number; last: number; samples: number; advancing: boolean; changed: boolean; }
+const persistentBlockerReasons = new Set(['subscription_paused','subscription_rate_limited','circuit_open','circuit_probe_wait','circuit_recovery_rate_limited','ordering_blocked','capacity_consumer','capacity_app','capacity_account','retry_backoff']);
+class StallTracker {
+ private samples = new Map<number,StallSample>();
+ observe(out: CommitRecoveryStatusResult, age: number, threshold: number): void {
+  if(!threshold)return;
+  const now=performance.now(), wall=Date.now();
+  out.items.forEach((row,i)=>{
+   let previous=this.samples.get(i);
+   const current=diagnosticObservation(row.diagnostics,row);
+   if(!current || diagnosticFreshness(row,wall,age)!=='fresh'){this.samples.delete(i);return;}
+   if(previous && (Date.parse(previous.observation.observed_at)>wall || wall-Date.parse(previous.observation.observed_at)>age)){this.samples.delete(i);previous=undefined;}
+   if(row.diagnostics!.retained)return;
+   const sample: StallSample={observation:current,first:current.observed_at,started:now,last:now,samples:1,advancing:false,changed:false};
+   if(previous && diagnosticTimeAfter(current.observed_at,previous.observation.observed_at)){
+    const before=diagnosticRoutingFields(previous.observation),after=diagnosticRoutingFields(current);
+    if(Object.keys({...before,...after}).every(key=>key === 'ordering_accepted_at' && before[key] && after[key] ? sameAcceptance(before[key]!,after[key]!) : before[key]===after[key])){sample.first=previous.first;sample.started=previous.started;sample.samples=previous.samples+1;}
+    else {sample.changed=true;sample.advancing=(previous.observation.routing_state==='pending' && current.routing_state==='processing') || (previous.observation.status==='available' && current.status==='not_waiting' && current.routing_state==='enqueued');}
+   }else if(previous){this.samples.delete(i);return;}
+   this.samples.set(i,sample);
+  });
+ }
+ summarize(out: CommitRecoveryStatusResult, age: number, threshold: number): CommitRecoveryConsumerStall[] {
+  if(!threshold || !out.diagnostics_progress)return [];
+  const groups=new Map(out.diagnostics_progress.consumers.map(c=>[c.subscription_id,{subscription_id:c.subscription_id,counts:{insufficient_evidence:0,advancing:0,routing_changed:0,not_blocked:0,observing:0,stalled:0} as Record<string,number>,blockers:[] as CommitRecoveryPersistentBlocker[]}]));
+  const now=Date.now();
+  out.items.forEach((row,i)=>{
+   if(!diagnosticTarget(row))return;
+   const g=groups.get(row.attempt.subscription_id.toLowerCase())!,sample=this.samples.get(i);
+   if(!sample || diagnosticFreshness(row,now,age)!=='fresh' || !sameAcceptance(row.diagnostics!.observed_at!,sample.observation.observed_at)){this.samples.delete(i);g.counts.insufficient_evidence!++;return;}
+   if(sample.changed)g.counts.routing_changed!++;
+   if(sample.advancing)g.counts.advancing!++;
+   const o=sample.observation;
+   if(!o.routing || !persistentBlockerReasons.has(o.routing.waiting_reason)){g.counts.not_blocked!++;return;}
+   const duration=Math.max(0,Math.floor(sample.last-sample.started)),state=sample.samples>=2 && sample.last-sample.started>=threshold ? 'stalled':'observing';
+   g.counts[state]!++;
+   g.blockers.push({query:o.query,waiting_reason:o.routing.waiting_reason,state,first_observed_at:sample.first,last_observed_at:o.observed_at,samples:sample.samples,monitored_ms:duration});
+  });
+  return [...groups.values()];
+ }
 }

@@ -448,3 +448,6 @@ type CommitRecoveryDiagnosticEstimate = api.CommitRecoveryDiagnosticEstimate
 
 type CommitRecoveryDiagnosticConsumer = api.CommitRecoveryDiagnosticConsumer
 type CommitRecoveryDiagnosticWaiting = api.CommitRecoveryDiagnosticWaiting
+
+type CommitRecoveryConsumerStall = api.CommitRecoveryConsumerStall
+type CommitRecoveryPersistentBlocker = api.CommitRecoveryPersistentBlocker

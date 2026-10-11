@@ -19,6 +19,7 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 
 // CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
 type CommitRecoveryWatchOptions struct {
+	StallThreshold    time.Duration
 	WatchDiagnostics  bool
 	MaxDiagnosticAge  time.Duration
 	Diagnostics       bool
@@ -41,6 +42,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	passes, usedRetries := 0, 0
 	reason := "read_failure"
 	estimator := &commitRecoveryDiagnosticEstimator{}
+	stalls := &commitRecoveryStallTracker{}
 	estimateDelay := interval
 	summary := func(stopReason string) *CommitRecoveryMonitoring {
 		freshness, fresh := commitRecoveryFreshnessCounts(out, maxAge)
@@ -54,7 +56,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 		} else {
 			coverage = commitRecoveryDiagnosticCoverageComplete(out, options.MaxDiagnosticAge)
 		}
-		return &CommitRecoveryMonitoring{DiagnosticEstimate: estimator.estimate(out, time.Since(started).Seconds()*1000, estimateDelay.Seconds()*1000), WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
+		return &CommitRecoveryMonitoring{StallThresholdMS: options.StallThreshold.Milliseconds(), ConsumerStalls: stalls.summarize(out, options.MaxDiagnosticAge, options.StallThreshold), DiagnosticEstimate: estimator.estimate(out, time.Since(started).Seconds()*1000, estimateDelay.Seconds()*1000), WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
 	}
 	defer func() {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -77,6 +79,9 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	}
 	if options.MaxDiagnosticAge > 0 && !options.Diagnostics {
 		return out, ErrValidation("maximum diagnostic age requires diagnostics")
+	}
+	if options.StallThreshold < 0 || options.StallThreshold > CommitRecoveryStallThresholdMax || (options.StallThreshold > 0 && (options.StallThreshold < CommitRecoveryStallThresholdMin || !options.Diagnostics || options.MaxDiagnosticAge == 0)) {
+		return out, ErrValidation("stall threshold requires diagnostics and a positive diagnostic age limit (100ms-24h)")
 	}
 	// Freeze caller-owned inputs across polling passes and progress callbacks.
 	saved, err := cloneCommitRecoveryWatchInputs(plan, applied, previous)
@@ -113,6 +118,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				out = diagnosed
 			}
 			estimator.observe(out, time.Since(diagnosticStarted).Seconds()*1000)
+			stalls.observe(out, options.MaxDiagnosticAge, options.StallThreshold)
 			if err == nil {
 				err = diagnosticErr
 			}
@@ -304,3 +310,6 @@ const (
 	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
 	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
 )
+
+const CommitRecoveryStallThresholdMin = CommitRecoveryWatchObservationAgeMin
+const CommitRecoveryStallThresholdMax = CommitRecoveryWatchObservationAgeMax

@@ -497,6 +497,7 @@ async def awatch_commit_recovery_status(
     diagnostics: bool = False,
     watch_diagnostics: bool = False,
     max_diagnostic_age: float = 0,
+    stall_threshold: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -511,6 +512,9 @@ async def awatch_commit_recovery_status(
     ):
         raise ValueError("invalid recovery watch options")
     _validate_observation_age(max_observation_age)
+    _validate_observation_age(stall_threshold)
+    if stall_threshold > 0 and (not diagnostics or max_diagnostic_age <= 0):
+        raise ValueError("stall threshold requires diagnostics and a positive diagnostic age limit")
     _validate_observation_age(max_diagnostic_age)
     if max_diagnostic_age > 0 and not diagnostics:
         raise ValueError("maximum diagnostic age requires diagnostics")
@@ -530,6 +534,7 @@ async def awatch_commit_recovery_status(
     used_retries, passes = 0, 0
     reason, phase = "read_failure", "read"
     estimator = _DiagnosticEstimator()
+    stalls = _StallTracker()
     estimate_delay_ms = interval * 1000
 
     async def read_diagnostics(status: dict[str, Any]) -> dict[str, Any]:
@@ -544,8 +549,10 @@ async def awatch_commit_recovery_status(
             )
         except CommitRecoveryStatusError as error:
             estimator.observe(error.result, (loop.time() - diagnostic_started) * 1000)
+            stalls.observe(error.result, max_diagnostic_age, stall_threshold, loop.time())
             raise
         estimator.observe(sampled, (loop.time() - diagnostic_started) * 1000)
+        stalls.observe(sampled, max_diagnostic_age, stall_threshold, loop.time())
         return sampled
 
     def summarize(stop_reason: str) -> dict[str, Any]:
@@ -567,6 +574,14 @@ async def awatch_commit_recovery_status(
                     )
                 }
                 if "diagnostics_progress" in out
+                else {}
+            ),
+            **(
+                {
+                    "stall_threshold_ms": stall_threshold * 1000,
+                    "consumer_stalls": stalls.summarize(out, max_diagnostic_age, stall_threshold),
+                }
+                if stall_threshold > 0
                 else {}
             ),
             "stop_reason": stop_reason,
@@ -1363,3 +1378,131 @@ def _diagnostic_consumers(out: dict[str, Any]) -> list[dict[str, Any]]:
                 waiting_reason=reason,
             )
     return [groups[sid] for sid in sorted(groups)]
+
+
+_PERSISTENT_BLOCKERS = frozenset(
+    (
+        "subscription_paused",
+        "subscription_rate_limited",
+        "circuit_open",
+        "circuit_probe_wait",
+        "circuit_recovery_rate_limited",
+        "ordering_blocked",
+        "capacity_consumer",
+        "capacity_app",
+        "capacity_account",
+        "retry_backoff",
+    )
+)
+
+
+class _StallTracker:
+    def __init__(self) -> None:
+        self.samples: dict[int, dict[str, Any]] = {}
+
+    def observe(self, out: dict[str, Any], age: float, threshold: float, now: float) -> None:
+        if threshold == 0:
+            return
+        wall = datetime.now(UTC).timestamp()
+        for i, row in enumerate(out["items"]):
+            previous = self.samples.get(i)
+            current = _diagnostic_observation(row.get("diagnostics"), row)
+            if current is None or _diagnostic_freshness(row, wall, age) != "fresh":
+                self.samples.pop(i, None)
+                continue
+            if previous:
+                observed = datetime.fromisoformat(previous["observation"]["observed_at"]).timestamp()
+                if observed > wall or wall - observed > age:
+                    self.samples.pop(i, None)
+                    previous = None
+            if row["diagnostics"].get("retained"):
+                continue
+            sample = dict(
+                observation=current,
+                first=current["observed_at"],
+                started=now,
+                last=now,
+                samples=1,
+                advancing=False,
+                changed=False,
+            )
+            if previous and _diagnostic_time_key(current["observed_at"]) > _diagnostic_time_key(
+                previous["observation"]["observed_at"]
+            ):
+                before = _diagnostic_routing_fields(previous["observation"])
+                after = _diagnostic_routing_fields(current)
+                if (
+                    before.get("ordering_accepted_at")
+                    and after.get("ordering_accepted_at")
+                    and _diagnostic_time_key(before["ordering_accepted_at"])
+                    == _diagnostic_time_key(after["ordering_accepted_at"])
+                ):
+                    after["ordering_accepted_at"] = before["ordering_accepted_at"]
+                if before == after:
+                    sample.update(first=previous["first"], started=previous["started"], samples=previous["samples"] + 1)
+                else:
+                    sample["changed"] = True
+                    prior = previous["observation"]
+                    sample["advancing"] = (
+                        prior["routing_state"] == "pending" and current["routing_state"] == "processing"
+                    ) or (
+                        prior["status"] == "available"
+                        and current["status"] == "not_waiting"
+                        and current["routing_state"] == "enqueued"
+                    )
+            elif previous:
+                self.samples.pop(i, None)
+                continue
+            self.samples[i] = sample
+
+    def summarize(self, out: dict[str, Any], age: float, threshold: float) -> list[dict[str, Any]]:
+        if threshold == 0 or "diagnostics_progress" not in out:
+            return []
+        groups = {
+            c["subscription_id"]: dict(
+                subscription_id=c["subscription_id"],
+                counts=dict.fromkeys(
+                    ("insufficient_evidence", "advancing", "routing_changed", "not_blocked", "observing", "stalled"), 0
+                ),
+                blockers=[],
+            )
+            for c in out["diagnostics_progress"]["consumers"]
+        }
+        wall = datetime.now(UTC).timestamp()
+        for i, row in enumerate(out["items"]):
+            if not _diagnostic_target(row):
+                continue
+            g = groups[row["attempt"]["subscription_id"].lower()]
+            sample = self.samples.get(i)
+            if (
+                sample is None
+                or _diagnostic_freshness(row, wall, age) != "fresh"
+                or _diagnostic_time_key(row["diagnostics"]["observed_at"])
+                != _diagnostic_time_key(sample["observation"]["observed_at"])
+            ):
+                self.samples.pop(i, None)
+                g["counts"]["insufficient_evidence"] += 1
+                continue
+            if sample["changed"]:
+                g["counts"]["routing_changed"] += 1
+            if sample["advancing"]:
+                g["counts"]["advancing"] += 1
+            o = sample["observation"]
+            if not o.get("routing") or o["routing"]["waiting_reason"] not in _PERSISTENT_BLOCKERS:
+                g["counts"]["not_blocked"] += 1
+                continue
+            duration = max(0, (sample["last"] - sample["started"]) * 1000)
+            state = "stalled" if sample["samples"] >= 2 and duration >= threshold * 1000 else "observing"
+            g["counts"][state] += 1
+            g["blockers"].append(
+                dict(
+                    query=o["query"],
+                    waiting_reason=o["routing"]["waiting_reason"],
+                    state=state,
+                    first_observed_at=sample["first"],
+                    last_observed_at=o["observed_at"],
+                    samples=sample["samples"],
+                    monitored_ms=int(duration),
+                )
+            )
+        return list(groups.values())

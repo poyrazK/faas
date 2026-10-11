@@ -21,6 +21,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
 	diagnostics := fs.Bool("diagnostics", false, "include bounded live delivery blocker diagnostics")
+	stallThreshold := fs.Duration("stall-threshold", 0, "persistent blocker alert threshold (100ms-24h; requires watch, diagnostics and max-diagnostic-age)")
 	diagnosticAge := fs.Duration("max-diagnostic-age", 0, "maximum diagnostic sample age (100ms-24h; requires diagnostics; default disabled)")
 	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
 	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
@@ -38,6 +39,9 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if *watchDiagnostics {
 		*watch = true
 		*diagnostics = true
+	}
+	if *stallThreshold < 0 || *stallThreshold > api.CommitRecoveryStallThresholdMax || (*stallThreshold > 0 && (*stallThreshold < api.CommitRecoveryStallThresholdMin || !*watch || !*diagnostics || *diagnosticAge <= 0)) {
+		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *diagnosticAge < 0 || *diagnosticAge > api.CommitRecoveryDiagnosticAgeMax || (*diagnosticAge > 0 && (*diagnosticAge < api.CommitRecoveryDiagnosticAgeMin || !*diagnostics)) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
 		return 1
@@ -100,6 +104,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if *watch {
 		last := ""
 		lastRows := map[string]string{}
+		lastStalls := map[string]bool{}
 		lastDiagnostics := map[string]string{}
 		lastEstimateWarning := false
 		progress := func(status api.CommitRecoveryStatusResult) {
@@ -111,6 +116,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 				}
 			}
 			printCommitRecoveryDiagnosticChanges(status, lastDiagnostics)
+			printCommitRecoveryStallAlerts(status.Monitoring, lastStalls)
 			rows := make([]any, 0, len(status.Items))
 			for _, row := range status.Items {
 				fields := []any{row.Status, row.Reason, row.Generation, row.GenerationRelation, row.Attribution, row.ExecutionID, row.ExecutionState}
@@ -152,7 +158,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 			}
 			lastEstimateWarning = warning
 		}
-		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{StallThreshold: *stallThreshold, ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
 	}
 	if !*watch && err == nil && *diagnostics {
 		if saved != nil && *resumePath != "" {
@@ -263,4 +269,28 @@ func commitRecoveryConsumerSummary(consumers []api.CommitRecoveryDiagnosticConsu
 		result = append(result, []any{consumer.SubscriptionID, consumer.TargetCount, consumer.Freshness, consumer.Statuses, consumer.FreshWaitingReasons, consumer.StaleWaitingReasons, consumer.Compared, consumer.Changed, oldest})
 	}
 	return result
+}
+
+func printCommitRecoveryStallAlerts(monitoring *api.CommitRecoveryMonitoring, seen map[string]bool) {
+	current := map[string]bool{}
+	if monitoring != nil {
+		for _, consumer := range monitoring.ConsumerStalls {
+			for _, blocker := range consumer.Blockers {
+				if blocker.State != "stalled" {
+					continue
+				}
+				raw, _ := json.Marshal([]any{blocker.Query, blocker.WaitingReason, blocker.FirstObservedAt})
+				key := string(raw)
+				current[key] = true
+				if !seen[key] {
+					evidence, _ := json.Marshal(blocker)
+					_, _ = fmt.Fprintf(os.Stderr, "Persistent sampled routing blocker for consumer %s: %s\n", consumer.SubscriptionID, evidence)
+				}
+			}
+		}
+	}
+	clear(seen)
+	for key := range current {
+		seen[key] = true
+	}
 }
