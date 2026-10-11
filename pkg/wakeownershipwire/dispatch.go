@@ -110,3 +110,15 @@ func Incoming(ctx context.Context, localNodeID string) (state.ProjectEnvironment
 	}
 	return frame, nil
 }
+
+// IncomingPresent recognizes even malformed or future envelopes, allowing an
+// unsupported receiver to refuse them instead of silently using a generic wake.
+func IncomingPresent(ctx context.Context) bool {
+	md, _ := metadata.FromIncomingContext(ctx)
+	for key := range md {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}

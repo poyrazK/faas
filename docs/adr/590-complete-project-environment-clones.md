@@ -10170,3 +10170,28 @@ Transport integration, receiver payload matching, durable native incoming
 ownership, physical binding and delayed-producer closure remain pending. No
 schema or launch behavior changes are introduced. Public full-stage admission
 remains gated, and no native VM or live provider qualification is claimed.
+
+### Gated router transport for original wake ownership
+
+The router has an additive retained-dispatch preparer that replaces the existing
+recorder for the selected admission, verifies the returned instance, app,
+deployment, node and requested method, and attaches the private ownership
+envelope before cold boot, restore or paused restore. Source wakes with no clone
+record carry no envelope. Subsequent correlation metadata cannot replace the
+retained original wake identity. Admission errors or foreign ownership return
+before the VM RPC.
+
+This path requires a separate client capability before admission. Older clients
+cannot silently drop ownership, and the production VMM client rejects support
+until durable native incoming binding exists. Production schedd configuration
+continues to use its current recorder. The vmmd generic wake parsers also refuse
+any checkpoint ownership envelope, including malformed or future fields, before
+ordinary VM effects. Tagged requests cannot fall back to generic launch on this
+receiver. The sender capability remains gated until a qualified native owner can
+handle incoming admission, physical binding and delayed-producer revocation.
+
+Portable router and in-process RPC tests cover original transport, metadata
+preservation, single preparation, denied or foreign admission, ordinary source
+wakes, unsupported clients and rejection before VM effects. Durable native
+ownership and closure, proof-backed release, native KVM qualification and live
+provider qualification remain pending. Public full-stage admission remains gated.
