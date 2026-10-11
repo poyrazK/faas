@@ -1109,3 +1109,14 @@ func TestProfileGateProblemStatus(t *testing.T) {
 		t.Fatalf("profiling gate status = %d, want %d", got, http.StatusConflict)
 	}
 }
+
+// Hunt #9 H9-70: callers pass only the byte cap, and the detail read
+// " plan caps secret values at 32768 bytes" with an empty plan name.
+func TestErrSecretValueTooLargeDetail(t *testing.T) {
+	if got := ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: 32768}, 200000).Detail; got != "Secret values are capped at 32768 bytes; got 200000." {
+		t.Errorf("detail without plan = %q", got)
+	}
+	if got := ErrSecretValueTooLarge(Limits{Plan: PlanPro, SecretValueMaxBytes: 32768}, 40000).Detail; !strings.HasPrefix(got, "pro plan caps") {
+		t.Errorf("detail with plan = %q", got)
+	}
+}
