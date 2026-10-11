@@ -82,7 +82,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`open`](#open) | Open the app&#39;s URL (linked app or interactive picker) |
 | [`orgs`](#orgs) | Manage orgs, members, and workspace activity |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
-| [`park`](#park) | Park an app cold (kill all live instances) |
+| [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
@@ -9652,7 +9652,7 @@ Set / clear the account&#39;s overage cap (--clear | &lt;cents&gt;)
 
 ## park
 
-Park an app cold (kill all live instances)
+Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request
 
 `gregale park <slug>`
 

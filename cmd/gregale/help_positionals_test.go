@@ -41,6 +41,8 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 		{"jobs registry set", []string{"--registry <HOST>", "--user <USER>", "<job>"}},
 		// Prod hunt #9: rename help omitted the required new slug.
 		{"app my-api rename", []string{"gregale app <slug> rename <new-slug>", "old hostname stops routing"}},
+		// Prod hunt #9: park silently suspends a min-instances floor.
+		{"park", []string{"gregale park <slug>", "min-instances floor stays off"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

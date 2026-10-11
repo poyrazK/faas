@@ -3629,7 +3629,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "park",
 		DocSlug:     "park-wake",
-		Short:       "Park an app cold (kill all live instances)",
+		Short:       "Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request",
 		Positionals: []string{"<slug>"},
 		Examples:    []string{"gregale park my-api"},
 	},
