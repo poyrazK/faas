@@ -123,15 +123,19 @@ are strictly below a later successful barrier.
 
 Set `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED=1` only in the native
 acceptance environment after deploying compatible readers. It requires cleanup
-management and its prerequisites. Startup checks a bounded quota-root listing
-and conditional create/update/deletion of this process's unique private worker
-probe. It does not inspect or step a scope during that probe.
+management and its prerequisites. Startup checks bounded quota-root/index
+listings and this process's unique private worker/index probes. Worker probes
+verify conditional create/update/deletion; index probes verify create/deletion.
+They do not inspect or step a scope.
 
-One runtime goroutine scans up to four quota roots per sweep, including inactive
-roots, and advances a disposable discovery cursor. It operates only on the
-node's configured durable-app allowlist and existing, unfinished cleanup
-operations past their reader-grace boundary. It never starts a cleanup, rotates
-an epoch or creates a quota root. Operators still authorize start explicitly.
+One runtime goroutine normally visits up to four active index candidates per
+5-second polling interval. Independently, it reconciles up to four quota roots
+once a minute, including inactive roots, advancing a separate disposable cursor.
+It operates only on the node's configured durable-app allowlist and existing,
+unfinished cleanup operations past their reader-grace boundary. It never starts
+a cleanup, rotates an epoch or creates a quota root. Operators still authorize
+start explicitly. Root reconciliation runs at startup and continues even while
+index discovery is failing or backing off.
 
 Each eligible scope takes a known-acknowledged, 30-second CAS claim in
 `tenant-registry/workers/v1/<scope-hash>` before attempting at most one cleanup
@@ -142,12 +146,15 @@ claim acknowledgement authorizes no work. A replacement worker cannot have its
 observation overwritten by a delayed older claim because observation writes
 also compare the private object's version.
 
-Sweeps have a 45-second deadline, discovery listing a 5-second deadline, each
-scope a 15-second budget and each cleanup step a 10-second deadline. The runtime
-waits 5 seconds between sweeps; successful scopes wait at least 5 seconds between
-attempts. Failed scope attempts persist exponential backoff starting at 10 seconds
-and capped at 5 minutes. Discovery errors use a separate bounded process-local
-backoff and reset only the discovery cursor. Scope records survive restart.
+A runtime cycle shares a 45-second deadline across both discovery lanes.
+Listings have a 5-second deadline, each scope a 15-second budget and each cleanup
+step a 10-second deadline. The runtime waits 5 seconds between cycles; successful
+scopes wait at least 5 seconds between attempts. Each lane attempts at most one
+page per eligible scope in its bounded batch. Failed scope attempts persist exponential backoff starting at 10 seconds
+and capped at 5 minutes. Index and root discovery have independent bounded
+process-local backoffs and cursors. Index errors start at 10 seconds; root scan
+errors start at 2 minutes; both cap at 5 minutes and reset only their own cursor.
+Scope records survive restart.
 If a process dies before releasing its claim, another node resumes after lease
 expiry. Runtime cancellation stops the goroutine and its in-flight contexts.
 
@@ -180,16 +187,69 @@ hold until completion. The worker does not change schema or silently lift them.
 There is one small private observation record per attempted scope; temporary
 probe leftovers from unknown outcomes are separate from collected shard epochs.
 
-Root discovery costs scale with all quota roots, not just unfinished operations.
-Large fleets can have longer revisit intervals; high admission contention can
-also delay progress. No completion-time guarantee or cross-node exactly-once
+Normal discovery costs scale with active hints and stale candidates. Root
+reconciliation still scans all quota roots at a lower rate, so large fleets can
+have longer repair intervals; high admission contention can also delay progress. No completion-time guarantee or cross-node exactly-once
 DELETE claim is made. Bounded contexts and short advisory leases complement the
 permanent epoch fence; delayed provider requests remain safe because they can
 only delete permanently obsolete namespaces.
 
+## Active cleanup index
+
+Markers use `tenant-registry/cleanup-index/v1/<scope-hash>/<20-digit epoch>/<UUID>`.
+Their keys are canonical and immutable; their bodies provide no authority.
+A known-acknowledged cleanup start publishes its marker best-effort, and exact
+start replay repairs it. Known completion removes that exact marker best-effort.
+Each publication/removal has a 2-second budget within the caller's context.
+Marker failure does not turn a known root acknowledgement into an uncertain
+start/step outcome. A lost root acknowledgement still requires root inspection
+or exact replay before assuming start succeeded.
+
+Root reconciliation repairs hints for authenticated unfinished operations,
+including during reader grace. It also provides a bounded fallback cleanup step
+when index access fails. A failed marker write is reported as deferred discovery
+while fallback progress can still commit. Older binaries that do not publish
+hints remain discoverable through this scan. Deleted/missing hints are not lost
+work: the root's persisted operation remains authoritative. Replaying the latest
+start request with its original source revision can repair a known scope's hint
+without waiting for a complete root scan.
+
+Every indexed candidate is checked against its fresh authenticated root,
+including operation ID, epoch, phase, grace and the app allowlist. The ordinary
+worker claim/backoff and step's fresh checkpoint validation still apply. An index
+entry cannot create an operation, bypass grace or allow application-state deletion.
+Whole pages are checked for prefix, duplicates, count and cursor bounds before
+processing any candidate. Future epochs, unknown names, unmatched current-epoch
+operations and roots that are absent/unreadable remain untouched.
+
+Only a marker in a strictly older root epoch, or the exact completed operation
+in the current epoch, may be pruned. A delayed prune can never hit a later
+rotation's marker, even if an operation UUID is reused, because the epoch is
+part of its key. A delayed publisher can leave another safe stale marker after
+completion; a later index pass collects it. No root, worker observation or shard
+is removed by index pruning. Neither index hints nor delete counts are customer
+quota authority. These markers are private platform metadata.
+
+There is no atomic transaction between root and index. Safety comes from root
+validation; liveness comes from independent bounded reconciliation. This reduces
+routine scans of inactive roots without promising immediate repair, zero stale
+metadata or constant discovery cost for arbitrarily large active populations.
+Configured app subsets still share the candidate pool and can scan one another's
+hints without acting on them. Native acceptance must measure index backlog,
+root-repair revisit time and provider request/storage cost.
+
 ## Source and native acceptance
 
-The worker implementation at source commit
+The indexed-discovery implementation at source commit
+`4c4fe97fc62e52a6c293c4825e5faf210e4e8a13` passed
+[remote CI run 38174072709](https://github.com/poyrazK/faas/actions/runs/38174072709).
+Validation includes four durable Go packages under the race detector (including
+seven new index tests), 32 focused API race tests exercising indexed cleanup,
+CLI and generated-protocol checks, 16 Node workflow tests and the packed starter
+install/typecheck workflow. No local tests or native GCS/KVM acceptance were run
+for this revision.
+
+The preceding root-scan worker implementation at source commit
 `1f3061811ad5355af6d1aadbc2fed1c0951d0186` passed
 [remote CI run 38169049230](https://github.com/poyrazK/faas/actions/runs/38169049230).
 Validation includes four durable Go packages under the race detector (including
@@ -234,5 +294,6 @@ permanent retirement fences, unchanged customer accounting,
 and metadata storage growth across repeated rotations. Measure reader grace and
 checkpoint contention before production enablement. Worker acceptance also
 requires multi-node takeover, clock skew, shutdown/restart, prefix permissions,
-manual/worker races, observation loss and discovery cost at realistic root counts. No production flag, PR or
+manual/worker races, observation loss, missing/unknown index writes, delayed
+pruning, index outages and discovery/repair cost at realistic root counts. No production flag, PR or
 deployment is part of this change.

@@ -1,7 +1,8 @@
 # ADR 980: Bounded durable registry cleanup continuation
 
 Status: implemented behind a separate off-by-default worker flag; native
-acceptance pending. Extends ADRs 978 and 979.
+acceptance pending. Extends ADRs 978 and 979. ADR 981 replaces routine root
+discovery with an active index and retains lower-frequency root reconciliation.
 
 Manual cleanup checkpoints are durable but require repeated operator calls.
 Continue explicitly started operations with one cancelable runtime goroutine.

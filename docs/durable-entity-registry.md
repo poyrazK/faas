@@ -72,6 +72,8 @@ outside the customer reservation budget. The opt-in
 [epoch-fenced cleanup workflow](durable-entity-registry-cleanup.md) can collect
 strictly older epochs while current-epoch admission continues; an optional bounded
 worker can continue explicitly started operations without starting new ones.
+An active-operation index reduces routine root scans; periodic reconciliation
+repairs missing hints while roots remain authoritative.
 Never delete them based on one root scan: readers and concurrent writers may
 still reference an older snapshot. Native acceptance must measure read latency,
 metadata growth and the control-plane storage cost before release.
