@@ -22,7 +22,7 @@ func workflowPerformanceContributorURL(path string, opts api.OperationWorkflowPe
 	if group.ContractVersion > 0 {
 		q.Set("contract_version", strconv.Itoa(group.ContractVersion))
 	}
-	for key, value := range map[string]string{"condition_id": group.ConditionID, "condition_description": group.ConditionDescription, "condition_result": group.ConditionResult, "state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
+	for key, value := range map[string]string{"condition_evidence_status": group.ConditionEvidenceStatus, "condition_id": group.ConditionID, "condition_description": group.ConditionDescription, "condition_result": group.ConditionResult, "state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -111,7 +111,7 @@ func workflowDecisionOutcomeGroupLabel(group api.OperationWorkflowPerformanceGro
 		if group.Dimension == "active_condition_blocked" {
 			measure = "Blocked time"
 		}
-		return fmt.Sprintf("%s · last reported %s=%s · decision %s · rule %s / %s · contract %d", measure, group.ConditionID, group.ConditionResult, group.DecisionCode, group.RuleID, group.RuleVersion, group.ContractVersion)
+		return fmt.Sprintf("%s · last reported %s=%s · decision %s · rule %s / %s · contract %d", measure+workflowConditionFreshnessLabel(group.ConditionEvidenceStatus), group.ConditionID, group.ConditionResult, group.DecisionCode, group.RuleID, group.RuleVersion, group.ContractVersion)
 	}
 
 	measure := "Completion time"
@@ -126,4 +126,11 @@ func workflowDecisionOutcomeGroupLabel(group api.OperationWorkflowPerformanceGro
 		identity += " · rule " + group.RuleID + " / " + group.RuleVersion
 	}
 	return fmt.Sprintf("%s · %s → %s · contract %d", measure, identity, group.OutcomeCode, group.ContractVersion)
+}
+
+func workflowConditionFreshnessLabel(status string) string {
+	if status == "" {
+		return ""
+	}
+	return " · evidence " + status
 }

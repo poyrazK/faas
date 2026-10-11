@@ -306,3 +306,5 @@ export type { OperationWorkflowRuleVersionCohort, OperationWorkflowRuleVersionOv
 export { type OperationWorkflowConditionOutcomeSummary, type OperationWorkflowConditionOutcomeGroup } from './customer-operations.js';
 
 export type { OperationWorkflowActiveConditionSummary, OperationWorkflowActiveConditionGroup } from './customer-operations.js';
+
+export type { OperationWorkflowConditionFreshness } from './customer-operations.js';

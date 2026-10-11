@@ -9659,3 +9659,6 @@ const (
 // Active condition summaries bound context retention and displayed groups.
 const OperationWorkflowActiveConditionContextsMax = 256
 const OperationWorkflowActiveConditionGroupsMax = 64
+
+// Optional condition evidence budgets allow at most ten years. Zero disables the budget.
+const OperationBusinessConditionEvidenceMaxAgeSeconds int64 = 10 * 365 * 24 * 60 * 60

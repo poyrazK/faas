@@ -7,6 +7,9 @@ import type { OperationWorkflowDurationDistribution } from './OperationWorkflowD
  * One latest explicitly reported result per exact condition identity and workflow. Elapsed and blocked durations cover the entire observed workflow to evaluated_at, not time under the condition. Evidence age is measured at the same time. Workflow state staleness follows its declared threshold and does not expire the condition.
  */
 export type OperationWorkflowActiveConditionGroup = {
+  within_budget_workflow_count: number;
+  overdue_workflow_count: number;
+  no_budget_workflow_count: number;
   contract_version: number;
   decision_code: string;
   rule_id: string;

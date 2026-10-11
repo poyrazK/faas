@@ -165,7 +165,7 @@ func validateConditionOutcomeGroup(g api.OperationWorkflowPerformanceGroup) erro
 	return validateConditionGroupSelectors(g)
 }
 func validateConditionGroupSelectors(g api.OperationWorkflowPerformanceGroup) error {
-	if g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || g.State != "" || g.Operation != "" || g.Code != "" || g.Owner != "" || g.Unassigned || g.Kind != "" || g.GroupID != "" || g.PathID != "" {
+	if g.ConditionEvidenceStatus != "" || g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || g.State != "" || g.Operation != "" || g.Code != "" || g.Owner != "" || g.Unassigned || g.Kind != "" || g.GroupID != "" || g.PathID != "" {
 		return ErrInvalidArgument
 	}
 	if api.ValidateOperationBusinessDecision(api.OperationBusinessDecision{Workflow: "workflow", InstanceID: "instance", Code: g.DecisionCode, Description: "decision", RuleID: g.RuleID, RuleVersion: g.RuleVersion}) != nil {

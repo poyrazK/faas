@@ -10,6 +10,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.list_account_workflow_performance_instances_cohort import (
     ListAccountWorkflowPerformanceInstancesCohort,
 )
+from ...models.list_account_workflow_performance_instances_condition_evidence_status import (
+    ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus,
+)
 from ...models.list_account_workflow_performance_instances_condition_result import (
     ListAccountWorkflowPerformanceInstancesConditionResult,
 )
@@ -47,6 +50,7 @@ def _get_kwargs(
     path_id: str | Unset = UNSET,
     condition_id: str | Unset = UNSET,
     condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
     condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -101,6 +105,12 @@ def _get_kwargs(
     params["condition_id"] = condition_id
 
     params["condition_description"] = condition_description
+
+    json_condition_evidence_status: str | Unset = UNSET
+    if not isinstance(condition_evidence_status, Unset):
+        json_condition_evidence_status = condition_evidence_status
+
+    params["condition_evidence_status"] = json_condition_evidence_status
 
     json_condition_result: str | Unset = UNSET
     if not isinstance(condition_result, Unset):
@@ -202,6 +212,7 @@ def sync_detailed(
     path_id: str | Unset = UNSET,
     condition_id: str | Unset = UNSET,
     condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
     condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
@@ -235,8 +246,11 @@ def sync_detailed(
     condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
     selectors are rejected. They use latest explicit decision snapshots in the current contract, return
     evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
-    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
-    Conflicting snapshots and incomplete histories are excluded.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -260,6 +274,8 @@ def sync_detailed(
         path_id (str | Unset):
         condition_id (str | Unset):
         condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
         condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
         outcome_code (str | Unset):
 
@@ -293,6 +309,7 @@ def sync_detailed(
         path_id=path_id,
         condition_id=condition_id,
         condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
         condition_result=condition_result,
         outcome_code=outcome_code,
     )
@@ -328,6 +345,7 @@ def sync(
     path_id: str | Unset = UNSET,
     condition_id: str | Unset = UNSET,
     condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
     condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
@@ -361,8 +379,11 @@ def sync(
     condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
     selectors are rejected. They use latest explicit decision snapshots in the current contract, return
     evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
-    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
-    Conflicting snapshots and incomplete histories are excluded.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -386,6 +407,8 @@ def sync(
         path_id (str | Unset):
         condition_id (str | Unset):
         condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
         condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
         outcome_code (str | Unset):
 
@@ -420,6 +443,7 @@ def sync(
         path_id=path_id,
         condition_id=condition_id,
         condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
         condition_result=condition_result,
         outcome_code=outcome_code,
     ).parsed
@@ -449,6 +473,7 @@ async def asyncio_detailed(
     path_id: str | Unset = UNSET,
     condition_id: str | Unset = UNSET,
     condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
     condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
@@ -482,8 +507,11 @@ async def asyncio_detailed(
     condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
     selectors are rejected. They use latest explicit decision snapshots in the current contract, return
     evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
-    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
-    Conflicting snapshots and incomplete histories are excluded.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -507,6 +535,8 @@ async def asyncio_detailed(
         path_id (str | Unset):
         condition_id (str | Unset):
         condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
         condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
         outcome_code (str | Unset):
 
@@ -540,6 +570,7 @@ async def asyncio_detailed(
         path_id=path_id,
         condition_id=condition_id,
         condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
         condition_result=condition_result,
         outcome_code=outcome_code,
     )
@@ -573,6 +604,7 @@ async def asyncio(
     path_id: str | Unset = UNSET,
     condition_id: str | Unset = UNSET,
     condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
     condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
@@ -606,8 +638,11 @@ async def asyncio(
     condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
     selectors are rejected. They use latest explicit decision snapshots in the current contract, return
     evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
-    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
-    Conflicting snapshots and incomplete histories are excluded.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         slug (str):
@@ -631,6 +666,8 @@ async def asyncio(
         path_id (str | Unset):
         condition_id (str | Unset):
         condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
         condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
         outcome_code (str | Unset):
 
@@ -666,6 +703,7 @@ async def asyncio(
             path_id=path_id,
             condition_id=condition_id,
             condition_description=condition_description,
+            condition_evidence_status=condition_evidence_status,
             condition_result=condition_result,
             outcome_code=outcome_code,
         )

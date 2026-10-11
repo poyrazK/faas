@@ -112,8 +112,9 @@ func CanonicalOperationWorkflowChangeReason(input *OperationWorkflowChangeReason
 
 // OperationBusinessConditionDefinition declares public reasoning vocabulary on a pinned milestone step.
 type OperationBusinessConditionDefinition struct {
-	ID          string `json:"id" yaml:"id" toml:"id"`
-	Description string `json:"description" yaml:"description" toml:"description"`
+	EvidenceMaxAgeSeconds int64  `json:"evidence_max_age_seconds,omitempty" yaml:"evidence_max_age_seconds,omitempty" toml:"evidence_max_age_seconds,omitempty"`
+	ID                    string `json:"id" yaml:"id" toml:"id"`
+	Description           string `json:"description" yaml:"description" toml:"description"`
 }
 
 // OperationBusinessConditionResult is reported by the application; Gregale never evaluates it.
@@ -130,6 +131,9 @@ func CanonicalOperationBusinessConditions(input []OperationBusinessConditionDefi
 	out := append([]OperationBusinessConditionDefinition(nil), input...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	for i, c := range out {
+		if c.EvidenceMaxAgeSeconds < 0 || c.EvidenceMaxAgeSeconds > OperationBusinessConditionEvidenceMaxAgeSeconds {
+			return nil, fmt.Errorf("condition evidence age budget is out of range")
+		}
 		if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`).MatchString(c.ID) || strings.TrimSpace(c.Description) == "" || len(c.Description) > OperationBusinessConditionDescriptionMaxBytes || !utf8.ValidString(c.Description) || strings.ContainsFunc(c.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) || i > 0 && out[i-1].ID == c.ID {
 			return nil, fmt.Errorf("business conditions require unique bounded IDs and public descriptions without control characters")
 		}
@@ -184,3 +188,5 @@ func SameOperationBusinessDecision(a, b OperationBusinessDecision) bool {
 	}
 	return reflect.DeepEqual(a, b)
 }
+
+const OperationBusinessConditionEvidenceMaxAgeSeconds int64 = 10 * 365 * 24 * 60 * 60

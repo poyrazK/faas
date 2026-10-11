@@ -60,5 +60,5 @@ type WorkflowConditionOutcomeLink struct {
 
 type WorkflowActiveConditionLink struct {
 	api.OperationWorkflowActiveConditionGroup
-	ElapsedURL, BlockedURL string
+	ElapsedURL, BlockedURL, OverdueURL string
 }

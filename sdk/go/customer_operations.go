@@ -209,3 +209,5 @@ type OperationWorkflowRuleVersionOverlap = api.OperationWorkflowRuleVersionOverl
 
 type OperationWorkflowActiveConditionSummary = api.OperationWorkflowActiveConditionSummary
 type OperationWorkflowActiveConditionGroup = api.OperationWorkflowActiveConditionGroup
+
+type OperationWorkflowConditionFreshness = api.OperationWorkflowConditionFreshness

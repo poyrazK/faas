@@ -1095,6 +1095,7 @@ export type { OperationWorkflowChangeReason } from './models/OperationWorkflowCh
 export type { OperationWorkflowConditionChange } from './models/OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './models/OperationWorkflowConditionComparison.js';
 export type { OperationWorkflowConditionEvidence } from './models/OperationWorkflowConditionEvidence.js';
+export type { OperationWorkflowConditionFreshness } from './models/OperationWorkflowConditionFreshness.js';
 export type { OperationWorkflowConditionOutcomeGroup } from './models/OperationWorkflowConditionOutcomeGroup.js';
 export type { OperationWorkflowConditionOutcomeSummary } from './models/OperationWorkflowConditionOutcomeSummary.js';
 export type { OperationWorkflowControlResponse } from './models/OperationWorkflowControlResponse.js';

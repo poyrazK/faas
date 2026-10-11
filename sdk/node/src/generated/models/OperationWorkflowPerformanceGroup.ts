@@ -6,6 +6,10 @@
  * Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads.
  */
 export type OperationWorkflowPerformanceGroup = {
+  /**
+   * Optional active-condition contributor filter; other dimensions reject this selector.
+   */
+  condition_evidence_status?: 'within_budget' | 'overdue' | 'no_budget';
   condition_id?: string;
   /**
    * Exact public condition description in the returned group; UTF-8 byte bound without controls.

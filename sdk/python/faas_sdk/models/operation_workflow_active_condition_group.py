@@ -25,6 +25,9 @@ class OperationWorkflowActiveConditionGroup:
 
     """
 
+    within_budget_workflow_count: int
+    overdue_workflow_count: int
+    no_budget_workflow_count: int
     contract_version: int
     decision_code: str
     rule_id: str
@@ -44,6 +47,12 @@ class OperationWorkflowActiveConditionGroup:
     zero."""
 
     def to_dict(self) -> dict[str, Any]:
+        within_budget_workflow_count = self.within_budget_workflow_count
+
+        overdue_workflow_count = self.overdue_workflow_count
+
+        no_budget_workflow_count = self.no_budget_workflow_count
+
         contract_version = self.contract_version
 
         decision_code = self.decision_code
@@ -70,6 +79,9 @@ class OperationWorkflowActiveConditionGroup:
 
         field_dict.update(
             {
+                "within_budget_workflow_count": within_budget_workflow_count,
+                "overdue_workflow_count": overdue_workflow_count,
+                "no_budget_workflow_count": no_budget_workflow_count,
                 "contract_version": contract_version,
                 "decision_code": decision_code,
                 "rule_id": rule_id,
@@ -91,6 +103,12 @@ class OperationWorkflowActiveConditionGroup:
         from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
 
         d = dict(src_dict)
+        within_budget_workflow_count = d.pop("within_budget_workflow_count")
+
+        overdue_workflow_count = d.pop("overdue_workflow_count")
+
+        no_budget_workflow_count = d.pop("no_budget_workflow_count")
+
         contract_version = d.pop("contract_version")
 
         decision_code = d.pop("decision_code")
@@ -114,6 +132,9 @@ class OperationWorkflowActiveConditionGroup:
         evidence_age = OperationWorkflowDurationDistribution.from_dict(d.pop("evidence_age"))
 
         operation_workflow_active_condition_group = cls(
+            within_budget_workflow_count=within_budget_workflow_count,
+            overdue_workflow_count=overdue_workflow_count,
+            no_budget_workflow_count=no_budget_workflow_count,
             contract_version=contract_version,
             decision_code=decision_code,
             rule_id=rule_id,

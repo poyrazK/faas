@@ -4,23 +4,24 @@ import "time"
 
 // OperationWorkflowPerformanceGroup identifies one exact performance dimension.
 type OperationWorkflowPerformanceGroup struct {
-	ConditionID          string `json:"condition_id,omitempty"`
-	ConditionDescription string `json:"condition_description,omitempty"`
-	ConditionResult      string `json:"condition_result,omitempty"`
-	Kind                 string `json:"kind,omitempty"`
-	DecisionCode         string `json:"decision_code,omitempty"`
-	RuleID               string `json:"rule_id,omitempty"`
-	RuleVersion          string `json:"rule_version,omitempty"`
-	GroupID              string `json:"group_id,omitempty"`
-	PathID               string `json:"path_id,omitempty"`
-	OutcomeCode          string `json:"outcome_code,omitempty"`
-	Dimension            string `json:"dimension"`
-	ContractVersion      int    `json:"contract_version,omitempty"`
-	State                string `json:"state,omitempty"`
-	Operation            string `json:"operation,omitempty"`
-	Code                 string `json:"code,omitempty"`
-	Owner                string `json:"owner,omitempty"`
-	Unassigned           bool   `json:"unassigned,omitempty"`
+	ConditionEvidenceStatus string `json:"condition_evidence_status,omitempty"`
+	ConditionID             string `json:"condition_id,omitempty"`
+	ConditionDescription    string `json:"condition_description,omitempty"`
+	ConditionResult         string `json:"condition_result,omitempty"`
+	Kind                    string `json:"kind,omitempty"`
+	DecisionCode            string `json:"decision_code,omitempty"`
+	RuleID                  string `json:"rule_id,omitempty"`
+	RuleVersion             string `json:"rule_version,omitempty"`
+	GroupID                 string `json:"group_id,omitempty"`
+	PathID                  string `json:"path_id,omitempty"`
+	OutcomeCode             string `json:"outcome_code,omitempty"`
+	Dimension               string `json:"dimension"`
+	ContractVersion         int    `json:"contract_version,omitempty"`
+	State                   string `json:"state,omitempty"`
+	Operation               string `json:"operation,omitempty"`
+	Code                    string `json:"code,omitempty"`
+	Owner                   string `json:"owner,omitempty"`
+	Unassigned              bool   `json:"unassigned,omitempty"`
 }
 
 type OperationWorkflowPerformanceInstanceOptions struct {
@@ -64,6 +65,7 @@ type OperationWorkflowPerformanceInstancesResponse struct {
 
 // OperationWorkflowDecisionOutcomeEvidence identifies the qualifying report and optional decision fact. Active groups use latest snapshots.
 type OperationWorkflowDecisionOutcomeEvidence struct {
+	ConditionFreshness       *OperationWorkflowConditionFreshness  `json:"condition_freshness,omitempty"`
 	EvidenceAgeSeconds       *int64                                `json:"evidence_age_seconds,omitempty"`
 	Condition                *OperationBusinessConditionResult     `json:"condition,omitempty"`
 	ObservedConditionResults []string                              `json:"observed_condition_results,omitempty"`

@@ -209,15 +209,26 @@ type OperationWorkflowActiveConditionSummary struct {
 
 // OperationWorkflowActiveConditionGroup measures full workflow durations, not condition latency.
 type OperationWorkflowActiveConditionGroup struct {
-	ContractVersion      int                                   `json:"contract_version"`
-	DecisionCode         string                                `json:"decision_code"`
-	RuleID               string                                `json:"rule_id"`
-	RuleVersion          string                                `json:"rule_version"`
-	ConditionID          string                                `json:"condition_id"`
-	ConditionDescription string                                `json:"condition_description"`
-	ConditionResult      string                                `json:"condition_result"`
-	StaleWorkflowCount   int64                                 `json:"stale_workflow_count"`
-	ElapsedTime          OperationWorkflowDurationDistribution `json:"elapsed_time"`
-	BlockedTime          OperationWorkflowDurationDistribution `json:"blocked_time"`
-	EvidenceAge          OperationWorkflowDurationDistribution `json:"evidence_age"`
+	WithinBudgetWorkflowCount int64                                 `json:"within_budget_workflow_count"`
+	OverdueWorkflowCount      int64                                 `json:"overdue_workflow_count"`
+	NoBudgetWorkflowCount     int64                                 `json:"no_budget_workflow_count"`
+	ContractVersion           int                                   `json:"contract_version"`
+	DecisionCode              string                                `json:"decision_code"`
+	RuleID                    string                                `json:"rule_id"`
+	RuleVersion               string                                `json:"rule_version"`
+	ConditionID               string                                `json:"condition_id"`
+	ConditionDescription      string                                `json:"condition_description"`
+	ConditionResult           string                                `json:"condition_result"`
+	StaleWorkflowCount        int64                                 `json:"stale_workflow_count"`
+	ElapsedTime               OperationWorkflowDurationDistribution `json:"elapsed_time"`
+	BlockedTime               OperationWorkflowDurationDistribution `json:"blocked_time"`
+	EvidenceAge               OperationWorkflowDurationDistribution `json:"evidence_age"`
+}
+
+// OperationWorkflowConditionFreshness measures report age against the pinned definition, not condition truth.
+type OperationWorkflowConditionFreshness struct {
+	Status                string     `json:"status"`
+	EvidenceMaxAgeSeconds int64      `json:"evidence_max_age_seconds,omitempty"`
+	RefreshDueAt          *time.Time `json:"refresh_due_at,omitempty"`
+	OverdueSeconds        int64      `json:"overdue_seconds,omitempty"`
 }

@@ -100,7 +100,7 @@ func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) e
 	if conditionOutcomeDimension(g.Dimension) {
 		return validateConditionOutcomeGroup(g)
 	}
-	if g.ConditionID != "" || g.ConditionDescription != "" || g.ConditionResult != "" {
+	if g.ConditionEvidenceStatus != "" || g.ConditionID != "" || g.ConditionDescription != "" || g.ConditionResult != "" {
 		return ErrInvalidArgument
 	}
 	if decisionOutcomeDimension(g.Dimension) {
@@ -242,7 +242,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		found := false
 		selector := workflowConditionOutcomeSelector(opts.OperationWorkflowPerformanceGroup)
 		for _, group := range out.ActiveConditions.Groups {
-			if workflowActiveConditionGroupKey(group) == selector {
+			if workflowActiveConditionGroupKey(group) == selector && workflowActiveConditionStatusCount(group, opts.ConditionEvidenceStatus) > 0 {
 				found = true
 				break
 			}

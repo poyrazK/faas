@@ -1513,6 +1513,9 @@ from .list_account_workflow_attention_priority import ListAccountWorkflowAttenti
 from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
 from .list_account_workflow_attention_sort import ListAccountWorkflowAttentionSort
 from .list_account_workflow_performance_instances_cohort import ListAccountWorkflowPerformanceInstancesCohort
+from .list_account_workflow_performance_instances_condition_evidence_status import (
+    ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus,
+)
 from .list_account_workflow_performance_instances_condition_result import (
     ListAccountWorkflowPerformanceInstancesConditionResult,
 )
@@ -1560,6 +1563,9 @@ from .list_platform_tenant_self_workflow_attention_reason import ListPlatformTen
 from .list_platform_tenant_self_workflow_attention_sort import ListPlatformTenantSelfWorkflowAttentionSort
 from .list_platform_tenant_self_workflow_performance_instances_cohort import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
+)
+from .list_platform_tenant_self_workflow_performance_instances_condition_evidence_status import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesConditionEvidenceStatus,
 )
 from .list_platform_tenant_self_workflow_performance_instances_condition_result import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult,
@@ -2072,6 +2078,8 @@ from .operation_workflow_condition_change_status import OperationWorkflowConditi
 from .operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 from .operation_workflow_condition_comparison_status import OperationWorkflowConditionComparisonStatus
 from .operation_workflow_condition_evidence import OperationWorkflowConditionEvidence
+from .operation_workflow_condition_freshness import OperationWorkflowConditionFreshness
+from .operation_workflow_condition_freshness_status import OperationWorkflowConditionFreshnessStatus
 from .operation_workflow_condition_outcome_group import OperationWorkflowConditionOutcomeGroup
 from .operation_workflow_condition_outcome_group_condition_result import (
     OperationWorkflowConditionOutcomeGroupConditionResult,
@@ -2121,6 +2129,9 @@ from .operation_workflow_performance_cohort import OperationWorkflowPerformanceC
 from .operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
 from .operation_workflow_performance_coverage_reason_reason import OperationWorkflowPerformanceCoverageReasonReason
 from .operation_workflow_performance_group import OperationWorkflowPerformanceGroup
+from .operation_workflow_performance_group_condition_evidence_status import (
+    OperationWorkflowPerformanceGroupConditionEvidenceStatus,
+)
 from .operation_workflow_performance_group_condition_result import OperationWorkflowPerformanceGroupConditionResult
 from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
 from .operation_workflow_performance_group_kind import OperationWorkflowPerformanceGroupKind
@@ -5024,6 +5035,7 @@ __all__ = (
     "ListAccountWorkflowAttentionReason",
     "ListAccountWorkflowAttentionSort",
     "ListAccountWorkflowPerformanceInstancesCohort",
+    "ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus",
     "ListAccountWorkflowPerformanceInstancesConditionResult",
     "ListAccountWorkflowPerformanceInstancesDimension",
     "ListAccountWorkflowPerformanceInstancesKind",
@@ -5066,6 +5078,7 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowAttentionReason",
     "ListPlatformTenantSelfWorkflowAttentionSort",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesCohort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionEvidenceStatus",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
@@ -5549,6 +5562,8 @@ __all__ = (
     "OperationWorkflowConditionComparison",
     "OperationWorkflowConditionComparisonStatus",
     "OperationWorkflowConditionEvidence",
+    "OperationWorkflowConditionFreshness",
+    "OperationWorkflowConditionFreshnessStatus",
     "OperationWorkflowConditionOutcomeGroup",
     "OperationWorkflowConditionOutcomeGroupConditionResult",
     "OperationWorkflowConditionOutcomeSummary",
@@ -5594,6 +5609,7 @@ __all__ = (
     "OperationWorkflowPerformanceCoverageReason",
     "OperationWorkflowPerformanceCoverageReasonReason",
     "OperationWorkflowPerformanceGroup",
+    "OperationWorkflowPerformanceGroupConditionEvidenceStatus",
     "OperationWorkflowPerformanceGroupConditionResult",
     "OperationWorkflowPerformanceGroupDimension",
     "OperationWorkflowPerformanceGroupKind",

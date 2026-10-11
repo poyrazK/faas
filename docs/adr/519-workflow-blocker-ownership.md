@@ -790,3 +790,42 @@ workflow links, decision fact/report timestamps and evidence age frozen at the
 summary evaluation time. Changed retained evidence requires a refreshed summary.
 Completed condition outcome behavior remains unchanged. No migration or business
 execution is introduced; applications own evaluation and actions.
+
+### Pinned condition report freshness budgets
+
+A condition definition may declare `evidence_max_age_seconds`, a nonnegative
+integer bounded to ten years. Omission or zero leaves the budget unconfigured.
+For example, a milestone step can declare:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+```
+
+The active condition view resolves the selected fact's milestone against the
+reporting Operation's immutable definition and exact workflow contract version.
+It never reads the current deployment to reinterpret historical evidence. The
+source definitions participate in the cohort fingerprint. Read queries project
+this metadata from existing definition JSON and milestone rows; no migration is
+required. Memory and PostgreSQL stores use the same fact ownership and milestone
+mapping. Budgets belong to definitions, not application-reported result payloads.
+
+Each returned active group partitions its workflow count into
+`within_budget_workflow_count`, `overdue_workflow_count`, and
+`no_budget_workflow_count`. Contributor evidence includes `condition_freshness`
+with status, configured budget, refresh deadline, and optional overdue seconds.
+A report at 12:00 with a 900-second budget is within budget before 12:15 and
+becomes overdue at 12:15. All calculations use the token-bound `evaluated_at`.
+The optional `condition_evidence_status` selector filters active contributor
+queries by `within_budget`, `overdue`, or `no_budget`; a status must have matching
+contributors in the returned group. Other dimensions reject this selector.
+Dashboard overdue links rank workflows by their full observed blocked duration.
+
+Metadata-only reports preserve evidence and its original clock. An explicitly
+republished decision snapshot refreshes reporting age; it does not prove the
+application performed a new verification. Unknown remains an explicit business
+result and is independent of reporting freshness. Unreported conditions and
+incomplete histories retain their existing coverage handling. Workflow state
+staleness is separate. No facts expire and no application actions are triggered.

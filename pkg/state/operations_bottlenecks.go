@@ -8,10 +8,11 @@ import (
 )
 
 type workflowBottleneckObservation struct {
-	SLAWarningPercent int64                                  `json:"sla_warning_percent"`
-	SLABudgetSeconds  int64                                  `json:"sla_budget_seconds"`
-	History           api.OperationWorkflowStateHistoryEntry `json:"history"`
-	Terminal          bool                                   `json:"terminal"`
+	ConditionDefinitions map[string][]api.OperationBusinessConditionDefinition `json:"condition_definitions,omitempty"`
+	SLAWarningPercent    int64                                                 `json:"sla_warning_percent"`
+	SLABudgetSeconds     int64                                                 `json:"sla_budget_seconds"`
+	History              api.OperationWorkflowStateHistoryEntry                `json:"history"`
+	Terminal             bool                                                  `json:"terminal"`
 }
 type workflowStateDurationKey struct {
 	Version int
@@ -287,7 +288,7 @@ func (m *MemStore) workflowBottleneckHistoryAtLocked(account, tenant, app, scope
 				}
 			}
 		}
-		observations = append(observations, workflowBottleneckObservation{History: h, Terminal: terminal, SLABudgetSeconds: slaBudget, SLAWarningPercent: slaWarning})
+		observations = append(observations, workflowBottleneckObservation{ConditionDefinitions: workflowReportConditionDefinitions(data.definitions[op.DefinitionID].Spec.WorkflowSteps, data.milestones[h.OperationID], h), History: h, Terminal: terminal, SLABudgetSeconds: slaBudget, SLAWarningPercent: slaWarning})
 	}
 	return observations
 }

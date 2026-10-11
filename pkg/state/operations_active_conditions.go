@@ -11,6 +11,7 @@ import (
 // Reasons are one context; each selected path group is another. Contract changes reset all contexts.
 func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[workflowConditionOutcomeKey]api.OperationWorkflowDecisionOutcomeEvidence, string) {
 	contexts := map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
+	declarations := map[string][]api.OperationBusinessConditionDefinition{}
 	version := 0
 	for _, observation := range workflowDecisionOutcomeReports(instance) {
 		h := observation.History
@@ -18,6 +19,7 @@ func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[
 		if currentVersion != version {
 			contexts = map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
 			version = currentVersion
+			declarations = map[string][]api.OperationBusinessConditionDefinition{}
 		}
 		fact := api.OperationWorkflowDecisionOutcomeEvidence{ReportID: h.ID, OperationID: h.OperationID, Revision: h.Revision, FromState: h.FromState, State: h.State, OccurredAt: h.OccurredAt}
 		if h.ChangeReason != nil {
@@ -26,12 +28,14 @@ func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[
 			value.Decision = &decision
 			value.MilestoneID = h.ChangeReason.MilestoneID
 			contexts["reason"] = value
+			declarations["reason"] = observation.ConditionDefinitions[value.MilestoneID]
 		}
 		// A reported path snapshot replaces its groups, including paths without a decision fact.
 		if len(h.SelectedPaths) != 0 {
 			for context := range contexts {
 				if context != "reason" {
 					delete(contexts, context)
+					delete(declarations, context)
 				}
 			}
 			for _, path := range h.SelectedPaths {
@@ -42,6 +46,7 @@ func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[
 				value.MilestoneID = path.DecisionMilestoneID
 				value.Decision = &api.OperationBusinessDecision{Workflow: h.Workflow, InstanceID: h.InstanceID, Code: path.DecisionCode, Description: path.DecisionDescription, RuleID: path.DecisionRuleID, RuleVersion: path.DecisionRuleVersion, Conditions: append([]api.OperationBusinessConditionResult(nil), path.DecisionConditions...)}
 				contexts["path:"+path.GroupID] = value
+				declarations["path:"+path.GroupID] = observation.ConditionDefinitions[value.MilestoneID]
 			}
 		}
 		if len(contexts) > api.OperationWorkflowActiveConditionContextsMax {
@@ -75,6 +80,7 @@ func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[
 				value := fact
 				c := condition
 				value.Condition = &c
+				value.ConditionFreshness = workflowConditionFreshnessDefinition(declarations[context], c)
 				out[key] = value
 			}
 		}
@@ -114,6 +120,7 @@ func workflowActiveConditions(instances []workflowPerformanceInstance, at time.T
 		}
 		out.LinkedWorkflowCount++
 		for key, fact := range evidence {
+			workflowEvaluateConditionFreshness(&fact, at)
 			bucket := buckets[key]
 			if bucket == nil {
 				if len(buckets) == api.OperationWorkflowActiveConditionGroupsMax {
@@ -138,6 +145,14 @@ func workflowActiveConditions(instances []workflowPerformanceInstance, at time.T
 			bucket.Elapsed = append(bucket.Elapsed, instance.Bottlenecks.StateSeconds)
 			bucket.Blocked = append(bucket.Blocked, instance.Bottlenecks.BlockedSeconds)
 			bucket.Age = append(bucket.Age, workflowConditionEvidenceAge(fact, at))
+			switch fact.ConditionFreshness.Status {
+			case "within_budget":
+				bucket.Group.WithinBudgetWorkflowCount++
+			case "overdue":
+				bucket.Group.OverdueWorkflowCount++
+			case "no_budget":
+				bucket.Group.NoBudgetWorkflowCount++
+			}
 			if instance.Current.Stale {
 				bucket.Group.StaleWorkflowCount++
 			}
@@ -171,6 +186,10 @@ func validateActiveConditionGroup(g api.OperationWorkflowPerformanceGroup) error
 	if g.OutcomeCode != "" {
 		return ErrInvalidArgument
 	}
+	if g.ConditionEvidenceStatus != "" && g.ConditionEvidenceStatus != "within_budget" && g.ConditionEvidenceStatus != "overdue" && g.ConditionEvidenceStatus != "no_budget" {
+		return ErrInvalidArgument
+	}
+	g.ConditionEvidenceStatus = ""
 	return validateConditionGroupSelectors(g)
 }
 func workflowActiveConditionGroupKey(g api.OperationWorkflowActiveConditionGroup) workflowConditionOutcomeKey {
@@ -183,6 +202,10 @@ func workflowActiveConditionContribution(instance workflowPerformanceInstance, g
 	}
 	fact, exists := facts[workflowConditionOutcomeSelector(group)]
 	if !exists {
+		return 0, nil
+	}
+	workflowEvaluateConditionFreshness(&fact, at)
+	if group.ConditionEvidenceStatus != "" && group.ConditionEvidenceStatus != fact.ConditionFreshness.Status {
 		return 0, nil
 	}
 	age := workflowConditionEvidenceAge(fact, at)

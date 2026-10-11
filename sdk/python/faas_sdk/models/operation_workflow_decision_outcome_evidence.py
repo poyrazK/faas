@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.operation_business_condition_result import OperationBusinessConditionResult
     from ..models.operation_business_decision import OperationBusinessDecision
     from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
+    from ..models.operation_workflow_condition_freshness import OperationWorkflowConditionFreshness
 
 
 T = TypeVar("T", bound="OperationWorkflowDecisionOutcomeEvidence")
@@ -36,6 +37,12 @@ class OperationWorkflowDecisionOutcomeEvidence:
     revision: int
     state: str
     occurred_at: datetime.datetime
+    condition_freshness: OperationWorkflowConditionFreshness | Unset = UNSET
+    """Report-age status using the selected fact reporting Operation's immutable condition definition and the
+    summary evaluation time. A positive budget yields a refresh deadline from occurred_at; overdue begins at the
+    deadline. Missing or zero budgets remain no_budget. This does not expire facts, change reported results, or
+    authorize execution. Republishing an explicit snapshot updates reporting freshness; it does not prove renewed
+    business verification."""
     evidence_age_seconds: int | Unset = UNSET
     """Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current
     truth."""
@@ -67,6 +74,10 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = self.state
 
         occurred_at = self.occurred_at.isoformat()
+
+        condition_freshness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition_freshness, Unset):
+            condition_freshness = self.condition_freshness.to_dict()
 
         evidence_age_seconds = self.evidence_age_seconds
 
@@ -106,6 +117,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
                 "occurred_at": occurred_at,
             }
         )
+        if condition_freshness is not UNSET:
+            field_dict["condition_freshness"] = condition_freshness
         if evidence_age_seconds is not UNSET:
             field_dict["evidence_age_seconds"] = evidence_age_seconds
         if condition is not UNSET:
@@ -128,6 +141,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
         from ..models.operation_business_condition_result import OperationBusinessConditionResult
         from ..models.operation_business_decision import OperationBusinessDecision
         from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
+        from ..models.operation_workflow_condition_freshness import OperationWorkflowConditionFreshness
 
         d = dict(src_dict)
         report_id = UUID(d.pop("report_id"))
@@ -139,6 +153,13 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = d.pop("state")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        _condition_freshness = d.pop("condition_freshness", UNSET)
+        condition_freshness: OperationWorkflowConditionFreshness | Unset
+        if isinstance(_condition_freshness, Unset):
+            condition_freshness = UNSET
+        else:
+            condition_freshness = OperationWorkflowConditionFreshness.from_dict(_condition_freshness)
 
         evidence_age_seconds = d.pop("evidence_age_seconds", UNSET)
 
@@ -193,6 +214,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
             revision=revision,
             state=state,
             occurred_at=occurred_at,
+            condition_freshness=condition_freshness,
             evidence_age_seconds=evidence_age_seconds,
             condition=condition,
             observed_condition_results=observed_condition_results,

@@ -162,6 +162,8 @@ func workflowActiveConditionLinks(path string, opts api.OperationWorkflowPerform
 		link := dashboard.WorkflowActiveConditionLink{OperationWorkflowActiveConditionGroup: value, ElapsedURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)}
 		group.Dimension = "active_condition_blocked"
 		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
+		group.ConditionEvidenceStatus = "overdue"
+		link.OverdueURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
 		links = append(links, link)
 	}
 	return links

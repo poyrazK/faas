@@ -8249,7 +8249,7 @@ paths:
       tags: [operations]
       operationId: listAccountWorkflowPerformanceInstances
       summary: List ranked contributors to a workflow performance group.
-      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. Conflicting snapshots and incomplete histories are excluded.
+      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
       parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
@@ -8329,6 +8329,11 @@ paths:
         in: query
         description: Exact public condition description for the account returned condition group; UTF-8 byte bound without controls.
         schema: {type: string, minLength: 1, maxLength: 1024}
+      - name: condition_evidence_status
+        in: query
+        required: false
+        description: Account active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+        schema: {type: string, enum: [within_budget, overdue, no_budget]}
       - name: condition_result
         in: query
         description: Exact observed condition result for the account condition outcome group.
@@ -8358,7 +8363,7 @@ paths:
       tags: [operations]
       operationId: listPlatformTenantSelfWorkflowPerformanceInstances
       summary: List ranked performance contributors for the authenticated customer.
-      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. Conflicting snapshots and incomplete histories are excluded.
+      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. Conflicting snapshots and incomplete histories are excluded.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
@@ -8437,6 +8442,11 @@ paths:
         in: query
         description: Exact public condition description for the customer returned condition group; UTF-8 byte bound without controls.
         schema: {type: string, minLength: 1, maxLength: 1024}
+      - name: condition_evidence_status
+        in: query
+        required: false
+        description: Customer active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+        schema: {type: string, enum: [within_budget, overdue, no_budget]}
       - name: condition_result
         in: query
         description: Exact observed condition result for the customer condition outcome group.
@@ -38588,6 +38598,7 @@ components:
       additionalProperties: false
       required: [id, description]
       properties:
+        evidence_max_age_seconds: {type: integer, format: int64, minimum: 0, maximum: 315360000, description: Optional pinned maximum condition report age in seconds. Zero or omission disables the budget; this measures reporting freshness without changing the application result.}
         id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         description: {type: string, minLength: 1, maxLength: 1024, description: Public UTF-8 explanation without control characters; byte bound.}
     OperationBusinessConditionResult:
@@ -39097,6 +39108,7 @@ components:
       description: "Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact; active condition groups use the latest matching fact among current decision contexts. The optional business decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These are application-reported facts and do not establish causation."
       required: [report_id, operation_id, revision, state, occurred_at]
       properties:
+        condition_freshness: {$ref: '#/components/schemas/OperationWorkflowConditionFreshness'}
         evidence_age_seconds: {type: integer, format: int64, minimum: 0, description: Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current truth.}
         condition: {$ref: '#/components/schemas/OperationBusinessConditionResult'}
         observed_condition_results:
@@ -39120,6 +39132,7 @@ components:
       additionalProperties: false
       required: [dimension]
       properties:
+        condition_evidence_status: {type: string, enum: [within_budget, overdue, no_budget], description: Optional active-condition contributor filter; other dimensions reject this selector.}
         condition_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         condition_description: {type: string, minLength: 1, maxLength: 1024, description: Exact public condition description in the returned group; UTF-8 byte bound without controls.}
         condition_result: {type: string, enum: [pass, fail, unknown]}
@@ -39189,6 +39202,16 @@ components:
         cohort_limit: {type: integer, minimum: 1, maximum: 100}
         completed: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
         ongoing: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+    OperationWorkflowConditionFreshness:
+      type: object
+      additionalProperties: false
+      description: Report-age status using the selected fact reporting Operation's immutable condition definition and the summary evaluation time. A positive budget yields a refresh deadline from occurred_at; overdue begins at the deadline. Missing or zero budgets remain no_budget. This does not expire facts, change reported results, or authorize execution. Republishing an explicit snapshot updates reporting freshness; it does not prove renewed business verification.
+      required: [status]
+      properties:
+        status: {type: string, enum: [within_budget, overdue, no_budget]}
+        evidence_max_age_seconds: {type: integer, format: int64, minimum: 1, maximum: 315360000}
+        refresh_due_at: {type: string, format: date-time}
+        overdue_seconds: {type: integer, format: int64, minimum: 0}
     OperationWorkflowActiveConditionSummary:
       type: object
       additionalProperties: false
@@ -39213,8 +39236,11 @@ components:
       type: object
       additionalProperties: false
       description: One latest explicitly reported result per exact condition identity and workflow. Elapsed and blocked durations cover the entire observed workflow to evaluated_at, not time under the condition. Evidence age is measured at the same time. Workflow state staleness follows its declared threshold and does not expire the condition.
-      required: [contract_version, decision_code, rule_id, rule_version, condition_id, condition_description, condition_result, stale_workflow_count, elapsed_time, blocked_time, evidence_age]
+      required: [within_budget_workflow_count, overdue_workflow_count, no_budget_workflow_count, contract_version, decision_code, rule_id, rule_version, condition_id, condition_description, condition_result, stale_workflow_count, elapsed_time, blocked_time, evidence_age]
       properties:
+        within_budget_workflow_count: {type: integer, format: int64, minimum: 0}
+        overdue_workflow_count: {type: integer, format: int64, minimum: 0}
+        no_budget_workflow_count: {type: integer, format: int64, minimum: 0}
         contract_version: {type: integer, minimum: 1, maximum: 1000000}
         decision_code: {type: string, minLength: 1, maxLength: 64}
         rule_id: {type: string, minLength: 1, maxLength: 64}
